@@ -30,6 +30,7 @@
 
 #include <miniz.h>
 
+#include <array>
 #include <chrono>
 #include <ctime>
 #include <map>
@@ -198,9 +199,9 @@ static DynamicString GetCurrentDateString() {
 #else
   gmtime_r(&tt, &tm);
 #endif
-  char buf[32];
-  std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
-  return DynamicString{buf};
+  std::array<char, 32> buf{};
+  std::strftime(buf.data(), buf.size(), "%Y-%m-%d", &tm);
+  return DynamicString{buf.data()};
 }
 
 #ifdef MOCHI_BOTS_WITH_MECURIAL
@@ -214,9 +215,9 @@ static DynamicString GetSourceCommitHash() {
     return DynamicString{};
   }
   std::string out;
-  char buffer[128];
-  while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-    out += buffer;
+  std::array<char, 128> buffer{};
+  while (std::fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+    out += buffer.data();
   }
 #ifdef _WIN32
   _pclose(pipe);
