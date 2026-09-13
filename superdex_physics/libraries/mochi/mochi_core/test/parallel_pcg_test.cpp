@@ -75,6 +75,7 @@ class TrackingDiagonalPreconditioner final : public Preconditioner<real> {
       _invalidConcurrentSolve = true;
       return;
     }
+    _numConcurrentWorkers.store(worker.numWorkers, std::memory_order_relaxed);
     Apply(input, output, worker.rBegin, worker.rEnd);
     ++_concurrentSolveCalls;
   }
@@ -88,6 +89,9 @@ class TrackingDiagonalPreconditioner final : public Preconditioner<real> {
   }
   [[nodiscard]] int NumConcurrentSolveCalls() const {
     return _concurrentSolveCalls;
+  }
+  [[nodiscard]] int NumConcurrentWorkers() const {
+    return _numConcurrentWorkers.load(std::memory_order_relaxed);
   }
   [[nodiscard]] bool HadInvalidConcurrentSolve() const {
     return _invalidConcurrentSolve;
@@ -107,6 +111,7 @@ class TrackingDiagonalPreconditioner final : public Preconditioner<real> {
   DynamicArray<real> _inverseDiagonal;
   mutable std::atomic<int> _solveCalls{0};
   mutable std::atomic<int> _concurrentSolveCalls{0};
+  mutable std::atomic<int> _numConcurrentWorkers{0};
   mutable std::atomic<bool> _invalidConcurrentSolve{false};
 };
 
@@ -165,6 +170,7 @@ struct SolveResult {
   ColumnVector<real> x;
   int serialSolveCalls;
   int concurrentSolveCalls;
+  int numConcurrentWorkers;
   bool invalidConcurrentSolve;
 };
 
@@ -176,7 +182,7 @@ template <template <typename, typename> class Criterion, typename Dot = krylov::
 template <typename StopCriterion, typename Dot = krylov::UsualDot>
 [[nodiscard]] static SolveResult RunParallelPcg(
     PcgProblem const& problem,
-    StopCriterion stopCriterion,
+    StopCriterion&& stopCriterion,
     SolveOptions const& options = {},
     Dot dot = {}) {
   TrackingDiagonalPreconditioner prec(problem.inversePrecDiagonal);
@@ -200,6 +206,7 @@ template <typename StopCriterion, typename Dot = krylov::UsualDot>
       .x = std::move(x),
       .serialSolveCalls = prec.NumSolveCalls(),
       .concurrentSolveCalls = prec.NumConcurrentSolveCalls(),
+      .numConcurrentWorkers = prec.NumConcurrentWorkers(),
       .invalidConcurrentSolve = prec.HadInvalidConcurrentSolve()};
 }
 
@@ -301,6 +308,14 @@ TEST_P(ParallelPcgConvergenceTest, SolvesKnownSystem) {
       ExpectedRelativeResidualNorm(std::get<0>(GetParam()), problem, residual),
       5_r * kRelativeTolerance);
   EXPECT_FALSE(result.invalidConcurrentSolve);
+  if (result.numConcurrentWorkers != 0) {
+    EXPECT_EQ(result.serialSolveCalls, 0);
+    bool const needsPrec = std::get<0>(GetParam()) != CriterionKind::ResidualL2;
+    int const numPrecApplications = result.status.numIterDone +
+        (needsPrec ? 1 + static_cast<int>(std::get<2>(GetParam()) == InitialGuessHint::Unknown)
+                   : 0);
+    EXPECT_EQ(result.concurrentSolveCalls, numPrecApplications * result.numConcurrentWorkers);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -358,6 +373,10 @@ TEST_F(ParallelPcgTest, ConvergesImmediatelyForZeroSystemWithPreconditionedResid
   EXPECT_EQ(result.status.numIterDone, 0);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
   EXPECT_FALSE(result.invalidConcurrentSolve);
+  if (result.numConcurrentWorkers != 0) {
+    EXPECT_EQ(result.serialSolveCalls, 0);
+    EXPECT_EQ(result.concurrentSolveCalls, result.numConcurrentWorkers);
+  }
 }
 
 class ParallelPcgNonSpdTest : public ParallelPcgTest, public testing::WithParamInterface<bool> {};
@@ -409,15 +428,30 @@ TEST_F(ParallelPcgTest, ReportsSingularPreconditionerBreakdown) {
 }
 
 TEST_F(ParallelPcgTest, StopsAtIterationLimit) {
-  auto const problem = MakeProblem();
+  auto problem = MakeProblem();
+  problem.initialGuess = 0.25_r * problem.expectedSolution;
   ASSERT_GE(krylov::parallel_pcg::GetNumParallelWorkers(problem.A), 3);
-  auto const result =
-      RunParallelPcg(problem, MakeCriterion<krylov::StatusResidualL2>(), {.maxIter = 1});
+  auto criterion = MakeCriterion<krylov::StatusPreconditionedResidualL2, ScaledDot>();
+  auto const result = RunParallelPcg(
+      problem,
+      criterion,
+      {.maxIter = 1, .initialGuessHint = InitialGuessHint::Unknown},
+      ScaledDot{1_r});
 
   EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Stopped);
   EXPECT_EQ(result.status.numIterDone, 1);
   EXPECT_FALSE(mochi::test::NearEqualMatrices(result.x, problem.initialGuess));
+  auto const residual = problem.b - problem.A * result.x;
+  EXPECT_NEAR(
+      result.status.relativeResidualNorm,
+      ExpectedRelativeResidualNorm(CriterionKind::PreconditionedResidualL2, problem, residual),
+      kRelativeTolerance);
+  EXPECT_EQ(criterion.GetLatestRelativeResidualNorm(), result.status.relativeResidualNorm);
   EXPECT_FALSE(result.invalidConcurrentSolve);
+  if (result.numConcurrentWorkers != 0) {
+    EXPECT_EQ(result.serialSolveCalls, 0);
+    EXPECT_EQ(result.concurrentSolveCalls, 3 * result.numConcurrentWorkers);
+  }
 }
 
 TEST(ParallelPcg, FallsBackWhenWorkIsInsufficient) {
@@ -434,10 +468,12 @@ TEST(ParallelPcg, FallsBackWhenWorkIsInsufficient) {
       .expectedSolution = expectedSolution,
       .inversePrecDiagonal = DynamicArray<real>(kSize, 1_r)};
   ASSERT_LE(krylov::parallel_pcg::GetNumParallelWorkers(problem.A), 1);
-  auto const result = RunParallelPcg(problem, MakeCriterion<krylov::StatusResidualL2>());
+  auto const result =
+      RunParallelPcg(problem, MakeCriterion<krylov::StatusPreconditionedResidualL2>());
 
   EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
-  EXPECT_GT(result.serialSolveCalls, 0);
+  EXPECT_EQ(result.serialSolveCalls, 2);
+  EXPECT_EQ(result.numConcurrentWorkers, 0);
   EXPECT_EQ(result.concurrentSolveCalls, 0);
 }

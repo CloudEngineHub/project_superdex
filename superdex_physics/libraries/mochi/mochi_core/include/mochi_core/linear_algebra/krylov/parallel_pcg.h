@@ -148,7 +148,6 @@ LinearSolverStatus ParallelPCG(
     auto Ap = vectorFactory.GetSameAs(b);
     auto p = vectorFactory.GetSameAs(x);
     auto z = vectorFactory.GetSameAs(x);
-    statusCheck.SetScaling(r, prec, z);
 
     ParallelBarrier barrier(numTargetWorkers);
     ParallelDot<NonConstScalar> parDot(numTargetWorkers);
@@ -210,6 +209,10 @@ LinearSolverStatus ParallelPCG(
       //   workers to modify it.
       MOCHI_PROFILE_SCOPE_N("PcgWorkerTask");
       bool const isMaster = (workerIdx == 0);
+
+      // Copy the status check before workers wait for one another. After that wait, the master may
+      // modify statusCheck.
+      auto workerStatusCheckCopy = statusCheck;
       if (!areAllWorkersReady(timeoutTime, numWorkers, isMaster)) {
         success = false;
         return;
@@ -222,7 +225,7 @@ LinearSolverStatus ParallelPCG(
       MOCHI_ASSERT_VERBOSE(
           numRows >= 0 && rowBegin >= 0 && rowEnd <= A.Rows(), "Invalid row ranges.");
 
-      auto workerStatusCheck = statusCheck; // Worker copy to prevent race conditions.
+      auto& workerStatusCheck = isMaster ? statusCheck : workerStatusCheckCopy;
       auto workerBarrier = barrier; // Worker copy. The copy is mandatory for 'ParallelBarrier'.
       auto workerParDot = parDot; // Worker copy. The copy is mandatory for 'ParallelDot'.
       workerBarrier.ReduceNumWorkers(numWorkers, isMaster);
@@ -265,18 +268,22 @@ LinearSolverStatus ParallelPCG(
         }
       };
 
+      if constexpr (kNeedPrecResidual) {
+        computeBetaAndPrecResidual(); // z = Prec^{-1} b
+      }
+      workerStatusCheck.SetConcurrentScaling(r, z, rowBegin, rowEnd, workerIdx, workerParDot);
+
       if (initialGuessHint != InitialGuessHint::Zero) {
         // Pre- and post-ApplyToRange barriers not needed: 'x' is up-to-date and the next 'Dot'
         // prevents 'x' from being modified before the product is complete.
         ApplyToRange(A, x, Ap, rowBegin, rowEnd);
         rWorker -= ApWorker;
+        if constexpr (kNeedPrecResidual) {
+          computeBetaAndPrecResidual();
+        }
       }
 
       if constexpr (kNeedPrecResidual) {
-        // Even with x_0 = 0, do not reuse z from SetScaling(): it was computed with Solve(),
-        // whereas ParallelPCG uses ConcurrentSolve(). Reuse could therefore give iteration 0 a
-        // different effective preconditioner from subsequent iterations.
-        computeBetaAndPrecResidual();
         iterStatus = checkPreconditionedStatus();
       } else {
         iterStatus = workerStatusCheck.ParallelCheckStatus(
