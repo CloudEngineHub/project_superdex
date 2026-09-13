@@ -95,7 +95,9 @@ LinearSolverStatus PCG(
   constexpr bool kNeedPrecResidual =
       std::is_same_v<StopCriterion, StatusPreconditionedResidualL2<Dot, Scalar>> ||
       std::is_same_v<StopCriterion, StatusResidualPreconditionerInduced<Dot, Scalar>>;
-  constexpr bool kCheckStatusComputesRTz =
+  // The criterion owns a separate Dot. Reusing its rTz is safe only when both instances produce
+  // identical results. UsualDot guarantees this.
+  constexpr bool kCanReuseCriterionRTz = std::is_same_v<Dot, UsualDot> &&
       std::is_same_v<StopCriterion, StatusResidualPreconditionerInduced<Dot, Scalar>>;
   MOCHI_ASSERT_VERBOSE(
       initialGuessHint != InitialGuessHint::Zero || dot(x, x) == 0,
@@ -137,7 +139,7 @@ LinearSolverStatus PCG(
 
   p = z;
   Scalar rTz_current{}; // r_0^T z_0
-  if constexpr (kCheckStatusComputesRTz) {
+  if constexpr (kCanReuseCriterionRTz) {
     rTz_current = statusCheck.GetLatestResidualNormSqr();
   } else {
     rTz_current = dot(r, z);
@@ -203,7 +205,7 @@ LinearSolverStatus PCG(
     }
 
     auto const rTz_old = rTz_current;
-    if constexpr (kCheckStatusComputesRTz) {
+    if constexpr (kCanReuseCriterionRTz) {
       rTz_current = statusCheck.GetLatestResidualNormSqr();
     } else {
       rTz_current = dot(r, z);

@@ -230,21 +230,20 @@ using ConvergenceParam = std::tuple<CriterionKind, DotKind, InitialGuessHint, bo
 }
 
 template <typename Dot>
-[[nodiscard]] static SolveResult
-RunCriterion(CriterionKind criterion, PcgProblem const& problem, SolveOptions const& options) {
+[[nodiscard]] static SolveResult RunCriterion(
+    CriterionKind criterion,
+    PcgProblem const& problem,
+    SolveOptions const& options,
+    Dot dot = {}) {
   switch (criterion) {
     case CriterionKind::ResidualL2:
-      return RunParallelPcg(
-          problem, MakeCriterion<krylov::StatusResidualL2, Dot>(), options, Dot{});
+      return RunParallelPcg(problem, MakeCriterion<krylov::StatusResidualL2, Dot>(), options, dot);
     case CriterionKind::PreconditionedResidualL2:
       return RunParallelPcg(
-          problem, MakeCriterion<krylov::StatusPreconditionedResidualL2, Dot>(), options, Dot{});
+          problem, MakeCriterion<krylov::StatusPreconditionedResidualL2, Dot>(), options, dot);
     case CriterionKind::PreconditionerInduced:
       return RunParallelPcg(
-          problem,
-          MakeCriterion<krylov::StatusResidualPreconditionerInduced, Dot>(),
-          options,
-          Dot{});
+          problem, MakeCriterion<krylov::StatusResidualPreconditionerInduced, Dot>(), options, dot);
   }
   MOCHI_ASSERT(false, "Invalid stopping criterion.");
   return {};
@@ -260,7 +259,10 @@ RunCriterion(CriterionKind criterion, PcgProblem const& problem, SolveOptions co
     case DotKind::Usual:
       return RunCriterion<krylov::UsualDot>(criterion, problem, options);
     case DotKind::Scaled:
-      return RunCriterion<ScaledDot>(criterion, problem, options);
+      // The criterion owns a default-constructed ScaledDot with scale 100. Give the solver's
+      // distinct ScaledDot scale 1 so the test detects incorrect reuse of a dot product across the
+      // two instances.
+      return RunCriterion<ScaledDot>(criterion, problem, options, ScaledDot{1_r});
   }
   MOCHI_ASSERT(false, "Invalid dot type.");
   return {};

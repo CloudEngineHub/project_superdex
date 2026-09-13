@@ -92,6 +92,9 @@ int GetNumParallelWorkers(MatType const& A) {
  * - Assess variations of PCG that require fewer synchronization points
  *   (https://www.sciencedirect.com/science/article/abs/pii/S0167819113000719).
  * - Assess using only a subset of the workers to perform BLAS1 operations.
+ * - If the @ref StatusResidualPreconditionerInduced specialization using a dot other than
+ *   @ref UsualDot becomes performance-sensitive, compute the status and recurrence dot products in
+ *   one collective reduction using the criterion's and solver's respective dot instances.
  */
 template <
     typename MatType,
@@ -126,11 +129,10 @@ LinearSolverStatus ParallelPCG(
   constexpr bool kNeedPrecResidual =
       std::is_same_v<StopCriterion, StatusPreconditionedResidualL2<Dot, NonConstScalar>> ||
       std::is_same_v<StopCriterion, StatusResidualPreconditionerInduced<Dot, NonConstScalar>>;
-  constexpr bool kCheckStatusComputesRTz =
+  // The criterion owns a separate Dot. Reusing its rTz or replacing its Dot with the solver's is
+  // safe only when both instances produce identical results. UsualDot guarantees this.
+  constexpr bool kCanReuseCriterionRTz = std::is_same_v<Dot, UsualDot> &&
       std::is_same_v<StopCriterion, StatusResidualPreconditionerInduced<Dot, NonConstScalar>>;
-  // Pairing replaces the status criterion's Dot object with the solver's. This is valid only when
-  // all Dot objects produce identical results for the same inputs. Stateless UsualDot guarantees
-  // it.
   constexpr bool kPairStatusAndRTz = std::is_same_v<Dot, UsualDot> &&
       std::is_same_v<StopCriterion, StatusPreconditionedResidualL2<Dot, NonConstScalar>>;
   MOCHI_ASSERT_VERBOSE(
@@ -296,7 +298,7 @@ LinearSolverStatus ParallelPCG(
       }
 
       pWorker = zWorker;
-      if constexpr (kCheckStatusComputesRTz) {
+      if constexpr (kCanReuseCriterionRTz) {
         rTz = workerStatusCheck.GetLatestResidualNormSqr();
       } else if constexpr (!kPairStatusAndRTz) {
         rTz = workerParDot.Dot(dot, r, z, rowBegin, rowEnd, workerIdx);
@@ -361,7 +363,7 @@ LinearSolverStatus ParallelPCG(
           return;
         }
 
-        if constexpr (kCheckStatusComputesRTz) {
+        if constexpr (kCanReuseCriterionRTz) {
           rTz = workerStatusCheck.GetLatestResidualNormSqr();
         } else if constexpr (!kPairStatusAndRTz) {
           rTz = workerParDot.Dot(dot, r, z, rowBegin, rowEnd, workerIdx);
