@@ -343,9 +343,6 @@ static void ComputeAggregateBackPropSolverSceneStats(
   outStats.residualNorm = Sqrt(sqrResNorm);
 }
 
-// Declared in MochiDebugDrawSystems.cpp
-void RegisterDebugDrawSystems(DebugDrawInternal& debugDraw);
-
 // This ECS component simply ensures that its entity cannot be accidentally
 // destroyed before final shutdown.
 namespace {
@@ -630,6 +627,13 @@ void SceneImpl::Step(double timeStepSec) {
 
   timer.Reset();
 
+  // Check if a SceneDebugger needs to be cleaned up on this thread
+  DynamicArray<std::shared_ptr<dbg::SceneDebugger>> debuggersToShutdown;
+  _debugger.Mutate([&](auto& info) { debuggersToShutdown = std::move(info.pendingShutdown); });
+  for (auto& ptr : debuggersToShutdown) {
+    ptr->ShutdownOnSceneThread(this);
+  }
+
   // Fire pre-step callbacks one at a time
   {
     MOCHI_PROFILE_SCOPE_N("PreStepCallbacks");
@@ -682,13 +686,6 @@ void SceneImpl::Step(double timeStepSec) {
   {
     MOCHI_PROFILE_SCOPE_N("PostStepCallbacks");
     _postStepCallbacks.Call(stepInfo);
-  }
-
-  // Check if a SceneDebugger needs to be cleaned up on this thread
-  DynamicArray<std::shared_ptr<dbg::SceneDebugger>> debuggersToShutdown;
-  _debugger.Mutate([&](auto& info) { debuggersToShutdown = std::move(info.pendingShutdown); });
-  for (auto& ptr : debuggersToShutdown) {
-    ptr->ShutdownOnSceneThread(this);
   }
 
   TimeSpan postStepDuration = timer.GetElapsed();

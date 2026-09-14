@@ -358,20 +358,10 @@ class SceneSyncTest : public MochiDebuggerTest {
     _client->SetSettings(settings);
   }
 
-  static void EnableDebugDrawFeature(Scene* scene, std::string_view name, bool enable) {
-    ASSERT_NE(nullptr, scene);
-    auto& debugDraw = scene->GetDebugDraw();
-    int index = debugDraw.FindFeature(name);
-    ASSERT_LE(0, index);
-    debugDraw.EnableFeature(index, enable);
-    EXPECT_EQ(enable, debugDraw.IsFeatureEnabled(index));
-  }
-
   // Enable debug draw features that depend on the positions of actors.
-  static void EnableActorDebugDraw(Scene* scene) {
-    scene->GetDebugDraw().Enable(true);
-    EnableDebugDrawFeature(scene, "Actor Mesh", true); // Draws lines
-    EnableDebugDrawFeature(scene, "Actor Contact Samples", true); // Draws spheres
+  void EnableActorDebugDraw() {
+    _client->EnableDebugDrawFeature("Actor Mesh", true); // Draws lines
+    _client->EnableDebugDrawFeature("Actor Contact Samples", true); // Draws spheres
   }
 };
 } // namespace
@@ -699,11 +689,11 @@ TEST_F(SceneSyncTest, SyncUpdatesWhenActorMoves) {
   ActorHandle actor = CreateRigidActor(scene);
 
   // Enable debug-draw features whose geometry depends on the actor's pose.
-  EnableActorDebugDraw(scene);
 
   StartServer();
   ConnectClient();
   test::WaitUntil([&] { return ClientHasScene(sceneHandle); });
+  EnableActorDebugDraw();
 
   // Sync both actors and debug draw.
   SceneSyncParams params;
@@ -752,11 +742,11 @@ TEST_F(SceneSyncTest, SyncDebugDraw) {
   Scene* scene = CreateSceneNoGravity();
   SceneHandle sceneHandle = scene->GetHandle();
   CreateRigidActor(scene);
-  EnableActorDebugDraw(scene);
 
   StartServer();
   ConnectClient();
   test::WaitUntil([&] { return ClientHasScene(sceneHandle); });
+  EnableActorDebugDraw();
 
   // Sync debug draw only.
   SceneSyncParams params;
@@ -785,15 +775,39 @@ TEST_F(SceneSyncTest, SyncDebugDraw) {
   EXPECT_EQ(data.spheres.radii.size(), data.spheres.colors.size() / 4);
 }
 
-TEST_F(SceneSyncTest, DisablingCategoryClearsDataSynchronously) {
+TEST_F(SceneSyncTest, SelectingSceneAppliesDebugDrawBeforeInitialSync) {
   Scene* scene = CreateSceneNoGravity();
-  SceneHandle sceneHandle = scene->GetHandle();
-  ActorHandle actor = CreateRigidActor(scene);
-  EnableActorDebugDraw(scene);
+  SceneHandle const sceneHandle = scene->GetHandle();
+  CreateRigidActor(scene);
 
   StartServer();
   ConnectClient();
   test::WaitUntil([&] { return ClientHasScene(sceneHandle); });
+
+  _client->SelectScene({});
+  _client->EnableDebugDrawFeature("Actor Root Transform", true);
+
+  SceneSyncParams params;
+  params.enabled = true;
+  params.syncInterval = 100.0f;
+  params.syncDebugDraw = true;
+  SetSceneSyncParams(params);
+
+  _client->SelectScene(sceneHandle);
+  uint64_t const baseCounter = GetSceneSyncData().counter;
+  auto const data = WaitForSync(scene, baseCounter + 1).debugDraw;
+  EXPECT_FALSE(data.lineVertices.positions.empty());
+}
+
+TEST_F(SceneSyncTest, DisablingCategoryClearsDataSynchronously) {
+  Scene* scene = CreateSceneNoGravity();
+  SceneHandle sceneHandle = scene->GetHandle();
+  ActorHandle actor = CreateRigidActor(scene);
+
+  StartServer();
+  ConnectClient();
+  test::WaitUntil([&] { return ClientHasScene(sceneHandle); });
+  EnableActorDebugDraw();
 
   // Sync both actors and debug draw.
   SceneSyncParams params = ActorSyncParams();

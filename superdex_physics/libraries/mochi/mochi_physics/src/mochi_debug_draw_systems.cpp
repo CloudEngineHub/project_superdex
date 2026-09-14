@@ -1690,10 +1690,6 @@ static void RegisterDebugDrawSystem_LinearTransmission(DebugDrawInternal& debugD
       system, ecs::Excluded<TagExcludedFromDebugDraw>{});
 }
 
-// This suppresses a warning about no prior declaration of the function.
-// There is no header for this cpp, but that's OK.
-void RegisterDebugDrawSystems(DebugDrawInternal& debugDraw);
-
 // Called once by mochi::Scene to register all the DebugDrawSystems.
 void RegisterDebugDrawSystems(DebugDrawInternal& debugDraw) {
   // Transform
