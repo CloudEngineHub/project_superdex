@@ -63,7 +63,7 @@ int GetNumParallelWorkers(MatType const& A) {
  * @param[in] b The right-hand side vector of \f$ A x = b\f$.
  * @param[in,out] x Vector containing the initial guess at input and the solution at output.
  * @param[in] prec The preconditioner.
- * @param[in] maxIter Maximum number of iterations.
+ * @param[in] maxIter Maximum number of iterations. Must be positive.
  * @param[in,out] statusCheck A functor called every iteration to check the stop criteria. The norm
  * used in the stop criteria is determined by this object.
  * @param[in] abortIfNotSpd Boolean to abort the solve if the matrix is detected not to be symmetric
@@ -135,6 +135,7 @@ LinearSolverStatus ParallelPCG(
       std::is_same_v<StopCriterion, StatusResidualPreconditionerInduced<Dot, NonConstScalar>>;
   constexpr bool kPairStatusAndRTz = std::is_same_v<Dot, UsualDot> &&
       std::is_same_v<StopCriterion, StatusPreconditionedResidualL2<Dot, NonConstScalar>>;
+  MOCHI_ASSERT_VERBOSE(maxIter > 0, "Maximum number of iterations must be positive.");
   MOCHI_ASSERT_VERBOSE(
       initialGuessHint != InitialGuessHint::Zero || dot(x, x) == 0,
       "InitialGuessHint::Zero requires an exactly zero initial guess.");

@@ -4050,14 +4050,13 @@ class LinearSolverParams:
         Applies only to iterative solvers.
     """
     max_iter: int
-    """Maximum number of linear solver iterations.
+    """Maximum number of iterations for iterative solvers.
 
     Note:
         Applies only to iterative solvers.
 
     Note:
-        Must be non-negative or
-        :const:`~superdex.physics.AUTO_LINEAR_SOLVER_MAX_ITER`.
+        Must be positive or :const:`~superdex.physics.AUTO_LINEAR_SOLVER_MAX_ITER`.
 
     Note:
         :const:`~superdex.physics.AUTO_LINEAR_SOLVER_MAX_ITER` lets Mochi select the
