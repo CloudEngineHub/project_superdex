@@ -129,10 +129,8 @@ if (MOCHI_USE_PYBIND OR MOCHI_BUILD_RENDERER)
     if (MOCHI_USE_PYBIND)
         list(APPEND _mochi_python3_components Development.Module)
     endif ()
-    # Pass the same version range pybind11's later find_package() uses so the
-    # first (sticky) lookup picks a compatible interpreter. Without this CMake
-    # may resolve to an older system Python (e.g. /usr/bin/python3.9), which
-    # then fails pybind11's 3.12.x check.
+    # Pin the supported Python minor version so CMake does not resolve to an older
+    # system interpreter (for example /usr/bin/python3.9).
     find_package(Python3 3.12...3.12.99 REQUIRED COMPONENTS ${_mochi_python3_components})
     unset(_mochi_python3_components)
 
@@ -185,10 +183,6 @@ if (MOCHI_USE_PYBIND OR MOCHI_BUILD_RENDERER)
             target_link_libraries(Python::Module INTERFACE Python3::Module)
         endif ()
     endif ()
-endif ()
-
-if (MOCHI_USE_PYBIND AND MOCHI_PYBIND_FIND_PACKAGE)
-    find_package(pybind11 2.13.6 REQUIRED)
 endif ()
 
 if (MOCHI_USE_TRACY)

@@ -65,7 +65,7 @@ option(MOCHI_USE_CCACHE "Let third-party builds wrap the compiler in ccache if o
 option(MOCHI_USE_DOUBLE_PRECISION "Use 64-bit double-precision floating point" OFF)
 option(MOCHI_USE_EIGEN "Compile with Eigen to enable some experimental features" ON)
 option(MOCHI_USE_HDF5 "Compile with HDF5 to enable use of the H5 file format" ON)
-option(MOCHI_USE_PYBIND "Compile with pybind11 to enable Python bindings for select subprojects" ON)
+option(MOCHI_USE_PYBIND "Compile Python bindings for select subprojects" ON)
 option(MOCHI_USE_TINYFILEDIALOG "Compile with tinyfiledialog for file dialog support in ImGui applications" OFF)
 option(MOCHI_USE_TRACY "Compile with Tracy to enable profiling" OFF)
 option(MOCHI_BUILD_TRACY_GUI "Build the tracy-profiler GUI alongside Mochi" OFF)
