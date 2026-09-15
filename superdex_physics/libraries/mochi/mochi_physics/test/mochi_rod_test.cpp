@@ -1759,6 +1759,56 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_UsesDedicatedSurface) {
   EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
 }
 
+TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_BoundsIncludePointCloudCollider) {
+  constexpr real kRadius = 0.05_r;
+
+  for (ColliderType const colliderType : {ColliderType::PointCloud, ColliderType::Auto}) {
+    SCOPED_TRACE(static_cast<int>(colliderType));
+    ShapeHandle const shape = CreateRodShapeWithContactSkin();
+    RodActorParams params = GetRodActorParams(shape, /*useContactSkin=*/true);
+    params.colliderType = colliderType;
+    params.pointCloudCollider.radius = kRadius;
+    Actor* const actor = CreateRodActor(_scene, params, test::ExpectOK{});
+    actor->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, test::ExpectOK{});
+
+    auto& reg = GetRegistry();
+    auto const entity = mochi::GetEntity(reg, actor->GetHandle(), test::ExpectOK{});
+    ASSERT_TRUE(reg.all_of<CPointCloudColliderParams>(entity));
+
+    auto const& polylineMesh = reg.get<CPolylineMesh const>(entity);
+    auto expectBounds = [&] {
+      auto const surfacePositions =
+          Unflatten<Real3 const>(actor->GetSurfaceMeshNodePositionsLocal(test::ExpectOK{}));
+      Aabb const surfaceBounds = CalcAabb(surfacePositions);
+
+      auto const& displacements =
+          reg.get<CRodPose<TimeStep::Current> const>(entity).value.displacements;
+      DynamicArray<Real3> centerlinePositions(polylineMesh.nodes.size());
+      for (int i = 0; i < isize(polylineMesh.nodes); ++i) {
+        int const offset = i * fem::kNumRodFields;
+        centerlinePositions[i] = polylineMesh.nodes[i] +
+            Real3{displacements[offset], displacements[offset + 1], displacements[offset + 2]};
+      }
+      Aabb const pointCloudBounds = ExpandShape(CalcAabb(centerlinePositions), kRadius);
+      Aabb const expectedBounds = GetAabb(surfaceBounds, pointCloudBounds);
+      Aabb const actualBounds =
+          GetAabb(reg.get<CBoundingVolume<TimeStep::Current> const>(entity).localShape);
+      EXPECT_NEAR_EQ(expectedBounds.GetMin(), actualBounds.GetMin());
+      EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
+    };
+
+    _scene->Step(0_r);
+    expectBounds();
+
+    auto& displacements = reg.get<CRodPose<TimeStep::Current>>(entity).value.displacements;
+    int const lastNodeDofOffset = (isize(polylineMesh.nodes) - 1) * fem::kNumRodFields;
+    displacements[lastNodeDofOffset] = 0.25_r;
+    displacements[lastNodeDofOffset + 2] = 0.3_r;
+    _scene->Step(0_r);
+    expectBounds();
+  }
+}
+
 TEST_F(MochiRodSurfaceMeshes, ContactSkinElementTypeControlsSurfaceQuadrature) {
   ShapeHandle shape = CreateRodShapeWithContactSkin();
 

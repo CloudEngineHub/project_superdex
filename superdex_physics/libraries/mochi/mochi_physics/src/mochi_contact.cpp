@@ -3741,22 +3741,14 @@ void mochi::AssembleAsyncSkinnedContact(
 
 Aabb mochi::ExpandConservativeBoundsWithContactPadding(
     Aabb bounds,
-    ecs::PartialRegistry<
-        CContactParams const,
-        CRequiresFarSdfEvaluation const,
-        CPointCloudColliderParams const> reg,
+    ecs::PartialRegistry<CContactParams const, CRequiresFarSdfEvaluation const> reg,
     entt::entity e) {
   auto const* contactParams = reg.try_get<CContactParams const>(e);
   real farSdfDistance = GetFarSdfEvaluationDistance<true>(reg, e);
 
-  // Pad with: (1) contact params (for colliders), (2) point-cloud collider radius (for
-  // point-cloud colliders such as shell/rods), and (3) far-SDF distance (for collidees).
+  // Point-cloud collider radii are already included in the actors' local bounding volumes.
   if (contactParams) {
     bounds = ExpandColliderBoundsForContact(bounds, *contactParams);
-  }
-
-  if (auto const* pcParams = reg.try_get<CPointCloudColliderParams const>(e)) {
-    bounds = ExpandShape(bounds, pcParams->radius);
   }
 
   return ExpandShape(bounds, farSdfDistance);

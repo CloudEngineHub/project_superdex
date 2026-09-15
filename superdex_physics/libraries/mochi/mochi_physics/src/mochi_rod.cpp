@@ -546,13 +546,14 @@ void UpdateSurfaceContactBounds(
     CPolylineMesh const& polylineMesh,
     CRodPose<kStep> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
+    CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume<TimeStep::Current>& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
 
-  if (contactSkin.mesh->GetNumNodes() == 0) {
-    return;
-  }
+  MOCHI_ASSERT_VERBOSE(
+      contactSkin.mesh->GetNumNodes() > 0,
+      "TagRodSurfaceContact requires a non-empty contact skin.");
 
   ComputeDeformedSurfaceNodePositions(
       *contactSkin.mesh,
@@ -569,7 +570,15 @@ void UpdateSurfaceContactBounds(
     min = Min(min, pos);
     max = Max(max, pos);
   }
-  outBounds.localShape = GetObb(Aabb{Set(min, 3, 0_r), Set(max, 3, 0_r)});
+
+  Aabb bounds{Set(min, 3, 0_r), Set(max, 3, 0_r)};
+  if (pointCloudColliderParams) {
+    Aabb const pointCloudBounds = ExpandShape(
+        CalcDeformedRodCenterlineAabb(polylineMesh.nodes, rodPose.value.displacements),
+        pointCloudColliderParams->radius);
+    bounds = GetAabb(bounds, pointCloudBounds);
+  }
+  outBounds.localShape = GetObb(bounds);
 }
 
 template void UpdateSurfaceContactBounds<TimeStep::Current>(
@@ -579,6 +588,7 @@ template void UpdateSurfaceContactBounds<TimeStep::Current>(
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
+    CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume<TimeStep::Current>& outBounds);
 
 template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
@@ -588,6 +598,7 @@ template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::StageStart> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
+    CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume<TimeStep::Current>& outBounds);
 
 } // namespace mochi::rod

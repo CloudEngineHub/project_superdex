@@ -1122,10 +1122,7 @@ void AssembleAsyncSkinnedContact(
 
 Aabb ExpandConservativeBoundsWithContactPadding(
     Aabb bounds,
-    ecs::PartialRegistry<
-        CContactParams const,
-        CRequiresFarSdfEvaluation const,
-        CPointCloudColliderParams const> reg,
+    ecs::PartialRegistry<CContactParams const, CRequiresFarSdfEvaluation const> reg,
     entt::entity e);
 
 inline real GetColliderPadding(ContactParams const& contactParams) {
