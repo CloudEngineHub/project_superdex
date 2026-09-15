@@ -15,7 +15,7 @@
  */
 
 #include <superdex_robotics/core/loader.h>
-#if MOCHI_INTERNAL
+#if SUPERDEXROBOTICS_WITH_BOT_SCENE
 #include <superdex_robotics/internal/bot_scene.h>
 #endif
 #include <superdex_robotics/utils/archive_utils.h>
@@ -698,7 +698,7 @@ BotArchiveMetadata superdex::robotics::ReadBotArchiveMetadata(
 // Bot scene archives (.mochi_bot_scene_archive)
 // ---------------------------------------------------------------------------
 
-#if MOCHI_INTERNAL
+#if SUPERDEXROBOTICS_WITH_BOT_SCENE
 static void CollectScenePrefabDependencies(
     std::filesystem::path const& scenePath,
     std::set<std::filesystem::path>& collectedFiles,
@@ -952,4 +952,4 @@ DynamicString superdex::robotics::GetExtractedBotSceneArchiveTarget(
   return GetExtractedArchiveTargetImpl<BotSceneArchiveMetadata>(
       extractedDir, kSceneArchiveMetadataFile, error);
 }
-#endif // MOCHI_INTERNAL
+#endif // SUPERDEXROBOTICS_WITH_BOT_SCENE
