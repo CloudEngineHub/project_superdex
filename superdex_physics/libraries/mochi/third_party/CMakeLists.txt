@@ -537,6 +537,20 @@ if (MOCHI_USE_PYBIND)
 endif ()
 
 #-----------------------------------------------------------------------------
+# nanobind
+#-----------------------------------------------------------------------------
+
+# The Python bindings are built with vendored nanobind. Its robin_map dependency ships under
+# ext/robin_map. Tests are not the master project here, so nanobind's own test suite is not built.
+if (MOCHI_USE_PYBIND)
+    message(STATUS "[Mochi] Including nanobind")
+    # Mochi's root CMake setup exposes its FindPython3 result under the FindPython variable and
+    # target names consumed by nanobind.
+    FetchContent_Declare(nanobind SOURCE_DIR ${MOCHI_NANOBIND_SOURCE_DIR})
+    FetchContent_MakeAvailable(nanobind)
+endif ()
+
+#-----------------------------------------------------------------------------
 # Tracy
 #-----------------------------------------------------------------------------
 

@@ -15,7 +15,7 @@
 # CMake target is `superdex_robotics_pybind` (with `_pybind` suffix) so it does not collide
 # with the `superdex_robotics` C++ library target; the extension file is named via
 # OUTPUT_NAME below so it imports as `superdex_robotics` (or `superdex_robotics_double`).
-pybind11_add_module(superdex_robotics_pybind)
+nanobind_add_module(superdex_robotics_pybind NB_DOMAIN mochi)
 file(GLOB_RECURSE superdex_robotics_pybind_srcs src/*.cpp)
 list(FILTER superdex_robotics_pybind_srcs EXCLUDE REGEX "/internal/")
 target_sources(superdex_robotics_pybind PRIVATE ${superdex_robotics_pybind_srcs})

@@ -192,11 +192,13 @@ _CORE_THIRD_PARTY_LICENSE_FILES = (
 )
 _PHYSICS_THIRD_PARTY_LICENSE_FILES = _CORE_THIRD_PARTY_LICENSE_FILES + (
     "entt/LICENSE",
-    "pybind11/LICENSE",
+    "nanobind/LICENSE",
+    "robin_map/LICENSE",
 )
 _ROBOTICS_THIRD_PARTY_LICENSE_FILES = _CORE_THIRD_PARTY_LICENSE_FILES + (
     "miniz/LICENSE",
-    "pybind11/LICENSE",
+    "nanobind/LICENSE",
+    "robin_map/LICENSE",
     "tinyxml2/LICENSE",
     "xxhash/LICENSE",
 )

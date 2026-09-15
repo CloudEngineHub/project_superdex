@@ -76,6 +76,8 @@ set(MOCHI_TINYXML2_SOURCE_DIR "${_mochi_third_party}/tinyxml2" CACHE STRING "Sou
 option(MOCHI_PYBIND_FIND_PACKAGE "Use find_package for pybind11, rather than building from source" OFF)
 set(MOCHI_PYBIND_SOURCE_DIR "${_mochi_third_party}/pybind11" CACHE STRING "Source directory for building pybind11")
 
+set(MOCHI_NANOBIND_SOURCE_DIR "${_mochi_third_party}/nanobind" CACHE STRING "Source directory for building nanobind")
+
 option(MOCHI_TRACY_FIND_PACKAGE "Use find_package for Tracy, rather than building from source" OFF)
 
 set(MOCHI_FILAMENT_SOURCE_DIR "${_mochi_third_party}/filament" CACHE STRING "Source directory for building Filament")
