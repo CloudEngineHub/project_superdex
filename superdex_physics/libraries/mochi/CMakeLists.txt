@@ -128,10 +128,18 @@ if (MOCHI_USE_PYBIND OR MOCHI_BUILD_RENDERER)
     set(_mochi_python3_components Interpreter)
     if (MOCHI_USE_PYBIND)
         list(APPEND _mochi_python3_components Development.Module)
+        if (SKBUILD_SABI_VERSION)
+            if (CMAKE_VERSION VERSION_LESS 3.26)
+                message(FATAL_ERROR
+                    "[Mochi] Stable-ABI wheels require CMake 3.26 or newer."
+                )
+            endif ()
+            list(APPEND _mochi_python3_components Development.SABIModule)
+        endif ()
     endif ()
-    # Pin the supported Python minor version so CMake does not resolve to an older
-    # system interpreter (for example /usr/bin/python3.9).
-    find_package(Python3 3.12...3.12.99 REQUIRED COMPONENTS ${_mochi_python3_components})
+    # Require the oldest supported Python while allowing source builds with newer versions.
+    # cibuildwheel separately selects Python 3.12 when producing stable-ABI wheels.
+    find_package(Python3 3.12 REQUIRED COMPONENTS ${_mochi_python3_components})
     unset(_mochi_python3_components)
 
     if (MOCHI_USE_PYBIND)
@@ -161,16 +169,16 @@ if (MOCHI_USE_PYBIND OR MOCHI_BUILD_RENDERER)
             unset(_mochi_python3_executable)
         endif ()
 
-        # Nanobind consumes the FindPython variable and target names. The rest of
-        # Mochi uses FindPython3, so expose the equivalent values once at the root.
-        set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
-        set(Python_INCLUDE_DIRS "${Python3_INCLUDE_DIRS}")
-        set(Python_VERSION "${Python3_VERSION}")
-        set(Python_VERSION_MAJOR "${Python3_VERSION_MAJOR}")
-        set(Python_VERSION_MINOR "${Python3_VERSION_MINOR}")
-        set(Python_SOABI "${Python3_SOABI}")
-        set(Python_SOSABI "${Python3_SOSABI}")
-        set(Python_INTERPRETER_ID "${Python3_INTERPRETER_ID}")
+        # Nanobind consumes the FindPython variable and target names. The rest of Mochi
+        # uses FindPython3, so cache the equivalent values for sibling binding directories.
+        set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE INTERNAL "" FORCE)
+        set(Python_INCLUDE_DIRS "${Python3_INCLUDE_DIRS}" CACHE INTERNAL "" FORCE)
+        set(Python_VERSION "${Python3_VERSION}" CACHE INTERNAL "" FORCE)
+        set(Python_VERSION_MAJOR "${Python3_VERSION_MAJOR}" CACHE INTERNAL "" FORCE)
+        set(Python_VERSION_MINOR "${Python3_VERSION_MINOR}" CACHE INTERNAL "" FORCE)
+        set(Python_SOABI "${Python3_SOABI}" CACHE INTERNAL "" FORCE)
+        set(Python_SOSABI "${Python3_SOSABI}" CACHE INTERNAL "" FORCE)
+        set(Python_INTERPRETER_ID "${Python3_INTERPRETER_ID}" CACHE INTERNAL "" FORCE)
 
         if (NOT TARGET Python::Interpreter)
             add_executable(Python::Interpreter IMPORTED GLOBAL)
@@ -181,6 +189,10 @@ if (MOCHI_USE_PYBIND OR MOCHI_BUILD_RENDERER)
         if (NOT TARGET Python::Module)
             add_library(Python::Module INTERFACE IMPORTED GLOBAL)
             target_link_libraries(Python::Module INTERFACE Python3::Module)
+        endif ()
+        if (TARGET Python3::SABIModule AND NOT TARGET Python::SABIModule)
+            add_library(Python::SABIModule INTERFACE IMPORTED GLOBAL)
+            target_link_libraries(Python::SABIModule INTERFACE Python3::SABIModule)
         endif ()
     endif ()
 endif ()

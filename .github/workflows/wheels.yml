@@ -82,6 +82,8 @@ env:
   # Matches third-party/pypi/cibuildwheel in fbsource, so CI and an internal build resolve the
   # same tool. Bump both together.
   CIBUILDWHEEL_VERSION: 4.1.1
+  # Build once against the oldest supported CPython. The resulting binding wheels use abi3;
+  # the verification matrix below installs the same artifacts on every supported minor.
   PYTHON_VERSION: '3.12'
 
 jobs:
@@ -299,7 +301,7 @@ jobs:
           if-no-files-found: error
 
   verify:
-    name: verify · ${{ matrix.os }}
+    name: verify · ${{ matrix.os }} · Python ${{ matrix.python }}
     needs: [plan, native, pure]
     # `always()` because the default is to skip a dependent job when any leg of a dependency
     # fails, and each verify leg only consumes its own platform's wheels -- a red Windows build
@@ -315,12 +317,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-26, windows-2022]
+        python: ['3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python }}
 
       # `check_wheels.py` prints `auditwheel show` for each native wheel, and silently skips it
       # when auditwheel is absent -- which it was on every run before this, so the linkage report

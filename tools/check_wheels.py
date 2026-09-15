@@ -162,6 +162,15 @@ TOOL_DISTRIBUTIONS = (
 
 PURE_WHEEL_NAMES = ("superdex_lab", "superdex")
 FP64_WHEEL_NAMES = ("superdex_physics_fp64", "superdex_robotics_fp64")
+NATIVE_WHEEL_NAMES = frozenset(
+    distribution.wheel_name for distribution in NATIVE_DISTRIBUTIONS
+)
+TOOL_WHEEL_NAMES = frozenset(
+    distribution.wheel_name for distribution in TOOL_DISTRIBUTIONS
+)
+
+MINIMUM_PYTHON_TAG = "cp312"
+STABLE_ABI_TAG = "abi3"
 
 # The studio's resource trees. It resolves both relative to its own executable, so they have to
 # be inside the payload directory.
@@ -284,6 +293,8 @@ _LIBRARY_FILE = re.compile(
     r"^(?:lib)?(?P<stem>[A-Za-z0-9_.+]+?)"
     # auditwheel and delvewheel append a content hash to libraries they vendor.
     r"(?:[-_][0-9a-f]{6,})?"
+    # Stable-ABI Python extensions carry this before the platform's library extension.
+    r"(?:\.abi3)?"
     # ELF puts the SOVERSION after the extension (libmarl.so.1); Mach-O puts it before
     # (libmarl.1.dylib), which the stem would otherwise swallow.
     r"\.(?:so|dylib|dll|pyd)(?:\.[0-9]+)*$"
@@ -677,6 +688,20 @@ def check_payload_layout(
         problems.append(
             f"{wheel.name}: {distribution.payload_dir} has no {distribution.extension} "
             f"extension (found {sorted(s for s in stems if s)})"
+        )
+    filename = _wheel_filename(wheel)
+    if (
+        filename is not None
+        and "abi3" in filename.abi_tags
+        and not any(tag.startswith("win_") for tag in filename.platform_tags)
+        and not any(
+            name.rsplit("/", 1)[-1] == f"{distribution.extension}.abi3.so"
+            for name in payload
+        )
+    ):
+        problems.append(
+            f"{wheel.name}: abi3-tagged wheel has no "
+            f"{distribution.extension}.abi3.so extension"
         )
     for library in distribution.own_libraries:
         if library not in stems:
@@ -1159,7 +1184,7 @@ def _canonical_arch(target: str, arch: str) -> str:
     return aliases.get((target, normalized), normalized)
 
 
-def check_target_tag(
+def check_target_tag(  # noqa: C901
     wheel: Path,
     *,
     target: str | None,
@@ -1167,21 +1192,39 @@ def check_target_tag(
     target_python: str | None,
     target_abi: str | None,
 ) -> list[str]:
-    """Reject foreign-platform and foreign-architecture wheels."""
+    """Reject wheels whose compatibility tags do not match the distribution."""
 
     filename = _wheel_filename(wheel)
     if filename is None:
         return [f"{wheel.name}: malformed wheel filename"]
+    distribution = _normalize_distribution(filename.distribution)
     platforms = filename.platform_tags
-    if platforms == ("any",):
-        if filename.python_tags != ("py3",) or filename.abi_tags != ("none",):
+    if distribution not in (
+        NATIVE_WHEEL_NAMES | TOOL_WHEEL_NAMES | set(PURE_WHEEL_NAMES)
+    ):
+        return [f"{wheel.name}: unrecognized distribution {distribution}"]
+    if distribution in PURE_WHEEL_NAMES:
+        if (
+            filename.python_tags != ("py3",)
+            or filename.abi_tags != ("none",)
+            or platforms != ("any",)
+        ):
             return [f"{wheel.name}: pure wheel must be tagged py3-none-any"]
         return []
+    if platforms == ("any",):
+        return [f"{wheel.name}: platform wheel must not be tagged for any platform"]
 
-    if target_python is not None and target_python not in filename.python_tags:
-        return [f"{wheel.name}: Python tag does not match target {target_python}"]
-    if target_abi is not None and target_abi not in filename.abi_tags:
-        return [f"{wheel.name}: ABI tag does not match target {target_abi}"]
+    if distribution in NATIVE_WHEEL_NAMES:
+        expected_python = target_python or MINIMUM_PYTHON_TAG
+        expected_abi = target_abi or STABLE_ABI_TAG
+    else:
+        expected_python = "py3"
+        expected_abi = "none"
+
+    if expected_python not in filename.python_tags:
+        return [f"{wheel.name}: Python tag does not match target {expected_python}"]
+    if expected_abi not in filename.abi_tags:
+        return [f"{wheel.name}: ABI tag does not match target {expected_abi}"]
 
     selected_target = target or platform.system()
     prefixes = {

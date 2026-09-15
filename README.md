@@ -84,8 +84,8 @@ SuperDex Teleop runs natively on-device on Quest 3. No remote PC, no streaming. 
 
 ## Requirements
 * **OS:** Linux (x86_64), Windows (x86_64), macOS (ARM)
-* **Python** 3.12
-   - Pre-built wheels are currently provided only for Python3.12. More flexible abi3 wheels will be available in a future release.
+* **Python:** Standard (GIL-enabled) CPython 3.12 or newer
+   - Native binding wheels use the stable `abi3` ABI from Python 3.12 onward.
 
 ## Get the Source Code and Examples
 
@@ -115,7 +115,7 @@ Project SuperDex has first-class support for Python across the board. The quicke
 
 ### Install Pre-requisites
 
-* [CMake](https://cmake.org/download/) (v3.25 or newer)
+* [CMake](https://cmake.org/download/) (v3.26 or newer)
 * [Ninja](https://github.com/ninja-build/ninja/releases)
 * [uv](https://docs.astral.sh/uv/getting-started/installation/) (for Python build)
 * Linux:
