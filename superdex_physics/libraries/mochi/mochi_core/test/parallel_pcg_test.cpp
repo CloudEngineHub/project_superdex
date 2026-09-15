@@ -19,6 +19,7 @@
 #include <mochi_core/solvers/linear_solver.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/span.h>
 #include <mochi_core/utils/task_scheduler.h>
 
 #include <gtest/gtest.h>
@@ -64,18 +65,24 @@ class TrackingDiagonalPreconditioner final : public Preconditioner<real> {
     Apply(input, output, 0, input.Rows());
   }
 
+  void PrepareConcurrentSolve(Span<int const> workerRowRanges) const override {
+    _workerRowRanges.assign(workerRowRanges.begin(), workerRowRanges.end());
+    _prepareCalls.fetch_add(1, std::memory_order_relaxed);
+  }
+
   void ConcurrentSolve(
       ColumnVectorView<real const> input,
       ColumnVectorView<real> output,
       ParallelWorkerInfo const& worker) const override {
-    bool const valid = worker.numWorkers >= 1 && worker.workerId >= 0 &&
-        worker.workerId < worker.numWorkers && worker.rBegin >= 0 && worker.rBegin <= worker.rEnd &&
-        worker.rEnd <= input.Rows();
+    bool const valid = _prepareCalls.load(std::memory_order_relaxed) > 0 &&
+        worker.numWorkers >= 1 && worker.workerId >= 0 && worker.workerId < worker.numWorkers &&
+        isize(_workerRowRanges) == worker.numWorkers + 1 &&
+        _workerRowRanges[worker.workerId] == worker.rBegin &&
+        _workerRowRanges[worker.workerId + 1] == worker.rEnd;
     if (!valid) {
       _invalidConcurrentSolve = true;
       return;
     }
-    _numConcurrentWorkers.store(worker.numWorkers, std::memory_order_relaxed);
     Apply(input, output, worker.rBegin, worker.rEnd);
     ++_concurrentSolveCalls;
   }
@@ -87,14 +94,17 @@ class TrackingDiagonalPreconditioner final : public Preconditioner<real> {
   [[nodiscard]] int NumSolveCalls() const {
     return _solveCalls;
   }
+  [[nodiscard]] int NumPrepareCalls() const {
+    return _prepareCalls;
+  }
   [[nodiscard]] int NumConcurrentSolveCalls() const {
     return _concurrentSolveCalls;
   }
-  [[nodiscard]] int NumConcurrentWorkers() const {
-    return _numConcurrentWorkers.load(std::memory_order_relaxed);
-  }
   [[nodiscard]] bool HadInvalidConcurrentSolve() const {
     return _invalidConcurrentSolve;
+  }
+  [[nodiscard]] DynamicArray<int> const& WorkerRowRanges() const {
+    return _workerRowRanges;
   }
 
  private:
@@ -109,9 +119,10 @@ class TrackingDiagonalPreconditioner final : public Preconditioner<real> {
   }
 
   DynamicArray<real> _inverseDiagonal;
+  mutable DynamicArray<int> _workerRowRanges;
   mutable std::atomic<int> _solveCalls{0};
+  mutable std::atomic<int> _prepareCalls{0};
   mutable std::atomic<int> _concurrentSolveCalls{0};
-  mutable std::atomic<int> _numConcurrentWorkers{0};
   mutable std::atomic<bool> _invalidConcurrentSolve{false};
 };
 
@@ -168,9 +179,10 @@ struct SolveOptions {
 struct SolveResult {
   LinearSolverStatus status;
   ColumnVector<real> x;
+  DynamicArray<int> workerRowRanges;
   int serialSolveCalls;
+  int prepareCalls;
   int concurrentSolveCalls;
-  int numConcurrentWorkers;
   bool invalidConcurrentSolve;
 };
 
@@ -204,10 +216,28 @@ template <typename StopCriterion, typename Dot = krylov::UsualDot>
   return {
       .status = status,
       .x = std::move(x),
+      .workerRowRanges = prec.WorkerRowRanges(),
       .serialSolveCalls = prec.NumSolveCalls(),
+      .prepareCalls = prec.NumPrepareCalls(),
       .concurrentSolveCalls = prec.NumConcurrentSolveCalls(),
-      .numConcurrentWorkers = prec.NumConcurrentWorkers(),
       .invalidConcurrentSolve = prec.HadInvalidConcurrentSolve()};
+}
+
+static void ExpectValidExecution(SolveResult const& result, int numRows) {
+  EXPECT_FALSE(result.invalidConcurrentSolve);
+  if (result.prepareCalls == 0) {
+    EXPECT_TRUE(result.workerRowRanges.empty());
+    EXPECT_EQ(0, result.concurrentSolveCalls);
+    return;
+  }
+  EXPECT_EQ(0, result.serialSolveCalls);
+  EXPECT_EQ(1, result.prepareCalls);
+  EXPECT_GE(result.workerRowRanges.size(), 3);
+  if (result.workerRowRanges.size() >= 3) {
+    EXPECT_EQ(0, result.workerRowRanges.front());
+    EXPECT_EQ(numRows, result.workerRowRanges.back());
+  }
+  EXPECT_GT(result.concurrentSolveCalls, 0);
 }
 
 enum class CriterionKind { ResidualL2, PreconditionedResidualL2, PreconditionerInduced };
@@ -307,14 +337,14 @@ TEST_P(ParallelPcgConvergenceTest, SolvesKnownSystem) {
       result.status.relativeResidualNorm,
       ExpectedRelativeResidualNorm(std::get<0>(GetParam()), problem, residual),
       5_r * kRelativeTolerance);
-  EXPECT_FALSE(result.invalidConcurrentSolve);
-  if (result.numConcurrentWorkers != 0) {
-    EXPECT_EQ(result.serialSolveCalls, 0);
+  ExpectValidExecution(result, problem.A.Rows());
+  if (result.prepareCalls != 0) {
     bool const needsPrec = std::get<0>(GetParam()) != CriterionKind::ResidualL2;
     int const numPrecApplications = result.status.numIterDone +
         (needsPrec ? 1 + static_cast<int>(std::get<2>(GetParam()) == InitialGuessHint::Unknown)
                    : 0);
-    EXPECT_EQ(result.concurrentSolveCalls, numPrecApplications * result.numConcurrentWorkers);
+    EXPECT_EQ(
+        numPrecApplications * (isize(result.workerRowRanges) - 1), result.concurrentSolveCalls);
   }
 }
 
@@ -343,7 +373,7 @@ TEST_F(ParallelPcgTest, KeepsConfiguredDotInstancesDistinct) {
   EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
   EXPECT_EQ(result.status.numIterDone, 1);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
-  EXPECT_FALSE(result.invalidConcurrentSolve);
+  ExpectValidExecution(result, problem.A.Rows());
 }
 
 TEST_F(ParallelPcgTest, ConvergesImmediatelyFromExactInitialGuess) {
@@ -358,7 +388,7 @@ TEST_F(ParallelPcgTest, ConvergesImmediatelyFromExactInitialGuess) {
   EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
   EXPECT_EQ(result.status.numIterDone, 0);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
-  EXPECT_FALSE(result.invalidConcurrentSolve);
+  ExpectValidExecution(result, problem.A.Rows());
 }
 
 TEST_F(ParallelPcgTest, ConvergesImmediatelyForZeroSystemWithPreconditionedResidual) {
@@ -372,10 +402,9 @@ TEST_F(ParallelPcgTest, ConvergesImmediatelyForZeroSystemWithPreconditionedResid
   EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
   EXPECT_EQ(result.status.numIterDone, 0);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
-  EXPECT_FALSE(result.invalidConcurrentSolve);
-  if (result.numConcurrentWorkers != 0) {
-    EXPECT_EQ(result.serialSolveCalls, 0);
-    EXPECT_EQ(result.concurrentSolveCalls, result.numConcurrentWorkers);
+  ExpectValidExecution(result, problem.A.Rows());
+  if (result.prepareCalls != 0) {
+    EXPECT_EQ(isize(result.workerRowRanges) - 1, result.concurrentSolveCalls);
   }
 }
 
@@ -400,7 +429,7 @@ TEST_P(ParallelPcgNonSpdTest, HonorsAbortPolicy) {
   EXPECT_TRUE(
       mochi::test::NearEqualMatrices(
           result.x, abortIfNotSpd ? problem.initialGuess : problem.expectedSolution));
-  EXPECT_FALSE(result.invalidConcurrentSolve);
+  ExpectValidExecution(result, problem.A.Rows());
 }
 
 static std::string GetAbortPolicyName(testing::TestParamInfo<bool> const& info) {
@@ -424,7 +453,7 @@ TEST_F(ParallelPcgTest, ReportsSingularPreconditionerBreakdown) {
   EXPECT_EQ(result.status.numIterDone, 1);
   EXPECT_NEAR(result.x[0], 1_r, kRelativeTolerance);
   EXPECT_NEAR(result.x[1], 0_r, kRelativeTolerance);
-  EXPECT_FALSE(result.invalidConcurrentSolve);
+  ExpectValidExecution(result, problem.A.Rows());
 }
 
 TEST_F(ParallelPcgTest, StopsAtIterationLimit) {
@@ -447,10 +476,9 @@ TEST_F(ParallelPcgTest, StopsAtIterationLimit) {
       ExpectedRelativeResidualNorm(CriterionKind::PreconditionedResidualL2, problem, residual),
       kRelativeTolerance);
   EXPECT_EQ(criterion.GetLatestRelativeResidualNorm(), result.status.relativeResidualNorm);
-  EXPECT_FALSE(result.invalidConcurrentSolve);
-  if (result.numConcurrentWorkers != 0) {
-    EXPECT_EQ(result.serialSolveCalls, 0);
-    EXPECT_EQ(result.concurrentSolveCalls, 3 * result.numConcurrentWorkers);
+  ExpectValidExecution(result, problem.A.Rows());
+  if (result.prepareCalls != 0) {
+    EXPECT_EQ(3 * (isize(result.workerRowRanges) - 1), result.concurrentSolveCalls);
   }
 }
 
@@ -474,6 +502,6 @@ TEST(ParallelPcg, FallsBackWhenWorkIsInsufficient) {
   EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
   EXPECT_EQ(result.serialSolveCalls, 2);
-  EXPECT_EQ(result.numConcurrentWorkers, 0);
+  EXPECT_EQ(0, result.prepareCalls);
   EXPECT_EQ(result.concurrentSolveCalls, 0);
 }

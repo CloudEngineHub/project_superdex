@@ -69,6 +69,10 @@ struct PrecApplyer {
       ParallelWorkerInfo const& data) const {
     prec.get().ConcurrentSolve(x, Px, data);
   }
+
+  void PrepareConcurrentSolve(Span<int const> workerRowRanges) const {
+    prec.get().PrepareConcurrentSolve(workerRowRanges);
+  }
 };
 
 inline constexpr bool IsCudaSolver(LinearSolverType const& solverType) {

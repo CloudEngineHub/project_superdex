@@ -79,7 +79,7 @@ int GetNumParallelWorkers(MatType const& A) {
  * @return Linear solver status. Contains the convergence status, number of iterations, and achieved
  * absolute and relative residuals.
  *
- * @note The preconditioner must implement a 'ConcurrentSolve' method.
+ * @note The preconditioner must implement @ref PrepareConcurrentSolve and @ref ConcurrentSolve.
  * @note The input matrix must be a supported matrix or linear operator type. Matrix application
  * functors are NOT supported.
  * @note CUDA matrices are not supported.
@@ -142,7 +142,7 @@ LinearSolverStatus ParallelPCG(
 
   auto* scheduler = TaskScheduler::TryGet();
   auto const numTargetWorkers = parallel_pcg::GetNumParallelWorkers(A);
-  std::atomic<bool> success = (scheduler && numTargetWorkers > 1); // At least 2 workers
+  std::atomic<bool> success = scheduler && numTargetWorkers > 1; // At least 2 workers
   LinearSolverStatus solverStatus = {};
   if (success) {
     auto r = vectorFactory.GetCopy(b);
@@ -202,7 +202,9 @@ LinearSolverStatus ParallelPCG(
       // Notes:
       // - The task is executed by either none or all of the workers. If it's executed, the workers
       //   do NOT yield until the task is completed.
-      // - Workers write exclusively to their range of rows. Writing outside their range is illegal.
+      // - Workers write within their matrix-vector-product row range unless a preconditioner uses a
+      //   different prepared distribution. Such a preconditioner must synchronize cross-worker
+      //   writes before returning.
       // - Workers may read from rows outside their range, e.g. in matrix-vector products and
       //   preconditioner solves. Barriers are used in those cases to avoid race conditions.
       // - The master worker is defined as the worker with workerIdx = 0.
@@ -232,6 +234,13 @@ LinearSolverStatus ParallelPCG(
       workerBarrier.ReduceNumWorkers(numWorkers, isMaster);
       workerParDot.ReduceNumWorkers(numWorkers, isMaster);
 
+      if (isMaster) {
+        prec.PrepareConcurrentSolve(MakeConstSpan(workerRowRanges));
+        // Before the first ConcurrentSolve, every worker reaches either the initial status-check
+        // dot or the explicit barrier below. Both wait for all workers, ensuring they all see the
+        // state prepared by the master.
+      }
+
       ParallelWorkerInfo workerInfo{workerIdx, numWorkers, rowBegin, rowEnd, workerBarrier};
 
       auto xWorker = x.MiddleRows(rowBegin, numRows);
@@ -250,11 +259,18 @@ LinearSolverStatus ParallelPCG(
           beta = workerParDot.Dot(dot, r, z, rowBegin, rowEnd, workerIdx); // r_i^T z_{i-1}
         } else {
           beta = 0;
-          workerBarrier.Wait(); // TODO: Not needed for some preconditioners.
+          if constexpr (kNeedPrecResidual) {
+            // TODO: Avoid this barrier for preconditioners with worker-local input reads. The first
+            // application must still synchronize after PrepareConcurrentSolve.
+            workerBarrier.Wait();
+          }
         }
         prec.ConcurrentSolve(r, z, workerInfo); // z_{i} = Prec^{-1} r_{i}
-        // Post-solve barrier not needed. The next 'Dot' serves as implicit barrier and prevents
-        // 'r' from being modified before the solve is complete.
+        // ConcurrentSolve completes and makes visible any writes to z rows owned by another
+        // worker before that row owner returns from ConcurrentSolve. The next parallel dot cannot
+        // complete until every worker has returned from ConcurrentSolve, so no worker can update
+        // r while another preconditioner worker may still be reading it. Therefore, no additional
+        // post-solve barrier is needed here.
       };
 
       auto checkPreconditionedStatus = [&]() {
