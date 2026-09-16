@@ -28,6 +28,7 @@
 #include "mochi_ecs_utils.h"
 #include "mochi_group.h"
 #include "mochi_integration.h"
+#include "mochi_point_cloud_contact.h"
 #include "mochi_query.h"
 #include "mochi_rigid.h"
 #include "mochi_rod.h"
@@ -550,6 +551,25 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
     ValidateContactParams(newParams, error);
     MOCHI_ERROR_RETURN(error);
+
+    if (auto const* pointCloudParams = reg.try_get<CPointCloudColliderParams const>(e)) {
+      ValidatePointCloudColliderParams(*pointCloudParams, newParams, error);
+      MOCHI_ERROR_RETURN(error);
+      real const oldContactThreshold = params->GetPenaltyThresholdDist(/*addPadding*/ true);
+      real const newContactThreshold = newParams.GetPenaltyThresholdDist(/*addPadding*/ true);
+      if (oldContactThreshold != newContactThreshold) {
+        auto const& colliderDiscretization = reg.get<CColliderPointCloudDiscretization const>(e);
+        auto newSpatialHash =
+            CreateSpatialHashTable(*pointCloudParams, colliderDiscretization, newContactThreshold);
+        UpdateSpatialHashTable(
+            ecs::Included<TagUsePointCloudContact>{},
+            colliderDiscretization,
+            reg.get<CFinalDisplacementRef<TimeStep::Current> const>(e),
+            newSpatialHash);
+        reg.get<CSpatialHashTable>(e) = std::move(newSpatialHash);
+      }
+    }
+
     *params = newParams;
   }
 

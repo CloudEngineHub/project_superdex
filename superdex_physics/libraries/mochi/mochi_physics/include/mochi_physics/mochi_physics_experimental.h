@@ -495,6 +495,10 @@ struct PointCloudColliderParams {
    * element)^(1/d), where `d` is the parametric dimension of the collider geometry (`d = 2` for
    * surfaces such as shell, `d = 1` for curves such as rods).
    *
+   * @note Must be finite and strictly positive. Its sum with the effective contact threshold in
+   * @ref ContactParams, including @ref ContactParams::penaltyThresholdExtraPadding, must also be
+   * finite and strictly positive.
+   *
    * @note This value also serves as the length scale for dimensional correction of the contact
    * penalty coefficient on the collider side. The effective penalty stiffness is scaled by
    * `pow(radius, -integralDim)`, where `integralDim` is the dimension of the collider-side
