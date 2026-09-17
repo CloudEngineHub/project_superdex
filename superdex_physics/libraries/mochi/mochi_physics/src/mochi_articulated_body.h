@@ -126,6 +126,13 @@ struct CArticulatedJointVels : public ArticulatedJointVelocities, NoCopy {
   MOCHI_TEMPLATE_END();
 };
 
+// World-space link velocities in [vcom.xyz, omega.xyz] order, without SIMD padding or vsym.
+struct CArticulatedFullVel : public NoCopy {
+  explicit CArticulatedFullVel(int size) : value(ColumnVector<real>::Zero(size)) {}
+
+  ColumnVector<real> value;
+};
+
 /// @brief Component for time integration of articulated reduced pose.
 MOCHI_DEFINE_INTEGRATION_COMPONENT(CIntegrationArticulatedReducedPose, ArticulatedPose);
 
@@ -451,6 +458,30 @@ void ResolveSkinningJacobianDJoints(
     CArticulatedJacobian const& articulatedJacobian,
     CActiveUniqueNodes const* activeNodes,
     CArticulatedSkinningData& skinningData);
+
+// Copy current rigid-link velocities to contiguous [vcom.xyz, omega.xyz] storage.
+void UpdateFullVelocity(
+    ecs::PartialRegistry<CRigidVel<TimeStep::Current> const> reg,
+    CGroupMembers const& groupMembers,
+    CArticulatedFullVel& outVelFull);
+
+// Compute world-space velocity produced by skeletal skinning.
+void ComputeSkinningVelocityFromSkeleton(
+    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
+    CArticulatedFullVel const& velFull,
+    CArticulatedSkinningData const& skinningData,
+    ColumnVectorView<real const> unposedCoords,
+    ColumnVectorView<real> outVelocity);
+
+// Compute world-space skinning velocity.
+inline void UpdateSkinningVelocity(
+    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
+    CArticulatedFullVel const& velFull,
+    CArticulatedSkinningData const& skinningData,
+    CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>& outVelocity) {
+  ComputeSkinningVelocityFromSkeleton(
+      linkTransforms, velFull, skinningData, skinningData.restCoords, outVelocity.value);
+}
 
 /*
  * System to compute contact Jacobians as colliding actor. It is called after the collision

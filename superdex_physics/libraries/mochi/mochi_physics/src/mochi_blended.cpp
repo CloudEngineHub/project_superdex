@@ -227,6 +227,27 @@ void blended::ResolveAllNodeBlendingDisplacementsPipeline(
       &ResolveBlending<TimeStep::Current, /* kForceUseAllNodes */ true>, reg, entities);
 }
 
+void blended::UpdateBlendingVelocity(
+    ecs::PartialRegistry<CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned> const>
+        reg,
+    CBlendedComposition const& composition,
+    CBlendingData const& blendingData,
+    CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>& inOutVelocity) {
+  // Velocity is initialized with world-space skinning velocity. Blend the soft actor contribution.
+  auto blendedVel3 = Unflatten<Real3>(inOutVelocity.value.GetSpan());
+  for (int s = 0; s < isize(composition.soft); ++s) {
+    auto const soft = composition.soft[s];
+    auto const softVel3 = Unflatten<Real3 const>(
+        reg.get<CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned> const>(soft)
+            .value.GetConstSpan());
+    auto const& blending = blendingData[s];
+    for (int src : blending.nodesSource) {
+      int const dst = blending.mappingSourceToTarget[src];
+      blendedVel3[dst] += blending.weightsSource[src] * (softVel3[src] - blendedVel3[dst]);
+    }
+  }
+}
+
 void blended::InitBlendedActor(
     entt::registry& reg,
     entt::entity e,
