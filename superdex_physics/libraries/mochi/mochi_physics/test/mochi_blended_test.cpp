@@ -16,6 +16,7 @@
 
 #include "mochi_physics_test_fixture.h"
 
+#include <mochi_core/utils/constants.h>
 #include <mochi_physics/src/mochi_articulated_body.h>
 #include <mochi_physics/src/mochi_blended.h>
 #include <mochi_physics/src/mochi_common_components.h>
@@ -36,6 +37,7 @@ constexpr real kFiniteDifferenceStep = MOCHI_USE_DOUBLE_PRECISION ? 1e-6_r : 2e-
 constexpr real kFiniteDifferenceTolerance = MOCHI_USE_DOUBLE_PRECISION ? 2e-7_r : 2e-3_r;
 constexpr real kCompositionTolerance = MOCHI_USE_DOUBLE_PRECISION ? 1e-12_r : 1e-6_r;
 constexpr real kSoftWeight = 0.35_r;
+constexpr Real3 kFreeJointLinearVelocity{1_r, 2_r, 0_r};
 
 using CCurrentSkinnedVelocity = CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>;
 
@@ -65,11 +67,12 @@ class SkinnedVelocityTest : public test::MochiSceneTestBase {
 
   ShapeHandle CreateSkinnedUnitCube(
       bool constrainNodeZero,
-      std::shared_ptr<BlendingDataMap const> blending = nullptr) {
+      std::shared_ptr<BlendingDataMap const> blending = nullptr,
+      int boneIndex = 1) {
     auto&& [coords, connectivity] = test::CreateMinimalTetMeshUnitCube();
     auto mesh = std::make_shared<TetrahedralMesh const>(coords, connectivity);
     auto skinning = std::make_shared<SkinningData const>(
-        test::MakeSingleBoneSkinning(mesh->GetNumNodes(), /*boneIndex=*/1));
+        test::MakeSingleBoneSkinning(mesh->GetNumNodes(), boneIndex));
 
     std::shared_ptr<ConstrainedNodesData const> constrained;
     if (constrainNodeZero) {
@@ -79,6 +82,53 @@ class SkinnedVelocityTest : public test::MochiSceneTestBase {
     auto shape =
         std::make_shared<TetrahedralMeshShape>(mesh, skinning, constrained, std::move(blending));
     return assert_cast<ContextImpl*>(_mochiContext)->RegisterShape(shape, test::ExpectOK{});
+  }
+
+  SoftSkinnedActorParams MakeFreeJointSoftSkinnedParams() {
+    SoftSkinnedActorParams params;
+    params.hasInertia = true;
+    params.skeletonParams.joints = {{.type = ArticulatedJointType::Free}};
+    params.skeletonParams.links = {
+        {.parentLink = -1,
+         .shape = test::CreateUnitCubeTetMeshShape(_mochiContext),
+         .colliderType = ColliderType::None,
+         .hasGravity = false},
+    };
+
+    SoftActorParams soft;
+    soft.name = "soft";
+    soft.shape = CreateSkinnedUnitCube(
+        /*constrainNodeZero=*/true, /*blending=*/nullptr, /*boneIndex=*/0);
+    soft.hasGravity = false;
+    soft.hasInertia = false;
+    soft.hasStress = false;
+    params.softParams = {soft};
+    return params;
+  }
+
+  static DynamicArray<real> MakeFreeJointVelocity() {
+    return {
+        kFreeJointLinearVelocity[0],
+        kFreeJointLinearVelocity[1],
+        kFreeJointLinearVelocity[2],
+        0_r,
+        0_r,
+        0_r};
+  }
+
+  Actor* CreateMovingFreeJointSoftSkinnedActor() {
+    Actor* actor =
+        _scene->CreateSoftSkinnedActor(MakeFreeJointSoftSkinnedParams(), test::ExpectOK{});
+    actor->SetArticulatedJointVelocities(MakeFreeJointVelocity(), test::ExpectOK{});
+    return actor;
+  }
+
+  static Quaternion RotateRootByQuarterTurn(Actor* actor) {
+    TransformRT root = actor->GetRootTransform();
+    Quaternion const rotation = Quaternion::FromRotationVector(Real3{0_r, 0_r, 0.5_r * kPI});
+    root.SetRotation(rotation);
+    actor->SetRootTransform(root, test::ExpectOK{});
+    return rotation;
   }
 
   SoftSkinnedActorParams MakeSoftSkinnedParams(bool blended = false) {
@@ -191,6 +241,42 @@ TEST_F(SkinnedVelocityTest, ArticulatedVelocityMatchesFiniteDifferenceAndOverwri
       &articulated::compound::UpdateSkinningVelocity, reg, MakeSingletonConstSpan(entity));
   EXPECT_TRUE(test::NearEqualMatrices(expected, output, kFiniteDifferenceTolerance));
   EXPECT_TRUE(test::NearEqualMatrices(firstResult, output, kCompositionTolerance));
+}
+
+TEST_F(SkinnedVelocityTest, PoseChangeUpdatesLinkVelocity) {
+  Actor* parent = CreateMovingFreeJointSoftSkinnedActor();
+  auto const linkHandles = parent->GetNestedLinkActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(linkHandles));
+  Actor* link = _scene->GetActor(linkHandles[0]);
+  ASSERT_NE(nullptr, link);
+
+  EXPECT_NEAR_EQ(kFreeJointLinearVelocity, link->GetLinearVelocity(test::ExpectOK{}));
+
+  Quaternion const rotation = RotateRootByQuarterTurn(parent);
+
+  EXPECT_NEAR_EQ(rotation * kFreeJointLinearVelocity, link->GetLinearVelocity(test::ExpectOK{}));
+  DynamicArray<real> const jointVelocity = MakeFreeJointVelocity();
+  DynamicArray<real> jointVelocityAfter(jointVelocity.size());
+  parent->GetArticulatedJointVelocities(jointVelocityAfter, test::ExpectOK{});
+  EXPECT_SPAN_EQ(jointVelocity, jointVelocityAfter);
+}
+
+TEST_F(SkinnedVelocityTest, PoseChangeUpdatesNestedSoftVelocity) {
+  Actor* parent = CreateMovingFreeJointSoftSkinnedActor();
+  auto const softHandles = parent->GetNestedSoftActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(softHandles));
+
+  auto& reg = GetRegistry();
+  entt::entity const nestedEntity = GetEntity(_scene->GetActor(softHandles[0]));
+  ASSERT_TRUE((reg.all_of<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>(nestedEntity)));
+  Quaternion const rotation = RotateRootByQuarterTurn(parent);
+
+  auto const velocity = Unflatten<Real3 const>(
+      reg.get<CCurrentSkinnedVelocity const>(nestedEntity).value.GetConstSpan());
+  Real3 const expected = rotation * kFreeJointLinearVelocity;
+  for (Real3 const& nodeVelocity : velocity) {
+    EXPECT_NEAR_EQ(expected, nodeVelocity);
+  }
 }
 
 TEST_F(SkinnedVelocityTest, CurrentVelocityIsUniversalWhileIntegrationHistoryIsConditional) {

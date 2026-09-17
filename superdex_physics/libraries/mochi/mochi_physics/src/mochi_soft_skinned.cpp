@@ -518,6 +518,11 @@ void skinned::InitSkinnedActor(
   // Resolve skinning so the skinned displacements reflect the actual skeleton pose rather than the
   // rest mesh.
   ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(e));
+
+  // The skeleton velocity is initialized before nested soft actors exist. Initialize the
+  // state-backed skinned velocity now that all inputs are available.
+  ecs::TryInvokeOnEntity<ecs::policy::AllowReadWriteSameComponent>(
+      &skinned::UpdateSkinningVelocity</*kIsState*/ true>, reg, e);
 }
 
 template <int kNumDofsPerNode>

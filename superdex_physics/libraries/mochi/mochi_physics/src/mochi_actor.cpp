@@ -40,6 +40,7 @@
 #include "mochi_solve.h"
 #include "mochi_transmission.h"
 
+#include <mochi_core/articulated_body/articulated_body_hessian.h>
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/materials/batched_smith_neo_hookean.h>
 #include <mochi_core/materials/material_params_utils.h>
@@ -2903,16 +2904,42 @@ void diffsim::SetArticulatedPoseFromJointsBackward(
   // controller target pose to the provided pose with zero target velocity. The input pose can
   // therefore own state, current-target, and previous-target gradients. Only add target gradients
   // that are still owned by SetArticulatedPoseFromJoints; later target setters may overwrite them.
-  AsView(outGradPose) = reg.get<CDiffStateGrad const>(e).value;
+  auto outGrad = AsView(outGradPose);
+  outGrad = reg.get<CDiffStateGrad const>(e).value;
+
+  // A pose reset also updates the link velocities as v_link = J(q) * v_joint. Account for
+  // d(v_link)/dq = dJ(q)/dq * v_joint using the articulation Hessian.
+  auto const& jacobian = reg.get<CArticulatedJacobian const>(e).value;
+  int const linkDofs = jacobian.Rows();
+  auto const dt = static_cast<real>(reg.ctx<CSceneTime const>().DeltaTime());
+  ColumnVector<real> linkVelocityGrad(
+      dt * reg.get<CDiffDerivedStepGrad const>(e).value.BottomRows(linkDofs));
+  DynamicArray<real> jointVelocity(outGrad.Rows());
+  actor->GetArticulatedJointVelocities(jointVelocity, ErrorAssert{});
+
+  auto const* joints = reg.get<CArticulatedBodyShape const>(e).shape->GetJointsData();
+  articulated::JacobianDerivativeDoubleContract(
+      joints->dofInfo,
+      joints->jointAxes,
+      reg.get<CArticulatedParents const>(e),
+      reg.get<CArticulatedRestTransforms const>(e),
+      reg.get<CRootTransform const>(e).worldFromLocal,
+      reg.get<CArticulatedJointTransforms<TimeStep::Current> const>(e),
+      reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(e),
+      linkVelocityGrad,
+      jacobian,
+      jointVelocity,
+      outGrad);
+
   if (reg.all_of<CControllerConstraints>(e)) {
     auto const& targetPoseGrad = reg.get<CDiffTargetPoseGrad const>(e);
     auto const& owner = reg.get<CTargetOwners const>(e);
     if (owner.newPoseOwner == TargetOwner::PoseFromJoints) {
-      AsView(outGradPose) += AsConstView(targetPoseGrad.current);
+      outGrad += AsConstView(targetPoseGrad.current);
     }
     if (owner.oldPoseStep == owner.newPoseStep &&
         owner.oldPoseOwner == TargetOwner::PoseFromJoints) {
-      AsView(outGradPose) += AsConstView(targetPoseGrad.previous);
+      outGrad += AsConstView(targetPoseGrad.previous);
     }
   }
 
