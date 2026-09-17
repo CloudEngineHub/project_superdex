@@ -680,6 +680,17 @@ TEST(ModelUtils, Validate_Mesh_Skinning) {
   TestValidateSkinningData(model, *model.mesh->skinning, kInvalidSkinningIndices);
 }
 
+TEST(ModelUtils, ValidateSkinningSourceCount) {
+  SkinningData skinning;
+  skinning.weightsPerNode = 2;
+  skinning.indices = {0, 1};
+  skinning.weights = {0.5_r, 0.5_r};
+
+  model::ValidateSkinning(skinning, /*numNodes=*/1, /*numSkinningSources=*/2, test::ExpectOK{});
+  model::ValidateSkinning(skinning, /*numNodes=*/1, /*numSkinningSources=*/1, test::ExpectNotOK{});
+  model::ValidateSkinning(skinning, /*numNodes=*/1, /*numSkinningSources=*/0, test::ExpectNotOK{});
+}
+
 TEST(ModelUtils, AutoCorrect_Mesh_Skinning) {
   // Load model with a mesh + skinning
   ModelData model = model::LoadFromBytes(kTriMeshCubeJson, test::ExpectOK{});

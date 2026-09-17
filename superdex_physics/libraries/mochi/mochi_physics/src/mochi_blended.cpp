@@ -386,10 +386,9 @@ void blended::SetupCollidingJacobians(
 
   // Prepare bone rotations
   std::vector<VMatrix3x3r> rotations(linkTransforms.size());
-  auto const& transforms = skinningInfo.skinningTransform.GetParameterizations();
+  auto const preTransforms = skinningInfo.skinningTransform.GetPreTransforms();
   for (int i = 0; i < rotations.size(); i++) {
-    auto const& preTransform = transforms[i].preTransform.GetRotation();
-    rotations[i] = ToVMatrix3x3(linkTransforms[i].GetRotation() * preTransform);
+    rotations[i] = ToVMatrix3x3(linkTransforms[i].GetRotation() * preTransforms[i].GetRotation());
   }
 
   // Compute Jacobians

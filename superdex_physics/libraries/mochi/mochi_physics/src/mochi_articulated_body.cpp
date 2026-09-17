@@ -32,12 +32,12 @@
 #include "mochi_island.h"
 #include "mochi_pose_controller.h"
 #include "mochi_simulation.h"
-#include "mochi_skinning.h"
 #include "mochi_soft_skinned.h"
 
 #include <mochi_core/contact/contact_partition.h>
 #include <mochi_core/contact/dmap.h>
 #include <mochi_core/geometry/geometry_utils.h>
+#include <mochi_core/geometry/model_utils.h>
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/utils/log.h>
 #include <mochi_core/utils/rigid_body_assembly.h>
@@ -1171,37 +1171,41 @@ Span<real const> articulated::compound::GetPoseControllerForce(
 }
 
 static ArticulatedSkinningData CreateArticulatedSkinningData(
-    Span<Real3 const> restCoordsSpan,
+    entt::registry& reg,
+    entt::entity articulated,
+    Span<Real3 const> restCoords,
     SkinningData const& skinningData,
-    SkinningParams const& skinningParams,
     int numReducedDofs) {
   MOCHI_PROFILE_SCOPE();
-  int numSkinnedNodes = isize(skinningData.weights) / skinningData.weightsPerNode;
 
-  // Consistency checks for input data
-  MOCHI_ASSERT(
-      isize(skinningData.weights) == isize(skinningData.indices),
-      "Indices and weights have different sizes");
-
-  // Create components for resolution of skinning coordinates
-  ColumnVector<real> restCoords =
-      ColumnVectorView<real const>(Flatten(restCoordsSpan).data(), numSkinnedNodes * 3);
-  Error error;
-  auto skinningTransform = skinning::CreateSkinningTransform(skinningData, skinningParams, error);
-  MOCHI_ASSERT(error.IsOK(), "Error creating skinning transform");
-
-  // Create components for resolution of skinning Jacobians
-  auto jacobianDJoints = CreateJacobianStorage(restCoords.Rows(), numReducedDofs);
-  auto jacobianDBones = skinningTransform.CreateDBones();
+  // Fetch root-link-from-bone-CoM transforms while the rigid actors are in their reference pose.
+  // These encode each bone's reference orientation and center-of-mass offset from the root link.
+  auto const& groupMembers = reg.get<CGroupMembers const>(articulated);
+  int const numActors = isize(groupMembers.actors);
+  DynamicArray<TransformRT> preTransforms;
+  preTransforms.reserve(numActors);
+  TransformRT const rootLinkFromWorld =
+      Invert(reg.get<CRootTransform const>(groupMembers.actors[0]).worldFromLocal);
+  for (entt::entity const actor : groupMembers.actors) {
+    TransformRT const& worldFromBoneCenterOfMass =
+        reg.get<CRigidState<TimeStep::Current> const>(actor).value;
+    TransformRT const rootLinkFromBoneCenterOfMass = rootLinkFromWorld * worldFromBoneCenterOfMass;
+    preTransforms.emplace_back(Invert(rootLinkFromBoneCenterOfMass));
+  }
 
   // Create and return skinning data component
-  SkinningData skinningDataCopy(skinningData);
+  DSkinningTransform skinningTransform(
+      skinningData.indices,
+      skinningData.weights,
+      skinningData.weightsPerNode,
+      std::move(preTransforms));
+  auto jacobianDBones = skinningTransform.CreateDBones();
   return ArticulatedSkinningData{
-      .restCoords = std::move(restCoords),
-      .skinningData = std::move(skinningDataCopy),
+      .restCoords = AsConstView(Flatten(restCoords)),
+      .skinningData = skinningData,
       .skinningTransform = std::move(skinningTransform),
       .jacobianDBones = std::move(jacobianDBones),
-      .jacobianDJoints = std::move(jacobianDJoints)};
+      .jacobianDJoints = CreateJacobianStorage(3 * isize(restCoords), numReducedDofs)};
 }
 
 void mochi::InitSkinnedMesh(
@@ -1237,6 +1241,10 @@ void mochi::InitSkinnedMesh(
   }
   auto const& skinningData = shape->GetMeshSkinning();
   MOCHI_ERROR_IF_NOT(skinningData, error, "Skinning data not available");
+  MOCHI_ERROR_RETURN(error);
+
+  auto const& actors = reg.get<CGroupMembers const>(articulated).actors;
+  model::ValidateSkinning(*skinningData, mesh->GetNumNodes(), isize(actors), error);
   MOCHI_ERROR_RETURN(error);
 
   // Create mesh and basic transform components if not present
@@ -1281,14 +1289,11 @@ void mochi::InitSkinnedMesh(
 
   // Emplace skinning data component. Some data is fetched from the articulated entity, some data
   // from this entity (possibly different).
-  SkinningParams skinningParams =
-      articulated::compound::CreateSkinningParams(reg, articulated, true, error);
-  MOCHI_ERROR_RETURN(error);
   auto const restCoords = mesh->GetNodeCoordinates();
   int numReducedDofs = reg.get<CArticulatedProps const>(articulated).reducedDofsDim;
   reg.emplace<CArticulatedSkinningData>(
       entity,
-      CreateArticulatedSkinningData(restCoords, *skinningData, skinningParams, numReducedDofs));
+      CreateArticulatedSkinningData(reg, articulated, restCoords, *skinningData, numReducedDofs));
 
   reg.emplace<CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>>(
       entity, kSpaceDim3 * mesh->GetNumNodes());
@@ -3169,37 +3174,6 @@ static void DecodeDatasetToContainers(
   for (int i = 0; i < count; ++i) {
     writeData(data[i], outAllContainers[i]);
   }
-}
-
-SkinningParams articulated::compound::CreateSkinningParams(
-    entt::registry& reg,
-    entt::entity e,
-    bool allowUnusedBones,
-    Error& error) {
-  MOCHI_ERROR_RETURN(error, {});
-
-  // Fetch reference bone transforms. This requires that the rigid actors are currently in their
-  // reference pose. In practice, the reference bone transforms are translations between the root
-  // and the center of mass of each bone.
-  auto const* groupMembers = reg.try_get<CGroupMembers const>(e);
-  MOCHI_ERROR_IF(!groupMembers, error, "Not a compound actor");
-  MOCHI_ERROR_RETURN(error, {});
-  auto numActors = groupMembers->actors.size();
-  SkinningParams skinningParams;
-  SkeletonReferenceFrames refFrames;
-  refFrames.initialWorldFromBone.resize(numActors);
-  refFrames.referenceRootFromBone.resize(numActors);
-  TransformRT rootInverse =
-      Invert(reg.get<CRootTransform const>(groupMembers->actors[0]).worldFromLocal);
-  for (int i = 0; i < numActors; i++) {
-    TransformRT const& transform =
-        reg.get<CRigidState<TimeStep::Current> const>(groupMembers->actors[i]).value;
-    refFrames.initialWorldFromBone[i] = transform;
-    refFrames.referenceRootFromBone[i] = rootInverse * transform;
-  }
-  skinningParams.allowUnusedBones = allowUnusedBones;
-  skinningParams.referenceFrames = refFrames;
-  return skinningParams;
 }
 
 void articulated::compound::ProjectDerivedStateGradient(

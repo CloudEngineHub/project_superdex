@@ -310,12 +310,6 @@ static SkinningData CreateSkinning(int size) {
   return result;
 }
 
-static DSkinningTransform CreateSkinningTransform(SkinningData const& skinningData) {
-  SkinningWeightsByBone weights{
-      skinningData.indices, skinningData.weights, skinningData.weightsPerNode, kBones};
-  return DSkinningTransform{weights};
-}
-
 static std::array<VMatrix3x3r, kBones> CreateSkeletonRotations(
     ColumnVectorView<real const, kArticulatedSize> articulatedState,
     DSkinningTransform const& skinningTransform) {
@@ -495,7 +489,11 @@ class DMapTest : public testing::Test {
   ColumnVector<real, kArticulatedSize> const kArticulatedState{CreateVectorState(kArticulatedSize)};
   std::vector<int> const kArticulatedDofs{CreateArticulatedDofs(kArticulatedSize)};
   SkinningData const kSkinning{CreateSkinning(isize(kPoints))};
-  DSkinningTransform const kSkinningTransform{CreateSkinningTransform(kSkinning)};
+  DSkinningTransform const kSkinningTransform{
+      kSkinning.indices,
+      kSkinning.weights,
+      kSkinning.weightsPerNode,
+      DynamicArray<TransformRT>(kBones)};
   std::array<VMatrix3x3r, kBones> const kSkeletonRotations{
       CreateSkeletonRotations(kArticulatedState, kSkinningTransform)};
 

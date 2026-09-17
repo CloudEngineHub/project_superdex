@@ -22,7 +22,6 @@
 #include "mochi_pose_controller.h"
 #include "mochi_rigid.h"
 #include "mochi_shape.h"
-#include "mochi_skinning.h"
 #include "mochi_snle.h"
 
 #include <mochi_physics/cpp_api/mochi_structs.h> // ArticulatedActorParams, ArticulatedSkinParams
@@ -30,6 +29,7 @@
 #include <mochi_core/articulated_body/articulated_body.h>
 #include <mochi_core/articulated_body/transmission.h>
 #include <mochi_core/integration/integration_utils.h>
+#include <mochi_core/utils/dskinning.h>
 #include <mochi_core/utils/graph.h>
 
 #include <memory>
@@ -770,12 +770,6 @@ void UpdateVSym(
     ecs::Included<TagArticulatedActor>,
     ecs::CtxGlobal<CSceneTime const> time,
     CArticulatedJointVels<TimeStep::Current>& outJointVels);
-
-/*
- * Helper function to produce a SkinningParams data structure for an articulated body
- */
-SkinningParams
-CreateSkinningParams(entt::registry& reg, entt::entity e, bool allowUnusedBones, Error& error);
 
 /*
  * [Differentiability] System to project a derived state gradient to a state gradient.
