@@ -610,6 +610,10 @@ class ActorInterfaceImpl : public ActorInterface {
 
     currentDisplacement->value = AsConstView(displacements);
 
+    if (reg.all_of<TagNestedSoftActor>(e)) {
+      skinned::SynchronizeAfterExternalChange(reg, e);
+    }
+
     // External state changes invalidate step history.
     InvalidateActorStepHistory(reg, e);
   }
@@ -1808,8 +1812,31 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetZeroDisplacementsAndVelocities(Error& error) override {
-    mochi::SetZeroDisplacements(reg, e, error);
-    mochi::SetZeroVelocities(reg, e, error);
+    MOCHI_ERROR_RETURN(error);
+    MOCHI_PROFILE_SCOPE();
+
+    auto* currDispl = reg.try_get<CDisplacementSlice<real, TimeStep::Current>>(e);
+    MOCHI_ERROR_IF(
+        currDispl == nullptr, error, "CDisplacementSlice<real, TimeStep::Current> required.");
+    auto* prevDispl = reg.try_get<CDisplacementSlice<real, TimeStep::Previous>>(e);
+    MOCHI_ERROR_IF(
+        prevDispl == nullptr, error, "CDisplacementSlice<real, TimeStep::Previous> required.");
+    auto* currVel = reg.try_get<CVelocitySlice<real, TimeStep::Current>>(e);
+    MOCHI_ERROR_IF(currVel == nullptr, error, "CVelocitySlice<real, TimeStep::Current> required.");
+    auto* prevVel = reg.try_get<CVelocitySlice<real, TimeStep::Previous>>(e);
+    MOCHI_ERROR_IF(prevVel == nullptr, error, "CVelocitySlice<real, TimeStep::Previous> required.");
+    MOCHI_ERROR_RETURN(error);
+    currDispl->value.SetZero();
+    prevDispl->value.SetZero();
+    currVel->value.SetZero();
+    prevVel->value.SetZero();
+
+    if (reg.all_of<TagNestedSoftActor>(e)) {
+      skinned::SynchronizeAfterExternalChange(reg, e);
+    }
+
+    // External state changes invalidate step history.
+    InvalidateActorStepHistory(reg, e);
   }
 
   Span<real const> GetElementsDeformationGradient(Error& error) const override {

@@ -16,6 +16,7 @@
 
 #include "mochi_soft_skinned.h"
 
+#include "mochi_blended.h"
 #include "mochi_common_components.h"
 #include "mochi_contact_filter.h"
 #include "mochi_integration.h"
@@ -411,6 +412,21 @@ void skinned::ResolveAllNodeSkinningDisplacementsPipeline(
   MOCHI_PROFILE_SCOPE();
   ecs::InvokeForEach(
       &ResolveSkinning<TimeStep::Current, /* kForceUseAllNodes */ true>, reg, entities);
+}
+
+void skinned::SynchronizeAfterExternalChange(entt::registry& reg, entt::entity e) {
+  skinned::ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(e));
+
+  auto const parent = reg.get<CSkinnedComposition const>(e).articulated;
+  if (reg.all_of<CBlendingData>(parent)) {
+    articulated::compound::ResolveAllNodeSkinningDisplacementsPipeline(
+        reg, MakeSingletonConstSpan(parent));
+    blended::ResolveAllNodeBlendingDisplacementsPipeline(reg, MakeSingletonConstSpan(parent));
+    RelaxConservativeStepBoundsOnNextStep(reg, parent);
+  }
+
+  ecs::TryInvokeOnEntity<ecs::policy::AllowReadWriteSameComponent>(
+      UpdateSkinningVelocity</*kIsState*/ true>, reg, e);
 }
 
 template <bool kIsState>

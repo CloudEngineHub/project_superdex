@@ -9628,7 +9628,8 @@ class Actor:
             only (before skinning is applied).
 
         Note:
-            Does not change node velocities.
+            Does not change the elastic velocity DoFs, but changes the skinned node
+            velocities of nested soft actors.
 
         Note:
             Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler
@@ -10153,8 +10154,8 @@ class Actor:
             and rod actors.
 
         Note:
-            For nested soft actors, it zeroes the elastic deformation and velocity only.
-            The skeleton-driven pose is unaffected.
+            For nested soft actors, it zeroes only elastic displacement and velocity.
+            Skeleton-driven displacement and velocity are preserved.
 
         Note:
             For rod actors, it zeroes both the translational displacement DoFs and the

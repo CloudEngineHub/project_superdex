@@ -163,6 +163,13 @@ void ResolveAllNodeSkinningDisplacementsPipeline(
     entt::registry& reg,
     Span<entt::entity const> entities);
 
+/*
+ * Synchronize a nested soft actor's current skinned displacement and velocity after an external
+ * displacement and velocity change. If it belongs to a blended actor, republishes the parent's
+ * final displacement.
+ */
+void SynchronizeAfterExternalChange(entt::registry& reg, entt::entity e);
+
 // Compute world-space skinning velocity for nested soft actors.
 template <bool kIsState>
 void UpdateSkinningVelocity(

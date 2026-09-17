@@ -106,11 +106,7 @@ static void ResolveSkinning(
   outDisplacements.value -= skinningData.restCoords;
 }
 
-/*
- * Pipeline to resolve current skinning displacements for all nodes, including inactive nodes when
- * subsampling is enabled.
- */
-static void ArticulatedResolveAllNodeSkinningDisplacementsPipeline(
+void articulated::compound::ResolveAllNodeSkinningDisplacementsPipeline(
     entt::registry& reg,
     Span<entt::entity const> entities) {
   MOCHI_PROFILE_SCOPE();
@@ -198,7 +194,8 @@ static void UpdateDerivedStateFromPose(
   ecs::InvokeForEach(&articulated::rigid::EntitySetSolution, reg, members.actors);
   ecs::InvokeForEach(&mochi::rigid::ComputeRootTransformCurrent, reg, members.actors);
   ecs::InvokeOnEntity(&articulated::compound::UpdateJacobianState<TimeStep::Current>, reg, e);
-  ArticulatedResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(e));
+  articulated::compound::ResolveAllNodeSkinningDisplacementsPipeline(
+      reg, MakeSingletonConstSpan(e));
   if (composition) {
     skinned::ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeConstSpan(composition->soft));
     blended::ResolveAllNodeBlendingDisplacementsPipeline(reg, MakeSingletonConstSpan(e));

@@ -321,7 +321,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // @note Only supported for standalone soft actors, nested soft actors, and shell actors.
   // @note For nested soft actors, displacements are the elastic deformation component only (before
   // skinning is applied).
-  // @note Does not change node velocities.
+  // @note Does not change the elastic velocity DoFs, but changes the skinned node velocities of
+  // nested soft actors.
   // @note Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler in the first
   // time step after this method is called.
   //
@@ -607,8 +608,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // @brief Set all local displacement and velocity DoFs to zero.
   //
   // @note Only supported for standalone soft actors, nested soft actors, shell actors, and rod actors.
-  // @note For nested soft actors, it zeroes the elastic deformation and velocity only. The
-  // skeleton-driven pose is unaffected.
+  // @note For nested soft actors, it zeroes only elastic displacement and velocity.
+  // Skeleton-driven displacement and velocity are preserved.
   // @note For rod actors, it zeroes both the translational displacement DoFs and the twist-angle DoFs.
   // @note Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler in the first
   // time step after this method is called.

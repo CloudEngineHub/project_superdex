@@ -436,6 +436,14 @@ void UpdateJacobianState(
 }
 
 /*
+ * Pipeline to resolve current skinning displacements for all nodes, including inactive nodes when
+ * subsampling is enabled.
+ */
+void ResolveAllNodeSkinningDisplacementsPipeline(
+    entt::registry& reg,
+    Span<entt::entity const> entities);
+
+/*
  * Function to update the Jacobian of some skinned data w.r.t. the bone dofs (if one exists).
  * It is called from the method computing the Jacobian w.r.t. to the joint dofs.
  * Note that in this case template does not require time step type or mesh type since Jacobian is
