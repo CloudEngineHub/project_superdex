@@ -580,7 +580,7 @@ class Context [no_init, no_destruct, singleton] {
   //
   // @see ShapeHandle, ReleaseShape
   fn CreateTetMeshShape(
-    Span<real const> coordinates [units(m)],
+    Span<real const> coordinates [units("m")],
     Span<int const> connectivity
   ) -> ShapeHandle [pure, virtual, mochi_error];
 
@@ -599,7 +599,7 @@ class Context [no_init, no_destruct, singleton] {
   //
   // @see ShapeHandle, ReleaseShape
   fn CreateTriMeshShape(
-    Span<real const> coordinates [units(m)],
+    Span<real const> coordinates [units("m")],
     Span<int const> connectivity,
   )  -> ShapeHandle [pure, virtual, mochi_error];
   // @brief Create an implicit sphere shape.
@@ -615,7 +615,7 @@ class Context [no_init, no_destruct, singleton] {
   // @note Call on any thread.
   //
   // @see ShapeHandle, ReleaseShape
-  fn CreateSphereShape(Real3 const& center, real radius [units(m)]) -> ShapeHandle [pure, virtual, mochi_error];
+  fn CreateSphereShape(Real3 const& center, real radius [units("m")]) -> ShapeHandle [pure, virtual, mochi_error];
 
   // @brief Create an implicit plane with infinite extents.
   //
@@ -632,7 +632,7 @@ class Context [no_init, no_destruct, singleton] {
   // @note Call on any thread.
   //
   // @see ShapeHandle, ReleaseShape
-  fn CreatePlaneShape(Real3 const& normal, real distance [units(m)]) -> ShapeHandle [pure, virtual, mochi_error];
+  fn CreatePlaneShape(Real3 const& normal, real distance [units("m")]) -> ShapeHandle [pure, virtual, mochi_error];
 
   // @brief Get a view of the shape's main mesh data.
   //
