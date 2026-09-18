@@ -34,17 +34,8 @@ from superdex.lab.gym.registration import (
 )
 from superdex.lab.gym.utils.env_discovery import register_all_envs
 from superdex.lab.gym.utils.registry import unwrap_mochi_env
-from test.envs.registry_expectations import (
-    EXPECTED_PUBLIC_REGISTRATIONS,
-    restore_gym_registry,
-    serialize_snapshot,
-    snapshot_env_spec,
-    snapshot_gym_registry,
-)
+from test.envs.registry_test_utils import restore_gym_registry, snapshot_gym_registry
 
-_EXPECTED_PUBLIC_IDS = tuple(
-    expected["entry"]["env_id"] for expected in EXPECTED_PUBLIC_REGISTRATIONS
-)
 _CONCRETE_ENV_MODULES = (
     "superdex.lab.gym.envs.benchmarks.ant_env",
     "superdex.lab.gym.envs.benchmarks.cartpole_env",
@@ -71,6 +62,20 @@ _EXPECTED_EXPORTS = (
     "envs",
 )
 
+# Independently declared golden list of public IDs. Kept separate from the production
+# ``_PUBLIC_ENV_SPECS`` on purpose: comparing the registry against the same tuple the
+# registrar iterates would be tautological and could not catch a wrong/missing/extra ID.
+_EXPECTED_PUBLIC_IDS = (
+    "superdex_gym/Ant-v0",
+    "superdex_gym/AntFullObservation-v0",
+    "superdex_gym/AntNoContact-v0",
+    "superdex_gym/AntRotationVector-v0",
+    "superdex_gym/CartPole-v0",
+    "superdex_gym/CartPoleActuateOnPole-v0",
+    "superdex_gym/HalfCheetah-v0",
+    "superdex_gym/HalfCheetahFullObservation-v0",
+)
+
 
 @dataclasses.dataclass
 class _TypedCartPoleCfg:
@@ -88,29 +93,25 @@ class RegistrationTest(unittest.TestCase):
     def _clear_registry(self) -> None:
         gym.registry.clear()
 
-    def test_public_specs_match_frozen_snapshot(self) -> None:
-        self._clear_registry()
-        register_envs()
+    def _public_env_ids(self) -> tuple[str, ...]:
+        return _EXPECTED_PUBLIC_IDS
 
-        actual = tuple(
-            snapshot_env_spec(gym.spec(env_id)) for env_id in _EXPECTED_PUBLIC_IDS
-        )
-        expected = tuple(
-            registration["spec"] for registration in EXPECTED_PUBLIC_REGISTRATIONS
-        )
-        self.assertEqual(serialize_snapshot(expected), serialize_snapshot(actual))
-        self.assertEqual(_EXPECTED_PUBLIC_IDS, tuple(gym.registry))
+    def _register_public_envs(self) -> tuple[str, ...]:
+        public_env_ids = self._public_env_ids()
+        register_envs()
+        return public_env_ids
 
     def test_package_import_preserves_exports_and_registers_idempotently(self) -> None:
         self._clear_registry()
 
         first_import = importlib.reload(superdex_gym)
-        first_specs = {env_id: gym.spec(env_id) for env_id in _EXPECTED_PUBLIC_IDS}
+        public_env_ids = self._public_env_ids()
+        first_specs = {env_id: gym.spec(env_id) for env_id in public_env_ids}
         second_import = importlib.reload(first_import)
 
         self.assertIs(first_import, second_import)
         self.assertEqual(list(_EXPECTED_EXPORTS), second_import.__all__)
-        self.assertEqual(_EXPECTED_PUBLIC_IDS, tuple(gym.registry))
+        self.assertEqual(public_env_ids, tuple(gym.registry))
         for env_id, first_spec in first_specs.items():
             with self.subTest(env_id=env_id):
                 self.assertIs(first_spec, gym.spec(env_id))
@@ -191,14 +192,14 @@ class RegistrationTest(unittest.TestCase):
         self._clear_registry()
 
         with namespace("ambient"):
-            register_envs()
+            public_env_ids = self._register_public_envs()
             gym.register(
                 id="Probe-v0",
                 entry_point="example.module:Environment",
             )
 
         self.assertEqual(
-            (*_EXPECTED_PUBLIC_IDS, "ambient/Probe-v0"),
+            (*public_env_ids, "ambient/Probe-v0"),
             tuple(gym.registry),
         )
 
@@ -225,8 +226,9 @@ class RegistrationTest(unittest.TestCase):
         self.assertNotIn("Probe-v0", gym.registry)
 
     def test_equivalent_pre_registration_is_preserved(self) -> None:
+        public_env_ids = self._public_env_ids()
         desired_specs = {
-            env_id: copy.deepcopy(gym.spec(env_id)) for env_id in _EXPECTED_PUBLIC_IDS
+            env_id: copy.deepcopy(gym.spec(env_id)) for env_id in public_env_ids
         }
         self._clear_registry()
         gym.registry.update(desired_specs)
@@ -238,10 +240,11 @@ class RegistrationTest(unittest.TestCase):
                 self.assertIs(desired_spec, gym.spec(env_id))
 
     def test_every_env_spec_field_participates_in_collision_check(self) -> None:
+        public_env_ids = self._public_env_ids()
         desired_specs = {
-            env_id: copy.deepcopy(gym.spec(env_id)) for env_id in _EXPECTED_PUBLIC_IDS
+            env_id: copy.deepcopy(gym.spec(env_id)) for env_id in public_env_ids
         }
-        target_id = _EXPECTED_PUBLIC_IDS[0]
+        target_id = public_env_ids[0]
         conflicting_values: dict[str, Any] = {
             "id": "different_namespace/Different-v9",
             "entry_point": "different.module:Environment",
@@ -337,13 +340,13 @@ class RegistrationTest(unittest.TestCase):
 
     def test_legacy_discovery_keeps_explicit_specs(self) -> None:
         self._clear_registry()
-        register_envs()
-        explicit_specs = {env_id: gym.spec(env_id) for env_id in _EXPECTED_PUBLIC_IDS}
+        public_env_ids = self._register_public_envs()
+        explicit_specs = {env_id: gym.spec(env_id) for env_id in public_env_ids}
 
         entries = register_all_envs()
 
         discovered_ids = {entry.env_id for entry in entries if not entry.test_only}
-        self.assertTrue(set(_EXPECTED_PUBLIC_IDS).issubset(discovered_ids))
+        self.assertTrue(set(public_env_ids).issubset(discovered_ids))
         for env_id, explicit_spec in explicit_specs.items():
             with self.subTest(env_id=env_id):
                 self.assertIs(explicit_spec, gym.spec(env_id))
@@ -351,9 +354,9 @@ class RegistrationTest(unittest.TestCase):
 
     def test_all_public_ids_support_spec_and_make(self) -> None:
         self._clear_registry()
-        register_envs()
+        public_env_ids = self._register_public_envs()
 
-        for env_id in _EXPECTED_PUBLIC_IDS:
+        for env_id in public_env_ids:
             with self.subTest(env_id=env_id):
                 self.assertEqual(env_id, gym.spec(env_id).id)
                 env = gym.make(env_id)

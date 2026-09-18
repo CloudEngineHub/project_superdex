@@ -27,14 +27,11 @@ import gymnasium as gym
 from gymnasium.envs.registration import EnvSpec
 from superdex.lab.gym.registration import get_env_specs
 from superdex.lab.gym.utils.env_discovery import discover_envs
-from test.envs.registry_expectations import (
-    PUBLIC_ENV_PACKAGE,
-    restore_gym_registry,
-    snapshot_gym_registry,
-)
+from test.envs.registry_test_utils import restore_gym_registry, snapshot_gym_registry
 
 ########################################################################################
 
+PUBLIC_ENV_PACKAGE = "superdex.lab.gym.envs.benchmarks"
 _MAX_STEPS = 20
 _MAX_TIME = 5.0
 

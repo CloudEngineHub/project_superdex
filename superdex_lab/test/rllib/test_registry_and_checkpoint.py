@@ -30,7 +30,7 @@ from arvr.projects.superdex.superdex_lab.apps.rllib.utils import (
 )
 from gymnasium.envs.registration import EnvSpec
 from superdex.lab.gym.registration import register_envs as register_gym_envs
-from test.envs.registry_expectations import restore_gym_registry, snapshot_gym_registry
+from test.envs.registry_test_utils import restore_gym_registry, snapshot_gym_registry
 
 
 class RegistryAndCheckpointTest(unittest.TestCase):
