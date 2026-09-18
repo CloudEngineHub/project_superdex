@@ -106,18 +106,19 @@ Project SuperDex has first-class support for Python across the board. The quicke
 4. Pip Install: `uv pip install superdex`
 5. Run
     * Optional: To run Python examples in double precision (float64), set the environment variable `SUPERDEX_PRECISION=double`; otherwise, single precision is used.
-    * Physics example: `uv run --no-project superdex_physics/examples/example_tendon_comparison.py`
-    * Robotics example: `uv run --no-project superdex_robotics/examples/control/example_osc_jsc_control.py`
-    * SuperDex Studio: `uv run --no-project superdex-studio`
-    * Note:  `--no-project` is required for `uv run` cmds within this repo or else it will build from source
+    * Physics example: `uv run superdex_physics/examples/example_tendon_comparison.py`
+    * Robotics example: `uv run superdex_robotics/examples/control/example_osc_jsc_control.py`
+    * SuperDex Studio: `uv run superdex-studio`
 
 ## Building from Source
 
 ### Install Pre-requisites
 
-* [CMake](https://cmake.org/download/) (v3.26 or newer)
-* [Ninja](https://github.com/ninja-build/ninja/releases)
-* [uv](https://docs.astral.sh/uv/getting-started/installation/) (for Python build)
+* For Python build:
+    * [uv](https://docs.astral.sh/uv/getting-started/installation/)
+* For C++ build:
+    * [CMake](https://cmake.org/download/) (v3.26 or newer)
+    * [Ninja](https://github.com/ninja-build/ninja/releases)
 * Linux:
     * [Clang](https://clang.llvm.org/get_started.html) (v17 or newer):
         * Check your installed version: `clang --version`. The executable may be versioned instead (for example, `clang-22 --version`).
@@ -156,14 +157,14 @@ Project SuperDex has first-class support for Python across the board. The quicke
         * Select the **Desktop development with C++** workload and include the **C++ Clang tools for Windows** (ClangCL) component.
     * Or install from terminal:
         * `winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --add Microsoft.VisualStudio.Component.VC.Llvm.Clang --add Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset --add Microsoft.VisualStudio.Component.Windows11SDK.26100"`
-* Ensure `cmake`, `ninja`, `uv`, and the platform-specific Clang compiler are on PATH: `clang` and `clang++` on Linux/macOS (versioned names such as `clang-17` and `clang++-17` are also supported), or `clang-cl` on Windows.
+* Ensure `uv` and the platform-specific Clang compiler are on PATH for Python builds: `clang` and `clang++` on Linux/macOS (versioned names such as `clang-17` and `clang++-17` are also supported), or `clang-cl` on Windows. For C++ builds, also ensure `cmake` and `ninja` are on PATH.
 * Other compilers such as GCC and MSVC are not officially supported or covered by CI, but can be used "at your own risk".
 
 ### Building from Source (Python)
 
 1. Get the source code and install pre-requisites (see above)
 2. Windows only: From the Start menu, launch the `x64 Native Tools Command Prompt` matching your installed Visual Studio version (e.g. `x64 Native Tools Command Prompt for VS 2022`).
-3. `cd` into the `project_superdex` source directory
+3. `cd` into the `project_superdex` source directory; `uv sync` must be run from this repository root
 4. Build: `uv sync --extra gui -v`
 5. Run:
     * Physics example: `uv run superdex_physics/examples/example_tendon_comparison.py`
@@ -174,7 +175,7 @@ Flags for `uv sync` are:
 
 | uv sync flags (additive) | Build targets |
 | :-- | :-- |
-| none | build tools only |
+| `--extra build` | build tools only |
 | `--extra core` | physics, robotics, lab |
 | `--extra gui` | core + physics-debugger, studio, mesh-cli |
 | `--extra double` | core + physics-fp64, robotics-fp64 |
