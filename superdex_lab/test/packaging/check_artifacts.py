@@ -230,9 +230,10 @@ def _venv_python(root: Path) -> Path:
 def _probe_source(expected_package_data: Sequence[str]) -> str:
     return f"""
 import importlib.util
+import json
 import sys
 import sysconfig
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from gymnasium.envs.registration import registry
 
@@ -270,6 +271,62 @@ actual_package_data = tuple(sorted(
     if path.is_file() and (path.suffix == ".json" or path.name == "py.typed")
 ))
 assert actual_package_data == expected_package_data, (actual_package_data, expected_package_data)
+
+recipe_path = root / "superdex/lab/rllib/recipe_manifest.py"
+manifest_path = recipe_path.with_name("recipes") / "manifest.json"
+if recipe_path.is_file() and manifest_path.is_file():
+    recipe_spec = importlib.util.spec_from_file_location(
+        "installed_superdex_lab_recipe_manifest", recipe_path
+    )
+    assert recipe_spec is not None and recipe_spec.loader is not None
+    recipe_manifest = importlib.util.module_from_spec(recipe_spec)
+    sys.modules[recipe_spec.name] = recipe_manifest
+    recipe_spec.loader.exec_module(recipe_manifest)
+
+    manifest_path = recipe_manifest.PUBLIC_RECIPE_MANIFEST
+    raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert isinstance(raw_manifest, dict) and raw_manifest
+    recipe_manifest.load_recipe_manifest(manifest_path, "__packaging_probe__")
+    kinds = {{
+        kind
+        for record in raw_manifest.values()
+        for kind in record.get("recipes", {{}})
+    }}
+    for kind in kinds:
+        recipe_manifest.load_recipe_manifest(manifest_path, kind)
+
+    recipes = recipe_manifest.load_recipes("train")
+    expected_train = tuple(
+        (env_id, record["slug"])
+        for env_id, record in raw_manifest.items()
+        if "train" in record.get("recipes", {{}})
+    )
+    actual_train = tuple(
+        (env_id, recipe.slug) for env_id, recipe in recipes.items()
+    )
+    assert actual_train == expected_train, (actual_train, expected_train)
+
+    recipe_root = manifest_path.parent
+    expected_recipe_json = {{"manifest.json"}}
+    for record in raw_manifest.values():
+        for relative_path in record.get("recipes", {{}}).values():
+            assert isinstance(relative_path, str) and relative_path
+            posix_path = PurePosixPath(relative_path)
+            windows_path = PureWindowsPath(relative_path)
+            assert not posix_path.is_absolute()
+            assert not windows_path.is_absolute() and not windows_path.drive
+            assert "\\\\" not in relative_path
+            assert all(part not in {{"", ".", ".."}} for part in posix_path.parts)
+            assert posix_path.as_posix() == relative_path
+            expected_recipe_json.add(relative_path)
+    actual_recipe_json = {{
+        path.relative_to(recipe_root).as_posix()
+        for path in recipe_root.rglob("*.json")
+    }}
+    assert actual_recipe_json == expected_recipe_json, (
+        actual_recipe_json,
+        expected_recipe_json,
+    )
 """
 
 

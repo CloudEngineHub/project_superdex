@@ -129,10 +129,10 @@ class PackagingTest(unittest.TestCase):
 
     def test_archive_contract_requires_all_package_data_in_sdist(self) -> None:
         project = _source()
+        missing = check_artifacts.package_data_paths(project)[0]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             wheel, sdist = _write_pair(root, project)
-            missing = check_artifacts.package_data_paths(project)[0]
             replacement = root / "missing.tar.gz"
             with (
                 tarfile.open(sdist, "r:gz") as source,
@@ -155,6 +155,21 @@ class PackagingTest(unittest.TestCase):
             with zipfile.ZipFile(wheel, "a") as archive:
                 archive.writestr(duplicate, b"duplicate")
             with self.assertRaisesRegex(ValueError, "duplicate members"):
+                check_artifacts.check_archives(wheel, sdist, project)
+
+    def test_archive_contract_rejects_undeclared_recipe_json(self) -> None:
+        project = _source()
+        declared_recipe = next(
+            Path(path)
+            for path in check_artifacts.package_data_paths(project)
+            if "/rllib/recipes/" in path and path.endswith(".json")
+        )
+        undeclared_recipe = (declared_recipe.parent / "undeclared.json").as_posix()
+        with tempfile.TemporaryDirectory() as temporary:
+            wheel, sdist = _write_pair(Path(temporary), project)
+            with zipfile.ZipFile(wheel, "a") as archive:
+                archive.writestr(undeclared_recipe, b"{}")
+            with self.assertRaisesRegex(ValueError, "package data inventory"):
                 check_artifacts.check_archives(wheel, sdist, project)
 
     def test_archive_contract_rejects_misplaced_metadata(self) -> None:
@@ -195,7 +210,7 @@ class PackagingTest(unittest.TestCase):
         for member in check_artifacts.package_data_paths(project):
             self.assertIn(member, commands[2][-1])
 
-    def test_probe_loads_registration_directly_without_concrete_ids(self) -> None:
+    def test_probe_derives_installed_registries_without_concrete_values(self) -> None:
         probe = check_artifacts._probe_source(
             check_artifacts.package_data_paths(_source())
         )
@@ -204,7 +219,22 @@ class PackagingTest(unittest.TestCase):
         self.assertIn("registration.register_envs()", probe)
         self.assertIn("registration.get_env_specs()", probe)
         self.assertIn('env_spec.namespace == "superdex_gym"', probe)
+        self.assertIn("installed_superdex_lab_recipe_manifest", probe)
+        self.assertIn("recipe_manifest.PUBLIC_RECIPE_MANIFEST", probe)
+        self.assertIn("json.loads", probe)
+        self.assertIn("recipe_manifest.load_recipe_manifest", probe)
+        self.assertIn('recipe_manifest.load_recipes("train")', probe)
+        self.assertIn("actual_train == expected_train", probe)
+        self.assertIn("actual_recipe_json == expected_recipe_json", probe)
         self.assertNotIn("import superdex.lab", probe)
+        self.assertNotIn("from superdex.lab.rllib", probe)
         self.assertNotRegex(probe, r"superdex_gym/[A-Za-z0-9_-]+-v[0-9]+")
-        self.assertFalse(hasattr(check_artifacts, "PUBLIC_ENV_IDS"))
-        self.assertFalse(hasattr(check_artifacts, "PUBLIC_JSON"))
+        for symbol in (
+            "PUBLIC_ENV_IDS",
+            "PUBLIC_JSON",
+            "PUBLIC_RECIPE_JSON",
+            "PUBLIC_RECIPE_SLUGS",
+            "_SDIST_ONLY",
+            "_REQUIRED",
+        ):
+            self.assertFalse(hasattr(check_artifacts, symbol), symbol)

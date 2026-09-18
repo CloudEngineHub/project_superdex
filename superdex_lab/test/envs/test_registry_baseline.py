@@ -18,13 +18,8 @@ import unittest
 
 import gymnasium as gym
 from gymnasium.envs.registration import EnvSpec
-from superdex.lab.gym.utils.env_discovery import (
-    discover_envs,
-    load_entry_config,
-    register_all_envs,
-)
+from superdex.lab.gym.utils.env_discovery import discover_envs, register_all_envs
 from test.envs.registry_expectations import (
-    EXPECTED_PUBLIC_RECIPE_ASSOCIATIONS,
     EXPECTED_PUBLIC_REGISTRATIONS,
     PUBLIC_ENV_PACKAGE,
     restore_gym_registry,
@@ -72,17 +67,6 @@ class TestRegistryBaseline(unittest.TestCase):
             ),
             serialize_snapshot(actual),
         )
-
-    def test_public_recipe_associations_match_baseline(self) -> None:
-        entries = discover_envs((PUBLIC_ENV_PACKAGE,))
-        actual = tuple(
-            (entry.env_id, kind)
-            for entry in entries
-            for kind in ("train", "benchmark")
-            if load_entry_config(entry, kind)
-        )
-
-        self.assertEqual(EXPECTED_PUBLIC_RECIPE_ASSOCIATIONS, actual)
 
     def test_incompatible_existing_registration_is_rejected(self) -> None:
         env_id = EXPECTED_PUBLIC_REGISTRATIONS[0]["entry"]["env_id"]

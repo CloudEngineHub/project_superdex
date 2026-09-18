@@ -22,10 +22,7 @@ The environments themselves are smoke-tested in ``test_envs``, which generates o
 instantiate-and-step test per discovered entry.
 """
 
-import inspect
-import json
 import unittest
-from pathlib import Path
 
 import gymnasium as gym
 from superdex.lab.gym.utils.env_discovery import (
@@ -33,7 +30,6 @@ from superdex.lab.gym.utils.env_discovery import (
     discover_envs,
     get_env_entries,
     get_env_short_names,
-    load_entry_config,
     register_all_envs,
 )
 
@@ -130,33 +126,6 @@ class TestEnvDiscovery(unittest.TestCase):
                 self.assertNotIn(entry.env_id, gym.registry)
                 self.assertNotIn(entry.short_name, public_names)
                 self.assertIn(entry.short_name, all_names)
-
-    def test_variant_recipe_does_not_fall_back_to_base(self) -> None:
-        """A usage recipe is written for one configuration, so a variant must not inherit
-        the base env's recipe (nor the reverse): the Ant training recipe targets
-        ``ant_no_contact``, and applying its stop criteria to the base Ant would train
-        against a different observation space."""
-        entries = {entry.short_name: entry for entry in discover_envs()}
-        base, variant = entries.get("ant"), entries.get("ant_no_contact")
-        if base is None or variant is None:
-            self.skipTest("the Ant env is absent from this build")
-        self.assertTrue(load_entry_config(variant, "train"))
-        self.assertEqual(load_entry_config(base, "train"), {})
-
-    def test_train_recipes_declare_no_env_config(self) -> None:
-        """Env configuration belongs in a gym config variant, so that every configuration
-        that gets trained is also nameable, runnable and smoke-tested. A recipe-only
-        override is rejected at training time, but catch it here instead."""
-        directories = {
-            Path(inspect.getfile(entry.env_cls)).parent for entry in discover_envs()
-        }
-        recipes = sorted(
-            path for directory in directories for path in directory.glob("*.train.json")
-        )
-        self.assertTrue(recipes, "no training recipes were found")
-        for path in recipes:
-            with self.subTest(recipe=path.name):
-                self.assertNotIn("env_config", json.loads(path.read_text()))
 
     def test_registered_cfg_is_decoupled_from_cached_entry(self) -> None:
         """Entries are cached for the process lifetime, so the registry must not share

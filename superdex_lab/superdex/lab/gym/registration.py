@@ -29,7 +29,6 @@ from gymnasium.envs.registration import EnvSpec
 _NAMESPACE = "superdex_gym"
 _FACTORY_ENTRY_POINT = "superdex.lab.gym.registration:make_superdex_env"
 
-
 _PUBLIC_ENV_SPECS: tuple[EnvSpec, ...] = (
     EnvSpec(
         id=f"{_NAMESPACE}/Ant-v0",
