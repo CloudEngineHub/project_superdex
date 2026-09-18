@@ -19,19 +19,16 @@ from __future__ import annotations
 import re
 import time
 import unittest
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
 import gymnasium as gym
 from gymnasium.envs.registration import EnvSpec
 from superdex.lab.gym.registration import get_env_specs
-from superdex.lab.gym.utils.env_discovery import discover_envs
-from test.envs.registry_test_utils import restore_gym_registry, snapshot_gym_registry
 
 ########################################################################################
 
-PUBLIC_ENV_PACKAGE = "superdex.lab.gym.envs.benchmarks"
 _MAX_STEPS = 20
 _MAX_TIME = 5.0
 
@@ -41,7 +38,7 @@ class TestOnlyEnvCase:
     """An explicit crash-only configuration that must not be registered."""
 
     name: str
-    """Exact discovery short name used as the stable smoke-test label."""
+    """Stable snake_case label used as the smoke-test name."""
     base_env_id: str
     test_only_env_id: str
     cfg: Mapping[str, Any]
@@ -80,42 +77,8 @@ PUBLIC_TEST_ONLY_ENV_CASES = (
 )
 
 
-def discover_test_only_env_cases(
-    packages: Sequence[str],
-) -> tuple[TestOnlyEnvCase, ...]:
-    """Derive crash-only cases from legacy discovery without leaking registry changes."""
-    registry_snapshot = snapshot_gym_registry()
-    try:
-        entries = discover_envs(packages)
-    finally:
-        restore_gym_registry(registry_snapshot)
-
-    base_env_ids = {
-        entry.env_cls: entry.env_id for entry in entries if entry.variant is None
-    }
-    cases = []
-    for entry in entries:
-        if not entry.test_only:
-            continue
-        cases.append(
-            TestOnlyEnvCase(
-                name=entry.short_name,
-                base_env_id=base_env_ids[entry.env_cls],
-                test_only_env_id=entry.env_id,
-                cfg=entry.cfg_kwargs,
-            )
-        )
-    return tuple(cases)
-
-
 class TestEnvs(unittest.TestCase):
     """Instantiate-and-step smoke tests for public registry entries."""
-
-    def test_test_only_cases_match_discovery(self) -> None:
-        self.assertEqual(
-            PUBLIC_TEST_ONLY_ENV_CASES,
-            discover_test_only_env_cases((PUBLIC_ENV_PACKAGE,)),
-        )
 
     def test_registry_is_non_empty(self) -> None:
         self.assertTrue(

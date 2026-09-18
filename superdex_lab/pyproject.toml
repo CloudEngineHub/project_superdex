@@ -61,13 +61,6 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "superdex.lab" = ["py.typed"]
-"superdex.lab.gym.envs.benchmarks" = [
-    "ant_env_full_observation.json",
-    "ant_env_no_contact.json",
-    "ant_env_rotation_vector.json",
-    "cartpole_env_actuate_on_pole.json",
-    "halfcheetah_env_full_observation.json",
-]
 "superdex.lab.rllib" = [
     "recipes/manifest.json",
     "recipes/*/*.json",

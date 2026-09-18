@@ -32,7 +32,6 @@ from superdex.lab.gym.registration import (
     register_env_spec,
     register_envs,
 )
-from superdex.lab.gym.utils.env_discovery import register_all_envs
 from superdex.lab.gym.utils.registry import unwrap_mochi_env
 from test.envs.registry_test_utils import restore_gym_registry, snapshot_gym_registry
 
@@ -337,20 +336,6 @@ class RegistrationTest(unittest.TestCase):
             (specs[2], specs[3], specs[4], specs[0]),
             actual,
         )
-
-    def test_legacy_discovery_keeps_explicit_specs(self) -> None:
-        self._clear_registry()
-        public_env_ids = self._register_public_envs()
-        explicit_specs = {env_id: gym.spec(env_id) for env_id in public_env_ids}
-
-        entries = register_all_envs()
-
-        discovered_ids = {entry.env_id for entry in entries if not entry.test_only}
-        self.assertTrue(set(public_env_ids).issubset(discovered_ids))
-        for env_id, explicit_spec in explicit_specs.items():
-            with self.subTest(env_id=env_id):
-                self.assertIs(explicit_spec, gym.spec(env_id))
-                self.assertIsInstance(gym.spec(env_id).entry_point, str)
 
     def test_all_public_ids_support_spec_and_make(self) -> None:
         self._clear_registry()
