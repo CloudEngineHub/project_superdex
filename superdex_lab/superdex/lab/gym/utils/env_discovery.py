@@ -57,8 +57,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
-import gymnasium as gym
+from gymnasium.envs.registration import EnvSpec
 from superdex.lab.gym.envs.mochi_env import MochiEnv
+from superdex.lab.gym.registration import _FACTORY_ENTRY_POINT, register_env_spec
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -286,8 +287,8 @@ def invalidate_env_entries() -> None:
 def register_all_envs() -> list[EnvEntry]:
     """Register every discovered environment (and public variant) with Gymnasium.
 
-    Idempotent: ids already present in the Gymnasium registry are left untouched. Returns
-    every discovered entry, including the test-only ones that were not registered.
+    Idempotent for equivalent specs; incompatible existing registrations are rejected.
+    Returns every discovered entry, including the test-only ones that were not registered.
 
     Test-only variants are skipped, which is also what keeps them out of the Ray Tune
     registry, since that is populated by fanning out the Gymnasium registry.
@@ -305,12 +306,17 @@ def register_all_envs() -> list[EnvEntry]:
     entries = get_env_entries()
 
     for entry in entries:
-        if entry.test_only or entry.env_id in gym.registry:
+        if entry.test_only:
             continue
-        gym.register(
-            entry.env_id,
-            entry_point=entry.env_cls,
-            kwargs={"cfg": dict(entry.cfg_kwargs)},
+        register_env_spec(
+            EnvSpec(
+                id=entry.env_id,
+                entry_point=_FACTORY_ENTRY_POINT,
+                kwargs={
+                    "env_cls": f"{entry.env_cls.__module__}:{entry.env_cls.__name__}",
+                    "cfg": dict(entry.cfg_kwargs),
+                },
+            )
         )
 
     return entries

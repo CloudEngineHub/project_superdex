@@ -14,9 +14,7 @@
 
 """Characterization tests for the public environment registry baseline."""
 
-import logging
 import unittest
-import warnings
 
 import gymnasium as gym
 from gymnasium.envs.registration import EnvSpec
@@ -103,7 +101,7 @@ class TestRegistryBaseline(unittest.TestCase):
 
         self.assertEqual(EXPECTED_PUBLIC_RECIPE_ASSOCIATIONS, actual)
 
-    def test_existing_registration_is_silently_preserved(self) -> None:
+    def test_incompatible_existing_registration_is_rejected(self) -> None:
         env_id = EXPECTED_PUBLIC_REGISTRATIONS[0]["entry"]["env_id"]
         self._register_envs_for_test()
         conflicting_spec = EnvSpec(
@@ -114,17 +112,10 @@ class TestRegistryBaseline(unittest.TestCase):
         )
         gym.registry[env_id] = conflicting_spec
 
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            warnings.simplefilter("always")
-            with self.assertNoLogs(level=logging.WARNING):
-                register_all_envs()
+        with self.assertRaisesRegex(ValueError, rf"{env_id!r}.*entry_point"):
+            register_all_envs()
 
-        self.assertEqual([], caught_warnings)
-        self.assertIs(gym.registry[env_id], conflicting_spec)
-        self.assertEqual(
-            "deliberately.incompatible:Environment",
-            gym.registry[env_id].entry_point,
-        )
+        self.assertIs(conflicting_spec, gym.registry[env_id])
 
 
 if __name__ == "__main__":
