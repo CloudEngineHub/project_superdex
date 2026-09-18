@@ -302,7 +302,7 @@ if (MOCHI_USE_HDF5)
     #
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # Applies to every consumer that gets its own dynamic symbol table: SHARED_LIBRARY and
-        # MODULE_LIBRARY, the latter being what pybind11_add_module() produces for the Python
+        # MODULE_LIBRARY, the latter being what nanobind_add_module() produces for the Python
         # extensions.
         set(_mochi_hdf5_dynamic_image "$<OR:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>")
         foreach (_mochi_hdf5_target hdf5-static hdf5_cpp-static hdf5_hl-static hdf5_hl_cpp-static)

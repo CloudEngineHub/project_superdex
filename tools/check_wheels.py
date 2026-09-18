@@ -1480,7 +1480,7 @@ for module_name, module in tuple(sys.modules.items()):
         origins.append(Path(module_file).resolve())
     origins.extend(Path(path).resolve() for path in getattr(module, "__path__", ()))
     if not origins:
-        # pybind11's def_submodule() registers e.g. `superdex_robotics.bots` through
+        # Native def_submodule() calls register e.g. `superdex_robotics.bots` through
         # PyImport_AddModule, so it has no file, no __path__ and no spec. No finder ever
         # located it: it is part of whatever binary its parent was loaded from, and that
         # parent is checked in its own right. A top-level name has no parent to inherit
