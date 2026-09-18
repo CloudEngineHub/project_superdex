@@ -18,6 +18,7 @@
 
 // clang-format off
 
+#include <limits>
 #include <nanobind/nanobind.h>
 #include "../pybind_include.h"
 

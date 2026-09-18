@@ -20,6 +20,7 @@
 
 #if !MOCHI_INTERNAL
 
+#include <limits>
 #include <nanobind/nanobind.h>
 #include "../pybind_include.h"
 
