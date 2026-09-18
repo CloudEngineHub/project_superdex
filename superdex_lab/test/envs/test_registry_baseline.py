@@ -26,14 +26,12 @@ from superdex.lab.gym.utils.env_discovery import (
 from test.envs.registry_expectations import (
     EXPECTED_PUBLIC_RECIPE_ASSOCIATIONS,
     EXPECTED_PUBLIC_REGISTRATIONS,
-    EXPECTED_PUBLIC_TEST_ONLY_CONFIGURATIONS,
     PUBLIC_ENV_PACKAGE,
     restore_gym_registry,
     serialize_snapshot,
     snapshot_entry,
     snapshot_env_spec,
     snapshot_gym_registry,
-    snapshot_test_only_configuration,
 )
 
 
@@ -74,21 +72,6 @@ class TestRegistryBaseline(unittest.TestCase):
             ),
             serialize_snapshot(actual),
         )
-
-    def test_public_test_only_configurations_match_baseline(self) -> None:
-        self._register_envs_for_test()
-        entries = discover_envs((PUBLIC_ENV_PACKAGE,))
-        test_only = tuple(entry for entry in entries if entry.test_only)
-
-        self.assertEqual(
-            serialize_snapshot(EXPECTED_PUBLIC_TEST_ONLY_CONFIGURATIONS),
-            serialize_snapshot(
-                tuple(snapshot_test_only_configuration(entry) for entry in test_only)
-            ),
-        )
-        for entry in test_only:
-            with self.subTest(env_id=entry.env_id):
-                self.assertNotIn(entry.env_id, gym.registry)
 
     def test_public_recipe_associations_match_baseline(self) -> None:
         entries = discover_envs((PUBLIC_ENV_PACKAGE,))

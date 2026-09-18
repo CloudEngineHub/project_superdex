@@ -33,6 +33,7 @@ from superdex.lab.gym.registration import (
     register_envs,
 )
 from superdex.lab.gym.utils.env_discovery import register_all_envs
+from superdex.lab.gym.utils.registry import unwrap_mochi_env
 from test.envs.registry_expectations import (
     EXPECTED_PUBLIC_REGISTRATIONS,
     restore_gym_registry,
@@ -298,6 +299,13 @@ class RegistrationTest(unittest.TestCase):
         self.assertEqual({"nested": {"values": [1, 2, 3]}}, source_cfg)
         self.assertEqual({"nested": {"values": [1, 2, 4]}}, registered_cfg)
         self.assertEqual({"nested": {"values": [1, 2, 3]}}, spec.kwargs["cfg"])
+
+    def test_unwrap_rejects_non_mochi_env(self) -> None:
+        env = gym.Wrapper(gym.Env())
+        self.addCleanup(env.close)
+
+        with self.assertRaisesRegex(TypeError, "must unwrap to MochiEnv, not Env"):
+            unwrap_mochi_env(env)
 
     def test_all_version_enumeration_is_exact_and_deterministic(self) -> None:
         specs = (

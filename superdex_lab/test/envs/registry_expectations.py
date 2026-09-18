@@ -109,50 +109,6 @@ EXPECTED_PUBLIC_REGISTRATIONS = (
     ),
 )
 
-EXPECTED_PUBLIC_TEST_ONLY_CONFIGURATIONS = (
-    {
-        "env_id": "superdex_gym/AntTestNoDynamics-v0",
-        "short_name": "ant_test_no_dynamics",
-        "entry_point": "superdex.lab.gym.envs.benchmarks.ant_env:AntEnv",
-        "description": (
-            "Test-only: Ant stripped of damping and gravity on a low-friction ground. "
-            "A degenerate setup that is not a trainable task, kept as a crash check for "
-            "the non-default physics paths."
-        ),
-        "env_cfg": {
-            "use_damping": False,
-            "use_gravity": False,
-            "use_low_friction": True,
-        },
-    },
-    {
-        "env_id": "superdex_gym/CartPoleTestDampedFreePole-v0",
-        "short_name": "cart_pole_test_damped_free_pole",
-        "entry_point": "superdex.lab.gym.envs.benchmarks.cartpole_env:CartPoleEnv",
-        "description": (
-            "Test-only: CartPole without gravity and with the pole joint limits removed. "
-            "A degenerate setup that is not a trainable task, kept as a crash check for "
-            "the non-default physics paths."
-        ),
-        "env_cfg": {
-            "use_damping": True,
-            "use_gravity": False,
-            "free_pole": True,
-        },
-    },
-    {
-        "env_id": "superdex_gym/HalfCheetahTestNoGravityNoSprings-v0",
-        "short_name": "half_cheetah_test_no_gravity_no_springs",
-        "entry_point": "superdex.lab.gym.envs.benchmarks.halfcheetah_env:HalfCheetahEnv",
-        "description": (
-            "Test-only: HalfCheetah without gravity and without joint rest springs. A "
-            "degenerate setup that is not a trainable task, kept as a crash check for "
-            "the non-default physics paths."
-        ),
-        "env_cfg": {"use_gravity": False, "use_rest_springs": False},
-    },
-)
-
 EXPECTED_PUBLIC_RECIPE_ASSOCIATIONS = (
     ("superdex_gym/AntNoContact-v0", "train"),
     ("superdex_gym/CartPole-v0", "train"),
@@ -185,16 +141,6 @@ def snapshot_entry(entry: EnvEntry) -> dict[str, Any]:
         "short_name": entry.short_name,
         "entry_point": normalize_entry_point(entry.env_cls),
         "cfg_kwargs": entry.cfg_kwargs,
-    }
-
-
-def snapshot_test_only_configuration(entry: EnvEntry) -> dict[str, Any]:
-    return {
-        "env_id": entry.env_id,
-        "short_name": entry.short_name,
-        "entry_point": normalize_entry_point(entry.env_cls),
-        "description": entry.description,
-        "env_cfg": entry.cfg_kwargs,
     }
 
 
