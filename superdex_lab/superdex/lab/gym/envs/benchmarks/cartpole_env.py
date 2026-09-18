@@ -73,6 +73,11 @@ class CartPoleEnv(MochiEnv):
     _render_control: bool
     _actuate_on_pole: bool
 
+    @property
+    def actuate_on_pole(self) -> bool:
+        """Whether control is applied to the pole joint rather than the cart."""
+        return self._actuate_on_pole
+
     ####################################################################################
     # Constructor
     ####################################################################################

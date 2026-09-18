@@ -22,6 +22,7 @@ from gymnasium.envs.registration import EnvSpec
 from superdex.lab.gym.utils.env_discovery import EnvEntry
 
 PUBLIC_ENV_PACKAGE = "superdex.lab.gym.envs.benchmarks"
+_FACTORY_ENTRY_POINT = "superdex.lab.gym.registration:make_superdex_env"
 
 
 def _registration(
@@ -198,15 +199,24 @@ def snapshot_test_only_configuration(entry: EnvEntry) -> dict[str, Any]:
 
 
 def snapshot_env_spec(spec: EnvSpec) -> dict[str, Any]:
+    entry_point = normalize_entry_point(spec.entry_point)
+    kwargs = spec.kwargs
+    if entry_point == _FACTORY_ENTRY_POINT:
+        kwargs = dict(kwargs)
+        assert "env_cls" in kwargs, (
+            f"Factory spec {spec.id!r} is missing the 'env_cls' kwarg."
+        )
+        entry_point = kwargs.pop("env_cls")
+
     return {
         "id": spec.id,
-        "entry_point": normalize_entry_point(spec.entry_point),
+        "entry_point": entry_point,
         "reward_threshold": spec.reward_threshold,
         "nondeterministic": spec.nondeterministic,
         "max_episode_steps": spec.max_episode_steps,
         "order_enforce": spec.order_enforce,
         "disable_env_checker": spec.disable_env_checker,
-        "kwargs": spec.kwargs,
+        "kwargs": kwargs,
         "namespace": spec.namespace,
         "name": spec.name,
         "version": spec.version,
