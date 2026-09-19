@@ -624,8 +624,10 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
   // TODO Explore whether we can avoid accessing `SnleProblem<T>::increment`
   auto dxStep = AsView(problem.increment);
 
-  // Owning copy of the initial solution.
-  ColumnVector<T> const initialSolution = problem.GetSolution();
+  // Owning copy of the initial solution used by verbose termination logging.
+  ColumnVector<T> const initialSolution = _params.verbosity >= VerbosityLevel::Verbose
+      ? problem.GetSolution().Duplicate()
+      : ColumnVector<T>{};
 
   // Linear operator with the approximate DResidual for the linear solve.
   AnyLinearOperator linOp = {};
