@@ -55,7 +55,7 @@ class MochiMeshErrorException : public std::runtime_error {
 using RealArray = nb::ndarray<nb::numpy, real const, nb::c_contig, nb::device::cpu>;
 using IntArray = nb::ndarray<nb::numpy, int const, nb::c_contig, nb::device::cpu>;
 
-MeshData MeshDataFromNumpy(RealArray const& vertices, IntArray const& faces) {
+MeshDataView MeshDataViewFromNumpy(RealArray const& vertices, IntArray const& faces) {
   if (vertices.ndim() != 2 || vertices.shape(1) != 3) {
     throw std::invalid_argument("vertices must be an (N, 3) array");
   }
@@ -70,24 +70,10 @@ MeshData MeshDataFromNumpy(RealArray const& vertices, IntArray const& faces) {
     throw std::invalid_argument("faces array is too large");
   }
 
-  MeshData mesh;
+  MeshDataView mesh;
   mesh.nodesPerElement = 3;
-
-  int const numVerts = StaticCast<int>(vertices.shape(0));
-  int const numFaces = StaticCast<int>(faces.shape(0));
-
-  mesh.coordinates.resize(numVerts * 3);
-  auto const* vPtr = vertices.data();
-  for (int i = 0; i < numVerts * 3; ++i) {
-    mesh.coordinates[i] = vPtr[i];
-  }
-
-  mesh.connectivity.resize(numFaces * 3);
-  auto const* fPtr = faces.data();
-  for (int i = 0; i < numFaces * 3; ++i) {
-    mesh.connectivity[i] = fPtr[i];
-  }
-
+  mesh.coordinates = Span<real const>(vertices.data(), vertices.size());
+  mesh.connectivity = Span<int const>(faces.data(), faces.size());
   return mesh;
 }
 
@@ -171,7 +157,7 @@ NB_MODULE(MODULE_NAME, m) {
   m.def(
       "remesh_surface",
       [](RealArray const& vertices, IntArray const& faces, SurfaceRemeshingParams const& params) {
-        MeshData inputMesh = MeshDataFromNumpy(vertices, faces);
+        MeshDataView const inputMesh = MeshDataViewFromNumpy(vertices, faces);
         Error error;
         MeshData result = RemeshSurface(inputMesh, params, error);
         if (!error.IsOK()) {
@@ -211,16 +197,15 @@ NB_MODULE(MODULE_NAME, m) {
          IntArray const& faces,
          std::optional<RealArray> const& refVertices,
          std::optional<IntArray> const& refFaces) {
-        MeshData mesh = MeshDataFromNumpy(vertices, faces);
+        MeshDataView const mesh = MeshDataViewFromNumpy(vertices, faces);
         Error error;
         MeshStatistics stats;
         if (refVertices.has_value() != refFaces.has_value()) {
           throw std::invalid_argument("Both ref_vertices and ref_faces must be provided together.");
         }
         if (refVertices.has_value() && refFaces.has_value()) {
-          MeshData refMesh = MeshDataFromNumpy(*refVertices, *refFaces);
-          MeshDataView refView(refMesh);
-          stats = ComputeMeshStatistics(mesh, &refView, error);
+          MeshDataView const refMesh = MeshDataViewFromNumpy(*refVertices, *refFaces);
+          stats = ComputeMeshStatistics(mesh, &refMesh, error);
         } else {
           stats = ComputeMeshStatistics(mesh, nullptr, error);
         }
