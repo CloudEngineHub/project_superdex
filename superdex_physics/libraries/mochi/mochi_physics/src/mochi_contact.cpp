@@ -3325,6 +3325,13 @@ static void AssembleAllSyncContactPairs(
   for (auto& cp : allPairs) {
     Interval<int> pointsRemaining{0, isize(cp.collision->collisionResult.sampleIndices)};
     while (pointsRemaining.Size() > 0) {
+      if (isize(taskWork) == kMaxTasks) {
+        // Floating-point rounding can leave work after kMaxTasks. Do not grow taskWork:
+        // DynamicArray::GrowCapacity allocates a new FILO block, then tries to free the previous
+        // block. FiloAllocator only permits freeing the most recently allocated block.
+        taskWork.back().pairWork.emplace_back(&cp, pointsRemaining);
+        break;
+      }
       if (taskWork.empty() || taskWork.back().cost >= targetCostPerTask) {
         taskWork.push_back({});
       }
