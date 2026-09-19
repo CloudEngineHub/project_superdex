@@ -3204,6 +3204,7 @@ static void AssembleAllSyncContactPairs(
   bool const assemObj = (outObj != nullptr);
   bool const assemRes = !outRes.empty();
   bool const assemDRes = (GetNumValues(outDRes) > 0);
+  bool const needJacs = assemRes || assemDRes;
 
   // This function can be VERY expensive. The interaction matrix can have many thousands of non-zero
   // values, even for a single object contacting the hands. Most of the cost comes from from adding
@@ -3231,7 +3232,9 @@ static void AssembleAllSyncContactPairs(
   // Start by enumerating the contacting pairs and their ContactJacs
   DynamicArray<ContactJac const*> allJacs;
   DynamicArray<ContactPair> allPairs(filoAllocator);
-  allJacs.reserve(2 * JacData::kMaxJacs * isize(actors) * isize(actors)); // worst case
+  if (needJacs) {
+    allJacs.reserve(2 * JacData::kMaxJacs * isize(actors) * isize(actors)); // worst case
+  }
   allPairs.reserve(isize(actors) * isize(actors)); // worst case
   for (auto entity0 : actors) {
     if (auto* activeCollisions =
@@ -3239,7 +3242,7 @@ static void AssembleAllSyncContactPairs(
                 entity0)) {
       for (auto& coll : *activeCollisions) {
         int firstJac = isize(allJacs);
-        if (assemRes || assemDRes) {
+        if (needJacs) {
           // For each contact pair, colliding Jacobian(s) must go before collider Jacobian(s).
           entt::entity entity1 = coll.colliderEntity;
           reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId].GetJacs(
