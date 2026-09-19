@@ -3064,7 +3064,7 @@ static void AppendBlockIndices(DynamicArray<int>& outBlockIndices, Span<int cons
   } else {
     int outIdx = isize(outBlockIndices);
     int prevIdx = -1;
-    outBlockIndices.resize(outBlockIndices.size() + fullIndices.size()); // worst case
+    outBlockIndices.resize_noinit(outBlockIndices.size() + fullIndices.size()); // worst case
     for (int i : fullIndices) {
       int bi = i / kBlockSize;
       if (bi != prevIdx) {
