@@ -105,7 +105,7 @@ Project SuperDex has first-class support for Python across the board. The quicke
 3. Create venv `uv venv`
 4. Pip Install: `uv pip install superdex`
 5. Run
-    * Optional: To run Python examples in double precision (float64), set the environment variable `SUPERDEX_PRECISION=double`; otherwise, single precision is used.
+    * Optional: To run Python examples in FP64, set the environment variable `SUPERDEX_PRECISION=fp64`; otherwise, FP32 is used.
     * Physics example: `uv run superdex_physics/examples/example_tendon_comparison.py`
     * Robotics example: `uv run superdex_robotics/examples/control/example_osc_jsc_control.py`
     * SuperDex Studio: `uv run superdex-studio`
@@ -178,12 +178,12 @@ Flags for `uv sync` are:
 | `--extra build` | build tools only |
 | `--extra core` | physics, robotics, lab |
 | `--extra gui` | core + physics-debugger, studio, mesh-cli |
-| `--extra double` | core + physics-fp64, robotics-fp64 |
+| `--extra fp64` | core + physics-fp64, robotics-fp64 |
 | `--all-extras` | everything |
 
 NOTE: Running the examples above requires `--extra gui`.
 
-NOTE: `--extra double` builds the double-precision bindings, but single precision is still the default at runtime. To run Python examples in double precision, set the environment variable `SUPERDEX_PRECISION=double`.
+NOTE: `--extra fp64` builds the FP64 bindings, but FP32 is still the default at runtime. To run Python examples in FP64, set the environment variable `SUPERDEX_PRECISION=fp64`.
 
 ### Building from Source (C++)
 
@@ -195,7 +195,7 @@ Core modules such as SuperDex Physics and SuperDex Robotics are written in C++ a
 4. Configure lean Release build: `cmake -B build -DCMAKE_BUILD_TYPE=Release -DMOCHI_BUILD_DEBUGGER=OFF -DMOCHI_USE_PYBIND=OFF -G Ninja`
 5. Build: `cmake --build build --parallel`
 
-NOTE: To build the C++ libraries in double precision, add `-DMOCHI_USE_DOUBLE_PRECISION=ON` when configuring CMake. Otherwise, single precision will be used by default.
+NOTE: To build the C++ libraries in FP64, add `-DMOCHI_USE_DOUBLE_PRECISION=ON` when configuring CMake. Otherwise, FP32 will be used by default.
 
 ---
 ## Documentation
