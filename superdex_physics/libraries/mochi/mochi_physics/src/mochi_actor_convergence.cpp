@@ -113,8 +113,11 @@ static VMatrix3x3r SqrtSym3x3(VSymMatrix3x3r const& sym) {
  * The diagonal elements (√I_world)_{ii} give the per-axis characteristic torques. MOI must be in
  * the world frame to match the world-frame rotational residual DoFs.
  */
-static ColumnVector<real>
-GetRigidActorResidualWeights(entt::registry const& reg, entt::entity actor, real aRef) {
+static void GetRigidActorResidualWeights(
+    entt::registry const& reg,
+    entt::entity actor,
+    real aRef,
+    ColumnVector<real>& outWeights) {
   MOCHI_ASSERT_VERBOSE(
       reg.all_of<TagRigidActor>(actor) && !reg.any_of<TagStaticActor>(actor),
       "Expected rigid dynamic actor.");
@@ -126,24 +129,22 @@ GetRigidActorResidualWeights(entt::registry const& reg, entt::entity actor, real
   auto const moiWorld =
       RotateInertia(inertia.GetMomentOfInertiaLocal(), rootTransform.worldFromLocal.GetRotation());
 
-  ColumnVector<real> weights(RigidSize::kDAll);
+  outWeights.Resize(RigidSize::kDAll);
 
   // Translational DoFs: f_c = m·aRef.
   real const fRef = mass * aRef;
   real const forceWeight = (fRef > 0_r) ? (1_r / Sqr(fRef)) : 1_r;
   for (int i = 0; i < RigidSize::kDTrans; ++i) {
-    weights(i) = forceWeight;
+    outWeights(i) = forceWeight;
   }
 
   // Rotational DoFs: τ_c = aRef·√m·(√I_world)_{ii} via principal matrix square root.
   auto const sqrtI = SqrtSym3x3(SimdFullToSym(moiWorld));
   for (int i = 0; i < RigidSize::kDRot; ++i) {
     real const characteristicTorque = aRef * Sqrt(mass) * sqrtI[i][i];
-    weights(RigidSize::kDTrans + i) =
+    outWeights(RigidSize::kDTrans + i) =
         (characteristicTorque > 0_r) ? (1_r / Sqr(characteristicTorque)) : 1_r;
   }
-
-  return weights;
 }
 
 /**
@@ -507,8 +508,11 @@ static void BlockSqrtDiagonal(MatrixView<real const, 3, 3> block, Span<real> out
  * 4. Characteristic Formula: We compute the principal matrix square root per block.
  *    Q_c,i = aRef * m_i¹/² * (M_block¹/²)_{ii}
  */
-static ColumnVector<real>
-GetArticulatedActorResidualWeights(entt::registry const& reg, entt::entity actor, real aRef) {
+static void GetArticulatedActorResidualWeights(
+    entt::registry const& reg,
+    entt::entity actor,
+    real aRef,
+    ColumnVector<real>& outWeights) {
   MOCHI_ASSERT_VERBOSE(reg.all_of<TagArticulatedActor>(actor), "Expected articulated actor.");
   MOCHI_ASSERT_VERBOSE(aRef > 0_r, "Characteristic acceleration must be positive.");
 
@@ -556,19 +560,17 @@ GetArticulatedActorResidualWeights(entt::registry const& reg, entt::entity actor
   }
 
   // Compute weights.
-  ColumnVector<real> weights(numDofs);
+  outWeights.Resize(numDofs);
   auto fillWeights = [&](int offset, int size, real Qtype) {
     for (int d = 0; d < size; ++d) {
       int const idx = offset + d;
-      weights(idx) = (Qtype > 0_r && Qc[idx] > 0_r) ? (1_r / (Qtype * Qc[idx])) : 1_r;
+      outWeights(idx) = (Qtype > 0_r && Qc[idx] > 0_r) ? (1_r / (Qtype * Qc[idx])) : 1_r;
     }
   };
   for (auto const& joint : joints->dofInfo) {
     fillWeights(joint.GetTransOffset(), joint.transSize, Qtrans);
     fillWeights(joint.GetRotOffset(), joint.rotSize, Qrot);
   }
-
-  return weights;
 }
 
 void UpdateActorConvergenceWeights(
@@ -592,9 +594,9 @@ void UpdateActorConvergenceWeights(
   real const aRef = Max(1_r, Norm<3>(reg.ctx<CSceneGravity>().accel));
 
   if (reg.any_of<TagArticulatedActor>(actor)) {
-    outWeights.values = GetArticulatedActorResidualWeights(reg, actor, aRef);
+    GetArticulatedActorResidualWeights(reg, actor, aRef, outWeights.values);
   } else if (reg.any_of<TagRigidActor>(actor)) {
-    outWeights.values = GetRigidActorResidualWeights(reg, actor, aRef);
+    GetRigidActorResidualWeights(reg, actor, aRef, outWeights.values);
   } else if (reg.any_of<TagSoftActor>(actor)) {
     outWeights.values = GetSoftActorResidualWeights(reg, actor, aRef);
   } else if (reg.any_of<TagShellActor>(actor)) {
