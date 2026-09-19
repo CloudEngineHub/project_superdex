@@ -28,6 +28,7 @@
 #include <mochi_core/rom/rom_hyper_reduction.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/container_utils.h>
+#include <mochi_core/utils/dskinning.h>
 #include <mochi_core/utils/sparsity_utils.h>
 #include <mochi_core/utils/task_scheduler.h>
 
@@ -808,11 +809,11 @@ void skinned::SetupCollidingJacobians(
   auto const& linkTransforms =
       reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(articulated);
   // Prepare bone rotations
-  std::vector<VMatrix3x3r> rotations(linkTransforms.size());
-  auto const preTransforms = skinningInfo.skinningTransform.GetPreTransforms();
-  for (int i = 0; i < rotations.size(); i++) {
-    rotations[i] = ToVMatrix3x3(linkTransforms[i].GetRotation() * preTransforms[i].GetRotation());
-  }
+  MOCHI_ASSERT_VERBOSE(linkTransforms.size() == skinningInfo.skinningTransform.GetBoneCount());
+  MOCHI_FILO_STACK_ALLOCATOR(rotationAllocator, details::kBoneJacobiansStackSize);
+  DynamicArray<VMatrix3x3r> rotations(&rotationAllocator);
+  details::ComputeBoneJacobians</*kTranspose*/ false>(
+      skinningInfo.skinningTransform, linkTransforms, rotations);
 
   // Prepare dmap that depends on the soft actor, shared by all partitions.
   std::optional<DMapSoft> dsoft;
