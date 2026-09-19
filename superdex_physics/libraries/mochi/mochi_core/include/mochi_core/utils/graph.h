@@ -122,7 +122,7 @@ class Graph {
   Graph SortTargets(Cmp&& cmp = {}) && {
     MOCHI_PROFILE_SCOPE();
     if (NumTargets() == 0) {
-      return *this;
+      return std::move(*this);
     }
 
     // NOTE: The parallelization
@@ -138,7 +138,7 @@ class Graph {
       auto r = (*this)[v];
       std::sort(r.begin(), r.end(), cmp);
     });
-    return *this;
+    return std::move(*this);
   }
 
   Ptr NumTargets() const {
