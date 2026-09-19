@@ -16,6 +16,7 @@
 
 #include "mochi_scene_debugger.h"
 #include "mochi_scene.h"
+#include "mochi_step.h"
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/net/message_dispatcher.h>
@@ -477,6 +478,9 @@ void SceneDebuggerImpl::OnSceneStepRequest(SceneImpl* scene, protocol::SceneStep
         // Increment the step counter because the state of the scene has changed
         // and should thus be synced to client.
         ++_stepCounter;
+
+        // Re-process queries after RestoreStateFromBytes
+        UpdateAllActorQueries(scene->GetRegistry());
       } else {
         reply.error =
             Format("Failed to restore initial scene state. Reason: %s", error.GetDescription());
