@@ -559,11 +559,14 @@ static void DynamicLoadBalancingAssembly(
       double* obj = assemObj ? &localObj : nullptr;
 
       DynamicArray<int> activeElems;
-      activeElems.reserve(2 * nbs.NumElements() / numGroups);
+      bool const useSubset = !isElementActive.empty();
+      if (useSubset) {
+        activeElems.reserve(2 * nbs.NumElements() / numGroups);
+      }
 
-      auto processGroup = [&](Span<int const> groupElements) {
+      auto processGroup = [&, useSubset](Span<int const> groupElements) {
         Span<int const> elemsToProcess = groupElements;
-        if (!isElementActive.empty()) {
+        if (useSubset) {
           activeElems.clear();
           for (auto e : groupElements) {
             if (isElementActive[e]) {
