@@ -398,7 +398,7 @@ GetRodActorResidualWeights(entt::registry const& reg, entt::entity actor, real a
 static Matrix<real, 3, 3> ComputeMassBlock(
     entt::registry const& reg,
     CGroupMembers const& groupMembers,
-    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
+    Span<VMatrix3x3r const> linkMoisWorld,
     RowMatrixView<real const> J,
     int dofStart,
     int blockSize) {
@@ -422,10 +422,8 @@ static Matrix<real, 3, 3> ComputeMassBlock(
         inertia.GetMass() * (Jt_block.Transpose() * Jt_block);
 
     // Rotational: Jᵣᵀ·MOI·Jᵣ (MOI in world frame).
-    auto const moiWorld =
-        RotateInertia(inertia.GetMomentOfInertiaLocal(), linkTransforms[k].GetRotation());
     block.Block(0, 0, blockSize, blockSize) +=
-        Jr_block.Transpose() * AsMatrixView(moiWorld) * Jr_block;
+        Jr_block.Transpose() * AsMatrixView(linkMoisWorld[k]) * Jr_block;
   }
 
   return block;
@@ -525,11 +523,18 @@ static void GetArticulatedActorResidualWeights(
   auto const& dofInfo = reg.get<CActorDofInfo>(actor);
   int const numDofs = dofInfo.dofsSize;
 
-  // Stack allocator for temporaries (subtree masses + Qc per DoF).
-  constexpr std::size_t kStackSizeBytes = 1024 * 4;
+  // Stack allocator for temporaries (subtree masses + link MOIs in world space + Qc per DoF).
+  constexpr std::size_t kStackSizeBytes = 16 * 1024;
   MOCHI_FILO_STACK_ALLOCATOR(allocator, kStackSizeBytes);
 
   auto const subtreeMasses = ComputeSubtreeMasses(reg, groupMembers, parents, &allocator);
+  DynamicArray<VMatrix3x3r> linkMoisWorld(&allocator);
+  linkMoisWorld.resize_noinit(groupMembers.actors.size());
+  for (int i = 0; i < isize(groupMembers.actors); ++i) {
+    auto const& inertia = reg.get<CRigidBodyInertia>(groupMembers.actors[i]);
+    linkMoisWorld[i] =
+        RotateInertia(inertia.GetMomentOfInertiaLocal(), linkTransforms[i].GetRotation());
+  }
 
   // Compute Qc per DoF and accumulate per-type totals.
   DynamicArray<real> Qc(&allocator);
@@ -543,7 +548,8 @@ static void GetArticulatedActorResidualWeights(
     real const sqrtSubtreeMass = Sqrt(subtreeMasses[joints->jointsChildLinks[j]]);
 
     auto accumulateBlock = [&](int offset, int size, real& Qtype) {
-      auto const block = ComputeMassBlock(reg, groupMembers, linkTransforms, J, offset, size);
+      auto const block =
+          ComputeMassBlock(reg, groupMembers, MakeConstSpan(linkMoisWorld), J, offset, size);
       BlockSqrtDiagonal(block, Span(sqrtDiag, size));
       for (int d = 0; d < size; ++d) {
         Qc[offset + d] = aRef * sqrtSubtreeMass * sqrtDiag[d];
