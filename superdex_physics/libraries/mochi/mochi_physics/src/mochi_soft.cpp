@@ -783,12 +783,12 @@ void mochi::soft::SetMaterialParamsField(
   std::visit(
       [&](auto const& baseP) {
         using P = std::decay_t<decltype(baseP)>;
-        auto const homogeneous = materials::BuildPerElementParams(baseP);
         auto& c = soft::details::GetMatchingPerElementParams<P>(outMaterial);
         auto const& p = soft::details::GetTypedMaterialParams<P>(materialParams);
 
         if constexpr (materials::kIsLameMaterial<P>) {
           if (isize(c) < numElements) {
+            auto const homogeneous = materials::BuildPerElementParams(baseP);
             c.mu.resize(numElements, homogeneous.mu[0]);
             c.lambda.resize(numElements, homogeneous.lambda[0]);
           }
@@ -798,11 +798,13 @@ void mochi::soft::SetMaterialParamsField(
           c.lambda[elementIndex] = lam;
         } else if constexpr (std::is_same_v<P, ArapMaterialParams>) {
           if (isize(c) < numElements) {
+            auto const homogeneous = materials::BuildPerElementParams(baseP);
             c.stiffness.resize(numElements, homogeneous.stiffness[0]);
           }
           c.stiffness[elementIndex] = p.stiffness;
         } else if constexpr (std::is_same_v<P, ActiveShapeTargetingArapMaterialParams>) {
           if (isize(c) < numElements) {
+            auto const homogeneous = materials::BuildPerElementParams(baseP);
             int const oldSize = isize(c);
             c.stiffness.resize(numElements, homogeneous.stiffness[0]);
             c.shapeTargetTensor.resize_noinit(numElements * 6);
@@ -816,6 +818,7 @@ void mochi::soft::SetMaterialParamsField(
         } else {
           static_assert(std::is_same_v<P, ActiveNeoHookeanMaterialParams>);
           if (isize(c) < numElements) {
+            auto const homogeneous = materials::BuildPerElementParams(baseP);
             c.lame.mu.resize(numElements, homogeneous.lame.mu[0]);
             c.lame.lambda.resize(numElements, homogeneous.lame.lambda[0]);
             c.aniso.alpha.resize(numElements, homogeneous.aniso.alpha[0]);
