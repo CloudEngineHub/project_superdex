@@ -791,8 +791,10 @@ void mochi::FindPointContactsMapped(
     DynamicArray<ColliderJacDofs>* outDofsJac) {
   // Cull points based on collider bounds. The culled points are in collider space.
   auto const colliderFromPoints = Invert(pointsFromCollider);
-  DynamicArray<Real3> pointsCulled(points.size());
-  DynamicArray<int> indsCulled(points.size());
+  DynamicArray<Real3> pointsCulled;
+  DynamicArray<int> indsCulled;
+  pointsCulled.resize_noinit(points.size());
+  indsCulled.resize_noinit(points.size());
   auto numPointsCulled = static_cast<size_t>(
       FindPointsInAnyShape(bounds, points, colliderFromPoints, pointsCulled, indsCulled));
 
