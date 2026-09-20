@@ -4047,15 +4047,17 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
         // with each other (including themselves)
         reg.view<TagUsePointCloudContact const, CConservativeStepBounds const>().each(
             [&](entt::entity colliderEntity, CConservativeStepBounds const& colliderStepBounds) {
-              auto const& colliderLayer = reg.get<CContactLayer>(colliderEntity);
               // Skip self-collisions if indicated by the point-cloud collider parameters.
               bool const isSelfContact = (colliderEntity == collidingEntity);
               if (isSelfContact && !collidingPointCloudColliderParams.selfContact) {
                 return;
               }
+              if (!HasOverlap(collidingStepBounds.worldAabb, colliderStepBounds.worldAabb)) {
+                return;
+              }
+              auto const& colliderLayer = reg.get<CContactLayer>(colliderEntity);
               if (contactTable.IsContactEnabled(
-                      collidingEntity, colliderEntity, collidingLayer.id, colliderLayer.id) &&
-                  HasOverlap(collidingStepBounds.worldAabb, colliderStepBounds.worldAabb)) {
+                      collidingEntity, colliderEntity, collidingLayer.id, colliderLayer.id)) {
                 potentialColliders.emplace_back(colliderEntity);
               }
             });
