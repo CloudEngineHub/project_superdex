@@ -245,7 +245,7 @@ class TaskScheduler final {
   */
   using BatchTaskFn = std::function<void(int, int)>;
   int BatchEnqueueOnAvailableWorkers(
-      TaskSemaphore sem,
+      TaskSemaphore const& sem,
       BatchTaskFn&& task,
       int minWorkers,
       int targetWorkers,
