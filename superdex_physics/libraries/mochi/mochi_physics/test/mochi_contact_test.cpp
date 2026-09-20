@@ -26,6 +26,7 @@
 #include <mochi_physics/src/mochi_articulated_body.h>
 #include <mochi_physics/src/mochi_contact.h>
 #include <mochi_physics/src/mochi_context.h>
+#include <mochi_physics/src/mochi_deformable.h>
 #include <mochi_physics/src/mochi_group.h>
 #include <mochi_physics/src/mochi_island.h>
 #include <mochi_physics/src/mochi_rigid.h>
@@ -170,6 +171,50 @@ TEST(MochiContact, ComputeCollisionResponse) {
   runTest(/* explicitNormals */ false, /*coulombCoefficient*/ 0.5_r, /*viscousCoefficient*/ 0_r);
   runTest(/* explicitNormals */ true, /*coulombCoefficient*/ 0_r, /*viscousCoefficient*/ 100.0_r);
   runTest(/* explicitNormals */ true, /*coulombCoefficient*/ 0.5_r, /*viscousCoefficient*/ 0_r);
+}
+
+TEST(MochiContact, SetupActiveCollisionNormalsCachesLinearElementNormal) {
+  CSimulationParams simulationParams;
+  TetrahedralMesh const tetMesh{CreateMinimalTetMeshSingleTet()};
+  auto const displacements = ColumnVector<real>::Zero(kSpaceDim3 * tetMesh.GetNumNodes());
+  CRootTransform const transform{
+      TransformRT{Quaternion::FromRotationVector(Real3{0.2_r, -0.3_r, 0.4_r})}};
+  CContactSamples<TimeStep::Current> const contactPositions{0};
+  auto const surfaceMesh = CreateBoundaryMesh(tetMesh);
+  Real3 const expectedNormal =
+      transform.worldFromLocal.GetRotation() * surfaceMesh.GetElementNormals()[0];
+  auto runTest = [&](auto const& discretization) {
+    CActiveCollisions<ContactType::Sync, TimeStep::Current> collisions;
+    collisions.emplace_back(ActiveCollision{});
+    auto& result = collisions.front().collisionResult;
+    result.sampleIndices = {0, 1, 3};
+    result.jacColliderFromWorld.resize(3, VEye<3>());
+    deformable::SetupActiveCollisionNormals<ContactType::Sync>(
+        {},
+        ecs::CtxGlobal<CSimulationParams const>{simulationParams},
+        discretization,
+        CFinalDisplacementRef<TimeStep::Current>{AsConstView(displacements)},
+        CFinalDisplacementRef<TimeStep::StageStart>{AsConstView(displacements)},
+        transform,
+        contactPositions,
+        collisions);
+    EXPECT_NEAR_EQ(expectedNormal, result.normalColliding[0]);
+    EXPECT_NEAR_EQ(result.normalColliding[0], result.normalColliding[1]);
+    EXPECT_NEAR_EQ(
+        transform.worldFromLocal.GetRotation() * surfaceMesh.GetElementNormals()[1],
+        result.normalColliding[2]);
+  };
+
+  CFemVolumeDiscretizationP1Q1 volumeDiscretization;
+  volumeDiscretization.femElements.emplace_back(
+      0,
+      tetMesh.GetNodeCoordinates(),
+      tetMesh.GetElementConnectivity(),
+      tetrahedral::kTetrahedralQuadrature1);
+  runTest(
+      CFemBoundaryDiscretization::Create(
+          tetMesh, volumeDiscretization, ActorBoundaryElementType::P1Q3));
+  runTest(CFemSurfaceDiscretization::Create(ActorBoundaryElementType::P1Q3, surfaceMesh));
 }
 
 namespace {
