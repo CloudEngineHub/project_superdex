@@ -71,7 +71,7 @@ static void UpdateDirichletBC(
 
   // SNLE BC stores BC values as displacements, but we store BC positions.
   // Subtract our positions from the reference pose to update SNLE BC.
-  outLocalBC.poseValues.resize(inWorldBC->poseIndices.size());
+  outLocalBC.poseValues.resize_noinit(inWorldBC->poseIndices.size());
   Span<real const> refPositions = Flatten(mesh.mesh->GetNodeCoordinates());
   for (int i = 0; i < isize(inWorldBC->poseValues); i += 3) {
     Vec4r posWorld = ToSimdPoint(Load<3, Vec4r>(&inWorldBC->poseValues[i]));

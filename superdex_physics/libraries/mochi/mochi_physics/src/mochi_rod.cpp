@@ -293,7 +293,7 @@ static void UpdateDirichletBC(
     outLocalBC.colValueIndices = inWorldBC->colValueIndices;
 
     int const numBcDofs = isize(inWorldBC->dofIndices);
-    outLocalBC.poseValues.resize(numBcDofs);
+    outLocalBC.poseValues.resize_noinit(numBcDofs);
     for (int i = 0; i < numBcDofs; ++i) {
       int const dofIndex = inWorldBC->dofIndices[i];
       int const component = dofIndex % fem::kNumRodFields;
