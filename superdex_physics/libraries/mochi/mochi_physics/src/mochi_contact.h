@@ -246,6 +246,8 @@ struct ActiveCollision {
  * potentially colliding), and the corresponding contact result. The size is equal to the number of
  * potential colliders times the number of partitions. Templatized according to async or sync
  * contact, and according to the time step (Current or StageStart).
+ *
+ * @note Entries must remain sorted by collider entity, then colliding partition ID.
  */
 template <ContactType kContactType, TimeStep kTimeStep>
 struct CActiveCollisions : public std::vector<ActiveCollision> {
@@ -279,6 +281,7 @@ struct CActiveCollisions : public std::vector<ActiveCollision> {
 
     // Add colliders that previously were not potentially in contact but are now potentially in
     // contact.
+    bool appended = false;
     for (int c = 0; c < isize(potentialColls); ++c) {
       bool prevInContact = false;
       for (auto const& col : *this) {
@@ -288,6 +291,7 @@ struct CActiveCollisions : public std::vector<ActiveCollision> {
         }
       }
       if (!prevInContact) {
+        appended = true;
         for (int p = 0; p < numPartitions; ++p) {
           emplace_back(
               ActiveCollision{
@@ -296,9 +300,13 @@ struct CActiveCollisions : public std::vector<ActiveCollision> {
       }
     }
 
-    // Sort colliders by colliderEntity first, then by collidingPartitionId. This allows
-    // deterministic assembly of contact under scene resetting.
-    std::sort(begin(), end());
+    // Sort colliders by colliderEntity first, then by collidingPartitionId for deterministic
+    // assembly of contact under scene resetting. Stable removal preserves order and Clear()
+    // preserves both sort keys, so only appending collider blocks can require sorting.
+    if (appended) {
+      std::sort(begin(), end());
+    }
+    MOCHI_ASSERT_VERBOSE(std::is_sorted(begin(), end()), "Expected sorted active collisions.");
   }
 };
 

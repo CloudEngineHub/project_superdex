@@ -487,7 +487,17 @@ TEST(CActiveCollisions, SetUpBuildsSortedPartitionedEntries) {
 
 TEST(CActiveCollisions, SetUpAddsRemovesAndKeepsAcrossCalls) {
   CActiveAsync activeCollisions;
-  activeCollisions.SetUp(MakePotentialColliders({10, 20}), /*numPartitions*/ 2);
+  activeCollisions.SetUp(MakePotentialColliders({10, 20, 30}), /*numPartitions*/ 2);
+  activeCollisions.SetUp(MakePotentialColliders({30, 20, 10}), /*numPartitions*/ 2);
+  EXPECT_EQ(
+      (DynamicArray<std::pair<int, int>>{{10, 0}, {10, 1}, {20, 0}, {20, 1}, {30, 0}, {30, 1}}),
+      EntriesOf(activeCollisions));
+
+  // Removing without appending preserves sorted order regardless of input order.
+  activeCollisions.SetUp(MakePotentialColliders({30, 10}), /*numPartitions*/ 2);
+  EXPECT_EQ(
+      (DynamicArray<std::pair<int, int>>{{10, 0}, {10, 1}, {30, 0}, {30, 1}}),
+      EntriesOf(activeCollisions));
 
   // Flag every entry so we can verify SetUp clears the retained data of kept colliders.
   // isSdfGradUnitary is a convenient observable: ContactDetectionResult::Clear() resets it to true,
@@ -497,13 +507,13 @@ TEST(CActiveCollisions, SetUpAddsRemovesAndKeepsAcrossCalls) {
     collision.collisionResult.isSdfGradUnitary = false;
   }
 
-  // Re-run with a different collider set: 10 removed, 20 kept (not duplicated), 30 added.
-  activeCollisions.SetUp(MakePotentialColliders({20, 30}), /*numPartitions*/ 2);
+  // Re-run with a different collider set: 10 removed, 30 kept (not duplicated), 20 added.
+  activeCollisions.SetUp(MakePotentialColliders({30, 20}), /*numPartitions*/ 2);
 
   DynamicArray<std::pair<int, int>> const expected{{20, 0}, {20, 1}, {30, 0}, {30, 1}};
-  EXPECT_EQ(EntriesOf(activeCollisions), expected);
+  EXPECT_EQ(expected, EntriesOf(activeCollisions));
 
-  // Kept collider 20 had its retained data cleared; added collider 30 starts fresh, so every
+  // Kept collider 30 had its retained data cleared; added collider 20 starts fresh, so every
   // surviving entry's contact result must be reset. Catches removal of the SetUp clear loop.
   for (auto const& collision : activeCollisions) {
     EXPECT_TRUE(collision.collisionResult.isSdfGradUnitary);
