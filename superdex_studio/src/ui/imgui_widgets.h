@@ -24,6 +24,7 @@
 
 #include <math/vec3.h>
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <string>
@@ -75,7 +76,7 @@ inline constexpr AxisColors kAxisZ = {
     IM_COL32(46, 134, 233, 255), // blue, normal
     IM_COL32(50, 147, 255, 255), // blue, hovered
     IM_COL32(41, 119, 207, 255)}; // blue, active
-inline constexpr AxisColors kAxes[3] = {kAxisX, kAxisY, kAxisZ};
+inline constexpr std::array<AxisColors, 3> kAxes = {kAxisX, kAxisY, kAxisZ};
 
 // Frame-background highlight for a name input whose value collides with an existing name.
 inline ImVec4 const kNameConflictColor(0.5f, 0.0f, 0.0f, 1.0f);
@@ -201,7 +202,7 @@ bool ViewportOrientationGizmo(
 
 bool DragFloatXYZ(
     char const* label,
-    float v[3],
+    float v[3], // NOLINT(modernize-avoid-c-arrays) Array parameters are pointers.
     float v_speed = 1.0f,
     float v_min = 0.0f,
     float v_max = 0.0f,
