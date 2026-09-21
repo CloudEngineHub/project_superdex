@@ -47,6 +47,10 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <set>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -56,6 +60,7 @@ namespace {
 struct CombinedMesh {
   mochi::DynamicArray<float> positions;
   mochi::DynamicArray<float> normals;
+  mochi::DynamicArray<float> texcoords; // 2 per vertex (0,0 for untextured geometry)
   mochi::DynamicArray<uint8_t> joints;
   mochi::DynamicArray<float> weights;
   mochi::DynamicArray<uint32_t> indices;
@@ -70,6 +75,7 @@ struct MaterialFactors {
   float roughness;
   std::array<float, 3> emissive;
   float emissiveStrength;
+  int imageIndex = -1; // index into the images list, or -1 for an untextured (factor-only) material
 };
 
 // One glTF primitive: geometry plus the material it draws with, or -1 for untextured collision.
@@ -167,6 +173,11 @@ void AppendMeshGeometry(
       combined.normals.push_back(0.0f);
       combined.normals.push_back(0.0f);
     }
+
+    // Rigid geometry is untextured, but every primitive carries a TEXCOORD_0 so the writer's vertex
+    // attribute layout stays uniform across parts; these placeholder UVs go unused.
+    combined.texcoords.push_back(0.0f);
+    combined.texcoords.push_back(0.0f);
 
     combined.joints.push_back(static_cast<uint8_t>(linkIndex));
     combined.joints.push_back(0);
@@ -292,7 +303,8 @@ int FindOrAddMaterial(
   for (int i = 0; i < mochi::isize(materials); ++i) {
     if (materials[i].baseColor == factors.baseColor && materials[i].metallic == factors.metallic &&
         materials[i].roughness == factors.roughness && materials[i].emissive == factors.emissive &&
-        materials[i].emissiveStrength == factors.emissiveStrength) {
+        materials[i].emissiveStrength == factors.emissiveStrength &&
+        materials[i].imageIndex == factors.imageIndex) {
       return i;
     }
   }
@@ -319,6 +331,7 @@ void GatherRenderParts(
     mochi::Span<mochi::DynamicString const> linkNames,
     mochi::Span<mochi::TransformRT const> bindFromLinks,
     mochi::CoordinateSpaceConverter const& gltfFromMochi,
+    std::set<int> const& coveredLinks,
     mochi::DynamicArray<MaterialFactors>& materials,
     mochi::DynamicArray<MeshPart>& parts) {
   // Render GLBs are authored in the renderer's basis. Bringing them back into Mochi space lets them
@@ -328,6 +341,11 @@ void GatherRenderParts(
 
   int const numLinks = mochi::isize(bindFromLinks);
   for (int i = 0; i < numLinks; ++i) {
+    // A link the skin binds to is represented by the skin's own mesh, so skip its rigid render
+    // mesh.
+    if (coveredLinks.count(i) != 0) {
+      continue;
+    }
     auto const* linkPrefab = FindLinkPrefab(botPrefab, linkNames[i]);
     if (linkPrefab == nullptr || linkPrefab->renderModelFile.empty()) {
       continue;
@@ -388,10 +406,15 @@ void GatherCollisionPart(
     mochi::Span<mochi::ActorHandle const> linkActorHandles,
     mochi::Span<mochi::TransformRT const> bindFromLinks,
     mochi::CoordinateSpaceConverter const& gltfFromMochi,
+    std::set<int> const& coveredLinks,
     mochi::DynamicArray<MeshPart>& parts) {
   MeshPart part;
   int const numLinks = mochi::isize(bindFromLinks);
   for (int i = 0; i < numLinks; ++i) {
+    // A link the skin binds to is represented by the skin's own mesh, so skip its collision mesh.
+    if (coveredLinks.count(i) != 0) {
+      continue;
+    }
     auto* linkActor = scene->GetActor(linkActorHandles[i]);
     if (linkActor == nullptr) {
       continue;
@@ -440,6 +463,486 @@ void GatherCollisionPart(
         i);
   }
 
+  if (part.geometry.totalVertices > 0) {
+    parts.push_back(std::move(part));
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Skin support: a bot may carry a deformable skin (@ref robotics::BotPrefab::skin) skinned over the
+// articulation's links. Unlike a rigid link (every vertex weighted 1.0 to its own bone), a skin
+// vertex blends several links, so it is exported with its real per-vertex weights. The links the
+// skin binds to are represented by the skin, so their rigid meshes are skipped (see coveredLinks).
+// ------------------------------------------------------------------------------------------------
+
+// Raw base-color image extracted from a skin's render GLB, re-embedded verbatim into the export.
+struct ImageData {
+  std::vector<uint8_t> bytes;
+  std::string mimeType;
+};
+
+// One skinned triangle section read from a skin's render GLB: geometry plus up-to-4 bone influences
+// per vertex. Bone indices are in the SKIN's own bone order; the caller remaps them to composed
+// links. Positions/normals are in the renderer's (Y-up) basis, as authored.
+struct SkinnedSection {
+  std::vector<float> positions; // 3 per vertex
+  std::vector<float> normals; // 3 per vertex (may be empty)
+  std::vector<float> texcoords; // 2 per vertex (may be empty)
+  std::vector<int> indices; // 3 per triangle
+  std::vector<int> boneIndices; // 4 per vertex
+  std::vector<mochi::real> boneWeights; // 4 per vertex
+  std::array<float, 4> baseColor{1.0f, 1.0f, 1.0f, 1.0f};
+  float metallic = 0.0f;
+  float roughness = 1.0f;
+  // This section's own embedded base-color image, if it has one. Per section rather than per file:
+  // a skin GLB may texture its sections differently, and sharing one image across them would
+  // re-texture every section with whichever happened to be read first.
+  std::vector<uint8_t> imageBytes;
+  std::string imageMime;
+};
+
+// Reads a skinned GLB (POSITION / NORMAL / JOINTS_0 / WEIGHTS_0 / indices + PBR base color) via
+// cgltf -- unlike mochi_renderer::ReadGlbFromFile, which drops skinning. Returns empty on failure.
+std::vector<SkinnedSection> ReadSkinnedGlbSections(char const* path) {
+  std::vector<SkinnedSection> out;
+  cgltf_options parseOptions = {};
+  cgltf_data* data = nullptr;
+  if (cgltf_parse_file(&parseOptions, path, &data) != cgltf_result_success) {
+    return out;
+  }
+  MOCHI_DEFER(cgltf_free(data));
+  if (cgltf_load_buffers(&parseOptions, data, path) != cgltf_result_success) {
+    return out;
+  }
+  for (cgltf_size mi = 0; mi < data->meshes_count; ++mi) {
+    cgltf_mesh const& mesh = data->meshes[mi];
+    for (cgltf_size pi = 0; pi < mesh.primitives_count; ++pi) {
+      cgltf_primitive const& prim = mesh.primitives[pi];
+      if (prim.type != cgltf_primitive_type_triangles || prim.indices == nullptr) {
+        continue;
+      }
+      cgltf_accessor const* posA = nullptr;
+      cgltf_accessor const* nrmA = nullptr;
+      cgltf_accessor const* jntA = nullptr;
+      cgltf_accessor const* wgtA = nullptr;
+      cgltf_accessor const* texA = nullptr;
+      for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
+        switch (prim.attributes[a].type) {
+          case cgltf_attribute_type_position:
+            posA = prim.attributes[a].data;
+            break;
+          case cgltf_attribute_type_normal:
+            nrmA = prim.attributes[a].data;
+            break;
+          case cgltf_attribute_type_joints:
+            jntA = prim.attributes[a].data;
+            break;
+          case cgltf_attribute_type_weights:
+            wgtA = prim.attributes[a].data;
+            break;
+          case cgltf_attribute_type_texcoord:
+            if (texA == nullptr) {
+              texA = prim.attributes[a].data;
+            }
+            break;
+          // No default: every other attribute is deliberately ignored, and leaving the switch
+          // exhaustive keeps -Wswitch flagging attribute types added to cgltf later.
+          case cgltf_attribute_type_invalid:
+          case cgltf_attribute_type_tangent:
+          case cgltf_attribute_type_color:
+          case cgltf_attribute_type_custom:
+          case cgltf_attribute_type_max_enum:
+            break;
+        }
+      }
+      if (posA == nullptr) {
+        continue;
+      }
+      SkinnedSection section;
+      cgltf_size const n = posA->count;
+      section.positions.resize(n * 3);
+      cgltf_accessor_unpack_floats(posA, section.positions.data(), n * 3);
+      if (nrmA != nullptr && nrmA->count == n) {
+        section.normals.resize(n * 3);
+        cgltf_accessor_unpack_floats(nrmA, section.normals.data(), n * 3);
+      }
+      if (texA != nullptr && texA->count == n) {
+        section.texcoords.resize(n * 2);
+        cgltf_accessor_unpack_floats(texA, section.texcoords.data(), n * 2);
+      }
+      section.boneIndices.assign(n * 4, 0);
+      section.boneWeights.assign(n * 4, mochi::real(0));
+      if (jntA != nullptr && wgtA != nullptr && jntA->count == n && wgtA->count == n) {
+        std::vector<float> jointFloats(n * 4);
+        std::vector<float> weightFloats(n * 4);
+        // JOINTS_0 is an (unnormalized) integer accessor; unpack_floats returns the indices as
+        // floats, which round-trip exactly for the small counts a skin uses.
+        cgltf_accessor_unpack_floats(jntA, jointFloats.data(), n * 4);
+        cgltf_accessor_unpack_floats(wgtA, weightFloats.data(), n * 4);
+        for (cgltf_size i = 0; i < n * 4; ++i) {
+          section.boneIndices[i] = static_cast<int>(std::lround(jointFloats[i]));
+          section.boneWeights[i] = static_cast<mochi::real>(weightFloats[i]);
+        }
+      }
+      cgltf_size const numIndices = prim.indices->count;
+      section.indices.resize(numIndices);
+      for (cgltf_size i = 0; i < numIndices; ++i) {
+        section.indices[i] = static_cast<int>(cgltf_accessor_read_index(prim.indices, i));
+      }
+      if (prim.material != nullptr && prim.material->has_pbr_metallic_roughness) {
+        auto const& pbr = prim.material->pbr_metallic_roughness;
+        section.baseColor = {
+            pbr.base_color_factor[0],
+            pbr.base_color_factor[1],
+            pbr.base_color_factor[2],
+            pbr.base_color_factor[3]};
+        section.metallic = pbr.metallic_factor;
+        section.roughness = pbr.roughness_factor;
+        // Extract this section's base-color image bytes (embedded in the GLB via a buffer view)
+        // so the export can re-embed the skin's texture. External-URI images are not handled.
+        cgltf_texture const* tex = pbr.base_color_texture.texture;
+        if (tex != nullptr && tex->image != nullptr && tex->image->buffer_view != nullptr) {
+          cgltf_buffer_view const* bv = tex->image->buffer_view;
+          if (bv->buffer != nullptr && bv->buffer->data != nullptr) {
+            auto const* src = static_cast<uint8_t const*>(bv->buffer->data) + bv->offset;
+            section.imageBytes.assign(src, src + bv->size);
+            section.imageMime =
+                tex->image->mime_type != nullptr ? tex->image->mime_type : "image/png";
+          }
+        }
+      }
+      out.push_back(std::move(section));
+    }
+  }
+  return out;
+}
+
+// Transforms a SkinnedSection's positions/normals from the renderer's basis into Mochi space, so it
+// can share AppendSkinnedGeometry's one conversion path with the (already-Mochi) collision skin.
+void ConvertSkinnedSectionToMochi(
+    SkinnedSection& section,
+    mochi::CoordinateSpaceConverter const& mochiFromGltf) {
+  int const numNodes = mochi::isize(section.positions) / 3;
+  for (int i = 0; i < numNodes; ++i) {
+    mochi::Real3 const p{
+        section.positions[i * 3 + 0], section.positions[i * 3 + 1], section.positions[i * 3 + 2]};
+    mochi::Real3 const pm = mochiFromGltf.TranslationToOutput(p);
+    section.positions[i * 3 + 0] = static_cast<float>(pm[0]);
+    section.positions[i * 3 + 1] = static_cast<float>(pm[1]);
+    section.positions[i * 3 + 2] = static_cast<float>(pm[2]);
+  }
+  if (mochi::isize(section.normals) == numNodes * 3) {
+    for (int i = 0; i < numNodes; ++i) {
+      mochi::Real3 const nr{
+          section.normals[i * 3 + 0], section.normals[i * 3 + 1], section.normals[i * 3 + 2]};
+      mochi::Real3 const nm = mochiFromGltf.DirectionToOutput(nr);
+      section.normals[i * 3 + 0] = static_cast<float>(nm[0]);
+      section.normals[i * 3 + 1] = static_cast<float>(nm[1]);
+      section.normals[i * 3 + 2] = static_cast<float>(nm[2]);
+    }
+  }
+}
+
+// Like AppendMeshGeometry, but writes real per-vertex skin weights instead of a single rigid bone.
+// @p boneIndices / @p boneWeights hold @p weightsPerNode influences per vertex in the skin's own
+// bone order; @p boneToLink remaps each to a composed link index (an influence whose bone maps to
+// no link, or has non-positive weight, is dropped, then the kept influences are renormalized). Only
+// the 4 glTF influence slots are kept. Positions arrive in Mochi space.
+template <typename T>
+void AppendSkinnedGeometry(
+    CombinedMesh& combined,
+    mochi::Span<T const> positions,
+    mochi::Span<T const> normals,
+    mochi::Span<float const> texcoords,
+    mochi::Span<int const> indices,
+    mochi::Span<int const> boneIndices,
+    mochi::Span<mochi::real const> boneWeights,
+    int weightsPerNode,
+    mochi::TransformRT const& rootFromMesh,
+    mochi::Real3 const& preScale,
+    mochi::CoordinateSpaceConverter const& gltfFromMochi,
+    mochi::Span<int const> boneToLink) {
+  int const numNodes = mochi::isize(positions) / 3;
+  int const numElements = mochi::isize(indices) / 3;
+  if (numNodes == 0 || numElements == 0 || weightsPerNode <= 0) {
+    return;
+  }
+  bool const hasSourceNormals = mochi::isize(normals) == numNodes * 3;
+  mochi::Real3 const inversePreScale{1_r / preScale[0], 1_r / preScale[1], 1_r / preScale[2]};
+  auto const vertexOffset = static_cast<uint32_t>(combined.totalVertices);
+
+  for (int i = 0; i < numNodes; ++i) {
+    mochi::Real3 const pos{
+        static_cast<mochi::real>(positions[i * 3 + 0]) * preScale[0],
+        static_cast<mochi::real>(positions[i * 3 + 1]) * preScale[1],
+        static_cast<mochi::real>(positions[i * 3 + 2]) * preScale[2]};
+    mochi::Real3 const bindPos =
+        gltfFromMochi.TranslationToOutput(rootFromMesh.TransformPoint(pos));
+    combined.positions.push_back(static_cast<float>(bindPos[0]));
+    combined.positions.push_back(static_cast<float>(bindPos[1]));
+    combined.positions.push_back(static_cast<float>(bindPos[2]));
+
+    if (hasSourceNormals) {
+      mochi::Real3 const normal{
+          static_cast<mochi::real>(normals[i * 3 + 0]) * inversePreScale[0],
+          static_cast<mochi::real>(normals[i * 3 + 1]) * inversePreScale[1],
+          static_cast<mochi::real>(normals[i * 3 + 2]) * inversePreScale[2]};
+      mochi::Real3 const bindNormal =
+          gltfFromMochi.DirectionToOutput(rootFromMesh.TransformDirection(normal));
+      combined.normals.push_back(static_cast<float>(bindNormal[0]));
+      combined.normals.push_back(static_cast<float>(bindNormal[1]));
+      combined.normals.push_back(static_cast<float>(bindNormal[2]));
+    } else {
+      combined.normals.push_back(0.0f);
+      combined.normals.push_back(0.0f);
+      combined.normals.push_back(0.0f);
+    }
+
+    if (i * 2 + 1 < mochi::isize(texcoords)) {
+      combined.texcoords.push_back(texcoords[i * 2 + 0]);
+      combined.texcoords.push_back(texcoords[i * 2 + 1]);
+    } else {
+      combined.texcoords.push_back(0.0f);
+      combined.texcoords.push_back(0.0f);
+    }
+
+    std::array<uint8_t, 4> outJoints{0, 0, 0, 0};
+    std::array<float, 4> outWeights{0.0f, 0.0f, 0.0f, 0.0f};
+    int kept = 0;
+    float weightSum = 0.0f;
+    for (int k = 0; k < weightsPerNode && kept < 4; ++k) {
+      int const bone = boneIndices[i * weightsPerNode + k];
+      auto const weight = static_cast<float>(boneWeights[i * weightsPerNode + k]);
+      if (weight <= 0.0f || bone < 0 || bone >= mochi::isize(boneToLink)) {
+        continue;
+      }
+      int const link = boneToLink[bone];
+      if (link < 0) {
+        continue;
+      }
+      outJoints[kept] = static_cast<uint8_t>(link);
+      outWeights[kept] = weight;
+      weightSum += weight;
+      ++kept;
+    }
+    if (weightSum > 0.0f) {
+      for (int k = 0; k < kept; ++k) {
+        outWeights[k] /= weightSum;
+      }
+    } else {
+      // No usable influence (shouldn't happen for a valid skin); bind rigidly to the root link.
+      outJoints[0] = 0;
+      outWeights[0] = 1.0f;
+    }
+    for (int k = 0; k < 4; ++k) {
+      combined.joints.push_back(outJoints[k]);
+    }
+    for (int k = 0; k < 4; ++k) {
+      combined.weights.push_back(outWeights[k]);
+    }
+  }
+
+  int numAppendedElements = 0;
+  for (int e = 0; e < numElements; ++e) {
+    // Indices come from an external GLB (or a .mochi.h5), so validate them against this section's
+    // own vertex count before offsetting: an out-of-range value would index past the vertices just
+    // appended, and the face-normal path below writes through it.
+    int const raw0 = indices[e * 3 + 0];
+    int const raw1 = indices[e * 3 + 1];
+    int const raw2 = indices[e * 3 + 2];
+    if (raw0 < 0 || raw0 >= numNodes || raw1 < 0 || raw1 >= numNodes || raw2 < 0 ||
+        raw2 >= numNodes) {
+      MOCHI_LOG_WARNING_ONCE(
+          "ExportSkeletalGlb: skinned mesh has triangle indices outside its vertex range; those "
+          "triangles are dropped from the export.");
+      continue;
+    }
+    uint32_t const i0 = vertexOffset + static_cast<uint32_t>(raw0);
+    uint32_t const i1 = vertexOffset + static_cast<uint32_t>(raw1);
+    uint32_t const i2 = vertexOffset + static_cast<uint32_t>(raw2);
+    combined.indices.push_back(i0);
+    combined.indices.push_back(i1);
+    combined.indices.push_back(i2);
+    ++numAppendedElements;
+
+    if (hasSourceNormals) {
+      continue;
+    }
+    float const* p0 = &combined.positions[i0 * 3];
+    float const* p1 = &combined.positions[i1 * 3];
+    float const* p2 = &combined.positions[i2 * 3];
+    std::array<float, 3> const edge1 = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+    std::array<float, 3> const edge2 = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+    std::array<float, 3> const faceNormal = {
+        edge1[1] * edge2[2] - edge1[2] * edge2[1],
+        edge1[2] * edge2[0] - edge1[0] * edge2[2],
+        edge1[0] * edge2[1] - edge1[1] * edge2[0]};
+    for (uint32_t const vi : {i0, i1, i2}) {
+      combined.normals[vi * 3 + 0] += faceNormal[0];
+      combined.normals[vi * 3 + 1] += faceNormal[1];
+      combined.normals[vi * 3 + 2] += faceNormal[2];
+    }
+  }
+
+  combined.totalVertices += numNodes;
+  combined.totalIndices += numAppendedElements * 3;
+}
+
+// Maps skin bone b -> composed link index. For a composed (mod) bot, @ref BotPrefab::_skinBoneLinks
+// names the link each skin bone binds to (its indices were offset onto the composed skeleton when
+// the sub-bot was attached), so this bakes those offsets in for export. For a standalone skinned
+// bot _skinBoneLinks is empty and the skin's bone indices already ARE link indices (identity).
+// Empty if the bot has no skin.
+mochi::DynamicArray<int> BuildSkinBoneToLink(
+    robotics::BotPrefab const& botPrefab,
+    mochi::Span<mochi::DynamicString const> linkNames) {
+  mochi::DynamicArray<int> boneToLink;
+  if (!botPrefab.skin.has_value()) {
+    return boneToLink;
+  }
+  if (botPrefab._skinBoneLinks.empty()) {
+    boneToLink.resize(mochi::isize(linkNames));
+    for (int i = 0; i < mochi::isize(linkNames); ++i) {
+      boneToLink[i] = i;
+    }
+    return boneToLink;
+  }
+  std::unordered_map<std::string_view, int> linkIndexByName;
+  linkIndexByName.reserve(static_cast<size_t>(mochi::isize(linkNames)));
+  for (int i = 0; i < mochi::isize(linkNames); ++i) {
+    linkIndexByName.emplace(std::string_view(linkNames[i]), i);
+  }
+  boneToLink.resize(mochi::isize(botPrefab._skinBoneLinks));
+  for (int b = 0; b < mochi::isize(botPrefab._skinBoneLinks); ++b) {
+    auto const it = linkIndexByName.find(std::string_view(botPrefab._skinBoneLinks[b]));
+    boneToLink[b] = it != linkIndexByName.end() ? it->second : -1;
+    if (boneToLink[b] < 0) {
+      // Left as -1 so the vertex loop drops the influence and renormalizes, but report it: the
+      // exported skin silently loses that bone's deformation otherwise.
+      MOCHI_LOG_WARNING_ONCE(
+          "ExportSkeletalGlb: skin bone references link '%s', which is not in the exported "
+          "skeleton; that bone's influence is dropped.",
+          botPrefab._skinBoneLinks[b].c_str());
+    }
+  }
+  return boneToLink;
+}
+
+// Appends the skin's render mesh (@ref BotPrefab::skin->renderModelFile) to the render parts, per
+// distinct material, with real per-vertex weights remapped through @p skinBoneToLink. No-op if the
+// bot has no skin or the skin has no render model.
+void GatherSkinRenderParts(
+    robotics::BotPrefab const& botPrefab,
+    mochi::CoordinateSpaceConverter const& gltfFromMochi,
+    mochi::Span<int const> skinBoneToLink,
+    mochi::TransformRT const& rootFromSkinRoot,
+    mochi::DynamicArray<ImageData>& images,
+    mochi::DynamicArray<MaterialFactors>& materials,
+    mochi::DynamicArray<MeshPart>& parts) {
+  if (!botPrefab.skin.has_value() || botPrefab.skin->renderModelFile.empty()) {
+    return;
+  }
+  auto sections = ReadSkinnedGlbSections(botPrefab.skin->renderModelFile.c_str());
+  if (sections.empty()) {
+    MOCHI_LOG_WARNING(
+        "ExportSkeletalGlb: no skinned render geometry read from skin '%s'; skipping it.",
+        botPrefab.skin->renderModelFile.c_str());
+    return;
+  }
+  // Sections sharing identical image bytes share one embedded image, so a skin split across
+  // several primitives by material does not embed the same texture repeatedly.
+  auto findOrAddImage = [&images](std::vector<uint8_t>& bytes, std::string& mime) {
+    if (bytes.empty()) {
+      return -1;
+    }
+    for (int i = 0; i < mochi::isize(images); ++i) {
+      if (images[i].bytes == bytes) {
+        return i;
+      }
+    }
+    int const index = mochi::isize(images);
+    images.push_back(ImageData{std::move(bytes), std::move(mime)});
+    return index;
+  };
+  mochi::CoordinateSpaceConverter const mochiFromGltf(
+      mochi_renderer::RenderSpace(), mochi::CoordinateSpace::Default());
+  // The skin mesh is authored in the skin's own root-link frame. rootFromSkinRoot carries that
+  // frame to the composed root (identity for a standalone bot; the hand's offset onto the arm for a
+  // mod bot), and the skin's render-model transform is its static offset within that frame. The
+  // skinning then carries it to the pose.
+  mochi::TransformRT const rootFromMesh = rootFromSkinRoot *
+      mochi::TransformRT(botPrefab.skin->renderModelRotation,
+                         botPrefab.skin->renderModelTranslation);
+  for (auto& section : sections) {
+    if (section.positions.size() < 9 || section.indices.size() < 3) {
+      continue;
+    }
+    ConvertSkinnedSectionToMochi(section, mochiFromGltf);
+    // SkinnedSection carries no emissive data, so pass the neutral values: black emissive with unit
+    // strength, which keeps KHR_materials_emissive_strength off the exported material.
+    int const sectionImageIndex = findOrAddImage(section.imageBytes, section.imageMime);
+    MaterialFactors const factors{
+        section.baseColor,
+        section.metallic,
+        section.roughness,
+        {0.0f, 0.0f, 0.0f},
+        1.0f,
+        sectionImageIndex};
+    int const materialIndex = FindOrAddMaterial(materials, factors);
+    // Materials grow one at a time and every new material immediately gets its own part, so a
+    // material index is also its part index. Both render gatherers run before any collision part is
+    // pushed (which would add a part with no material), so the two stay in step here.
+    if (materialIndex == mochi::isize(parts)) {
+      MeshPart part;
+      part.materialIndex = materialIndex;
+      parts.push_back(std::move(part));
+    }
+    AppendSkinnedGeometry<float>(
+        parts[materialIndex].geometry,
+        mochi::MakeConstSpan(section.positions),
+        mochi::MakeConstSpan(section.normals),
+        mochi::MakeConstSpan(section.texcoords),
+        mochi::MakeConstSpan(section.indices),
+        mochi::MakeConstSpan(section.boneIndices),
+        mochi::MakeConstSpan(section.boneWeights),
+        /*weightsPerNode=*/4,
+        rootFromMesh,
+        botPrefab.skin->renderModelScale,
+        gltfFromMochi,
+        skinBoneToLink);
+  }
+}
+
+// Appends the skin's collision mesh (a preloaded @ref BotPrefab::skin->shapeFile .mochi.h5, already
+// in Mochi space and root-relative) as one untextured collision part, with real per-vertex weights
+// remapped through @p skinBoneToLink. No-op if the mesh carries no triangle skinning.
+void GatherSkinCollisionPart(
+    mochi::ModelData const& skinModel,
+    mochi::CoordinateSpaceConverter const& gltfFromMochi,
+    mochi::Span<int const> skinBoneToLink,
+    mochi::TransformRT const& rootFromSkinRoot,
+    mochi::DynamicArray<MeshPart>& parts) {
+  if (!skinModel.mesh.has_value() || !skinModel.mesh->skinning.has_value()) {
+    return;
+  }
+  auto const& mesh = *skinModel.mesh;
+  if (mesh.nodesPerElement != 3 || mesh.GetNumNodes() == 0) {
+    return;
+  }
+  MeshPart part; // untextured (materialIndex stays -1)
+  AppendSkinnedGeometry<mochi::real>(
+      part.geometry,
+      mochi::MakeConstSpan(mesh.coordinates),
+      mochi::Span<mochi::real const>{},
+      mochi::Span<float const>{},
+      mochi::MakeConstSpan(mesh.connectivity),
+      mochi::MakeConstSpan(mesh.skinning->indices),
+      mochi::MakeConstSpan(mesh.skinning->weights),
+      mesh.skinning->weightsPerNode,
+      rootFromSkinRoot,
+      mochi::Real3{1_r, 1_r, 1_r},
+      gltfFromMochi,
+      skinBoneToLink);
   if (part.geometry.totalVertices > 0) {
     parts.push_back(std::move(part));
   }
@@ -511,16 +1014,116 @@ void ExportSkeletalGlb(
   // where they reach the GLB, keeping one conversion per written value.
   mochi::CoordinateSpaceConverter const gltfFromMochi = GltfFromMochi();
 
+  // Skin (optional). The skin's bone indices are remapped to composed link indices -- identity for
+  // a standalone skinned bot, offset onto the composed skeleton for a mod bot (via _skinBoneLinks).
+  // The links the skin covers (see nonCollidingLinks below) are represented by the skin, so
+  // their per-link rigid meshes are skipped (coveredLinks).
+  mochi::DynamicArray<int> const skinBoneToLink = BuildSkinBoneToLink(botPrefab, artInfo.linkNames);
+  // The skin mesh is authored in its own root-link frame (skin bone 0 = the skin's root link).
+  // rootFromSkinRoot maps that frame to the composed root: identity for a standalone skinned bot
+  // (bone 0 -> link 0, whose root-relative rest is identity), and the hand's offset onto the arm
+  // for a mod bot. Skin vertices are placed through it so they land where the composed skeleton is.
+  int const skinRootLink =
+      (mochi::isize(skinBoneToLink) > 0 && skinBoneToLink[0] >= 0) ? skinBoneToLink[0] : 0;
+  mochi::TransformRT const rootFromSkinRoot =
+      (skinRootLink >= 0 && skinRootLink < mochi::isize(bindFromLinks))
+      ? bindFromLinks[skinRootLink]
+      : mochi::TransformRT{};
+  // Load the collision skin once; it is reused below (covered-set derivation when
+  // nonCollidingLinks is unset) and by GatherSkinCollisionPart.
+  mochi::ModelData skinCollisionModel;
+  bool loadFailed = false;
+  if (botPrefab.skin.has_value() && !botPrefab.skin->shapeFile.empty()) {
+    mochi::ErrorLog skinError;
+    skinCollisionModel = loader.LoadModelData(botPrefab.skin->shapeFile, skinError);
+    if (!skinError.IsOK() || !skinCollisionModel.mesh.has_value()) {
+      // Continuing would drop the collision skin AND leave coveredLinks empty, so every link the
+      // skin covers would export its rigid mesh as well as the skin -- overlapping geometry in a
+      // file that otherwise looks fine. A declared skin shape that will not load is an error.
+      MOCHI_LOG_ERROR(
+          "ExportSkeletalGlb: could not load the skin collision mesh '%s'.",
+          botPrefab.skin->shapeFile.c_str());
+      loadFailed = true;
+    }
+  }
+  // JOINTS_0 is emitted as unsigned bytes (see CombinedGeometry::joints), so link indices past
+  // 255 wrap and bind geometry to the wrong bone. Fail rather than write a file that is quietly
+  // wrong; widening the accessor to 16-bit is the real fix if this is ever hit.
+  if (mochi::isize(artInfo.linkNames) > 256) {
+    MOCHI_LOG_ERROR("ExportSkeletalGlb: bot has %d links.", mochi::isize(artInfo.linkNames));
+  }
+  MOCHI_ERROR_IF(
+      mochi::isize(artInfo.linkNames) > 256,
+      error,
+      "Bot has more links than the 256 addressable by unsigned-byte GLB joint indices.");
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(
+      loadFailed, error, "The bot's skin declares a collision mesh that could not be loaded.");
+  MOCHI_ERROR_RETURN(error);
+  // coveredLinks are the links the skin covers -- their rigid render/collision meshes are skipped
+  // because the skin represents them. This mirrors ArticulatedSkinParams::nonCollidingLinks
+  // exactly: when set, the skin covers precisely those listed links (and its faces cover only
+  // them; links NOT listed keep their own rigid geometry). When unset, no link collides and the
+  // skin is the sole colliding actor, so all links its collision mesh weights are covered.
+  std::set<int> coveredLinks;
+  if (botPrefab.skin.has_value()) {
+    if (botPrefab.skin->nonCollidingLinks.has_value()) {
+      std::unordered_map<std::string_view, int> linkIndexByName;
+      linkIndexByName.reserve(static_cast<size_t>(mochi::isize(artInfo.linkNames)));
+      for (int i = 0; i < mochi::isize(artInfo.linkNames); ++i) {
+        linkIndexByName.emplace(std::string_view(artInfo.linkNames[i]), i);
+      }
+      for (auto const& name : *botPrefab.skin->nonCollidingLinks) {
+        auto const it = linkIndexByName.find(std::string_view(name));
+        if (it != linkIndexByName.end()) {
+          coveredLinks.insert(it->second);
+        }
+      }
+    } else if (
+        skinCollisionModel.mesh.has_value() && skinCollisionModel.mesh->skinning.has_value()) {
+      for (int const boneIndex : skinCollisionModel.mesh->skinning->indices) {
+        int const link = (boneIndex >= 0 && boneIndex < mochi::isize(skinBoneToLink))
+            ? skinBoneToLink[boneIndex]
+            : -1;
+        if (link >= 0) {
+          coveredLinks.insert(link);
+        }
+      }
+    }
+  }
+
   // Gather geometry, render parts first, so each mesh owns a contiguous run of parts.
+  mochi::DynamicArray<ImageData> images;
   mochi::DynamicArray<MaterialFactors> materialFactors;
   mochi::DynamicArray<MeshPart> parts;
   if (options.includeRenderMeshes) {
     GatherRenderParts(
-        botPrefab, artInfo.linkNames, bindFromLinks, gltfFromMochi, materialFactors, parts);
+        botPrefab,
+        artInfo.linkNames,
+        bindFromLinks,
+        gltfFromMochi,
+        coveredLinks,
+        materialFactors,
+        parts);
+    GatherSkinRenderParts(
+        botPrefab,
+        gltfFromMochi,
+        mochi::MakeConstSpan(skinBoneToLink),
+        rootFromSkinRoot,
+        images,
+        materialFactors,
+        parts);
   }
   int const numRenderParts = mochi::isize(parts);
   if (options.includeCollisionMeshes) {
-    GatherCollisionPart(scene, context, linkActorHandles, bindFromLinks, gltfFromMochi, parts);
+    GatherCollisionPart(
+        scene, context, linkActorHandles, bindFromLinks, gltfFromMochi, coveredLinks, parts);
+    GatherSkinCollisionPart(
+        skinCollisionModel,
+        gltfFromMochi,
+        mochi::MakeConstSpan(skinBoneToLink),
+        rootFromSkinRoot,
+        parts);
   }
   int const numCollisionParts = mochi::isize(parts) - numRenderParts;
 
@@ -568,14 +1171,18 @@ void ExportSkeletalGlb(
 
   // From here on cgltf_data holds raw pointers into the arrays below, and cgltf_write derives every
   // JSON index from those pointers, so each array is sized once up front and never grows again.
-  int const numViews = numParts * 5 + (hasSkin ? 1 : 0);
+  int const numImages = mochi::isize(images);
+  int const numAccessors = numParts * 6 + (hasSkin ? 1 : 0);
+  int const imageViewBase = numAccessors;
+  int const numBufferViews = numAccessors + numImages;
   mochi::DynamicArray<cgltf_buffer_view> bufferViews;
-  ResizeZeroed(bufferViews, numViews);
+  ResizeZeroed(bufferViews, numBufferViews);
   mochi::DynamicArray<cgltf_accessor> accessors;
-  ResizeZeroed(accessors, numViews);
+  ResizeZeroed(accessors, numAccessors);
 
-  // Every element size here is a multiple of 4 bytes (12, 12, 4, 16, 4, 64), so appending
-  // sequentially keeps each view's offset 4-byte aligned as glTF requires, with no padding.
+  // Every geometry element size here is a multiple of 4 bytes (position 12, normal 12, texcoord 8,
+  // joints 4, weights 16, index 4, inverse-bind 64), so appending sequentially keeps each view's
+  // offset 4-byte aligned as glTF requires. Image blobs, appended last, are padded to 4 explicitly.
   mochi::DynamicArray<uint8_t> bufferData;
   auto const appendBytes = [&bufferData](void const* src, cgltf_size numBytes) {
     auto const offset = bufferData.size();
@@ -587,7 +1194,7 @@ void ExportSkeletalGlb(
   for (int p = 0; p < numParts; ++p) {
     auto const& geometry = parts[p].geometry;
     auto const numVertices = static_cast<cgltf_size>(geometry.totalVertices);
-    int const view = p * 5;
+    int const view = p * 6;
 
     std::array<float, 3> posMin{};
     std::array<float, 3> posMax{};
@@ -615,35 +1222,44 @@ void ExportSkeletalGlb(
     accessors[view + 1].count = numVertices;
     accessors[view + 1].buffer_view = &bufferViews[view + 1];
 
-    bufferViews[view + 2].offset = appendBytes(geometry.joints.data(), numVertices * 4);
-    bufferViews[view + 2].size = numVertices * 4;
-    bufferViews[view + 2].stride = 4;
+    bufferViews[view + 2].offset = appendBytes(geometry.texcoords.data(), numVertices * 8);
+    bufferViews[view + 2].size = numVertices * 8;
+    bufferViews[view + 2].stride = 8;
     bufferViews[view + 2].type = cgltf_buffer_view_type_vertices;
-    accessors[view + 2].component_type = cgltf_component_type_r_8u;
-    accessors[view + 2].type = cgltf_type_vec4;
+    accessors[view + 2].component_type = cgltf_component_type_r_32f;
+    accessors[view + 2].type = cgltf_type_vec2;
     accessors[view + 2].count = numVertices;
     accessors[view + 2].buffer_view = &bufferViews[view + 2];
 
-    bufferViews[view + 3].offset = appendBytes(geometry.weights.data(), numVertices * 16);
-    bufferViews[view + 3].size = numVertices * 16;
-    bufferViews[view + 3].stride = 16;
+    bufferViews[view + 3].offset = appendBytes(geometry.joints.data(), numVertices * 4);
+    bufferViews[view + 3].size = numVertices * 4;
+    bufferViews[view + 3].stride = 4;
     bufferViews[view + 3].type = cgltf_buffer_view_type_vertices;
-    accessors[view + 3].component_type = cgltf_component_type_r_32f;
+    accessors[view + 3].component_type = cgltf_component_type_r_8u;
     accessors[view + 3].type = cgltf_type_vec4;
     accessors[view + 3].count = numVertices;
     accessors[view + 3].buffer_view = &bufferViews[view + 3];
 
-    auto const numIndices = static_cast<cgltf_size>(geometry.totalIndices);
-    bufferViews[view + 4].offset = appendBytes(geometry.indices.data(), numIndices * 4);
-    bufferViews[view + 4].size = numIndices * 4;
-    bufferViews[view + 4].type = cgltf_buffer_view_type_indices;
-    accessors[view + 4].component_type = cgltf_component_type_r_32u;
-    accessors[view + 4].type = cgltf_type_scalar;
-    accessors[view + 4].count = numIndices;
+    bufferViews[view + 4].offset = appendBytes(geometry.weights.data(), numVertices * 16);
+    bufferViews[view + 4].size = numVertices * 16;
+    bufferViews[view + 4].stride = 16;
+    bufferViews[view + 4].type = cgltf_buffer_view_type_vertices;
+    accessors[view + 4].component_type = cgltf_component_type_r_32f;
+    accessors[view + 4].type = cgltf_type_vec4;
+    accessors[view + 4].count = numVertices;
     accessors[view + 4].buffer_view = &bufferViews[view + 4];
+
+    auto const numIndices = static_cast<cgltf_size>(geometry.totalIndices);
+    bufferViews[view + 5].offset = appendBytes(geometry.indices.data(), numIndices * 4);
+    bufferViews[view + 5].size = numIndices * 4;
+    bufferViews[view + 5].type = cgltf_buffer_view_type_indices;
+    accessors[view + 5].component_type = cgltf_component_type_r_32u;
+    accessors[view + 5].type = cgltf_type_scalar;
+    accessors[view + 5].count = numIndices;
+    accessors[view + 5].buffer_view = &bufferViews[view + 5];
   }
 
-  int const ibmView = numParts * 5;
+  int const ibmView = numParts * 6;
   if (hasSkin) {
     auto const ibmSize = static_cast<cgltf_size>(numLinks) * 64;
     bufferViews[ibmView].offset = appendBytes(ibmData.data(), ibmSize);
@@ -654,11 +1270,44 @@ void ExportSkeletalGlb(
     accessors[ibmView].buffer_view = &bufferViews[ibmView];
   }
 
+  // Image bytes (skin textures) follow the geometry, each as its own buffer view -- a glTF image
+  // references a buffer view directly, with no accessor. Pad to 4 bytes to keep later data aligned.
+  for (int i = 0; i < numImages; ++i) {
+    auto const imageSize = static_cast<cgltf_size>(images[i].bytes.size());
+    bufferViews[imageViewBase + i].offset = appendBytes(images[i].bytes.data(), imageSize);
+    bufferViews[imageViewBase + i].size = imageSize;
+    while (bufferData.size() % 4 != 0) {
+      bufferData.push_back(0);
+    }
+  }
+
   cgltf_buffer buffer = {};
   buffer.size = bufferData.size();
   buffer.data = bufferData.data();
   for (auto& bufferView : bufferViews) {
     bufferView.buffer = &buffer;
+  }
+
+  // Texture objects for the embedded skin images (one shared sampler, default linear/repeat). These
+  // outlive cgltf_write_file; the material loop below points textured materials at them.
+  cgltf_sampler sampler = {};
+  sampler.mag_filter = cgltf_filter_type_linear;
+  sampler.min_filter = cgltf_filter_type_linear;
+  sampler.wrap_s = cgltf_wrap_mode_repeat;
+  sampler.wrap_t = cgltf_wrap_mode_repeat;
+  mochi::DynamicArray<cgltf_image> cgltfImages;
+  mochi::DynamicArray<cgltf_texture> cgltfTextures;
+  mochi::DynamicArray<std::array<char, 24>> imageNames;
+  ResizeZeroed(cgltfImages, numImages);
+  ResizeZeroed(cgltfTextures, numImages);
+  imageNames.resize(numImages);
+  for (int i = 0; i < numImages; ++i) {
+    std::snprintf(imageNames[i].data(), imageNames[i].size(), "Image_%d", i);
+    cgltfImages[i].name = imageNames[i].data();
+    cgltfImages[i].buffer_view = &bufferViews[imageViewBase + i];
+    cgltfImages[i].mime_type = const_cast<char*>(images[i].mimeType.c_str());
+    cgltfTextures[i].image = &cgltfImages[i];
+    cgltfTextures[i].sampler = &sampler;
   }
 
   // cgltf_material::name is non-owning, so its storage has to outlive cgltf_write_file. Fixed-size
@@ -690,15 +1339,22 @@ void ExportSkeletalGlb(
     }
     materials[i].alpha_mode =
         materialFactors[i].baseColor[3] < 1.0f ? cgltf_alpha_mode_blend : cgltf_alpha_mode_opaque;
+    // Winding in the source render meshes is not dependable, so draw both sides rather than risk
+    // geometry disappearing to back-face culling.
+    materials[i].double_sided = 1;
+    if (materialFactors[i].imageIndex >= 0 && materialFactors[i].imageIndex < numImages) {
+      pbr.base_color_texture.texture = &cgltfTextures[materialFactors[i].imageIndex];
+      pbr.base_color_texture.texcoord = 0;
+    }
   }
 
   mochi::DynamicArray<cgltf_attribute> attributes;
-  ResizeZeroed(attributes, numParts * 4);
+  ResizeZeroed(attributes, numParts * 5);
   mochi::DynamicArray<cgltf_primitive> primitives;
   ResizeZeroed(primitives, numParts);
   for (int p = 0; p < numParts; ++p) {
-    int const view = p * 5;
-    int const attribute = p * 4;
+    int const view = p * 6;
+    int const attribute = p * 5;
     attributes[attribute + 0].name = const_cast<char*>("POSITION");
     attributes[attribute + 0].type = cgltf_attribute_type_position;
     attributes[attribute + 0].index = 0;
@@ -707,19 +1363,23 @@ void ExportSkeletalGlb(
     attributes[attribute + 1].type = cgltf_attribute_type_normal;
     attributes[attribute + 1].index = 0;
     attributes[attribute + 1].data = &accessors[view + 1];
-    attributes[attribute + 2].name = const_cast<char*>("JOINTS_0");
-    attributes[attribute + 2].type = cgltf_attribute_type_joints;
+    attributes[attribute + 2].name = const_cast<char*>("TEXCOORD_0");
+    attributes[attribute + 2].type = cgltf_attribute_type_texcoord;
     attributes[attribute + 2].index = 0;
     attributes[attribute + 2].data = &accessors[view + 2];
-    attributes[attribute + 3].name = const_cast<char*>("WEIGHTS_0");
-    attributes[attribute + 3].type = cgltf_attribute_type_weights;
+    attributes[attribute + 3].name = const_cast<char*>("JOINTS_0");
+    attributes[attribute + 3].type = cgltf_attribute_type_joints;
     attributes[attribute + 3].index = 0;
     attributes[attribute + 3].data = &accessors[view + 3];
+    attributes[attribute + 4].name = const_cast<char*>("WEIGHTS_0");
+    attributes[attribute + 4].type = cgltf_attribute_type_weights;
+    attributes[attribute + 4].index = 0;
+    attributes[attribute + 4].data = &accessors[view + 4];
 
     primitives[p].type = cgltf_primitive_type_triangles;
-    primitives[p].indices = &accessors[view + 4];
+    primitives[p].indices = &accessors[view + 5];
     primitives[p].attributes = &attributes[attribute];
-    primitives[p].attributes_count = 4;
+    primitives[p].attributes_count = 5;
     if (parts[p].materialIndex >= 0) {
       primitives[p].material = &materials[parts[p].materialIndex];
     }
@@ -860,6 +1520,14 @@ void ExportSkeletalGlb(
   if (numMaterials > 0) {
     data.materials = materials.data();
     data.materials_count = static_cast<cgltf_size>(numMaterials);
+  }
+  if (numImages > 0) {
+    data.images = cgltfImages.data();
+    data.images_count = static_cast<cgltf_size>(numImages);
+    data.textures = cgltfTextures.data();
+    data.textures_count = static_cast<cgltf_size>(numImages);
+    data.samplers = &sampler;
+    data.samplers_count = 1;
   }
 
   // Write GLB file

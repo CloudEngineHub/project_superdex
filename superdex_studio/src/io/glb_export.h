@@ -41,10 +41,13 @@ enum class GlbBindPose {
 // Which geometry @ref ExportSkeletalGlb writes, and what the skin binds to.
 struct GlbExportOptions {
   // Include each link's render mesh (@ref robotics::BotLinkPrefab::renderModelFile) as a
-  // "BotRenderMesh" node, preserving its materials.
+  // "BotRenderMesh" node, preserving its materials. A deformable skin
+  // (@ref robotics::BotPrefab::skin), if present, contributes its own textured render mesh here,
+  // and the links it surfaces are represented by it instead of their own render mesh.
   bool includeRenderMeshes = true;
   // Include each link's collision surface mesh (@ref robotics::BotLinkPrefab::shapeFile) as an
-  // untextured "BotCollisionMesh" node.
+  // untextured "BotCollisionMesh" node. A deformable skin's collision mesh, if present, is added
+  // here too.
   bool includeCollisionMeshes = true;
   GlbBindPose bindPose = GlbBindPose::Rest;
 };
@@ -60,6 +63,13 @@ struct GlbExportOptions {
 // Selecting neither source writes the joint hierarchy alone, with no mesh and no skin. Note that
 // without a skin there is nothing for an importer to build an armature from, so Blender reads such
 // a file as plain empties rather than bones.
+//
+// A deformable skin (@ref robotics::BotPrefab::skin), if present, is exported as additional skinned
+// geometry with its real per-vertex weights and its bone indices remapped onto the composed
+// skeleton (so an attached hand's skin lands correctly on the arm), and its base-color texture is
+// re-embedded. The links the skin covers carry no separate rigid mesh; links it does not cover
+// (e.g. hard couplings and nails) keep their own. The skin's nonCollidingLinks, when set, names
+// exactly the covered links; when unset, every link the skin binds to is covered.
 //
 // Geometry and joints are converted from Mochi's Z-up basis (@ref mochi::CoordinateSpace::Default)
 // into the Y-up one the render meshes use (@ref mochi_renderer::RenderSpace).

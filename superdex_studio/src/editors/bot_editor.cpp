@@ -930,6 +930,10 @@ void BotEditor::ShowExportSkeletalGlbModal() {
           _studio->GetBotLoader(),
           _glbExport.options,
           error);
+      if (error.IsOK()) {
+        // Newly written / overwritten export files only appear once the browser rescans.
+        _studio->GetAssetBrowser().Refresh();
+      }
     }
   }
 }
