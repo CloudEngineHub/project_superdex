@@ -36,6 +36,7 @@ namespace mochi_renderer {
 class MaterialInstance;
 class IInstanceable;
 class Resource;
+class SkinnedModelInstance;
 
 // Filament renderable layer bit reserved for the highlight overlay pass. A renderable tagged with
 // this bit is additionally re-rendered into an isolated overlay target (its normal appearance in
@@ -105,6 +106,12 @@ class SceneObject {
 
   virtual IInstanceable* GetInstanceable() = 0;
   void SetParent(SceneObject* other) const;
+
+  // RTTI-free downcast: returns this as a SkinnedModelInstance when the object is a GPU-skinned
+  // render model (so callers holding a base SceneObject can drive its joints), else nullptr.
+  virtual SkinnedModelInstance* AsSkinnedModelInstance() {
+    return nullptr;
+  }
 
  protected:
   SceneObject(filament::Engine* engine);

@@ -25,6 +25,7 @@
 
 #include <mochi_core/geometry/model_data.h>
 #include <mochi_core/geometry/model_utils.h>
+#include <mochi_core/utils/transform_rt.h>
 
 #include <algorithm>
 #include <vector>
@@ -115,7 +116,7 @@ class RenderModel : public Resource, public IInstanceable {
       mochi::Span<float const> normals,
       mochi::Span<int const> indices);
 
- private:
+ protected:
   friend class ResourceManager;
   RenderModel(
       filament::Engine* engine,
@@ -123,6 +124,14 @@ class RenderModel : public Resource, public IInstanceable {
       mochi::Path const& path,
       RenderModelFormat originalFormat);
 
+  // Factory for the SceneObject handed out by GetInstance(). The base returns a plain
+  // RenderModelInstance; SkinnedModel overrides it to return a SkinnedModelInstance. Runs on the
+  // main engine thread (same assumption as GetInstance()).
+  virtual std::unique_ptr<RenderModelInstance> CreateInstanceObject(
+      filament::gltfio::FilamentInstance* instance,
+      int instanceIndex);
+
+ private:
   // Creates a new FilamentInstance on demand and appends it to the pool. Returns nullptr if the
   // soft cap is reached or gltfio fails. Runs on the main engine thread (same assumption as
   // GetInstance()); a mutex could be added later if cross-thread access is ever required.
@@ -160,16 +169,86 @@ class RenderModelInstance : public SceneObject {
   void SetMaterial(std::shared_ptr<MaterialInstance> material) override;
   IInstanceable* GetInstanceable() override;
 
- private:
+ protected:
   RenderModelInstance(
       RenderModel* model,
       filament::gltfio::FilamentInstance* instance,
       int instanceIndex);
+  // Accessor for subclasses (SkinnedModelInstance) that need the backing gltfio instance to reach
+  // its skin joints.
+  filament::gltfio::FilamentInstance* GetFilamentInstance() const {
+    return _instance;
+  }
+
+ private:
   friend class RenderModel;
   RenderModel* _model = nullptr;
   filament::gltfio::FilamentInstance* _instance = nullptr;
   int _instanceIndex = -1;
   std::vector<filament::MaterialInstance*> _originalMaterials;
+};
+
+//--------------------------------------------------------------------------------------------------
+// SKINNED MODEL
+//--------------------------------------------------------------------------------------------------
+
+// A glTF/GLB render model that carries a skeleton + per-vertex skin (JOINTS_0/WEIGHTS_0) and is
+// deformed on the GPU by driving its joint transforms each frame. Shares all loading, pooling, and
+// instancing machinery with RenderModel; the only difference is that GetInstance() hands out a
+// SkinnedModelInstance whose joints can be posed. Produced by the ResourceManager when a loaded GLB
+// contains a skin (see LoadGltf); the geometry, skeleton, and inverse-bind matrices come straight
+// from the GLB (gltfio builds them), so the model root and joint transforms are expressed in the
+// GLB's authored frame.
+class SkinnedModel : public RenderModel {
+ protected:
+  friend class ResourceManager;
+  SkinnedModel(
+      filament::Engine* engine,
+      std::string const& name,
+      mochi::Path const& path,
+      RenderModelFormat originalFormat);
+
+  std::unique_ptr<RenderModelInstance> CreateInstanceObject(
+      filament::gltfio::FilamentInstance* instance,
+      int instanceIndex) override;
+};
+
+class SkinnedModelInstance : public RenderModelInstance {
+ public:
+  // Drives the skin by per-bone GPU skinning matrices (renderable-local, root-relative):
+  // boneMatrix_j = currentLinkWorldRel_j * inverse(restLinkWorldRel_j), built from the
+  // ARTICULATION's own current + rest link frames. The GLB's baked skeleton and inverse-bind
+  // matrices are never used, so a render GLB authored in a different bind convention (e.g. a
+  // DCC/Unreal export whose joint frames differ from the articulation) still deforms correctly.
+  // Mirrors WireframeMesh::SetBoneMatrices; boneMatrix_j applies to vertices weighted to skin
+  // joint j. The model root itself is placed via the usual SceneObject transform.
+  void SetBoneMatrices(mochi::Span<filament::math::mat4f const> boneMatrices);
+
+  SkinnedModelInstance* AsSkinnedModelInstance() override {
+    return this;
+  }
+
+ private:
+  friend class SkinnedModel;
+  SkinnedModelInstance(
+      RenderModel* model,
+      filament::gltfio::FilamentInstance* instance,
+      int instanceIndex);
+  void EnsureJointCache();
+
+  std::vector<utils::Entity> _joints; // skin 0 joints, in skin.joints (== link) order
+  bool _jointCacheReady = false;
+  // Renderables skinned by skin 0, paired (by index) with their load-time (rest) object-space AABBs
+  // captured before any pose is applied. Used by SetBoneMatrices to rebuild a posed cull box.
+  std::vector<utils::Entity> _skinnedRenderables;
+  std::vector<filament::Box> _skinnedRestBoxes;
+  // Per-bone (skin 0) rest-pose sub-AABB in the GLB's model space: the bounds of just the vertices
+  // each joint influences (weight > 0), computed once from the retained cgltf source.
+  // SetBoneMatrices transforms each joint's OWN sub-box (not the whole mesh box) so the posed AABB
+  // stays tight -- a whole-box-per-joint union over-bounds badly and drags the scene floor far
+  // below the skin. An unused joint's box is invalid (halfExtent.x < 0). Empty if the cgltf source
+  // was unavailable, in which case SetBoneMatrices falls back to the whole rest box.
+  std::vector<filament::Box> _boneRestBoxes;
 };
 
 } // namespace mochi_renderer

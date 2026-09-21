@@ -19,6 +19,7 @@
 #include <mochi_renderer/material.h>
 #include <mochi_renderer/mesh.h>
 #include <mochi_renderer/resource.h>
+#include <mochi_renderer/type_conversions.h>
 
 #include <filament/IndexBuffer.h>
 #include <filament/MaterialInstance.h>
@@ -26,12 +27,18 @@
 #include <filament/TransformManager.h>
 #include <filament/VertexBuffer.h>
 
+#include <gltfio/Animator.h>
+#include <gltfio/FilamentAsset.h>
 #include <gltfio/FilamentInstance.h>
+
+#include <cgltf.h>
 
 #include <mochi_core/utils/debug.h>
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
+#include <vector>
 
 namespace mochi_renderer {
 
@@ -209,9 +216,16 @@ std::unique_ptr<SceneObject> RenderModel::GetInstance() {
     rcm.setLayerMask(ri, 0xFF, 0x01);
   }
 
-  auto ret = std::unique_ptr<RenderModelInstance>(new RenderModelInstance(this, instance, slot));
+  auto ret = CreateInstanceObject(instance, slot);
   ret->SetName(GetName());
   return ret;
+}
+
+std::unique_ptr<RenderModelInstance> RenderModel::CreateInstanceObject(
+    filament::gltfio::FilamentInstance* instance,
+    int instanceIndex) {
+  return std::unique_ptr<RenderModelInstance>(
+      new RenderModelInstance(this, instance, instanceIndex));
 }
 
 int RenderModel::GetInstanceCount() const {
@@ -342,6 +356,232 @@ void RenderModelInstance::SetMaterial(std::shared_ptr<MaterialInstance> material
 
 IInstanceable* RenderModelInstance::GetInstanceable() {
   return _model;
+}
+
+//--------------------------------------------------------------------------------------------------
+// SKINNED MODEL
+//--------------------------------------------------------------------------------------------------
+
+SkinnedModel::SkinnedModel(
+    filament::Engine* engine,
+    std::string const& name,
+    mochi::Path const& path,
+    RenderModelFormat originalFormat)
+    : RenderModel(engine, name, path, originalFormat) {}
+
+std::unique_ptr<RenderModelInstance> SkinnedModel::CreateInstanceObject(
+    filament::gltfio::FilamentInstance* instance,
+    int instanceIndex) {
+  return std::unique_ptr<RenderModelInstance>(
+      new SkinnedModelInstance(this, instance, instanceIndex));
+}
+
+SkinnedModelInstance::SkinnedModelInstance(
+    RenderModel* model,
+    filament::gltfio::FilamentInstance* instance,
+    int instanceIndex)
+    : RenderModelInstance(model, instance, instanceIndex) {}
+
+void SkinnedModelInstance::EnsureJointCache() {
+  if (_jointCacheReady) {
+    return;
+  }
+  _jointCacheReady = true;
+  auto* instance = GetFilamentInstance();
+  if (instance->getSkinCount() > 0) {
+    size_t const count = instance->getJointCountAt(0);
+    utils::Entity const* joints = instance->getJointsAt(0);
+    _joints.assign(joints, joints + count);
+  }
+  // Snapshot each renderable's load-time (rest) AABB while the renderables still carry the GLB's
+  // authored bounds (this runs before the first pose is applied). SetBoneMatrices rebuilds a posed
+  // cull box from these each frame. A skin GLB's renderables are all driven by skin 0; any
+  // incidental non-skinned renderable would just get a conservatively larger box, which is safe for
+  // culling.
+  auto& rm = _engine->getRenderableManager();
+  for (utils::Entity const entity : GetEntities()) {
+    auto ri = rm.getInstance(entity);
+    if (!ri.isValid()) {
+      continue;
+    }
+    _skinnedRenderables.push_back(entity);
+    _skinnedRestBoxes.push_back(rm.getAxisAlignedBoundingBox(ri));
+  }
+
+  // Per-joint rest sub-AABBs (skin 0), in the GLB's model space, from the retained cgltf source:
+  // for each vertex, expand the sub-box of every joint that influences it (weight > 0). JOINTS_0
+  // indices are in skin-0 joint order, matching getJointsAt(0) / getInverseBindMatricesAt(0).
+  // SetBoneMatrices transforms each joint's own sub-box for a tight posed AABB; if the source is
+  // unavailable this stays empty and it falls back to the whole rest box.
+  if (!_joints.empty()) {
+    auto const* asset = instance->getAsset();
+    auto const* src = asset != nullptr
+        ? static_cast<cgltf_data const*>(
+              const_cast<filament::gltfio::FilamentAsset*>(asset)->getSourceAsset())
+        : nullptr;
+    if (src != nullptr && src->skins_count > 0) {
+      size_t const jointCount = _joints.size();
+      std::vector<filament::math::float3> boneMin(
+          jointCount, filament::math::float3{std::numeric_limits<float>::max()});
+      std::vector<filament::math::float3> boneMax(
+          jointCount, filament::math::float3{std::numeric_limits<float>::lowest()});
+      cgltf_skin const* const baseSkin = &src->skins[0];
+      std::vector<float> pos;
+      std::vector<float> jnt;
+      std::vector<float> wgt;
+      for (size_t n = 0; n < src->nodes_count; ++n) {
+        cgltf_node const& node = src->nodes[n];
+        if (node.mesh == nullptr || node.skin != baseSkin) {
+          continue;
+        }
+        for (size_t pi = 0; pi < node.mesh->primitives_count; ++pi) {
+          cgltf_primitive const& prim = node.mesh->primitives[pi];
+          cgltf_accessor const* posA = nullptr;
+          cgltf_accessor const* jointA = nullptr;
+          cgltf_accessor const* weightA = nullptr;
+          for (size_t as = 0; as < prim.attributes_count; ++as) {
+            switch (prim.attributes[as].type) {
+              case cgltf_attribute_type_position:
+                posA = prim.attributes[as].data;
+                break;
+              case cgltf_attribute_type_joints:
+                jointA = prim.attributes[as].data;
+                break;
+              case cgltf_attribute_type_weights:
+                weightA = prim.attributes[as].data;
+                break;
+              default:
+                break;
+            }
+          }
+          if (posA == nullptr || jointA == nullptr || weightA == nullptr) {
+            continue;
+          }
+          size_t const vcount = posA->count;
+          pos.resize(vcount * 3);
+          jnt.resize(vcount * 4);
+          wgt.resize(vcount * 4);
+          cgltf_accessor_unpack_floats(posA, pos.data(), pos.size());
+          cgltf_accessor_unpack_floats(jointA, jnt.data(), jnt.size());
+          cgltf_accessor_unpack_floats(weightA, wgt.data(), wgt.size());
+          for (size_t i = 0; i < vcount; ++i) {
+            filament::math::float3 const p{pos[i * 3 + 0], pos[i * 3 + 1], pos[i * 3 + 2]};
+            for (int k = 0; k < 4; ++k) {
+              float const w = wgt[i * 4 + k];
+              int const bone = static_cast<int>(jnt[i * 4 + k]);
+              if (w <= 0.0f || bone < 0 || static_cast<size_t>(bone) >= jointCount) {
+                continue;
+              }
+              boneMin[bone] = min(boneMin[bone], p);
+              boneMax[bone] = max(boneMax[bone], p);
+            }
+          }
+        }
+      }
+      _boneRestBoxes.assign(jointCount, filament::Box{{0.0f, 0.0f, 0.0f}, {-1.0f, -1.0f, -1.0f}});
+      for (size_t b = 0; b < jointCount; ++b) {
+        if (boneMin[b].x <= boneMax[b].x) {
+          _boneRestBoxes[b] =
+              filament::Box{(boneMin[b] + boneMax[b]) * 0.5f, (boneMax[b] - boneMin[b]) * 0.5f};
+        }
+      }
+    }
+  }
+}
+
+void SkinnedModelInstance::SetBoneMatrices(mochi::Span<filament::math::mat4f const> boneMatrices) {
+  EnsureJointCache();
+  if (_joints.empty() || _skinnedRenderables.empty() || boneMatrices.empty()) {
+    return;
+  }
+  auto& rm = _engine->getRenderableManager();
+  size_t const count = std::min(boneMatrices.size(), _joints.size());
+
+  // Build a tight posed AABB by transforming each bone's rest sub-box (bounds of just the vertices
+  // it influences) -- like WireframeMesh::SetBoneMatrices -- so the skin is not frustum-culled by
+  // its stale rest bounds. Falls back to the whole rest box if per-bone sub-boxes are unavailable.
+  bool const haveSubBoxes = _boneRestBoxes.size() == _joints.size();
+  filament::math::float3 minPt{
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::max()};
+  filament::math::float3 maxPt{
+      std::numeric_limits<float>::lowest(),
+      std::numeric_limits<float>::lowest(),
+      std::numeric_limits<float>::lowest()};
+  auto accumulate = [&](filament::math::mat4f const& bone, filament::Box const& box) {
+    filament::math::float3 const c = box.center;
+    filament::math::float3 const h = box.halfExtent;
+    for (int corner = 0; corner < 8; ++corner) {
+      filament::math::float4 const p{
+          c.x + ((corner & 1) ? h.x : -h.x),
+          c.y + ((corner & 2) ? h.y : -h.y),
+          c.z + ((corner & 4) ? h.z : -h.z),
+          1.0f};
+      filament::math::float4 const tp = bone * p;
+      minPt.x = std::min(minPt.x, tp.x);
+      minPt.y = std::min(minPt.y, tp.y);
+      minPt.z = std::min(minPt.z, tp.z);
+      maxPt.x = std::max(maxPt.x, tp.x);
+      maxPt.y = std::max(maxPt.y, tp.y);
+      maxPt.z = std::max(maxPt.z, tp.z);
+    }
+  };
+  bool anyValid = false;
+  if (haveSubBoxes) {
+    for (size_t j = 0; j < count; ++j) {
+      if (_boneRestBoxes[j].halfExtent.x >= 0.0f) {
+        accumulate(boneMatrices[j], _boneRestBoxes[j]);
+        anyValid = true;
+      }
+    }
+  }
+  filament::Box posedBox;
+  if (anyValid) {
+    posedBox = filament::Box{(minPt + maxPt) * 0.5f, (maxPt - minPt) * 0.5f};
+  }
+
+  for (size_t r = 0; r < _skinnedRenderables.size(); ++r) {
+    auto ri = rm.getInstance(_skinnedRenderables[r]);
+    if (!ri.isValid()) {
+      continue;
+    }
+    rm.setBones(ri, boneMatrices.data(), count, 0);
+    if (anyValid) {
+      rm.setAxisAlignedBoundingBox(ri, posedBox);
+    } else {
+      // Fallback: transform this renderable's whole rest box by every bone (conservative).
+      filament::math::float3 fbMin{
+          std::numeric_limits<float>::max(),
+          std::numeric_limits<float>::max(),
+          std::numeric_limits<float>::max()};
+      filament::math::float3 fbMax{
+          std::numeric_limits<float>::lowest(),
+          std::numeric_limits<float>::lowest(),
+          std::numeric_limits<float>::lowest()};
+      filament::Box const& rest = _skinnedRestBoxes[r];
+      filament::math::float3 const c = rest.center;
+      filament::math::float3 const h = rest.halfExtent;
+      for (size_t j = 0; j < count; ++j) {
+        for (int corner = 0; corner < 8; ++corner) {
+          filament::math::float4 const p{
+              c.x + ((corner & 1) ? h.x : -h.x),
+              c.y + ((corner & 2) ? h.y : -h.y),
+              c.z + ((corner & 4) ? h.z : -h.z),
+              1.0f};
+          filament::math::float4 const tp = boneMatrices[j] * p;
+          fbMin.x = std::min(fbMin.x, tp.x);
+          fbMin.y = std::min(fbMin.y, tp.y);
+          fbMin.z = std::min(fbMin.z, tp.z);
+          fbMax.x = std::max(fbMax.x, tp.x);
+          fbMax.y = std::max(fbMax.y, tp.y);
+          fbMax.z = std::max(fbMax.z, tp.z);
+        }
+      }
+      rm.setAxisAlignedBoundingBox(
+          ri, filament::Box{(fbMin + fbMax) * 0.5f, (fbMax - fbMin) * 0.5f});
+    }
+  }
 }
 
 } // namespace mochi_renderer
