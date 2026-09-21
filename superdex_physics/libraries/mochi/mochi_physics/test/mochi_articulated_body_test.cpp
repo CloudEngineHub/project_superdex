@@ -2219,6 +2219,27 @@ BoundarySubsamplingParams MakeSubsampling(real density = 0.5_r) {
   return subsampling;
 }
 
+// Two Free-jointed links (each a tet-mesh Box collider) plus a tet skin. Link names are set
+// explicitly so nonCollidingLinks can target them individually. The links carry real colliders so
+// non-substituted links can keep rigid contact.
+ArticulatedActorParams MakeTwoLinkSkinnedParams(Context* context) {
+  ArticulatedActorParams params;
+  params.joints = {{.type = ArticulatedJointType::Free}, {.type = ArticulatedJointType::Free}};
+  params.links = {
+      {.name = "link_0",
+       .parentLink = -1,
+       .shape = test::CreateUnitCubeTetMeshShape(context),
+       .colliderType = ColliderType::Box},
+      {.name = "link_1",
+       .parentLink = 0,
+       .shape = test::CreateUnitCubeTetMeshShape(context),
+       .colliderType = ColliderType::Box}};
+  ArticulatedSkinParams skin;
+  skin.shape = CreateUnitCubeTetMeshShapeWithSkinning(context);
+  params.skin = skin;
+  return params;
+}
+
 [[nodiscard]] bool DisplacementsMatchTranslation(
     Span<real const> before,
     Span<real const> after,
@@ -2413,6 +2434,79 @@ TEST_F(CreateSkinnedArticulatedActorTest, UnsupportedDifferentiableSkinLeavesSce
   EXPECT_NEAR_EQ(kTimeStep, _scene->GetTotalSimulationTime());
 }
 
+// nonCollidingLinks naming a link that does not exist must fail validation before any actor is
+// created, leaving the scene unchanged (mirrors InvalidSkinContactLeavesSceneUnchanged).
+TEST_F(CreateSkinnedArticulatedActorTest, NonCollidingLinksRejectsUnknownLinkName) {
+  auto params = MakeMinimalSkinnedParams(CreateUnitCubeTetMeshShapeWithSkinning(_mochiContext));
+  params.skin->nonCollidingLinks = DynamicArray<DynamicString>{"does_not_exist"};
+  int const numActorsBefore = _scene->GetNumActors();
+
+  EXPECT_EQ(nullptr, _scene->CreateArticulatedActor(params, test::ExpectNotOK{}));
+  EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
+}
+
+// An empty nonCollidingLinks entry is invalid (mirrors softAttachLinks validation).
+TEST_F(CreateSkinnedArticulatedActorTest, NonCollidingLinksRejectsEmptyName) {
+  auto params = MakeMinimalSkinnedParams(CreateUnitCubeTetMeshShapeWithSkinning(_mochiContext));
+  params.skin->nonCollidingLinks = DynamicArray<DynamicString>{""};
+
+  EXPECT_EQ(nullptr, _scene->CreateArticulatedActor(params, test::ExpectNotOK{}));
+}
+
+// Unset nonCollidingLinks preserves the original behavior: no link collides, so none carries a
+// rigid contact tag and the skin is the sole colliding actor.
+TEST_F(CreateSkinnedArticulatedActorTest, NonCollidingLinksUnsetMakesAllLinksNonColliding) {
+  entt::registry& reg = GetRegistry();
+  auto params = MakeTwoLinkSkinnedParams(_mochiContext);
+
+  auto* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+  ASSERT_NE(nullptr, actor);
+  auto const& members = reg.get<CGroupMembers const>(GetEntity(actor->GetHandle())).actors;
+  ASSERT_EQ(2, static_cast<int>(members.size()));
+  EXPECT_FALSE(reg.all_of<TagUseContact>(members[0]));
+  EXPECT_FALSE(reg.all_of<TagUseContact>(members[1]));
+}
+
+// A set nonCollidingLinks removes only the listed links from the colliding set: they drop their
+// rigid contact (the skin collides in their place) while unlisted links keep theirs.
+TEST_F(CreateSkinnedArticulatedActorTest, NonCollidingLinksKeepsRigidContactForUnlistedLink) {
+  entt::registry& reg = GetRegistry();
+  auto params = MakeTwoLinkSkinnedParams(_mochiContext);
+  params.skin->nonCollidingLinks = DynamicArray<DynamicString>{"link_0"};
+
+  auto* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+  ASSERT_NE(nullptr, actor);
+  auto const& members = reg.get<CGroupMembers const>(GetEntity(actor->GetHandle())).actors;
+  ASSERT_EQ(2, static_cast<int>(members.size()));
+  EXPECT_FALSE(reg.all_of<TagUseContact>(members[0])); // link_0 listed -> rigid contact off
+  EXPECT_TRUE(reg.all_of<TagUseContact>(members[1])); // link_1 unlisted -> keeps rigid contact
+}
+
+// An explicit empty nonCollidingLinks removes no links: every link keeps its rigid collision.
+TEST_F(CreateSkinnedArticulatedActorTest, NonCollidingLinksEmptyListKeepsAllColliding) {
+  entt::registry& reg = GetRegistry();
+  auto params = MakeTwoLinkSkinnedParams(_mochiContext);
+  params.skin->nonCollidingLinks = DynamicArray<DynamicString>{};
+
+  auto* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+  ASSERT_NE(nullptr, actor);
+  auto const& members = reg.get<CGroupMembers const>(GetEntity(actor->GetHandle())).actors;
+  ASSERT_EQ(2, static_cast<int>(members.size()));
+  EXPECT_TRUE(reg.all_of<TagUseContact>(members[0]));
+  EXPECT_TRUE(reg.all_of<TagUseContact>(members[1]));
+}
+
+// Skin params whose shape handle is invalid describe a skin that cannot exist. Reject them rather
+// than silently discarding every other skin setting (including nonCollidingLinks).
+TEST_F(CreateSkinnedArticulatedActorTest, SkinWithoutValidShapeIsRejected) {
+  auto params = MakeTwoLinkSkinnedParams(_mochiContext);
+  params.skin->shape = ShapeHandle{};
+  int const numActorsBefore = _scene->GetNumActors();
+
+  EXPECT_EQ(nullptr, _scene->CreateArticulatedActor(params, test::ExpectNotOK{}));
+  EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
+}
+
 class CreateBlendedActorTest : public test::MochiSceneTestBase {
  protected:
   // Build minimal SoftSkinnedActorParams describing a one-bone articulated skeleton with
@@ -2438,6 +2532,65 @@ class CreateBlendedActorTest : public test::MochiSceneTestBase {
     return params;
   }
 };
+
+// The soft-skinned path enables link collision via enableCollidingLinks. With no
+// nonCollidingLinks list that flag alone governs, which is the behavior that predates the list.
+TEST_F(CreateBlendedActorTest, EnableCollidingLinksGovernsWhenNonCollidingLinksUnset) {
+  entt::registry& reg = GetRegistry();
+  auto params = MakeMinimalBlendedParams(
+      CreateUnitCubeTetBlendedSkinShape(_mochiContext, DynamicString{"soft"}));
+  params.skeletonParams.links[0].name = "bone_0";
+  params.enableCollidingLinks = true;
+
+  auto* actor = _scene->CreateSoftSkinnedActor(params, test::ExpectOK{});
+  ASSERT_NE(nullptr, actor);
+  auto const linkHandles = actor->GetNestedLinkActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(linkHandles));
+  EXPECT_TRUE(reg.all_of<TagUseContact>(GetEntity(linkHandles[0])));
+}
+
+// nonCollidingLinks is honored on the soft-skinned path too: it subtracts from the links
+// enableCollidingLinks turned on, so a listed link ends up non-colliding.
+TEST_F(CreateBlendedActorTest, NonCollidingLinksRemovesLinkEnabledByEnableCollidingLinks) {
+  entt::registry& reg = GetRegistry();
+  auto params = MakeMinimalBlendedParams(
+      CreateUnitCubeTetBlendedSkinShape(_mochiContext, DynamicString{"soft"}));
+  params.skeletonParams.links[0].name = "bone_0";
+  params.enableCollidingLinks = true;
+  params.skeletonParams.skin->nonCollidingLinks = DynamicArray<DynamicString>{"bone_0"};
+
+  auto* actor = _scene->CreateSoftSkinnedActor(params, test::ExpectOK{});
+  ASSERT_NE(nullptr, actor);
+  auto const linkHandles = actor->GetNestedLinkActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(linkHandles));
+  EXPECT_FALSE(reg.all_of<TagUseContact>(GetEntity(linkHandles[0])));
+}
+
+// A name matching no link is rejected on the soft-skinned path as well, before any actor exists.
+TEST_F(CreateBlendedActorTest, NonCollidingLinksRejectsUnknownLinkName) {
+  auto params = MakeMinimalBlendedParams(
+      CreateUnitCubeTetBlendedSkinShape(_mochiContext, DynamicString{"soft"}));
+  params.skeletonParams.links[0].name = "bone_0";
+  params.skeletonParams.skin->nonCollidingLinks = DynamicArray<DynamicString>{"does_not_exist"};
+  int const numActorsBefore = _scene->GetNumActors();
+
+  EXPECT_EQ(nullptr, _scene->CreateSoftSkinnedActor(params, test::ExpectNotOK{}));
+  EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
+}
+
+// Without a blended surface there is no skin to collide in a listed link's place, so the list is
+// rejected rather than silently leaving those links with no collision at all. Mirrors the
+// boundarySubsampling guard on the same path.
+TEST_F(CreateBlendedActorTest, NonCollidingLinksRejectedWithoutBlendedSurface) {
+  auto params = MakeMinimalBlendedParams(ShapeHandle{});
+  params.skeletonParams.links[0].name = "bone_0";
+  params.skeletonParams.skin->boundarySubsampling.reset();
+  params.skeletonParams.skin->nonCollidingLinks = DynamicArray<DynamicString>{"bone_0"};
+  int const numActorsBefore = _scene->GetNumActors();
+
+  EXPECT_EQ(nullptr, _scene->CreateSoftSkinnedActor(params, test::ExpectNotOK{}));
+  EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
+}
 
 class ExternalPoseResetTest : public CreateBlendedActorTest {
  protected:

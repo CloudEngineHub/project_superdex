@@ -2826,6 +2826,17 @@
 /// @note For best performance, combine subsampling with @ref mochi::ArticulatedSkinParams::boundaryElementType "boundaryElementType" = @ref mochi::ActorBoundaryElementType::P1Q1 "ActorBoundaryElementType::P1Q1".
 ///
 
+/// @var mochi::ArticulatedSkinParams::nonCollidingLinks
+///
+/// @brief Local names of links that do not act as colliding actors.
+///
+/// @note A listed link contributes no rigid contact; the skin collides in its place. A link that is not listed keeps its own rigid contact, and the skin still collides over it, so both can generate contact in the same region.
+/// @note On an articulated actor, unset means no link collides and the skin is the sole colliding actor, while an empty list means every link collides.
+/// @note Each entry must be non-empty and must match a skeleton link local name.
+/// @note On a soft-skinned actor, @ref mochi::SoftSkinnedActorParams::enableCollidingLinks "SoftSkinnedActorParams::enableCollidingLinks" governs every link this list does not name: a link collides only when that flag is true and the link is not listed here. Unset therefore leaves that flag in sole control.
+/// @note This setting does not affect whether the links act as colliders; see @ref mochi::ArticulatedLinkParams::colliderType "ArticulatedLinkParams::colliderType".
+///
+
 /// @struct mochi::ArticulatedCycleJointParams
 ///
 /// @brief Parameters for a cycle-closing joint within an articulated actor.

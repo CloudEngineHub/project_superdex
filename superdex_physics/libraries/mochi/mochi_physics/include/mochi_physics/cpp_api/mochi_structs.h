@@ -241,6 +241,7 @@ struct ArticulatedSkinParams {
   ContactParams contact;
   ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
   std::optional<BoundarySubsamplingParams> boundarySubsampling;
+  std::optional<DynamicArray<DynamicString>> nonCollidingLinks;
 
 #if MOCHI_LANGUAGE_CPP20
   bool operator==(ArticulatedSkinParams const&) const = default;

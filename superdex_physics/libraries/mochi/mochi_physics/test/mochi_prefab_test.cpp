@@ -136,7 +136,8 @@ TEST(Prefab, ArticulatedActor_Serialization) {
             "contact": {
               "penaltyCoefficient": 4e9
             },
-            "boundaryElementType": "P1Q6"
+            "boundaryElementType": "P1Q6",
+            "nonCollidingLinks": ["parentLink", "childLink"]
           }
         }
       ]
@@ -185,6 +186,10 @@ TEST(Prefab, ArticulatedActor_Serialization) {
     EXPECT_STREQ("mySkinLayer", art.skin->layer.c_str());
     EXPECT_NEAR_EQ(4e9_r, art.skin->contact.penaltyCoefficient);
     EXPECT_EQ(ActorBoundaryElementType::P1Q6, art.skin->boundaryElementType);
+    ASSERT_TRUE(art.skin->nonCollidingLinks.has_value());
+    ASSERT_EQ(2, static_cast<int>(art.skin->nonCollidingLinks->size()));
+    EXPECT_STREQ("parentLink", (*art.skin->nonCollidingLinks)[0].c_str());
+    EXPECT_STREQ("childLink", (*art.skin->nonCollidingLinks)[1].c_str());
   };
 
   // Load one articulated actor from JSON.

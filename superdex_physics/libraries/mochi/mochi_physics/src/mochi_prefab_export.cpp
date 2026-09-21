@@ -775,6 +775,7 @@ static ArticulatedActorPrefab ExportArticulatedActorImpl(
     if (skinExportParams) {
       skinPrefab.boundaryElementType = skinExportParams->boundaryElementType;
       skinPrefab.boundarySubsampling = skinExportParams->boundarySubsampling;
+      skinPrefab.nonCollidingLinks = skinExportParams->nonCollidingLinks;
     }
 
     skin = std::move(skinPrefab);

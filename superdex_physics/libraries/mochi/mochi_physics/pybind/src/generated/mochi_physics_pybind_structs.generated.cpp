@@ -449,13 +449,14 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
   ;
 
   registry.GetClass<mochi::ArticulatedSkinParams>()
-    .def("__init__", [](mochi::ArticulatedSkinParams* self, nb::object shape, nb::object layer, nb::object contact, nb::object boundary_element_type, nb::object boundary_subsampling) {
+    .def("__init__", [](mochi::ArticulatedSkinParams* self, nb::object shape, nb::object layer, nb::object contact, nb::object boundary_element_type, nb::object boundary_subsampling, nb::object non_colliding_links) {
       mochi::ArticulatedSkinParams result{};
       result.shape = nb::cast<mochi::ShapeHandle>(shape);
       result.layer = nb::cast<mochi::DynamicString>(layer);
       result.contact = nb::cast<mochi::ContactParams>(contact);
       result.boundaryElementType = nb::cast<mochi::ActorBoundaryElementType>(boundary_element_type);
       result.boundarySubsampling = nb::cast<std::optional<mochi::BoundarySubsamplingParams>>(boundary_subsampling);
+      result.nonCollidingLinks = nb::cast<std::optional<mochi::DynamicArray<mochi::DynamicString>>>(non_colliding_links);
       new (self) mochi::ArticulatedSkinParams(std::move(result));
     }
       , nb::kw_only()
@@ -464,6 +465,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("contact").sig("...") = mochi::ArticulatedSkinParams{}.contact
       , nb::arg("boundary_element_type") = mochi::ArticulatedSkinParams{}.boundaryElementType
       , nb::arg("boundary_subsampling").sig("...") = mochi::ArticulatedSkinParams{}.boundarySubsampling
+      , nb::arg("non_colliding_links").sig("...") = mochi::ArticulatedSkinParams{}.nonCollidingLinks
     )
     .def(nb::init<>())
     .def(nb::self == nb::self)
@@ -475,6 +477,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def_rw("contact", &mochi::ArticulatedSkinParams::contact, "Contact mechanics parameters.")
     .def_rw("boundary_element_type", &mochi::ArticulatedSkinParams::boundaryElementType, "Finite element type for boundary discretization.\n\nNote:\n    Affects accuracy and performance of contact and boundary integrals.")
     .def_prop_rw("boundary_subsampling", [](mochi::ArticulatedSkinParams& self) -> std::optional<mochi::BoundarySubsamplingParams>& { return self.boundarySubsampling; }, [](mochi::ArticulatedSkinParams& self, nb::handle val) { self.boundarySubsampling = val.is_none() ? std::optional<mochi::BoundarySubsamplingParams>{} : nb::cast<std::optional<mochi::BoundarySubsamplingParams>>(val); }, "Optional subsampling for boundary integrals such as contact.\n\nNote:\n    Reduces computational cost by using fewer sample points.\n\nNote:\n    For best performance, combine subsampling with\n    :attr:`~superdex.physics.ArticulatedSkinParams.boundary_element_type` =\n    :class:`P1Q1 <superdex.physics.ActorBoundaryElementType>`.", nb::for_setter(nb::arg("value").none()))
+    .def_prop_rw("non_colliding_links", [](mochi::ArticulatedSkinParams& self) -> std::optional<mochi::DynamicArray<mochi::DynamicString>>& { return self.nonCollidingLinks; }, [](mochi::ArticulatedSkinParams& self, nb::handle val) { self.nonCollidingLinks = val.is_none() ? std::optional<mochi::DynamicArray<mochi::DynamicString>>{} : nb::cast<std::optional<mochi::DynamicArray<mochi::DynamicString>>>(val); }, "Local names of links that do not act as colliding actors.\n\nNote:\n    A listed link contributes no rigid contact; the skin collides in its place.\n    A link that is not listed keeps its own rigid contact, and the skin still\n    collides over it, so both can generate contact in the same region.\n\nNote:\n    On an articulated actor, unset means no link collides and the skin is the\n    sole colliding actor, while an empty list means every link collides.\n\nNote:\n    Each entry must be non-empty and must match a skeleton link local name.\n\nNote:\n    On a soft-skinned actor,\n    :attr:`~superdex.physics.SoftSkinnedActorParams.enable_colliding_links`\n    governs every link this list does not name: a link collides only when that\n    flag is true and the link is not listed here. Unset therefore leaves that\n    flag in sole control.\n\nNote:\n    This setting does not affect whether the links act as colliders; see\n    :attr:`~superdex.physics.ArticulatedLinkParams.collider_type`.", nb::for_setter(nb::arg("value").none()))
   ;
 
   registry.GetClass<mochi::ArticulatedCycleJointParams>()

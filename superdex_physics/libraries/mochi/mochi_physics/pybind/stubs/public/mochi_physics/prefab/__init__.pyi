@@ -1334,6 +1334,7 @@ class ArticulatedSkinPrefab(mochi_physics.ArticulatedSkinParams):
         contact: mochi_physics.ContactParams = ...,
         boundary_element_type: mochi_physics.ActorBoundaryElementType | int = ...,
         boundary_subsampling: Optional[mochi_physics.BoundarySubsamplingParams] = ...,
+        non_colliding_links: Optional[mochi_physics.ArrayLikeString] = ...,
         shape_file: str = ...,
         render_model_file: str = ...,
         render_model_scale: mochi_physics.Real3Like = ...,

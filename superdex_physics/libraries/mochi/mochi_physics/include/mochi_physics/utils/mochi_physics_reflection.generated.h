@@ -262,6 +262,7 @@ MOCHI_FIELD(layer)
 MOCHI_FIELD(contact)
 MOCHI_FIELD(boundaryElementType)
 MOCHI_FIELD(boundarySubsampling)
+MOCHI_FIELD(nonCollidingLinks)
 MOCHI_STRUCT_END_EX()
 
 MOCHI_STRUCT_BEGIN_EX(mochi::ArticulatedCycleJointParams)

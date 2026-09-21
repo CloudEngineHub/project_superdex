@@ -146,6 +146,7 @@ struct CArticulatedRestTransforms : public articulated::RestTransformArray, NoCo
 struct CArticulatedSkinExportParams : NoCopy {
   ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
   std::optional<BoundarySubsamplingParams> boundarySubsampling;
+  std::optional<DynamicArray<DynamicString>> nonCollidingLinks;
 };
 
 struct CArticulatedParents : public articulated::ParentIndexArray, NoCopy {};

@@ -6041,6 +6041,35 @@ class ArticulatedSkinParams:
         :attr:`~superdex.physics.ArticulatedSkinParams.boundary_element_type` =
         :class:`P1Q1 <superdex.physics.ActorBoundaryElementType>`.
     """
+    @property
+    def non_colliding_links(self) -> Optional[DynamicArrayString]:
+        """Local names of links that do not act as colliding actors.
+
+        Note:
+            A listed link contributes no rigid contact; the skin collides in its place.
+            A link that is not listed keeps its own rigid contact, and the skin still
+            collides over it, so both can generate contact in the same region.
+
+        Note:
+            On an articulated actor, unset means no link collides and the skin is the
+            sole colliding actor, while an empty list means every link collides.
+
+        Note:
+            Each entry must be non-empty and must match a skeleton link local name.
+
+        Note:
+            On a soft-skinned actor,
+            :attr:`~superdex.physics.SoftSkinnedActorParams.enable_colliding_links`
+            governs every link this list does not name: a link collides only when that
+            flag is true and the link is not listed here. Unset therefore leaves that
+            flag in sole control.
+
+        Note:
+            This setting does not affect whether the links act as colliders; see
+            :attr:`~superdex.physics.ArticulatedLinkParams.collider_type`.
+        """
+    @non_colliding_links.setter
+    def non_colliding_links(self, value: Optional[ArrayLikeString]) -> None: ...
     @overload
     def __init__(self) -> None: ...
     @overload
@@ -6051,6 +6080,7 @@ class ArticulatedSkinParams:
         contact: ContactParams = ...,
         boundary_element_type: ActorBoundaryElementType | int = ...,
         boundary_subsampling: Optional[BoundarySubsamplingParams] = ...,
+        non_colliding_links: Optional[ArrayLikeString] = ...,
     ) -> None: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...

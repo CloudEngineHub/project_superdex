@@ -356,13 +356,14 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
   ;
 
   registry.GetClass<mochi::prefab::ArticulatedSkinPrefab, mochi::ArticulatedSkinParams>()
-    .def("__init__", [](mochi::prefab::ArticulatedSkinPrefab* self, nb::object shape, nb::object layer, nb::object contact, nb::object boundary_element_type, nb::object boundary_subsampling, nb::object shape_file, nb::object render_model_file, nb::object render_model_scale, nb::object render_model_rotation, nb::object render_model_translation) {
+    .def("__init__", [](mochi::prefab::ArticulatedSkinPrefab* self, nb::object shape, nb::object layer, nb::object contact, nb::object boundary_element_type, nb::object boundary_subsampling, nb::object non_colliding_links, nb::object shape_file, nb::object render_model_file, nb::object render_model_scale, nb::object render_model_rotation, nb::object render_model_translation) {
       mochi::prefab::ArticulatedSkinPrefab result{};
       result.shape = nb::cast<mochi::ShapeHandle>(shape);
       result.layer = nb::cast<mochi::DynamicString>(layer);
       result.contact = nb::cast<mochi::ContactParams>(contact);
       result.boundaryElementType = nb::cast<mochi::ActorBoundaryElementType>(boundary_element_type);
       result.boundarySubsampling = nb::cast<std::optional<mochi::BoundarySubsamplingParams>>(boundary_subsampling);
+      result.nonCollidingLinks = nb::cast<std::optional<mochi::DynamicArray<mochi::DynamicString>>>(non_colliding_links);
       result.shapeFile = nb::cast<mochi::DynamicString>(shape_file);
       result.renderModelFile = nb::cast<mochi::DynamicString>(render_model_file);
       result.renderModelScale = nb::cast<mochi::Real3>(render_model_scale);
@@ -376,6 +377,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("contact").sig("...") = mochi::prefab::ArticulatedSkinPrefab{}.contact
       , nb::arg("boundary_element_type") = mochi::prefab::ArticulatedSkinPrefab{}.boundaryElementType
       , nb::arg("boundary_subsampling").sig("...") = mochi::prefab::ArticulatedSkinPrefab{}.boundarySubsampling
+      , nb::arg("non_colliding_links").sig("...") = mochi::prefab::ArticulatedSkinPrefab{}.nonCollidingLinks
       , nb::arg("shape_file") = mochi::prefab::ArticulatedSkinPrefab{}.shapeFile
       , nb::arg("render_model_file") = mochi::prefab::ArticulatedSkinPrefab{}.renderModelFile
       , nb::arg("render_model_scale").sig("...") = mochi::prefab::ArticulatedSkinPrefab{}.renderModelScale
