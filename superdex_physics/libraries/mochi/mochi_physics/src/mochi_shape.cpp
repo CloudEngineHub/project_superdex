@@ -38,6 +38,61 @@
 
 using namespace mochi;
 
+namespace {
+
+// Gather a new SkinningData for a subset/reordering of nodes: one weightsPerNode-sized row per
+// entry of nodeIndices, copied verbatim from the corresponding source node.
+SkinningData GatherSkinningNodes(SkinningDataView const& src, Span<int const> nodeIndices) {
+  MOCHI_ASSERT_VERBOSE(
+      isize(src.weights) == isize(src.indices),
+      "SkinningDataView indices and weights must be the same length");
+  int const w = src.weightsPerNode;
+  int const count = isize(nodeIndices);
+  SkinningData out;
+  out.weightsPerNode = w;
+  out.indices.resize_noinit(count * w);
+  out.weights.resize_noinit(count * w);
+  for (int i = 0; i < count; ++i) {
+    int const node = nodeIndices[i];
+    MOCHI_ASSERT_VERBOSE(
+        node >= 0 && (node + 1) * w <= isize(src.indices), "node index out of range");
+    for (int j = 0; j < w; ++j) {
+      out.indices[i * w + j] = src.indices[node * w + j];
+      out.weights[i * w + j] = src.weights[node * w + j];
+    }
+  }
+  return out;
+}
+
+} // namespace
+
+namespace mochi::details {
+
+std::shared_ptr<SkinningData const> MakeSurfaceSkinning(
+    std::shared_ptr<SkinningData const> const& meshSkinning,
+    TriangularMesh const& surfaceMesh) {
+  if (!meshSkinning) {
+    return {};
+  }
+  // Both branches below require one weightsPerNode-sized row per full-mesh node: the pass-through
+  // hands those rows out as surface-aligned, and the gather indexes them by full-mesh node index.
+  // Checked here rather than in the loop so it holds for both, and with MOCHI_ASSERT because this
+  // runs once per shape construction, not in a hot path.
+  MOCHI_ASSERT(
+      isize(meshSkinning->indices) == isize(meshSkinning->weights),
+      "Skinning indices and weights must be the same length");
+  MOCHI_ASSERT(
+      isize(meshSkinning->indices) == surfaceMesh.GetNumNodes() * meshSkinning->weightsPerNode,
+      "Skinning must have one weightsPerNode-sized row per full-mesh node");
+  if (surfaceMesh.GetNumActiveNodes() == surfaceMesh.GetNumNodes()) {
+    return meshSkinning;
+  }
+  return std::make_shared<SkinningData const>(
+      GatherSkinningNodes(SkinningDataView{*meshSkinning}, surfaceMesh.GetActiveNodes()));
+}
+
+} // namespace mochi::details
+
 ModelData ImplicitRigidShape::GetModelData(Error& error) const {
   MOCHI_ERROR_RETURN(error, {});
   ModelData outData;

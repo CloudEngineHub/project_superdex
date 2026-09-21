@@ -52,6 +52,16 @@ namespace mochi {
 struct RodSurfaceEmbeddingData;
 struct BlendingDataMap;
 
+namespace details {
+
+// Return skinning aligned 1:1 with @p surfaceMesh's active nodes, or null if @p meshSkinning is
+// null. Returns @p meshSkinning itself when the surface already follows full-mesh node order.
+std::shared_ptr<SkinningData const> MakeSurfaceSkinning(
+    std::shared_ptr<SkinningData const> const& meshSkinning,
+    TriangularMesh const& surfaceMesh);
+
+} // namespace details
+
 // Base class for shapes
 class Shape {
  public:
@@ -87,6 +97,12 @@ class Shape {
       view.nodesPerElement = mesh->GetNumNodesPerElement();
       view.coordinates = Flatten(mesh->GetActiveNodeCoordinates());
       view.connectivity = mesh->GetActiveNodesFlatConnectivity();
+      // Mesh shapes that carry per-node skinning expose it in surface (active-node) order, aligned
+      // 1:1 with the coordinates above.
+      auto const& skinning = GetSurfaceSkinning();
+      if (skinning) {
+        view.skinning = SkinningDataView{*skinning};
+      }
     }
 
     return view;
@@ -108,6 +124,14 @@ class Shape {
 
   // Populate a ModelData struct based on the derived Shape implementation, or fail with an Error.
   virtual ModelData GetModelData(Error& error) const = 0;
+
+  // Return skinning aligned 1:1 with GetSurfaceMesh()'s active nodes, or null if this shape has
+  // none. Derived shapes own immutable storage for their lifetime, so returned views remain valid
+  // and safe for concurrent reads. Bone indices are forwarded verbatim.
+  virtual std::shared_ptr<SkinningData const> const& GetSurfaceSkinning() const {
+    static std::shared_ptr<SkinningData const> const kEmpty;
+    return kEmpty;
+  }
 };
 
 using ShapePtr = std::shared_ptr<Shape>;
@@ -294,6 +318,8 @@ class TetrahedralMeshShape final : public GridSdfShape {
       : GridSdfShape(std::move(gridSdf)),
         _mesh(std::move(mesh)),
         _meshSkinningData(std::move(meshSkinningData)),
+        _surfaceSkinningData(
+            details::MakeSurfaceSkinning(_meshSkinningData, *_mesh->GetBoundaryMesh())),
         _constrainedNodesData(std::move(constrainedNodesData)),
         _meshBlendingData(std::move(meshBlendingData)),
         _visualMesh(std::move(visualMesh)),
@@ -324,6 +350,10 @@ class TetrahedralMeshShape final : public GridSdfShape {
 
   std::shared_ptr<SkinningData const> const& GetMeshSkinning() const override {
     return _meshSkinningData;
+  }
+
+  std::shared_ptr<SkinningData const> const& GetSurfaceSkinning() const override {
+    return _surfaceSkinningData;
   }
 
   std::shared_ptr<ConstrainedNodesData const> const& GetMeshConstrainedNodes() const {
@@ -375,6 +405,7 @@ class TetrahedralMeshShape final : public GridSdfShape {
  private:
   std::shared_ptr<TetrahedralMesh const> _mesh;
   std::shared_ptr<SkinningData const> _meshSkinningData;
+  std::shared_ptr<SkinningData const> const _surfaceSkinningData;
   std::shared_ptr<ConstrainedNodesData const> _constrainedNodesData;
   std::shared_ptr<BlendingDataMap const> _meshBlendingData;
   std::shared_ptr<TriangularMesh const> _visualMesh;
@@ -403,6 +434,7 @@ class TriangularMeshShape final : public GridSdfShape {
       : GridSdfShape(std::move(gridSdf)),
         _mesh(std::move(mesh)),
         _meshSkinningData(std::move(meshSkinningData)),
+        _surfaceSkinningData(details::MakeSurfaceSkinning(_meshSkinningData, *_mesh)),
         _constrainedNodesData(std::move(constrainedNodesData)),
         _meshBlendingData(std::move(meshBlendingData)),
         _visualMesh(std::move(visualMesh)),
@@ -433,6 +465,10 @@ class TriangularMeshShape final : public GridSdfShape {
 
   std::shared_ptr<SkinningData const> const& GetMeshSkinning() const override {
     return _meshSkinningData;
+  }
+
+  std::shared_ptr<SkinningData const> const& GetSurfaceSkinning() const override {
+    return _surfaceSkinningData;
   }
 
   std::shared_ptr<ConstrainedNodesData const> const& GetMeshConstrainedNodes() const {
@@ -468,6 +504,7 @@ class TriangularMeshShape final : public GridSdfShape {
  private:
   std::shared_ptr<TriangularMesh const> _mesh;
   std::shared_ptr<SkinningData const> _meshSkinningData;
+  std::shared_ptr<SkinningData const> const _surfaceSkinningData;
   std::shared_ptr<ConstrainedNodesData const> _constrainedNodesData;
   std::shared_ptr<BlendingDataMap const> _meshBlendingData;
   std::shared_ptr<TriangularMesh const> _visualMesh;
