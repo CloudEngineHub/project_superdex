@@ -132,8 +132,7 @@ static void EmplaceSoftActorContact(
     std::shared_ptr<TetrahedralMeshShape const> shape,
     Error& error,
     std::shared_ptr<DeepFlowShape const> flow) {
-  reg.emplace<CBoundingVolume<TimeStep::Current>>(e, shape->GetMesh()->GetObb());
-  reg.emplace<CBoundingVolume<TimeStep::Previous>>(e, shape->GetMesh()->GetObb());
+  reg.emplace<CBoundingVolume>(e, shape->GetMesh()->GetObb());
   auto& collider = reg.emplace<CColliderInfo>(e);
 
   static_assert(

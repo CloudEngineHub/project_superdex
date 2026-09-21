@@ -805,14 +805,14 @@ void ProjectContactForceAdjoints(
     CArticulatedJacobian const& jacobian,
     CDiffContactGrad<kGradTarget>& outGrad);
 
-// Update CBoundingVolume<TimeStep::Current>.localShape from the deformation of a triangular skin
-// mesh on a compound (articulated/blended) actor.
+// Update CBoundingVolume.localShape from the deformation of a triangular skin mesh on a compound
+// (articulated/blended) actor. kStep selects the state used to compute the bounds.
 template <TimeStep kStep>
 void UpdateBounds(
     ecs::RequiredTag<TagCompoundActor>,
     CTriangularMesh const& meshComponent,
     CFinalDisplacementRef<kStep> const& solComponent,
-    CBoundingVolume<TimeStep::Current>& outBounds);
+    CBoundingVolume& outBounds);
 
 } // namespace articulated::compound
 

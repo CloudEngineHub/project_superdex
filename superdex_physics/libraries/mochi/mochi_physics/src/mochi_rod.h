@@ -458,7 +458,7 @@ void UpdateSurfaceContactBounds(
     CRodPose<kStep> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CBoundingVolume<TimeStep::Current>& outBounds);
+    CBoundingVolume& outBounds);
 
 // Get the mass of a rod actor.
 [[nodiscard]] real GetActorMass(entt::registry const& reg, entt::entity actor);
@@ -491,12 +491,10 @@ void UpdateMaxGeometrySpeed(
     CPointCloudColliderParams const* pointCloudColliderParams,
     CConservativeStepBounds& outStepBounds);
 
-// Update CBoundingVolume<TimeStep::Current>.localShape based on the deformation of the rod. kStep
-// defines the data to be used in the update, not the component storing the result. There's no
-// CBoundingVolume<TimeStep::StageStart>, as it's not needed. We do bound checks in stage-start
-// collision detection, but we can use CBoundingVolume<TimeStep::Current> for this.
-// Note: Rods have 4 DoFs per node (3 displacement + 1 twist), so we extract just the displacement
-// components (stride of 4) to compute the bounding volume.
+// Update CBoundingVolume.localShape based on the deformation of the rod. kStep defines the data to
+// be used in the update.
+// Note: Rods have 4 DoFs per node (3 displacement + 1 twist), so we extract
+// just the displacement components (stride of 4) to compute the bounding volume.
 // Excluded<CFemSurfaceDiscretization> ensures this only runs for centerline contact rods;
 // contact-skin rods use UpdateSurfaceContactBounds to bound both collision roles.
 template <TimeStep kStep>
@@ -505,7 +503,7 @@ void UpdateBounds(
     CPolylineMesh const& mesh,
     CFinalDisplacementRef<kStep> const& solComponent,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CBoundingVolume<TimeStep::Current>& outBounds) {
+    CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
   Aabb bounds = CalcDeformedRodCenterlineAabb(mesh.nodes, solComponent.value);

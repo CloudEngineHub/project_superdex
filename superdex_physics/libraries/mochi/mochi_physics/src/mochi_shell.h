@@ -351,17 +351,15 @@ void AssembleAsyncContact(
     CDeformablePointAsyncCollisionsResponse& outResponse,
     CActorSnle& outActorSnle);
 
-// Update CBoundingVolume<TimeStep::Current>.localShape based on the deformation of the shell. kStep
-// defines the data to be used in the update, not the component storing the result. There's no
-// CBoundingVolume<TimeStep::StageStart>, as it's not needed. We do bound checks in stage-start
-// collision detection, but we can use CBoundingVolume<TimeStep::Current> for this.
+// Update CBoundingVolume.localShape based on the deformation of the shell. kStep selects the
+// displacement state used to compute the bounds.
 template <TimeStep kStep>
 void UpdateBounds(
     ecs::Included<TagShellActor>,
     CTriangularMesh const& meshComponent,
     CFinalDisplacementRef<kStep> const& solComponent,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CBoundingVolume<TimeStep::Current>& outBounds) {
+    CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
   auto const& sol = solComponent.value;

@@ -85,7 +85,7 @@ template <ContactType kContactType, TimeStep kTimeStep, bool kAllowFarSdfQuery =
 static void UpdatePotentialColliders(
     entt::registry const& reg,
     entt::entity colliding,
-    CBoundingVolume<TimeStep::Current> const& boundsColliding,
+    CBoundingVolume const& boundsColliding,
     CConservativePotentialColliders<kContactType> const& conservativeColliders,
     CContactLayer const& layerColliding,
     CIslandMemberInfo const& islandColliding,
@@ -117,7 +117,7 @@ static void UpdatePotentialColliders(
            CColliderInfo const,
            CContactLayer const,
            CIslandMemberInfo const*,
-           CBoundingVolumeFor<kContactType, kTimeStep> const,
+           CBoundingVolume const,
            CContactParams const>()
         .each([&](entt::entity collider,
                   auto const& colliderInfo,
@@ -173,11 +173,7 @@ static void UpdatePotentialColliders(
       auto collider = potentialColliderData.entity;
 
       MOCHI_ASSERT_VERBOSE(
-          (reg.all_of<
-              CBoundingVolumeFor<kContactType, kTimeStep>,
-              CColliderInfo,
-              CContactParams,
-              CRootTransform>(collider)),
+          (reg.all_of<CBoundingVolume, CColliderInfo, CContactParams, CRootTransform>(collider)),
           "Entities listed by CConservativePotentialColliders should have all of these components.");
 
       // Colliders must not have type "none".
@@ -190,8 +186,7 @@ static void UpdatePotentialColliders(
 
       // Get the world-space bounds of the collider and pad it by the penalty threshold distance
       // We use the penalty threshold of the collider, which is the one used for contact
-      auto const& boundsCollider =
-          reg.get<CBoundingVolumeFor<kContactType, kTimeStep> const>(collider);
+      auto const& boundsCollider = reg.get<CBoundingVolume const>(collider);
 
       auto const& paramsCollider = reg.get<CContactParams const>(collider);
       AnyShape worldBoundsCollider = TransformShape(
@@ -887,7 +882,7 @@ template <TimeStep kTimeStep, bool kAllowFarSdfQuery>
 /**
  * @brief Performs collision detection between a colliding entity (collidee) and a collider entity.
  *
- * @tparam kTimeStepCollider   Time slice for collider data (Current, StageStart or Previous)
+ * @tparam kTimeStep           Time slice for collider data (Current or StageStart)
  * @tparam kAllowFarSdfQuery   Allow SDF queries beyond the normal contact culling distance
  * @param reg                  Registry
  * @param colliding            Colliding entity (collidee)
@@ -901,7 +896,7 @@ template <TimeStep kTimeStep, bool kAllowFarSdfQuery>
  * @note If collision partitions are specified, the results are distributed across the partitions
  * based on which partition each sample point belongs to.
  */
-template <ContactType kContactType, TimeStep kTimeStep, bool kAllowFarSdfQuery>
+template <TimeStep kTimeStep, bool kAllowFarSdfQuery>
 static void DetectCollisionsWithSingleCollider(
     entt::registry const& reg,
     entt::entity colliding,
@@ -914,15 +909,9 @@ static void DetectCollisionsWithSingleCollider(
 
   entt::entity collider = colliderData.entity;
 
-  // Contact must be sync for dynamic colliders and async for static colliders
-  [[maybe_unused]] bool constexpr kIsSync = kContactType == ContactType::Sync;
-  MOCHI_ASSERT_VERBOSE(
-      kIsSync != reg.all_of<TagStaticActor>(collider), "Wrong contact type for this collider");
-
   auto const& colliderContactParams = reg.get<CContactParams const>(collider);
   auto const& worldFromCollider = GetRootTransform<kTimeStep>(reg, collider);
-  auto const& colliderBounds =
-      reg.get<CBoundingVolumeFor<kContactType, kTimeStep> const>(collider).localShape;
+  auto const& colliderBounds = reg.get<CBoundingVolume const>(collider).localShape;
   AnyShape expandedColliderBounds =
       ExpandColliderBoundsForContact(colliderBounds, colliderContactParams);
   auto collidingFromCollider = Invert(worldFromColliding) * worldFromCollider;
@@ -1150,7 +1139,7 @@ template <ContactType kContactType, TimeStep kTimeStep, bool kAllowFarSdfQuery =
 static void DetectCollisionsWithPotentialColliders(
     entt::registry const& reg,
     entt::entity colliding,
-    CBoundingVolume<TimeStep::Current> const& boundingVolume,
+    CBoundingVolume const& boundingVolume,
     CContactSamples<TimeStep::Current> const& samplesCurrent,
     CContactSamples<TimeStep::StageStart> const* samplesStageStartDeformable,
     CContactPartitions const* collisionPartitions,
@@ -1178,6 +1167,12 @@ static void DetectCollisionsWithPotentialColliders(
   resultPerCollider.reserve(numPotentialColliders);
 
   for (int c = 0; c < numPotentialColliders; ++c) {
+    // Contact must be sync for dynamic colliders and async for static colliders.
+    MOCHI_ASSERT_VERBOSE(
+        (kContactType == ContactType::Sync) !=
+            reg.all_of<TagStaticActor>(potentialColliders[c].entity),
+        "Wrong contact type for this collider");
+
     // Find active collisions corresponding to this potential collider.
     int idx = 0;
     for (; idx < isize(outActiveCollisions); idx += numPartitions) {
@@ -1229,7 +1224,7 @@ static void DetectCollisionsWithPotentialColliders(
   ParallelForN("DetectCollisionsWithSingleCollider", numPotentialColliders, 1, [&](int c) {
     // Perform collision detection with this collider. Even if there are multiple partitions, write
     // the full result on the container for the first partition.
-    DetectCollisionsWithSingleCollider<kContactType, kTimeStep, kAllowFarSdfQuery>(
+    DetectCollisionsWithSingleCollider<kTimeStep, kAllowFarSdfQuery>(
         reg,
         colliding,
         samplesTimeStep,
@@ -1241,9 +1236,8 @@ static void DetectCollisionsWithPotentialColliders(
       // For queries in TimeStep::Current and not kAllowFarSdfQuery, complete with data from
       // TimeStep::StageStart. Again, write the full result on the container for the first
       // partition.
-      // WARNING: This code path cannot access CBoundingVolume<TimeStep::Current> or
-      // CSpatialHashTable, because they are currently updated with TimeStep::Current, not
-      // TimeStep::StageStart.
+      // WARNING: Do not use CBoundingVolume or CSpatialHashTable here. They contain
+      // TimeStep::Current data, while this path evaluates TimeStep::StageStart.
       if (!resultPerCollider[c][0]->sampleIndices.empty()) {
         EvalStageStartContactWithSingleCollider(
             reg,
@@ -2486,7 +2480,7 @@ MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(CFemSegmentDiscretization, TimeStep::S
 
 void mochi::UpdateQuerySdfSurface(
     CSdfCollider const& collider,
-    CBoundingVolume<TimeStep::Current> const& bounds,
+    CBoundingVolume const& bounds,
     CQuerySdfSurface& outQuery) {
   MOCHI_PROFILE_SCOPE();
 
@@ -3784,7 +3778,7 @@ void mochi::CheckConservativeStepBounds(entt::registry const& reg, entt::entity 
   if (csb) {
     // Any actor with CConservativeStepBounds should also have these:
     auto const& root = reg.get<CRootTransform const>(e);
-    auto const& bounds = reg.get<CBoundingVolume<TimeStep::Current>>(e);
+    auto const& bounds = reg.get<CBoundingVolume>(e);
 
     // Compute the current world bounds
     Aabb worldAabb = GetAabb(TransformShape(root.worldFromLocal, bounds.localShape));
@@ -3947,14 +3941,13 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
 
   // Find all static colliders
   // TODO: These rarely change. We could cache this information and update it incrementally.
-  for (auto&& [e, colliderInfo, root, bounds, contactParams] :
-       reg.view<
-              TagStaticActor,
-              CColliderInfo const,
-              CRootTransform const,
-              CBoundingVolume<TimeStep::Previous> const,
-              CContactParams const>()
-           .each()) {
+  for (auto&& [e, colliderInfo, root, bounds, contactParams] : reg.view<
+                                                                      TagStaticActor,
+                                                                      CColliderInfo const,
+                                                                      CRootTransform const,
+                                                                      CBoundingVolume const,
+                                                                      CContactParams const>()
+                                                                   .each()) {
     if (colliderInfo.type != ColliderType::None) {
       staticColliders.push_back(e);
       staticBounds.push_back(ExpandColliderBoundsForContact(

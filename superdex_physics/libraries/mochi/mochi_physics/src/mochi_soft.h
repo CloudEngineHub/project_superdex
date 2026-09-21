@@ -184,8 +184,7 @@ void RecenterSolutionUsingRigidTransformEval(
     CVelocitySlice<real, TimeStep::Previous>& prevVel,
     CIntegrationVelocitySlices<DisplacementLayer::Default>& intVels,
     CRigidTransformEval& pivotEval,
-    CBoundingVolume<TimeStep::Current>* currBounds,
-    CBoundingVolume<TimeStep::Previous>* prevBounds);
+    CBoundingVolume* bounds);
 
 // Get SoftMaterialParams from CSoftMaterialParams
 void GetMaterialParams(CSoftMaterialParams const& material, SoftMaterialParams& outParams);
@@ -748,19 +747,17 @@ void UpdateRigidVelocity(
     ecs::Excluded<TagRomActor>,
     ecs::CtxGlobal<CSceneTime const> time,
     CRootTransform const& root,
-    CBoundingVolume<TimeStep::Current> const& bounds,
+    CBoundingVolume const& bounds,
     CPrevRigidVelocity& outRigidVelWorld);
 
-// Update CBoundingVolume<TimeStep::Current>.localShape based on the deformation of the mesh. kStep
-// defines the data to be used in the update, not the component storing the result. There's no
-// CBoundingVolume<TimeStep::StageStart>, as it's not needed. We do bound checks in stage-start
-// collision detection, but we can use CBoundingVolume<TimeStep::Current> for this.
+// Update CBoundingVolume.localShape based on the deformation of the mesh. kStep selects the
+// displacement state used to compute the bounds.
 template <TimeStep kStep>
 void UpdateBounds(
     CColliderInfo const& /*collider*/, // TODO: Is this actually required for the ECS system?
     CTetrahedralMesh const& meshSolver,
     CFinalDisplacementRef<kStep> const& solSolver,
-    CBoundingVolume<TimeStep::Current>& outBounds) {
+    CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
   auto const& sol = solSolver.value;

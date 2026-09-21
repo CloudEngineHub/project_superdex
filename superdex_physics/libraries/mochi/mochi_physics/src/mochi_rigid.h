@@ -388,7 +388,7 @@ void UpdateMaxGeometrySpeed(
     CRigidState<TimeStep::Current> const& state,
     CRigidVel<TimeStep::Current> const& vel,
     CRootTransform const& transform,
-    CBoundingVolume<TimeStep::Current> const& bounds,
+    CBoundingVolume const& bounds,
     CConservativeStepBounds& outStepBounds);
 
 /*

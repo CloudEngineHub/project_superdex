@@ -794,8 +794,9 @@ struct CFinalDisplacementRef : public VectorComponentRef {
   using VectorComponentRef::VectorComponentRef;
 };
 
-// Bounding volume that contains the entire actor at a given time.
-template <TimeStep kStep>
+// Bounding volume that contains the entire actor. For actors with a deforming surface, this
+// component is scratch state overwritten with bounds for the state being evaluated. For actors with
+// a rigid surface, the actor-local bounds are immutable.
 struct CBoundingVolume : public NoCopy {
   CBoundingVolume() = default;
 
@@ -808,15 +809,11 @@ struct CBoundingVolume : public NoCopy {
   // TODO(T225595100): Replace by AnyBoundingVolume.
   AnyShape localShape; // actor space
 
-  MOCHI_TEMPLATE_BEGIN(mochi::CBoundingVolume, kStep);
+  MOCHI_STRUCT_BEGIN(mochi::CBoundingVolume);
   // Bounds for deforming geometry are captured because they are not recomputed during restore.
-  // Previous bounds are derived from current bounds during PreStepEcs before stage-start contact
-  // uses them.
-  MOCHI_ATTRIBUTE_IF(
-      kStep == TimeStep::Current,
-      CaptureState(ecs::Included<CFinalDisplacementRef<TimeStep::Current>>{}));
+  MOCHI_ATTRIBUTE(CaptureState(ecs::Included<CFinalDisplacementRef<TimeStep::Current>>{}));
   MOCHI_FIELD(localShape);
-  MOCHI_TEMPLATE_END();
+  MOCHI_STRUCT_END();
 };
 
 /// @brief Optional component to store the color used in the debug draw.

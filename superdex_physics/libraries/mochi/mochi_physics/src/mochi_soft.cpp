@@ -963,8 +963,7 @@ void mochi::soft::RecenterSolutionUsingRigidTransformEval(
     CVelocitySlice<real, TimeStep::Previous>& prevVel,
     CIntegrationVelocitySlices<DisplacementLayer::Default>& intVels,
     CRigidTransformEval& pivotEval,
-    CBoundingVolume<TimeStep::Current>* currBounds,
-    CBoundingVolume<TimeStep::Previous>* prevBounds) {
+    CBoundingVolume* bounds) {
   MOCHI_PROFILE_SCOPE();
   if (!params.useRecentering) {
     return;
@@ -1020,11 +1019,8 @@ void mochi::soft::RecenterSolutionUsingRigidTransformEval(
   }
 
   // Update the local bounding volume (an Obb for soft actors)
-  if (currBounds) {
-    currBounds->localShape = TransformShape(newLocalFromOldLocal, currBounds->localShape);
-  }
-  if (prevBounds) {
-    prevBounds->localShape = TransformShape(newLocalFromOldLocal, prevBounds->localShape);
+  if (bounds) {
+    bounds->localShape = TransformShape(newLocalFromOldLocal, bounds->localShape);
   }
 }
 
@@ -1378,7 +1374,7 @@ void soft::UpdateRigidVelocity(
     ecs::Excluded<TagRomActor>,
     ecs::CtxGlobal<CSceneTime const> time,
     CRootTransform const& root,
-    CBoundingVolume<TimeStep::Current> const& bounds,
+    CBoundingVolume const& bounds,
     CPrevRigidVelocity& outRigidVel) {
   // Approximate the center-of-mass using the center-of-volume.
   // Then compute velocity of that point based on the change in root transform.

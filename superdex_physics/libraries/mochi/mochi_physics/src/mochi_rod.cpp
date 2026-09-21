@@ -548,7 +548,7 @@ void UpdateSurfaceContactBounds(
     CRodPose<kStep> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CBoundingVolume<TimeStep::Current>& outBounds) {
+    CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
 
@@ -590,7 +590,7 @@ template void UpdateSurfaceContactBounds<TimeStep::Current>(
     CRodPose<TimeStep::Current> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CBoundingVolume<TimeStep::Current>& outBounds);
+    CBoundingVolume& outBounds);
 
 template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
     ecs::Included<TagRodActor>,
@@ -600,7 +600,7 @@ template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
     CRodPose<TimeStep::StageStart> const& rodPose,
     CRodDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CBoundingVolume<TimeStep::Current>& outBounds);
+    CBoundingVolume& outBounds);
 
 // Compute max speed of skin vertices using finite-step twist velocities, not just instantaneous
 // tangent velocities.
@@ -1254,8 +1254,7 @@ static void EmplaceRodActorContact(
     int numCollidingSamples,
     Error& error) {
   Obb const meshObb = CalcObb(MakeConstSpan(shape.GetNodes()));
-  reg.emplace<CBoundingVolume<TimeStep::Current>>(e, meshObb);
-  reg.emplace<CBoundingVolume<TimeStep::Previous>>(e, meshObb);
+  reg.emplace<CBoundingVolume>(e, meshObb);
 
   ColliderType colliderType = params.colliderType;
   if (colliderType == ColliderType::Auto) {

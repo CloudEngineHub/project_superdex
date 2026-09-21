@@ -131,7 +131,7 @@ static void RegisterDebugDrawSystem_ActorAabbWorld(DebugDrawInternal& debugDraw)
   system.onDrawEntityWorldSpace =
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
         auto const& root = reg.get<CRootTransform>(e);
-        auto const& bv = reg.get<CBoundingVolume<TimeStep::Current>>(e);
+        auto const& bv = reg.get<CBoundingVolume>(e);
         if (std::holds_alternative<Plane>(bv.localShape)) {
           // This is an infinite plane. Don't draw anything.
         } else {
@@ -139,7 +139,7 @@ static void RegisterDebugDrawSystem_ActorAabbWorld(DebugDrawInternal& debugDraw)
               GetAabb(TransformShape(root.worldFromLocal, bv.localShape)), MakeColor(0x80FF80FF));
         }
       };
-  debugDraw.RegisterSystem<CRootTransform, CBoundingVolume<TimeStep::Current>>(system);
+  debugDraw.RegisterSystem<CRootTransform, CBoundingVolume>(system);
 }
 
 static void RegisterDebugDrawSystem_ActorAabbWorldConservative(DebugDrawInternal& debugDraw) {
@@ -163,14 +163,14 @@ static void RegisterDebugDrawSystem_ActorAabbLocal(DebugDrawInternal& debugDraw)
   system.sortingDepth -= 2_r; // Draw after the world-space Aabb, but before most other stuff
   system.onDrawEntityLocalSpace =
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
-        auto const& bv = reg.get<CBoundingVolume<TimeStep::Current>>(e);
+        auto const& bv = reg.get<CBoundingVolume>(e);
         if (std::holds_alternative<Plane>(bv.localShape)) {
           // This is an infinite plane. Don't draw anything.
         } else {
           out.AddWireframeAabb(GetAabb(bv.localShape), colors::kGray);
         }
       };
-  debugDraw.RegisterSystem<CBoundingVolume<TimeStep::Current>>(system);
+  debugDraw.RegisterSystem<CBoundingVolume>(system);
 }
 
 // Get a world-space Aabb that contains CBoundingVolume for all members of a group (recursively).
@@ -181,7 +181,7 @@ static std::optional<Aabb> GetGroupWorldBounds(
   bool hasBounds = false;
   ForEachDescendant(reg, members, [&](auto e) {
     auto const* root = reg.try_get<CRootTransform const>(e);
-    auto const* bounds = reg.try_get<CBoundingVolume<TimeStep::Current> const>(e);
+    auto const* bounds = reg.try_get<CBoundingVolume const>(e);
     if (root && bounds) {
       Aabb worldAabb = GetAabb(TransformShape(root->worldFromLocal, bounds->localShape));
       if (hasBounds) {
@@ -1297,7 +1297,7 @@ static void RegisterDebugDrawSystem_PotentialColliders(DebugDrawInternal& debugD
                                      entt::entity e,
                                      DebugDrawCollector& out) {
     auto const& actorRoot = reg.get<CRootTransform const>(e);
-    auto const& actorBv = reg.get<CBoundingVolume<TimeStep::Current> const>(e);
+    auto const& actorBv = reg.get<CBoundingVolume const>(e);
     auto const actorCenter =
         actorRoot.worldFromLocal.TransformPoint(GetBoundingSphere(actorBv.localShape).GetCenter());
 
@@ -1305,7 +1305,7 @@ static void RegisterDebugDrawSystem_PotentialColliders(DebugDrawInternal& debugD
     auto registerCollisionsFunc = [&](Span<PotentialColliderData const> colls) {
       for (auto const& coll : colls) {
         auto const& collRoot = reg.get<CRootTransform const>(coll.entity);
-        auto const& collBv = reg.get<CBoundingVolume<TimeStep::Current> const>(coll.entity);
+        auto const& collBv = reg.get<CBoundingVolume const>(coll.entity);
         auto const collCenter = collRoot.worldFromLocal.TransformPoint(
             GetBoundingSphere(collBv.localShape).GetCenter());
         LineVertex verts[2];
@@ -1325,8 +1325,7 @@ static void RegisterDebugDrawSystem_PotentialColliders(DebugDrawInternal& debugD
     }
   };
 
-  debugDraw.RegisterSystem<CRootTransform, CBoundingVolume<TimeStep::Current>, TagUseContact>(
-      system);
+  debugDraw.RegisterSystem<CRootTransform, CBoundingVolume, TagUseContact>(system);
 }
 
 static void RegisterDebugDrawSystem_RigidVelocity(DebugDrawInternal& debugDraw) {

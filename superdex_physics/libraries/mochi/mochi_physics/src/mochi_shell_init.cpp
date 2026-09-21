@@ -144,8 +144,7 @@ static void EmplaceShellActorContact(
     std::shared_ptr<TriangularMeshShape const> shape,
     int numCollidingSamples,
     Error& error) {
-  reg.emplace<CBoundingVolume<TimeStep::Current>>(e, shape->GetMesh()->GetObb());
-  reg.emplace<CBoundingVolume<TimeStep::Previous>>(e, shape->GetMesh()->GetObb());
+  reg.emplace<CBoundingVolume>(e, shape->GetMesh()->GetObb());
 
   ColliderType colliderType = params.colliderType;
   if (colliderType == ColliderType::Auto) {

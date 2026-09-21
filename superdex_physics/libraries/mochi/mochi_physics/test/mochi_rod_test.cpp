@@ -1913,8 +1913,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_UsesDedicatedSurface) {
 
   _scene->Step(0_r);
   Aabb const expectedBounds = contactSkin.mesh->GetAabb();
-  Aabb const actualBounds =
-      GetAabb(reg.get<CBoundingVolume<TimeStep::Current> const>(entity).localShape);
+  Aabb const actualBounds = GetAabb(reg.get<CBoundingVolume const>(entity).localShape);
   EXPECT_NEAR_EQ(expectedBounds.GetMin(), actualBounds.GetMin());
   EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
 }
@@ -1951,8 +1950,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_BoundsIncludePointCloudCollider
       }
       Aabb const pointCloudBounds = ExpandShape(CalcAabb(centerlinePositions), kRadius);
       Aabb const expectedBounds = GetAabb(surfaceBounds, pointCloudBounds);
-      Aabb const actualBounds =
-          GetAabb(reg.get<CBoundingVolume<TimeStep::Current> const>(entity).localShape);
+      Aabb const actualBounds = GetAabb(reg.get<CBoundingVolume const>(entity).localShape);
       EXPECT_NEAR_EQ(expectedBounds.GetMin(), actualBounds.GetMin());
       EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
     };

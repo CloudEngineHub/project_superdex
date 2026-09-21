@@ -942,13 +942,13 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   Aabb GetAabbLocal(Error& error) const override {
-    auto const* bv = MOCHI_TRY_GET(CBoundingVolume<TimeStep::Current>, reg, e, error);
+    auto const* bv = MOCHI_TRY_GET(CBoundingVolume, reg, e, error);
     MOCHI_ERROR_RETURN(error, {});
     return GetAabb(bv->localShape);
   }
 
   Aabb GetAabbWorld(Error& error) const override {
-    auto const* bv = MOCHI_TRY_GET(CBoundingVolume<TimeStep::Current>, reg, e, error);
+    auto const* bv = MOCHI_TRY_GET(CBoundingVolume, reg, e, error);
     MOCHI_ERROR_RETURN(error, {});
     return GetAabb(TransformShape(GetRootTransform(), bv->localShape));
   }

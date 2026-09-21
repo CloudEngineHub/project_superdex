@@ -30,7 +30,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<component<pre, TimeStep::StageStart, post>>(reg);
 
   ecs::RegisterComponent<CActorInfo>(reg);
-  MOCHI_REGISTER_ALL_TIME_STEPS(CBoundingVolume);
+  ecs::RegisterComponent<CBoundingVolume>(reg);
   ecs::RegisterComponent<CConservativeStepBounds>(reg);
   ecs::RegisterComponent<CContactParams>(reg);
   ecs::RegisterComponent<CConvergenceStatus>(reg);

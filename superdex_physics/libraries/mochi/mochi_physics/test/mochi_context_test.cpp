@@ -1876,8 +1876,7 @@ TEST_F(ActorTest, GetVelocitySoft) {
   auto* actor = CreateSoftUnitCube();
   auto entity = mochi::GetEntity(reg, actor->GetHandle(), ExpectOK{});
   ecs::InvokeOnEntity(&soft::UpdateBounds<TimeStep::Current>, reg, entity);
-  auto pivotLocal =
-      GetAabb(reg.get<CBoundingVolume<TimeStep::Current> const>(entity).localShape).GetCenter();
+  auto pivotLocal = GetAabb(reg.get<CBoundingVolume const>(entity).localShape).GetCenter();
 
   // Set rigid velocity
   Real3 linVel{-1_r, 2_r, 1_r};

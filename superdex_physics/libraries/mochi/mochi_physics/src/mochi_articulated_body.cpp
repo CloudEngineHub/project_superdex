@@ -1386,10 +1386,7 @@ void mochi::InitCollidingSkinMesh(
   reg.emplace<CSkinnedContactSnle>(e);
   reg.emplace<TagSkinnedContact>(e);
 
-  reg.emplace_or_replace<CBoundingVolume<TimeStep::Current>>(
-      e, shape.GetBoundingVolume(ErrorAssert{}));
-  reg.emplace_or_replace<CBoundingVolume<TimeStep::Previous>>(
-      e, shape.GetBoundingVolume(ErrorAssert{}));
+  reg.emplace_or_replace<CBoundingVolume>(e, shape.GetBoundingVolume(ErrorAssert{}));
 
   // Other components for collision detection (as colliding object, not as collider)
   deformable::EmplaceContactComponents(reg, e, numCollidingSamples);
@@ -1404,7 +1401,7 @@ void articulated::compound::UpdateBounds(
     ecs::RequiredTag<TagCompoundActor>,
     CTriangularMesh const& meshComponent,
     CFinalDisplacementRef<kStep> const& solComponent,
-    CBoundingVolume<TimeStep::Current>& outBounds) {
+    CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
   auto const& sol = solComponent.value;
@@ -1417,12 +1414,12 @@ template void articulated::compound::UpdateBounds<TimeStep::Current>(
     ecs::RequiredTag<TagCompoundActor>,
     CTriangularMesh const&,
     CFinalDisplacementRef<TimeStep::Current> const&,
-    CBoundingVolume<TimeStep::Current>&);
+    CBoundingVolume&);
 template void articulated::compound::UpdateBounds<TimeStep::StageStart>(
     ecs::RequiredTag<TagCompoundActor>,
     CTriangularMesh const&,
     CFinalDisplacementRef<TimeStep::StageStart> const&,
-    CBoundingVolume<TimeStep::Current>&);
+    CBoundingVolume&);
 
 static void InitFullSparsityPattern(
     entt::registry const& reg,

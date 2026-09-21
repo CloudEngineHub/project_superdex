@@ -158,26 +158,6 @@ struct CSdfColliderPending final : SdfCollider, NoCopy {
 template <TimeStep kStep>
 struct CSdfMapping : std::unique_ptr<BaseMap>, NoCopy {};
 
-namespace details {
-template <ContactType kContactType, TimeStep kTimeStep>
-struct BoundingVolumeForImpl {
-  static_assert(kTimeStep == TimeStep::Current || kTimeStep == TimeStep::StageStart);
-  using Type = std::conditional_t<
-      kContactType == ContactType::Async && kTimeStep == TimeStep::StageStart,
-      CBoundingVolume<TimeStep::Previous>,
-      CBoundingVolume<TimeStep::Current>>;
-};
-} // namespace details
-
-/**
- * @brief Alias to get the appropriate CBoundingVolume component of a collider during collision
- * detection, depending on contact type (sync = dynamic collider / async = static collider) and time
- * step (current / stage start). Static colliders at stage start use previous bounds. All other
- * cases use current bounds.
- */
-template <ContactType kContactType, TimeStep kTimeStep>
-using CBoundingVolumeFor = typename details::BoundingVolumeForImpl<kContactType, kTimeStep>::Type;
-
 /**************************************************************************
   ECS Broadphase Components
 */
@@ -1029,7 +1009,7 @@ void AddStageStartCollisionDetection(
 // Update CQuerySdfSurface which is used for debug drawing of the SDF surface and its normals.
 void UpdateQuerySdfSurface(
     CSdfCollider const& collider,
-    CBoundingVolume<TimeStep::Current> const& bounds,
+    CBoundingVolume const& bounds,
     CQuerySdfSurface& outQuery);
 
 // Update CQueryContactSamples which is used for debug drawing of contact samples.

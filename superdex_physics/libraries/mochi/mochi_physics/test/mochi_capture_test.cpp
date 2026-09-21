@@ -771,15 +771,11 @@ TEST_F(MochiCapture, RegisterPostRestoreCallback) {
 }
 
 TEST_F(MochiCapture, BoundingVolumeCapturePolicy) {
-  auto const& currentType = SReflect::GetTypeInfo<CBoundingVolume<TimeStep::Current>>();
-  auto const* currentCapture = currentType.GetAttribute<attribute::CaptureState>();
-  ASSERT_NE(nullptr, currentCapture);
+  auto const& type = SReflect::GetTypeInfo<CBoundingVolume>();
+  auto const* capture = type.GetAttribute<attribute::CaptureState>();
+  ASSERT_NE(nullptr, capture);
   EXPECT_EQ(
-      entt::type_id<CFinalDisplacementRef<TimeStep::Current>>().hash(),
-      currentCapture->onlyCaptureWith);
-
-  auto const& previousType = SReflect::GetTypeInfo<CBoundingVolume<TimeStep::Previous>>();
-  EXPECT_EQ(nullptr, previousType.GetAttribute<attribute::CaptureState>());
+      entt::type_id<CFinalDisplacementRef<TimeStep::Current>>().hash(), capture->onlyCaptureWith);
 }
 
 TEST_F(MochiCapture, CaptureStateToJson) {

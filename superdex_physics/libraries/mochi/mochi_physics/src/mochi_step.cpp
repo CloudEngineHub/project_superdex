@@ -42,7 +42,7 @@
 
 using namespace mochi;
 
-// Update CBoundingVolume<TimeStep::Current> for actor types whose local bounds can change.
+// Update CBoundingVolume for actor types whose local bounds can change.
 template <typename Invoke>
 static void ForEachCurrentBoundsUpdateSystem(Invoke&& invoke) {
   invoke(&soft::UpdateBounds<TimeStep::Current>);
@@ -137,10 +137,10 @@ static void UpdateConservativeStepBounds(entt::registry& reg) {
 
     // Every actor with CConservativeStepBounds should have these
     auto const& root = reg.get<CRootTransform const>(e);
-    auto const& currBounds = reg.get<CBoundingVolume<TimeStep::Current> const>(e);
+    auto const& bounds = reg.get<CBoundingVolume const>(e);
 
     // Start with tight fitting world-space bounds.
-    Aabb const currWorldAabb = GetAabb(TransformShape(root.worldFromLocal, currBounds.localShape));
+    Aabb const currWorldAabb = GetAabb(TransformShape(root.worldFromLocal, bounds.localShape));
     Aabb stepBounds = currWorldAabb;
 
     // Exaggerate the speed.
@@ -191,9 +191,8 @@ void mochi::PreStepEcs(entt::registry& reg) {
   ecs::InvokeForEachGlobal(&rigid::UpdateVSym, reg);
   ecs::InvokeForEachGlobal(&articulated::compound::UpdateVSym, reg);
 
-  // Update CBoundingVolume<TimeStep::Current> to reflect any changes since the previous step, e.g.,
-  // due to actor creation, API calls, etc. Must come BEFORE UpdateConservativeStepBounds which
-  // reads CBoundingVolume<Current>.
+  // Update CBoundingVolume to reflect any changes since the previous step, e.g., due to actor
+  // creation or API calls. Must come BEFORE UpdateConservativeStepBounds, which reads it.
   ForEachCurrentBoundsUpdateSystem(
       [&](auto const& system) { ecs::InvokeForEachGlobal(system, reg); });
 
@@ -227,16 +226,6 @@ void mochi::PreStepEcs(entt::registry& reg) {
     ecs::InvokeForEachGlobal(
         +[](ecs::Excluded<TagStaticActor>, CRootTransform& root) {
           root.worldFromLocalPrev = root.worldFromLocal;
-        },
-        reg);
-
-    // Set CBoundingVolume<TimeStep::Previous> equal to the current state, except for static and
-    // rigid actors.
-    ecs::InvokeForEachGlobal(
-        +[](ecs::Excluded<TagStaticActor, TagRigidActor>,
-            CBoundingVolume<TimeStep::Current> const& current,
-            CBoundingVolume<TimeStep::Previous>& outPrevious) {
-          outPrevious.localShape = current.localShape;
         },
         reg);
   }
@@ -311,7 +300,7 @@ void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& de
 static void UpdateActorQueriesAsync(TaskSemaphore sem, entt::registry& reg, entt::entity e) {
   bool isDeformable = reg.any_of<TagSoftActor, TagBlendedActor, TagShellActor, TagRodActor>(e);
   if (isDeformable) {
-    // Update CBoundingVolume<TimeStep::Current> for actors that deform
+    // Update CBoundingVolume for actors that deform
     // NOTE: Invoke in this thread since CBoundingVolume is NOT a CQuery component and it's read by
     // some of the UpdateQuery systems below.
     ForEachCurrentBoundsUpdateSystem(
@@ -422,7 +411,7 @@ static void PostStepIslandAsync(entt::registry& reg, CIslandDescendants const& d
   //      actors, invalidating the check logic).
   static constexpr bool kVerifyConservativeStepBounds = false;
   if constexpr (kVerifyConservativeStepBounds) {
-    // Update CBoundingVolume<TimeStep::Current> before the check.
+    // Update CBoundingVolume before the check.
     for (auto e : descendants.actors) {
       ForEachCurrentBoundsUpdateSystem(
           [&](auto const& system) { ecs::TryInvokeOnEntity(system, reg, e); });

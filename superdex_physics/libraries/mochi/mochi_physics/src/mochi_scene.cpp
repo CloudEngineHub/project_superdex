@@ -3149,10 +3149,7 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
   bool const hasCollider = colliderInfo && (colliderInfo->type != ColliderType::None);
   bool const canDetectContact = _registry.all_of<TagUseContact>(e);
   if (hasCollider || canDetectContact) {
-    MOCHI_ASSERT(
-        _registry.all_of<CBoundingVolume<TimeStep::Previous>>(e), "Missing required component");
-    MOCHI_ASSERT(
-        _registry.all_of<CBoundingVolume<TimeStep::Current>>(e), "Missing required component");
+    MOCHI_ASSERT(_registry.all_of<CBoundingVolume>(e), "Missing required component");
     MOCHI_ASSERT(_registry.all_of<CContactLayer>(e), "Missing required component");
     MOCHI_ASSERT(_registry.all_of<CContactParams>(e), "Missing required component");
   }
