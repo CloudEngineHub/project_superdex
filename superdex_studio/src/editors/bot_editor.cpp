@@ -1147,11 +1147,18 @@ void BotEditor::DrawBotVisualizations(mochi_renderer::Scene* renderScene) const 
 void BotEditor::OnSceneSelectionChanged(std::vector<mochi_renderer::SceneObject*> const& objects) {
   // The bot editor is single-select (it doesn't opt into multi-select), so derive the selected link
   // from the primary (last) object, or clear it when the selection is empty.
-  if (objects.empty()) {
+  if (objects.empty() || !_botAsset) {
     _selectedBotLinkIndex = -1;
     return;
   }
-  _selectedBotLinkIndex = _stage.GetSceneObjectIndex(objects.back());
+  // Staged actors are the bot's links (in link order) followed by optional extras.
+  // _selectedBotLinkIndex is a bot LINK index (used to index botPrefab.links/joints), so only a
+  // link maps to a selection: a non-link staged actor (stage index out of the link range) clears
+  // it to -1, which the UI treats as "no link selected". Assigning the raw stage index here (as
+  // before) put an out-of-range value into the per-link visualizations / hierarchy focus.
+  int const stageIndex = _stage.GetSceneObjectIndex(objects.back());
+  int const numLinks = static_cast<int>(_botAsset->GetBotPrefab().links.size());
+  _selectedBotLinkIndex = (stageIndex >= 0 && stageIndex < numLinks) ? stageIndex : -1;
   if (_selectedBotLinkIndex >= 0) {
     _forceLinkFocus = true;
   }
