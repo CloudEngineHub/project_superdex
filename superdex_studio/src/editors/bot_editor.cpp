@@ -1874,6 +1874,8 @@ static void PrepopulateModification(
           return "AttachLink";
         } else if constexpr (std::is_same_v<T, ReplaceLink>) {
           return "ReplaceLink";
+        } else if constexpr (std::is_same_v<T, AttachSkin>) {
+          return "AttachSkin";
         } else {
           return "ReplaceLinkWithBot";
         }
@@ -1906,6 +1908,9 @@ static void PrepopulateModification(
         } else if constexpr (std::is_same_v<T, ReplaceLink>) {
           m.linkToReplace = firstLeafName;
           m.link.name = uniqueName + "_link";
+        } else if constexpr (std::is_same_v<T, AttachSkin>) {
+          // Nothing to seed: an AttachSkin mod has no target link or joint, and its skin
+          // shape/render files are set by editing the mod's fields (no property-panel arm yet).
         } else { // ReplaceLinkWithBot
           m.linkToReplace = firstLeafName;
         }
@@ -2169,7 +2174,7 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
               modChanged |= linkNameCombo("Link to Replace", m.linkToReplace, static_cast<int>(i));
               bool modelChanged = false;
               modChanged |= ShowBotLinkEditorWidgets(m.link, assetManager, true, modelChanged);
-            } else {
+            } else if constexpr (std::is_same_v<T, superdex::robotics::AttachLink>) {
               modChanged |= linkNameCombo("Parent Link", m.parentLinkName, static_cast<int>(i));
               if (ImGui::CollapsingHeader("Joint", ImGuiTreeNodeFlags_DefaultOpen)) {
                 modChanged |= ShowBotJointEditorWidgets(m.joint, false);

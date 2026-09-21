@@ -359,6 +359,30 @@ static void CollectLinkAssets(
   }
 }
 
+static void CollectSkinAssets(
+    mochi::prefab::ArticulatedSkinPrefab const& skin,
+    std::set<std::filesystem::path>& collectedFiles,
+    DynamicArray<DynamicString>& warnings,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  auto const collectIfPresent = [&](DynamicString const& file, char const* what) {
+    if (file.empty()) {
+      return;
+    }
+    auto const path = NormalizeBotPath(std::string(file));
+    if (!std::filesystem::exists(path)) {
+      NoteMissingAsset(
+          warnings,
+          std::string(what) + " '" + path.generic_string() +
+              "' on skin does not exist; archived without it");
+      return;
+    }
+    collectedFiles.insert(path);
+  };
+  collectIfPresent(skin.shapeFile, "skin collision shape");
+  collectIfPresent(skin.renderModelFile, "skin render model");
+}
+
 static void CollectBotDependencies(
     std::string_view path,
     FileBotLoader const& loader,
@@ -390,6 +414,9 @@ static void CollectBotDependencies(
               [&](ReplaceLink const& m) {
                 CollectLinkAssets(m.link, collectedFiles, warnings, error);
               },
+              [&](AttachSkin const& m) {
+                CollectSkinAssets(m.skin, collectedFiles, warnings, error);
+              },
           },
           mod);
       MOCHI_ERROR_RETURN(error);
@@ -398,6 +425,10 @@ static void CollectBotDependencies(
     auto botPrefab = loader.LoadBotPrefab(path, error);
     for (auto const& link : botPrefab.links) {
       CollectLinkAssets(link, collectedFiles, warnings, error);
+      MOCHI_ERROR_RETURN(error);
+    }
+    if (botPrefab.skin.has_value()) {
+      CollectSkinAssets(*botPrefab.skin, collectedFiles, warnings, error);
       MOCHI_ERROR_RETURN(error);
     }
   }

@@ -419,7 +419,7 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
   ;
 
   registry.GetClass<superdex::robotics::BotPrefab>()
-    .def("__init__", [](superdex::robotics::BotPrefab* self, nb::object name, nb::object joints, nb::object links, nb::object world_from_root, nb::object default_pose, nb::object linear_transmissions, nb::object spatial_tendons, nb::object contact_overrides, nb::object cycles) {
+    .def("__init__", [](superdex::robotics::BotPrefab* self, nb::object name, nb::object joints, nb::object links, nb::object world_from_root, nb::object default_pose, nb::object linear_transmissions, nb::object spatial_tendons, nb::object contact_overrides, nb::object cycles, nb::object skin) {
       superdex::robotics::BotPrefab result{};
       result.name = nb::cast<mochi::DynamicString>(name);
       result.joints = nb::cast<mochi::DynamicArray<superdex::robotics::BotJointPrefab>>(joints);
@@ -430,6 +430,7 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
       result.spatialTendons = nb::cast<mochi::DynamicArray<superdex::robotics::BotSpatialTendonPrefab>>(spatial_tendons);
       result.contactOverrides = nb::cast<mochi::DynamicArray<superdex::robotics::BotContactOverride>>(contact_overrides);
       result.cycles = nb::cast<mochi::DynamicArray<mochi::ArticulatedCycleJointParams>>(cycles);
+      result.skin = nb::cast<std::optional<mochi::prefab::ArticulatedSkinPrefab>>(skin);
       new (self) superdex::robotics::BotPrefab(std::move(result));
     }
       , nb::kw_only()
@@ -442,6 +443,7 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
       , nb::arg("spatial_tendons").sig("...") = superdex::robotics::BotPrefab{}.spatialTendons
       , nb::arg("contact_overrides").sig("...") = superdex::robotics::BotPrefab{}.contactOverrides
       , nb::arg("cycles").sig("...") = superdex::robotics::BotPrefab{}.cycles
+      , nb::arg("skin").sig("...") = superdex::robotics::BotPrefab{}.skin
     )
     .def(nb::init<>())
     .def("__copy__", [](superdex::robotics::BotPrefab const& self) { return superdex::robotics::BotPrefab(self); })
@@ -455,6 +457,7 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
     .def_prop_rw("spatial_tendons", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<superdex::robotics::BotSpatialTendonPrefab>& { return self.spatialTendons; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.spatialTendons = nb::cast<mochi::DynamicArray<superdex::robotics::BotSpatialTendonPrefab>>(val); }, "Spatial tendons routed through waypoint and linear-joint elements. Each entry\nproduces one mochi::experimental::SpatialTendonParams at instantiation time.")
     .def_prop_rw("contact_overrides", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<superdex::robotics::BotContactOverride>& { return self.contactOverrides; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.contactOverrides = nb::cast<mochi::DynamicArray<superdex::robotics::BotContactOverride>>(val); }, "Array of link-link contact override pairs.")
     .def_prop_rw("cycles", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<mochi::ArticulatedCycleJointParams>& { return self.cycles; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.cycles = nb::cast<mochi::DynamicArray<mochi::ArticulatedCycleJointParams>>(val); }, "Cycle-closing joints for closed-loop mechanisms (e.g. four-bar linkages,\nparallel grippers). Each entry becomes one mochi::ArticulatedActorParams::cycles\nentry at instantiation time. Link references\n(mochi::ArticulatedCycleJointParams::parentLink /\nmochi::ArticulatedCycleJointParams::childLink) are int indices into\n:attr:`~superdex.robotics.BotPrefab.links`.")
+    .def_prop_rw("skin", [](superdex::robotics::BotPrefab& self) -> std::optional<mochi::prefab::ArticulatedSkinPrefab>& { return self.skin; }, [](superdex::robotics::BotPrefab& self, nb::handle val) { self.skin = val.is_none() ? std::optional<mochi::prefab::ArticulatedSkinPrefab>{} : nb::cast<std::optional<mochi::prefab::ArticulatedSkinPrefab>>(val); }, "Optional deformable skin skinned over the articulation's links, acting as a\ncontact collidee. When present, produces the mochi::ArticulatedActorParams::skin\nat instantiation time.", nb::for_setter(nb::arg("value").none()))
   ;
 
   registry.GetClass<superdex::robotics::RoboticsContext>()

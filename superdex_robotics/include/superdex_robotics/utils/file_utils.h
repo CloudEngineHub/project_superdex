@@ -417,7 +417,8 @@ MOCHI_API void MakeParamsPathAbsolute(
  * @param[in] basePath The base directory (typically the parent directory of the save file).
  * @param[in,out] error Error status. Check @ref Error::IsOK for success.
  *
- * @note Affects renderModelFile, shapeFile, and each sensor's params path in each link.
+ * @note Affects renderModelFile, shapeFile, and each sensor's params path in each link, plus the
+ * skin's shapeFile and renderModelFile when a skin is present.
  */
 MOCHI_API void MakePathsRelative(
     BotPrefab& botPrefab,
@@ -432,7 +433,8 @@ MOCHI_API void MakePathsRelative(
  * @param[in] basePath The base directory (typically the parent directory of the loaded file).
  * @param[in,out] error Error status. Check @ref Error::IsOK for success.
  *
- * @note Affects renderModelFile, shapeFile, and each sensor's params path in each link.
+ * @note Affects renderModelFile, shapeFile, and each sensor's params path in each link, plus the
+ * skin's shapeFile and renderModelFile when a skin is present.
  */
 MOCHI_API void MakePathsAbsolute(
     BotPrefab& botPrefab,

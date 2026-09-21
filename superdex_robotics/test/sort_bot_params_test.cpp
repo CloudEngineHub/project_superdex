@@ -432,6 +432,31 @@ TEST_F(SortBotPrefabTest, RebuildBotData_PrunesStaleContactOverrides) {
   EXPECT_TRUE(bp.contactOverrides[0].enable);
 }
 
+// RebuildBotData keeps a skin<->link override while the skin is present (the skin is a valid
+// override party, referenced by the bot's top-level actor name) and prunes it once the skin is
+// removed.
+TEST_F(SortBotPrefabTest, RebuildBotData_KeepsThenPrunesSkinOverride) {
+  BotPrefab bp;
+  bp.name = "test";
+  bp.links.push_back(MakeLink("root", kIndexNone));
+  bp.links.push_back(MakeLink("A", 0));
+  bp.joints.push_back(MakeHardJoint("root_joint"));
+  bp.joints.push_back(MakeRevoluteJoint("A_joint"));
+  bp.defaultPose = {0.0_r};
+  bp.skin.emplace();
+  // The skin is referenced by the bot name.
+  bp.contactOverrides.push_back(BotContactOverride{bp.name, "A", true});
+  RebuildBotData(bp, ExpectOK{});
+  ASSERT_EQ(isize(bp.contactOverrides), 1);
+  EXPECT_EQ(bp.contactOverrides[0].linkA, "test");
+  EXPECT_EQ(bp.contactOverrides[0].linkB, "A");
+
+  // Removing the skin makes the override reference an unknown party, so it is pruned.
+  bp.skin.reset();
+  RebuildBotData(bp, ExpectOK{});
+  EXPECT_EQ(isize(bp.contactOverrides), 0);
+}
+
 // SortBotPrefab remaps cycle-joint link indices through the same permutation as
 // links, so a cycle keeps referencing the same named links after a reorder.
 TEST_F(SortBotPrefabTest, RebuildBotData_RemapsCycleLinkIndices) {
@@ -652,6 +677,110 @@ TEST_F(SortBotPrefabTest, ApplyMod_AttachBot_PrefixesContactOverrides) {
   EXPECT_EQ(base.contactOverrides[0].linkA, "arm/croot");
   EXPECT_EQ(base.contactOverrides[0].linkB, "arm/tip");
   EXPECT_TRUE(base.contactOverrides[0].enable);
+}
+
+// ApplyMod(AttachBot) adopts a skinned child's skin: it records the per-bone->link mapping
+// (_skinBoneLinks) in the child's link (bone) order with the mod prefix, and forwards+prefixes the
+// names of the links the skin covers.
+TEST_F(SortBotPrefabTest, ApplyMod_AttachBot_AdoptsChildSkin) {
+  BotPrefab base;
+  base.name = "base";
+  base.links.push_back(MakeLink("root", kIndexNone));
+  base.joints.push_back(MakeHardJoint("root_joint"));
+  RebuildBotData(base, ExpectOK{});
+
+  InMemoryBotLoader loader;
+  loader.child.name = "child";
+  loader.child.links.push_back(MakeLink("croot", kIndexNone));
+  loader.child.links.push_back(MakeLink("tip", 0));
+  loader.child.joints.push_back(MakeHardJoint("croot_joint"));
+  loader.child.joints.push_back(MakeRevoluteJoint("tip_joint"));
+  loader.child.defaultPose = {0.0_r};
+  loader.child.skin.emplace();
+  loader.child.skin->nonCollidingLinks.emplace();
+  loader.child.skin->nonCollidingLinks->push_back(DynamicString("tip"));
+  RebuildBotData(loader.child, ExpectOK{});
+
+  AttachBot mod;
+  mod.parentLinkName = "root";
+  mod.prefix = "arm/";
+  mod.path = "child.superdex_bot";
+  mod.joint = MakeHardJoint("attach_joint");
+  ApplyMod(base, mod, loader, /*validate=*/false, ExpectOK{});
+
+  ASSERT_TRUE(base.skin.has_value());
+  // The child's skin bones are identity with its (sorted) link order, so the mapping is the child
+  // link names with the mod prefix, in link order.
+  DynamicArray<DynamicString> const expectedBoneLinks = {"arm/croot", "arm/tip"};
+  EXPECT_EQ(base._skinBoneLinks, expectedBoneLinks);
+  // The names of the links the skin covers are forwarded with the same prefix.
+  ASSERT_TRUE(base.skin->nonCollidingLinks.has_value());
+  ASSERT_EQ(isize(*base.skin->nonCollidingLinks), 1);
+  EXPECT_EQ((*base.skin->nonCollidingLinks)[0], "arm/tip");
+}
+
+// ApplyMod(AttachBot) rejects attaching a skinned child onto a bot that already has a skin: a bot
+// supports at most one skin.
+TEST_F(SortBotPrefabTest, ApplyMod_AttachBot_RejectsTwoSkins) {
+  BotPrefab base;
+  base.name = "base";
+  base.links.push_back(MakeLink("root", kIndexNone));
+  base.joints.push_back(MakeHardJoint("root_joint"));
+  base.skin.emplace();
+  RebuildBotData(base, ExpectOK{});
+
+  InMemoryBotLoader loader;
+  loader.child.name = "child";
+  loader.child.links.push_back(MakeLink("croot", kIndexNone));
+  loader.child.joints.push_back(MakeHardJoint("croot_joint"));
+  loader.child.skin.emplace();
+  RebuildBotData(loader.child, ExpectOK{});
+
+  AttachBot mod;
+  mod.parentLinkName = "root";
+  mod.prefix = "arm/";
+  mod.path = "child.superdex_bot";
+  mod.joint = MakeHardJoint("attach_joint");
+  ApplyMod(base, mod, loader, /*validate=*/false, ExpectNotOK{});
+}
+
+// A base bot that carries its own skin has no _skinBoneLinks -- its baked bone indices match its
+// own link order. Mods then add links and RebuildBotData re-sorts them, so BuildBot must capture
+// that identity mapping up front; otherwise each bone silently binds to whatever link ends up at
+// its index. "aaa" sorts ahead of "root"'s existing child, so the added link shifts link order.
+TEST_F(SortBotPrefabTest, BuildBot_CapturesIdentitySkinMappingForSkinnedBase) {
+  InMemoryBotLoader loader;
+  loader.basePath = "base.superdex_bot";
+  loader.baseBot.name = "base";
+  loader.baseBot.links.push_back(MakeLink("root", kIndexNone));
+  loader.baseBot.links.push_back(MakeLink("zzz", 0));
+  loader.baseBot.joints.push_back(MakeHardJoint("root_joint"));
+  loader.baseBot.joints.push_back(MakeRevoluteJoint("zzz_joint"));
+  loader.baseBot.defaultPose = {0.0_r};
+  loader.baseBot.skin.emplace();
+  RebuildBotData(loader.baseBot, ExpectOK{});
+  // The base is authored without a mapping: bone b binds to link b.
+  ASSERT_TRUE(loader.baseBot._skinBoneLinks.empty());
+  DynamicArray<DynamicString> const baseOrder = LinkNames(loader.baseBot);
+
+  // A mod that inserts a link sorting before the existing child, so link order changes.
+  AttachLink attach;
+  attach.parentLinkName = "root";
+  attach.joint = MakeRevoluteJoint("aaa_joint");
+  attach.link = MakeLink("aaa", 0);
+
+  ModBotPrefab recipe;
+  recipe.base = "base.superdex_bot";
+  recipe.modifications.push_back(attach);
+
+  BotPrefab const built = BuildBot(recipe, loader, /*validate=*/false, ExpectOK{});
+
+  // The mapping was captured before the mod ran, so it still names the base's original links in
+  // their original order -- not whatever occupies those indices now.
+  EXPECT_EQ(built._skinBoneLinks, baseOrder);
+  // Sanity: the mod really did perturb link order, so the identity assumption would have been
+  // wrong had it not been captured.
+  EXPECT_NE(LinkNames(built), baseOrder);
 }
 
 // A recipe's contact overrides are applied on top of the composed bot, where an attached child may

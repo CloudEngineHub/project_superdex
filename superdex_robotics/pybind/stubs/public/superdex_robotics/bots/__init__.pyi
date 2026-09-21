@@ -651,6 +651,11 @@ class BotPrefab:
         self,
         value: mochi_physics.ArrayLikeArticulatedCycleJointParams,
     ) -> None: ...
+    skin: Optional[mochi_physics.prefab.ArticulatedSkinPrefab]
+    """Optional deformable skin skinned over the articulation's links, acting as a
+    contact collidee. When present, produces the mochi::ArticulatedActorParams::skin
+    at instantiation time.
+    """
     @overload
     def __init__(self) -> None: ...
     @overload
@@ -665,6 +670,7 @@ class BotPrefab:
         spatial_tendons: ArrayLikeBotSpatialTendonPrefab = ...,
         contact_overrides: ArrayLikeBotContactOverride = ...,
         cycles: mochi_physics.ArrayLikeArticulatedCycleJointParams = ...,
+        skin: Optional[mochi_physics.prefab.ArticulatedSkinPrefab] = ...,
     ) -> None: ...
 
 class RoboticsContext:
