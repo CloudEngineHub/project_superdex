@@ -61,11 +61,11 @@ ShapeHandle CreateUnitCubeTetMeshShapeWithTwoBoneSkinning(Context* context) {
 std::shared_ptr<BlendingDataMap const>
 MakeUniformBlendingMap(DynamicString const& softName, int numTargetNodes, real weight) {
   BlendingDataTargetMesh target;
-  target.indices.resize(numTargetNodes * 2, 0);
-  target.weights.resize(numTargetNodes * 2, 0_r);
+  target.indices.resize(numTargetNodes);
+  target.weights.resize(numTargetNodes);
   for (int targetNode = 0; targetNode < numTargetNodes; ++targetNode) {
-    target.indices[2 * targetNode + 1] = targetNode;
-    target.weights[2 * targetNode + 1] = weight;
+    target.indices[targetNode] = targetNode;
+    target.weights[targetNode] = weight;
   }
   auto map = std::make_shared<BlendingDataMap>();
   map->perSourceShapeData.emplace(softName, std::move(target));
