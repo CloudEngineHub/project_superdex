@@ -43,6 +43,12 @@ struct BotContactFilterBuilder {
   // on it and assume its topology (link count and order) does not change. Do not
   // outlive the referenced prefab.
   explicit BotContactFilterBuilder(superdex::robotics::BotPrefab& prefab);
+  // Same, but reads+writes overrides in a separate list `overrides` (topology, defaults, and names
+  // still come from `prefab`). Used for a mod bot: the matrix reads the built/composed bot but
+  // writes into the recipe's ModBotPrefab::contactOverrides, which persists across rebuilds.
+  BotContactFilterBuilder(
+      superdex::robotics::BotPrefab& prefab,
+      mochi::DynamicArray<superdex::robotics::BotContactOverride>& overrides);
 
   // True if Mochi implicitly disables contact between the two links.
   [[nodiscard]] bool IsImplicitlyDisabled(int linkA, int linkB) const;
@@ -66,6 +72,8 @@ struct BotContactFilterBuilder {
   [[nodiscard]] int FindFilterIndex(int linkA, int linkB) const;
 
   superdex::robotics::BotPrefab& _prefab;
+  // The override list read+written by all queries/edits (defaults to _prefab.contactOverrides).
+  mochi::DynamicArray<superdex::robotics::BotContactOverride>& _overrides;
 };
 
 // Reusable collision probe for a fixed bot. Building the scene, articulated actor,

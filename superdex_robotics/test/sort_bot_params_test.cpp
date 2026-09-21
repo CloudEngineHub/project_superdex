@@ -81,12 +81,16 @@ DynamicArray<DynamicString> LinkNames(BotPrefab const& bp) {
 // exercise the AttachBot path of ApplyMod without touching the filesystem.
 struct InMemoryBotLoader : IBotLoader {
   BotPrefab child;
+  // Optional second prefab, served when the requested path equals basePath. Lets a test compose a
+  // recipe whose base and attached child differ; unset means every path resolves to `child`.
+  DynamicString basePath;
+  BotPrefab baseBot;
 
   BotFileType GetBotFileType(std::string_view, Error&) const override {
     return BotFileType::BotPrefab;
   }
-  BotPrefab LoadBotPrefab(std::string_view, Error&) const override {
-    return child;
+  BotPrefab LoadBotPrefab(std::string_view path, Error&) const override {
+    return (!basePath.empty() && path == std::string_view(basePath)) ? baseBot : child;
   }
   ModBotPrefab LoadModBotPrefab(std::string_view, Error&) const override {
     return {};
@@ -648,6 +652,49 @@ TEST_F(SortBotPrefabTest, ApplyMod_AttachBot_PrefixesContactOverrides) {
   EXPECT_EQ(base.contactOverrides[0].linkA, "arm/croot");
   EXPECT_EQ(base.contactOverrides[0].linkB, "arm/tip");
   EXPECT_TRUE(base.contactOverrides[0].enable);
+}
+
+// A recipe's contact overrides are applied on top of the composed bot, where an attached child may
+// already have contributed an override for the same link pair. The recipe's entry must REPLACE that
+// one rather than sit behind it: readers that stop at the first match would report the child's
+// value, while spawning applies every entry in order and would end up with the recipe's -- so the
+// editor matrix and the spawned bot would disagree.
+TEST_F(SortBotPrefabTest, BuildBot_RecipeContactOverrideReplacesChildOverride) {
+  InMemoryBotLoader loader;
+  loader.basePath = "base.superdex_bot";
+  loader.baseBot.name = "base";
+  loader.baseBot.links.push_back(MakeLink("root", kIndexNone));
+  loader.baseBot.joints.push_back(MakeHardJoint("root_joint"));
+  RebuildBotData(loader.baseBot, ExpectOK{});
+
+  // Child contributes an override between its own two links; AttachBot prefixes both names.
+  loader.child.name = "child";
+  loader.child.links.push_back(MakeLink("croot", kIndexNone));
+  loader.child.links.push_back(MakeLink("tip", 0));
+  loader.child.joints.push_back(MakeHardJoint("croot_joint"));
+  loader.child.joints.push_back(MakeRevoluteJoint("tip_joint"));
+  loader.child.defaultPose = {0.0_r};
+  loader.child.contactOverrides.push_back(BotContactOverride{"croot", "tip", true});
+  RebuildBotData(loader.child, ExpectOK{});
+
+  AttachBot attach;
+  attach.parentLinkName = "root";
+  attach.prefix = "arm/";
+  attach.path = "child.superdex_bot";
+  attach.joint = MakeHardJoint("attach_joint");
+
+  ModBotPrefab recipe;
+  recipe.base = "base.superdex_bot";
+  recipe.modifications.push_back(attach);
+  // Same pair the child contributed, opposite value, endpoints reversed to prove the match is
+  // order-independent.
+  recipe.contactOverrides.push_back(BotContactOverride{"arm/tip", "arm/croot", false});
+
+  BotPrefab const built = BuildBot(recipe, loader, /*validate=*/false, ExpectOK{});
+
+  // One entry for the pair, carrying the recipe's value -- not two with the child's first.
+  ASSERT_EQ(isize(built.contactOverrides), 1);
+  EXPECT_FALSE(built.contactOverrides[0].enable);
 }
 
 // Single-link bot: the root is the only link and therefore the only leaf.

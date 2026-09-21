@@ -528,6 +528,33 @@ BotPrefab superdex::robotics::BuildBot(
     }
     MOCHI_ERROR_RETURN(error, {});
   }
+  // Apply the recipe's own contact-filter overrides on top of the composed bot. These are matched
+  // by link name, so RebuildBotData's name-keyed prune keeps the ones whose parties exist and
+  // drops any dangling references.
+  if (!buildParams.contactOverrides.empty()) {
+    auto& composed = botPrefab.contactOverrides;
+    for (auto const& over : buildParams.contactOverrides) {
+      // AttachBot may already have contributed a prefixed child override for this same pair. Drop
+      // it so the recipe's entry is the only one: readers that stop at the first match would
+      // otherwise report the child's value, while spawning applies every entry in order and ends up
+      // with the recipe's -- the editor matrix and the spawned bot would disagree.
+      std::string_view const a(over.linkA);
+      std::string_view const b(over.linkB);
+      composed.erase(
+          std::remove_if(
+              composed.begin(),
+              composed.end(),
+              [&](BotContactOverride const& existing) {
+                std::string_view const ea(existing.linkA);
+                std::string_view const eb(existing.linkB);
+                return (ea == a && eb == b) || (ea == b && eb == a);
+              }),
+          composed.end());
+      composed.push_back(over);
+    }
+    RebuildBotData(botPrefab, error);
+    MOCHI_ERROR_RETURN(error, {});
+  }
   return botPrefab;
 }
 

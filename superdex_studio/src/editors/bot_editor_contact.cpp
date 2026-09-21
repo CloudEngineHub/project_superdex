@@ -25,9 +25,15 @@
 namespace superdex::studio {
 
 BotContactFilterBuilder::BotContactFilterBuilder(superdex::robotics::BotPrefab& prefab)
+    : BotContactFilterBuilder(prefab, prefab.contactOverrides) {}
+
+BotContactFilterBuilder::BotContactFilterBuilder(
+    superdex::robotics::BotPrefab& prefab,
+    mochi::DynamicArray<superdex::robotics::BotContactOverride>& overrides)
     : numLinks(mochi::isize(prefab.links)),
       implicitDisabledMask(numLinks * numLinks, false),
-      _prefab(prefab) {
+      _prefab(prefab),
+      _overrides(overrides) {
   // Mirror the rule the articulated-actor pipeline applies on creation.
   for (int a = 0; a < numLinks; ++a) {
     for (int b = a + 1; b < numLinks; ++b) {
@@ -49,7 +55,7 @@ bool BotContactFilterBuilder::DefaultEnabled(int linkA, int linkB) const {
 int BotContactFilterBuilder::FindFilterIndex(int linkA, int linkB) const {
   std::string_view const na(_prefab.links[linkA].name);
   std::string_view const nb(_prefab.links[linkB].name);
-  auto const& filters = _prefab.contactOverrides;
+  auto const& filters = _overrides;
   for (int i = 0; i < mochi::isize(filters); ++i) {
     std::string_view const fa(filters[i].linkA);
     std::string_view const fb(filters[i].linkB);
@@ -66,11 +72,11 @@ bool BotContactFilterBuilder::HasOverride(int linkA, int linkB) const {
 
 bool BotContactFilterBuilder::IsEnabled(int linkA, int linkB) const {
   int const idx = FindFilterIndex(linkA, linkB);
-  return idx != -1 ? _prefab.contactOverrides[idx].enable : DefaultEnabled(linkA, linkB);
+  return idx != -1 ? _overrides[idx].enable : DefaultEnabled(linkA, linkB);
 }
 
 void BotContactFilterBuilder::SetFilter(int linkA, int linkB, bool enable) {
-  auto& filters = _prefab.contactOverrides;
+  auto& filters = _overrides;
   int const idx = FindFilterIndex(linkA, linkB);
   if (enable == DefaultEnabled(linkA, linkB)) {
     // Matches the implicit default: drop any redundant override.
@@ -91,7 +97,7 @@ void BotContactFilterBuilder::SetFilter(int linkA, int linkB, bool enable) {
 }
 
 void BotContactFilterBuilder::SetAll(bool enable) {
-  auto& filters = _prefab.contactOverrides;
+  auto& filters = _overrides;
   filters.clear();
   for (int a = 0; a < numLinks; ++a) {
     for (int b = a + 1; b < numLinks; ++b) {

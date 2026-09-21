@@ -2243,9 +2243,14 @@ void BotEditor::ShowBotContactWindow(bool* open) {
     return;
   }
   auto& prefab = _botAsset->GetBotPrefab();
-  auto& filters = prefab.contactOverrides;
-  bool isReadOnly = _botAsset->IsReadOnly() ||
+  bool const isModBot =
       _botAsset->GetBotFileType() == superdex::robotics::BotFileType::ModBotPrefab;
+  // For a mod bot the composed BotPrefab (and its contactOverrides) is regenerated on every build,
+  // so edits must target the recipe's own contactOverrides list (which BuildBot re-applies on top
+  // of the composed bot). The matrix still reads topology/defaults/names from the built `prefab`.
+  auto& filters =
+      isModBot ? _botAsset->GetModBotPrefab().contactOverrides : prefab.contactOverrides;
+  bool const isReadOnly = _botAsset->IsReadOnly();
 
   int const numLinks = static_cast<int>(prefab.links.size());
   if (numLinks <= 1) {
@@ -2255,7 +2260,7 @@ void BotEditor::ShowBotContactWindow(bool* open) {
   }
 
   // Encapsulates the implicit-disable mask and the override-editing rules.
-  BotContactFilterBuilder builder(prefab);
+  BotContactFilterBuilder builder(prefab, filters);
   bool modified = false;
 
   float const avail = ImGui::GetContentRegionAvail().x;

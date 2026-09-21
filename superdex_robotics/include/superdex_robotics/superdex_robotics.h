@@ -464,10 +464,16 @@ struct ModBotPrefab {
   /// Ordered list of modifications to apply to the base bot.
   DynamicArray<BotMod> modifications;
 
+  /// Contact-filter overrides applied on top of the composed bot, after all modifications. Lets a
+  /// mod bot opt specific link pairs in or out even though its composed BotPrefab (and its
+  /// contactOverrides) is regenerated on every build.
+  DynamicArray<BotContactOverride> contactOverrides;
+
   MOCHI_STRUCT_BEGIN(superdex::robotics::ModBotPrefab)
   MOCHI_FIELD(name)
   MOCHI_FIELD(base)
   MOCHI_FIELD(modifications) MOCHI_ATTRIBUTE(NoSerializeDefaults);
+  MOCHI_FIELD(contactOverrides) MOCHI_ATTRIBUTE(NoSerializeDefaults);
   MOCHI_STRUCT_END()
 };
 
