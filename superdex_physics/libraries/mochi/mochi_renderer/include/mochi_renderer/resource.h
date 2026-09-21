@@ -138,6 +138,9 @@ class RenderModel : public Resource, public IInstanceable {
   filament::gltfio::FilamentInstance* CreateNewInstance();
   // One-time per-instance setup applied to every instance when it is created: enables stencil
   // write/INCR on the instance's own material instances and recomputes its bounding boxes.
+  // Snapshot every entity's current AABB, in getEntities() order, as this instance's rest bounds.
+  std::vector<filament::Box> CaptureInstanceRestBounds(
+      filament::gltfio::FilamentInstance* instance) const;
   void ConfigureInstance(filament::gltfio::FilamentInstance* instance);
   // Re-points a single instance at the model's current geometry override (_ownedVertexBuffer/
   // _ownedIndexBuffer). Shared by UpdateGeometry() (existing instances) and CreateNewInstance()
@@ -153,6 +156,12 @@ class RenderModel : public Resource, public IInstanceable {
   filament::gltfio::FilamentAsset* _primaryAsset = nullptr;
   FilamentInstanceVector _instances;
   std::vector<bool> _instanceInUse;
+  // Authored renderable bounds per pooled instance, one entry per entity (in getEntities() order),
+  // captured before anything can overwrite them and restored on checkout. Instances are pooled and
+  // reused, and SkinnedModelInstance::SetBoneMatrices rewrites a renderable's AABB to the posed
+  // box; without this, the next user of a recycled instance would read that stale, inflated box as
+  // if it were the model's rest bounds -- and each reuse would inflate it further.
+  std::vector<std::vector<filament::Box>> _instanceRestBounds;
   int _maxInstances = kDefaultMaxInstances;
   filament::gltfio::AssetLoader* _assetLoader = nullptr;
   filament::VertexBuffer* _ownedVertexBuffer = nullptr;
@@ -174,6 +183,10 @@ class RenderModelInstance : public SceneObject {
       RenderModel* model,
       filament::gltfio::FilamentInstance* instance,
       int instanceIndex);
+  // Authored (pre-pose) bounds of this instance's entity at @p entityIndex, in GetEntities()
+  // order. Returns an empty box when unavailable. Subclasses that overwrite a renderable's AABB
+  // (SkinnedModelInstance) read the untouched bounds through this rather than caching their own.
+  filament::Box GetAuthoredEntityBounds(size_t entityIndex) const;
   // Accessor for subclasses (SkinnedModelInstance) that need the backing gltfio instance to reach
   // its skin joints.
   filament::gltfio::FilamentInstance* GetFilamentInstance() const {
@@ -235,13 +248,24 @@ class SkinnedModelInstance : public RenderModelInstance {
       filament::gltfio::FilamentInstance* instance,
       int instanceIndex);
   void EnsureJointCache();
+  // Apply a posed cull box to each skinned renderable for @p boneMatrices. Shared by the rest-pose
+  // bounds established at construction and by SetBoneMatrices.
+  void ApplyPosedBounds(mochi::Span<filament::math::mat4f const> boneMatrices);
+  // Bone matrices for the GLB's own rest pose (jointWorld_rest * inverseBind), derived entirely
+  // from the retained cgltf source. Filament's recomputeBoundingBoxes() needs the joint world
+  // transforms to be settled, which is not guaranteed at load, so rest bounds are computed from
+  // source data instead and are the same whenever they are asked for.
+  std::vector<filament::math::mat4f> _restBoneMatrices;
 
   std::vector<utils::Entity> _joints; // skin 0 joints, in skin.joints (== link) order
   bool _jointCacheReady = false;
   // Renderables skinned by skin 0, paired (by index) with their load-time (rest) object-space AABBs
   // captured before any pose is applied. Used by SetBoneMatrices to rebuild a posed cull box.
   std::vector<utils::Entity> _skinnedRenderables;
-  std::vector<filament::Box> _skinnedRestBoxes;
+  // Position of each entry of _skinnedRenderables within GetEntities(), used to look up that
+  // renderable's authored bounds from the model. Storing the index rather than a copy of the box
+  // keeps one source of truth, so a later UpdateGeometry is picked up automatically.
+  std::vector<size_t> _skinnedEntityIndices;
   // Per-bone (skin 0) rest-pose sub-AABB in the GLB's model space: the bounds of just the vertices
   // each joint influences (weight > 0), computed once from the retained cgltf source.
   // SetBoneMatrices transforms each joint's OWN sub-box (not the whole mesh box) so the posed AABB

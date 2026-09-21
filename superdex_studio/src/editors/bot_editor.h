@@ -108,6 +108,7 @@ class BotEditor : public AssetEditor {
   ImGuiWindowFlags GetBotWindowFlags() const;
   void ShowBotDetailsWindow(bool* open);
   void ShowBotLinkDetailsWindow(bool* open);
+  void ShowBotSkinWindow(bool* open);
   void ApplyBotParamsEdit();
   bool ShowBotJointEditorWidgets(superdex::robotics::BotJointPrefab& joint, bool isRoot);
   bool ShowBotLinkEditorWidgets(
@@ -195,8 +196,29 @@ class BotEditor : public AssetEditor {
     std::vector<std::string> linkNames;
     std::vector<mochi::TransformRT> linkTransforms;
     mochi::DynamicArray<float> transmissionDisplacements;
+    // Per-step deformed skin surface (0 or 1 entry), applied to the staged "Skin" dynamic mesh.
+    std::vector<SoftMeshUpdate> softMeshUpdates;
+    // Per-step skin joint poses (0 or 1 entry), applied to the staged skin's GPU-skinned render
+    // model. Carries the per-link world transforms in nested-link (== GLB joint) order.
+    std::vector<SkinnedPoseUpdate> skinnedPoseUpdates;
   };
   mochi_renderer::ProducerConsumerBuffer<SimData> _simData;
+  // Skin surface queries held while simulating: registered on the articulated actor in
+  // CreatePhysicsActors when the bot has a skin, cancelled in DestroyPhysicsActors. The deformed
+  // (linear-blend-skinned) collision surface is read each step into SimData::softMeshUpdates and
+  // applied to the staged "Skin" dynamic mesh by name.
+  struct SkinQueryState {
+    mochi::QueryHandle positions;
+    mochi::QueryHandle normals;
+    std::string name;
+    bool active = false;
+    // For a composed (mod) bot that adopted a sub-bot's skin, maps skin bone index (== GLB joint
+    // order) to the merged articulation's link index, so per-step link transforms can be reordered
+    // into skin-bone order before posing the GPU-skinned skin. Empty for a natively skinned bot
+    // (bone i == link i), meaning "use link transforms as-is".
+    std::vector<int> boneRemap;
+  };
+  SkinQueryState _skinQuery;
   // UI state
   int _selectedBotLinkIndex = -1;
   bool _forceLinkFocus = false;

@@ -36,6 +36,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -49,6 +50,10 @@ namespace superdex::studio {
 // Forward declarations (defined below).
 static bool ValidateResultsHaveIssues(superdex::robotics::ValidateResults const& results);
 static mochi::DynamicString FirstValidateIssue(superdex::robotics::ValidateResults const& results);
+static void PrepopulateModification(
+    superdex::robotics::ModBotPrefab const& modBotPrefab,
+    superdex::robotics::IBotLoader const& loader,
+    superdex::robotics::BotMod& newMod);
 
 template <typename T>
 bool CopyPasteContextMenu(char const* id, T& value) {
@@ -396,6 +401,7 @@ std::vector<AssetEditor::WindowDeclaration> BotEditor::GetDefaultWindows() {
       {"Bot Hierarchy", true, Dock::SidePanelTop, false},
       {"Bot Details", true, Dock::SidePanelBottom, false},
       {"Bot Link Details", true, Dock::SidePanelBottom, false},
+      {"Bot Skin", false, Dock::SidePanelBottom, false},
       {"Bot Control", false, Dock::SidePanelBottom, false},
       {"Bot Contact", false, Dock::SidePanelBottom, false},
       {"Bot Transmissions", false, Dock::SidePanelBottom, false},
@@ -425,6 +431,11 @@ void BotEditor::ShowAuxiliaryWindows() {
   if (bool& open = _studio->GetWindowVisible("Bot Link Details")) {
     ImGui::BeginDisabled(_mochiScene.IsSimulating());
     ShowBotLinkDetailsWindow(&open);
+    ImGui::EndDisabled();
+  }
+  if (bool& open = _studio->GetWindowVisible("Bot Skin")) {
+    ImGui::BeginDisabled(_mochiScene.IsSimulating());
+    ShowBotSkinWindow(&open);
     ImGui::EndDisabled();
   }
   if (bool& open = _studio->GetWindowVisible("Bot Control")) {
@@ -459,7 +470,20 @@ void BotEditor::ShowAuxiliaryWindows() {
     _viewport->ShowSelectedObjectDetailsWindow("Render Scene Details", &open);
   }
   if (bool& open = _studio->GetWindowVisible("Render Scene Stage")) {
-    auto* simNames = _mochiScene.IsSimulating() ? &_simData.GetConsumerData().linkNames : nullptr;
+    // The "Sim Name" column mirrors the staged actors. Links come straight from linkNames; the skin
+    // is not a nested link actor -- it is driven by the top-level articulated actor's skinned
+    // surface
+    // -- so append that actor's name (matching the staged skin name) as its sim source. linkNames
+    // itself must stay links-only because it drives ApplyWorldTransforms, so build a display copy.
+    std::vector<std::string> simNamesStorage;
+    std::vector<std::string>* simNames = nullptr;
+    if (_mochiScene.IsSimulating()) {
+      simNamesStorage = _simData.GetConsumerData().linkNames;
+      if (_skinQuery.active) {
+        simNamesStorage.push_back(_skinQuery.name);
+      }
+      simNames = &simNamesStorage;
+    }
     _stage.ShowSceneStageWindow("Render Scene Stage", &open, simNames);
   }
 }
@@ -1151,11 +1175,12 @@ void BotEditor::OnSceneSelectionChanged(std::vector<mochi_renderer::SceneObject*
     _selectedBotLinkIndex = -1;
     return;
   }
-  // Staged actors are the bot's links (in link order) followed by optional extras.
-  // _selectedBotLinkIndex is a bot LINK index (used to index botPrefab.links/joints), so only a
-  // link maps to a selection: a non-link staged actor (stage index out of the link range) clears
-  // it to -1, which the UI treats as "no link selected". Assigning the raw stage index here (as
-  // before) put an out-of-range value into the per-link visualizations / hierarchy focus.
+  // Staged actors are the bot's links (in link order) followed by optional extras -- notably the
+  // skin, staged as "<bot> (Skin)" at stage index == link count. _selectedBotLinkIndex is a bot
+  // LINK index (used to index botPrefab.links/joints), so only a link maps to a selection: a
+  // non-link staged actor (stage index out of the link range) clears it to -1, which the UI treats
+  // as "no link selected". Assigning the raw stage index here (as before) put an out-of-range value
+  // into the per-link visualizations / hierarchy focus and crashed when the skin was clicked.
   int const stageIndex = _stage.GetSceneObjectIndex(objects.back());
   int const numLinks = static_cast<int>(_botAsset->GetBotPrefab().links.size());
   _selectedBotLinkIndex = (stageIndex >= 0 && stageIndex < numLinks) ? stageIndex : -1;
@@ -1188,11 +1213,63 @@ void BotEditor::CreatePhysicsActors(mochi::Scene* scene) {
   }
   _bot = botsContext->CreateBot(scene, botPrefab, _studio->GetBotLoader(), e);
   _botControl.SetBot(_bot);
+
+  // If the bot has a skin, register surface queries on the articulated actor so its deformed
+  // (linear-blend-skinned) collision surface can be read each step and pushed to the staged skin
+  // dynamic mesh. The skin is the top-level actor's own surface (not a nested link), so it is named
+  // after that actor plus " (Skin)" -- this must match the staged name in
+  // SceneStage::BuildBotRequests so ApplySoftMeshUpdates finds it. Cancelled in
+  // DestroyPhysicsActors while the actor is still alive.
+  _skinQuery = {};
+  if (_bot && botPrefab.skin.has_value()) {
+    if (auto* actor = _bot->GetArticulatedActor()) {
+      _skinQuery.positions = actor->RegisterQuery(mochi::QueryType::SurfaceNodePositions, e);
+      _skinQuery.normals = actor->RegisterQuery(mochi::QueryType::SurfaceNodeNormals, e);
+      if (e.IsOK()) {
+        char const* const skinActorName = actor->GetName();
+        _skinQuery.name = SkinStagedName(skinActorName ? skinActorName : "");
+        _skinQuery.active = true;
+        // If this bot adopted a sub-bot's skin (composed mod bot), precompute the map from skin
+        // bone index (== GLB joint order) to merged-articulation link index, so per-step link
+        // transforms can be reordered into skin-bone order before posing the GPU-skinned skin (see
+        // the skinned-pose emission in ProduceSimData). A natively skinned bot leaves this empty
+        // (bone i == link i), meaning the link transforms are used as-is.
+        for (auto const& linkName : botPrefab._skinBoneLinks) {
+          int linkIndex = -1;
+          for (int i = 0; i < static_cast<int>(botPrefab.links.size()); ++i) {
+            if (std::string_view(botPrefab.links[i].name) == std::string_view(linkName)) {
+              linkIndex = i;
+              break;
+            }
+          }
+          if (linkIndex < 0) {
+            // Mirrors the SceneStage path, which reports the same mismatch. Left as -1 so posing
+            // falls back to identity for this bone rather than mis-addressing another link.
+            MOCHI_LOG_ERROR_ONCE(
+                "BotEditor: skin bone references link '%s', which is not in the built bot; that "
+                "bone will not deform.",
+                linkName.c_str());
+          }
+          _skinQuery.boneRemap.push_back(linkIndex);
+        }
+      } else {
+        MOCHI_LOG_ERROR("Failed to register bot skin surface queries");
+      }
+    }
+  }
 }
 
 void BotEditor::DestroyPhysicsActors(mochi::Scene* scene) {
   if (!_bot) {
     return;
+  }
+  // Release the skin surface queries while the actor is still alive (this runs before teardown).
+  if (_skinQuery.active) {
+    if (auto* actor = _bot->GetArticulatedActor()) {
+      actor->CancelQuery(_skinQuery.positions);
+      actor->CancelQuery(_skinQuery.normals);
+    }
+    _skinQuery = {};
   }
   _botControl.SetBot(nullptr);
   superdex::robotics::DestroyBot(scene, _bot);
@@ -1253,6 +1330,68 @@ mochi::CallbackHandle BotEditor::RegisterPostStepCallback(mochi::AsyncScene* sce
               static_cast<float>(mochi::experimental::GetTransmissionDisplacement(
                   actor, static_cast<int>(transmissionIndex), e));
         }
+        // Skin: read the deformed (skinned) collision surface into a single SoftMeshUpdate matched
+        // to the staged skin dynamic mesh by name (_skinQuery.name). Local positions/normals are
+        // converted to renderer space; worldTransform is the articulated root (worldFromRoot).
+        if (_skinQuery.active) {
+          auto const& converter = _studio->GetEditorToRendererSpaceConverter();
+          auto const positions = actor->GetSurfaceMeshNodePositionsLocal(e);
+          auto const normals = actor->GetSurfaceMeshNodeNormalsLocal(e);
+          int const numNodes = static_cast<int>(positions.size() / 3);
+          int const numNormals = static_cast<int>(normals.size() / 3);
+          data.softMeshUpdates.resize(1);
+          SoftMeshUpdate& update = data.softMeshUpdates[0];
+          update.name = _skinQuery.name;
+          update.worldTransform = actor->GetRootTransform();
+          update.positions.resize(static_cast<size_t>(numNodes) * 3);
+          update.normals.resize(static_cast<size_t>(numNodes) * 3);
+          for (int n = 0; n < numNodes; ++n) {
+            auto const p = converter.TranslationToOutput(
+                mochi::StaticCast<mochi::Float3>(mochi::Real3{
+                    positions[3 * n + 0], positions[3 * n + 1], positions[3 * n + 2]}));
+            update.positions[3 * n + 0] = p[0];
+            update.positions[3 * n + 1] = p[1];
+            update.positions[3 * n + 2] = p[2];
+            mochi::Float3 nm{0.0f, 1.0f, 0.0f};
+            if (n < numNormals) {
+              nm = {
+                  static_cast<float>(normals[3 * n + 0]),
+                  static_cast<float>(normals[3 * n + 1]),
+                  static_cast<float>(normals[3 * n + 2])};
+            }
+            nm = converter.DirectionToOutput(nm);
+            update.normals[3 * n + 0] = nm[0];
+            update.normals[3 * n + 1] = nm[1];
+            update.normals[3 * n + 2] = nm[2];
+          }
+        } else {
+          data.softMeshUpdates.clear();
+        }
+        // Skin render model: pose its joints from the link world transforms (nested-link order ==
+        // GLB joint order). Emitted whenever the skin is staged; ApplySkinnedPose no-ops if the
+        // skin has no skinned render model.
+        if (_skinQuery.active) {
+          data.skinnedPoseUpdates.resize(1);
+          data.skinnedPoseUpdates[0].name = _skinQuery.name;
+          if (_skinQuery.boneRemap.empty()) {
+            data.skinnedPoseUpdates[0].linkWorldTransforms = data.linkTransforms;
+          } else {
+            // Composed skin: reorder the merged link transforms into skin-bone (GLB joint) order so
+            // the GPU-skinned skin's child-local bone indices address the correct links.
+            auto& poseTransforms = data.skinnedPoseUpdates[0].linkWorldTransforms;
+            poseTransforms.clear();
+            poseTransforms.reserve(_skinQuery.boneRemap.size());
+            for (int const linkIndex : _skinQuery.boneRemap) {
+              if (linkIndex >= 0 && linkIndex < static_cast<int>(data.linkTransforms.size())) {
+                poseTransforms.push_back(data.linkTransforms[linkIndex]);
+              } else {
+                poseTransforms.push_back(mochi::TransformRT{});
+              }
+            }
+          }
+        } else {
+          data.skinnedPoseUpdates.clear();
+        }
         _simData.Produce();
       });
   return handle;
@@ -1262,6 +1401,7 @@ void BotEditor::OnStopPhysics() {
   // Tear down the per-session force-drag controller. Runs after the async scene (and its callbacks)
   // are destroyed, so the controller's callback is already gone.
   _dragController.reset();
+  _skinQuery = {};
   _stage.ResetWorldTransforms(_studio->GetEditorToRendererSpaceConverter());
   _simData.Consume();
   // Hide and reset the Control window so the next sim starts at zero effort.
@@ -1271,9 +1411,14 @@ void BotEditor::OnStopPhysics() {
 void BotEditor::SyncFromPhysics() {
   if (_simData.Consume()) {
     auto const& data = _simData.GetConsumerData();
+    auto const& converter = _studio->GetEditorToRendererSpaceConverter();
     _transmissionDisplacements = data.transmissionDisplacements;
+    // Match link actors by name so the staged skin (an extra, non-link dynamic actor) coexists with
+    // the links; the skin's deformed surface is applied separately below.
     _stage.ApplyWorldTransforms(
-        mochi::MakeConstSpan(data.linkTransforms), _studio->GetEditorToRendererSpaceConverter());
+        mochi::MakeConstSpan(data.linkNames), mochi::MakeConstSpan(data.linkTransforms), converter);
+    _stage.ApplySoftMeshUpdates(mochi::MakeConstSpan(data.softMeshUpdates), converter);
+    _stage.ApplySkinnedPose(mochi::MakeConstSpan(data.skinnedPoseUpdates), converter);
   }
 }
 
@@ -1612,6 +1757,206 @@ void BotEditor::ShowBotDetailsWindow(bool* open) {
     }
   }
   ImGui::End(); // Bot Details
+}
+
+void BotEditor::ShowBotSkinWindow(bool* open) {
+  using namespace superdex::robotics;
+  ImGui::Begin("Bot Skin", open, GetBotWindowFlags());
+  auto& botPrefab = _botAsset->GetBotPrefab();
+  bool const isModBot = _botAsset->GetBotFileType() == BotFileType::ModBotPrefab;
+  bool const isReadOnly = _botAsset->IsReadOnly();
+  ModBotPrefab* modBotPrefab = isModBot ? &_botAsset->GetModBotPrefab() : nullptr;
+  int skinModIndex = kIndexNone;
+  int firstSkinModIndex = kIndexNone;
+  if (modBotPrefab != nullptr) {
+    for (int i = 0; i < isize(modBotPrefab->modifications); ++i) {
+      auto const* attachSkin = std::get_if<AttachSkin>(&modBotPrefab->modifications[i]);
+      if (attachSkin == nullptr) {
+        continue;
+      }
+      if (firstSkinModIndex == kIndexNone) {
+        firstSkinModIndex = i;
+      }
+      if (attachSkin->enabled) {
+        skinModIndex = i;
+        break;
+      }
+    }
+    if (skinModIndex == kIndexNone) {
+      skinModIndex = firstSkinModIndex;
+    }
+  }
+
+  mochi::prefab::ArticulatedSkinPrefab* skinPrefab = nullptr;
+  if (skinModIndex != kIndexNone) {
+    skinPrefab = &std::get<AttachSkin>(modBotPrefab->modifications[skinModIndex]).skin;
+  } else if (!isModBot && botPrefab.skin.has_value()) {
+    skinPrefab = &*botPrefab.skin;
+  }
+
+  bool changed = false;
+  bool referencesChanged = false;
+  ImGui::BeginDisabled(isReadOnly);
+
+  // A deformable skin skinned over the articulation's links, acting as a contact collidee. Skin is
+  // per-bot (not per-link). The skin's Mochi shape has no per-shape transform (only a file); its
+  // render model carries its own scale/rotation/translation.
+  if (skinPrefab == nullptr) {
+    if (isModBot && botPrefab.skin.has_value()) {
+      ImGui::TextDisabled(
+          "This skin comes from a referenced bot. Edit that bot to change its skin.");
+    } else {
+      ImGui::TextDisabled("This bot has no skin.");
+    }
+    if ((!isModBot || !botPrefab.skin.has_value()) &&
+        ImGui::Button(isModBot ? "Add Skin Modification" : "Add Skin")) {
+      if (isModBot) {
+        BotMod newMod = AttachSkin{};
+        PrepopulateModification(*modBotPrefab, _studio->GetBotLoader(), newMod);
+        modBotPrefab->modifications.push_back(std::move(newMod));
+      } else {
+        botPrefab.skin = mochi::prefab::ArticulatedSkinPrefab{};
+      }
+      changed = true;
+      referencesChanged = true;
+    }
+  } else {
+    auto& skin = *skinPrefab;
+    if (ImGui::Button(isModBot ? "Remove Skin Modification" : "Remove Skin")) {
+      if (isModBot) {
+        modBotPrefab->modifications.erase(modBotPrefab->modifications.begin() + skinModIndex);
+      } else {
+        botPrefab.skin.reset();
+      }
+      changed = true;
+      referencesChanged = true;
+    } else {
+      ImGui::SeparatorText("Model");
+      bool modelChanged = false;
+      if (ImGui::AssetSlot(
+              "Mochi Model",
+              skin.shapeFile,
+              _studio->GetAssetManager(),
+              _studio,
+              AssetType::MochiModel,
+              true)) {
+        modelChanged = true;
+      }
+      changed |= ImGui::ModelEditor(
+          "Render Model",
+          _studio,
+          AssetType::RenderModel,
+          skin.renderModelFile,
+          skin.renderModelScale,
+          skin.renderModelRotation,
+          skin.renderModelTranslation,
+          nullptr,
+          nullptr,
+          nullptr,
+          _studio->GetAssetManager(),
+          true,
+          modelChanged);
+      if (modelChanged) {
+        // Invalidate the cached skin shape so it re-bakes from the file on the next physics load.
+        skin.shape = {};
+        changed = true;
+        referencesChanged = true;
+      }
+
+      // Collision / contact params (the ArticulatedSkinParams base fields), rendered with the same
+      // Simple Reflection widgets used for rigid links. A skin has no ColliderType (it is always a
+      // surface collidee), so only layer / contact / boundary fields are exposed.
+      ImGui::SeparatorText("Collision / Contact");
+      changed |= ImGui::InputText("Layer", &skin.layer, ImGuiInputTextFlags_CharsNoBlank);
+      changed |= ImGui::SimpleReflectionStruct(skin.contact);
+      changed |= ImGui::SimpleReflectionEnum<mochi::ActorBoundaryElementType>(
+          "Boundary Element Type", skin.boundaryElementType);
+      bool hasSubsampling = skin.boundarySubsampling.has_value();
+      if (ImGui::Checkbox("Boundary Subsampling", &hasSubsampling)) {
+        skin.boundarySubsampling =
+            hasSubsampling ? std::make_optional(mochi::BoundarySubsamplingParams{}) : std::nullopt;
+        changed = true;
+      }
+      if (skin.boundarySubsampling.has_value()) {
+        auto subsamplingDensity = static_cast<float>(skin.boundarySubsampling->subsamplingDensity);
+        if (ImGui::DragFloat(
+                "Subsampling Density", &subsamplingDensity, 0.01f, 0.0f, 1.0f, "%.3f")) {
+          skin.boundarySubsampling->subsamplingDensity =
+              static_cast<mochi::real>(subsamplingDensity);
+          changed = true;
+        }
+        changed |= ImGui::SimpleReflectionEnum<mochi::BoundarySubsamplingStrategy>(
+            "Subsampling Strategy", skin.boundarySubsampling->strategy);
+      }
+
+      // Per-link collision. A checked link does not collide: its rigid contact is turned off and
+      // the skin collides in its place. An unchecked link keeps its own rigid collision. Unset
+      // (all checked) means no link collides -- the original behavior. Unchecking any link
+      // materializes an explicit list of the links that remain non-colliding.
+      ImGui::SeparatorText("Non-Colliding Links");
+      ImGui::TextDisabled(
+          "Checked = link does not collide; the skin collides for it. Unchecked = link keeps its "
+          "own rigid collision.");
+      {
+        auto const& links = botPrefab.links;
+        int const numLinks = static_cast<int>(links.size());
+        std::vector<bool> nonColliding(numLinks, true);
+        if (skin.nonCollidingLinks.has_value()) {
+          std::unordered_set<std::string> inList;
+          for (auto const& n : *skin.nonCollidingLinks) {
+            inList.insert(std::string(n.c_str()));
+          }
+          for (int i = 0; i < numLinks; ++i) {
+            nonColliding[i] = inList.count(std::string(links[i].name.c_str())) > 0;
+          }
+        }
+        bool listChanged = false;
+        for (int i = 0; i < numLinks; ++i) {
+          ImGui::PushID(i);
+          bool checked = nonColliding[i];
+          if (ImGui::Checkbox(links[i].name.c_str(), &checked)) {
+            nonColliding[i] = checked;
+            listChanged = true;
+          }
+          ImGui::PopID();
+        }
+        if (listChanged) {
+          bool const allNonColliding =
+              std::all_of(nonColliding.begin(), nonColliding.end(), [](bool b) { return b; });
+          if (allNonColliding) {
+            skin.nonCollidingLinks.reset();
+          } else {
+            mochi::DynamicArray<mochi::DynamicString> list;
+            for (int i = 0; i < numLinks; ++i) {
+              if (nonColliding[i]) {
+                list.push_back(links[i].name);
+              }
+            }
+            skin.nonCollidingLinks = std::move(list);
+          }
+          changed = true;
+        }
+      }
+    }
+  }
+
+  ImGui::EndDisabled();
+  if (changed) {
+    if (isModBot) {
+      _botAsset->SetDirty(!isReadOnly);
+      GetUndoStack().MarkEdited();
+      if (RecomputeModBuildStatus()) {
+        _botAsset->MarkThumbnailDirty();
+        RestageBot();
+      }
+    } else {
+      ApplyBotParamsEdit();
+    }
+    if (referencesChanged) {
+      _studio->GetAssetManager().ResyncReferencer(_botAsset);
+    }
+  }
+  ImGui::End(); // Bot Skin
 }
 
 void BotEditor::ShowBotLinkDetailsWindow(bool* open) {
@@ -2109,7 +2454,8 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
           char const* typeName = std::is_same_v<T, superdex::robotics::AttachBot> ? "Attach Bot"
               : std::is_same_v<T, superdex::robotics::AttachLink>                 ? "Attach Link"
               : std::is_same_v<T, superdex::robotics::ReplaceLink>                ? "Replace Link"
-                                                                   : "Replace Link With Bot";
+              : std::is_same_v<T, superdex::robotics::AttachSkin>                 ? "Attach Skin"
+                                                                  : "Replace Link With Bot";
           char const* warnIcon = isFailing ? " " ICON_FA_EXCLAMATION_TRIANGLE : "";
           std::array<char, 128> label{};
           if (m.name.empty()) {
@@ -2190,6 +2536,30 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
                 bool modelChanged = false;
                 modChanged |= ShowBotLinkEditorWidgets(m.link, assetManager, true, modelChanged);
               }
+            } else if constexpr (std::is_same_v<T, superdex::robotics::AttachSkin>) {
+              modChanged |= ImGui::AssetSlot(
+                  "Mochi Model",
+                  m.skin.shapeFile,
+                  assetManager,
+                  _studio,
+                  AssetType::MochiModel,
+                  true);
+              bool modelChanged = false;
+              modChanged |= ImGui::ModelEditor(
+                  "Render Model",
+                  _studio,
+                  AssetType::RenderModel,
+                  m.skin.renderModelFile,
+                  m.skin.renderModelScale,
+                  m.skin.renderModelRotation,
+                  m.skin.renderModelTranslation,
+                  nullptr,
+                  nullptr,
+                  nullptr,
+                  assetManager,
+                  true,
+                  modelChanged);
+              modChanged |= modelChanged;
             }
           }
           return modChanged;
@@ -2226,7 +2596,9 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
   ImGui::Separator();
   static int selectedModType = 0;
   ImGui::Combo(
-      "New Mod Type", &selectedModType, "AttachBot\0AttachLink\0ReplaceLink\0ReplaceLinkWithBot\0");
+      "New Mod Type",
+      &selectedModType,
+      "AttachBot\0AttachLink\0ReplaceLink\0ReplaceLinkWithBot\0AttachSkin\0");
   if (ImGui::Button("Add Modification")) {
     superdex::robotics::BotMod newMod;
     if (selectedModType == 0) {
@@ -2235,8 +2607,10 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
       newMod = superdex::robotics::AttachLink{};
     } else if (selectedModType == 2) {
       newMod = superdex::robotics::ReplaceLink{};
-    } else {
+    } else if (selectedModType == 3) {
       newMod = superdex::robotics::ReplaceLinkWithBot{};
+    } else {
+      newMod = superdex::robotics::AttachSkin{};
     }
     PrepopulateModification(modBotPrefab, _studio->GetBotLoader(), newMod);
     modBotPrefab.modifications.push_back(std::move(newMod));
@@ -2397,9 +2771,30 @@ void BotEditor::ShowBotContactWindow(bool* open) {
   float const cellSize = ImGui::GetFrameHeight();
   float const fontSize = ImGui::GetFontSize();
   float const spacing = ImGui::GetStyle().ItemSpacing.x;
+
+  // The optional skin is rendered as an extra rightmost column: a pseudo-link at index numLinks.
+  // Because the triangle pairs (i, j) for i < j, that column gets a cell against every real link,
+  // including the root. skinLabel holds a null-terminated copy for the header/tooltip.
+  bool const hasSkin = builder.HasSkin();
+  // The skin shares the bot's top-level actor, so it is labeled with that actor's (bot) name plus a
+  // " (Skin)" suffix for clarity. This is display-only; the stored override party is
+  // builder.SkinName().
+  std::string_view const skinNameView = hasSkin ? builder.SkinName() : std::string_view{};
+  mochi::DynamicString skinLabel(skinNameView.data(), skinNameView.size());
+  if (hasSkin) {
+    skinLabel += " (Skin)";
+  }
+  char const* const skinLabelC = skinLabel.c_str();
+
   float maxLabelW = 0.0f;
   for (auto const& link : prefab.links) {
     float const w = ImGui::CalcTextSize(link.name.c_str()).x;
+    if (w > maxLabelW) {
+      maxLabelW = w;
+    }
+  }
+  if (hasSkin) {
+    float const w = ImGui::CalcTextSize(skinLabelC).x;
     if (w > maxLabelW) {
       maxLabelW = w;
     }
@@ -2411,9 +2806,11 @@ void BotEditor::ShowBotContactWindow(bool* open) {
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   ImU32 const textColor = ImGui::GetColorU32(ImGuiCol_Text);
 
-  // Strict upper triangle (i < j): skip j=0 (no cells) and the last row (no cells).
-  int const numCols = numLinks - 1;
-  int const numRows = numLinks - 1;
+  // Strict upper triangle (i < j): skip j=0 (no cells) and the last row (no cells). When a skin is
+  // present it adds one rightmost column (and gives the last link a row) as a pseudo-link at index
+  // numLinks, which the triangle pairs with every real link.
+  int const numCols = hasSkin ? numLinks : numLinks - 1;
+  int const numRows = hasSkin ? numLinks : numLinks - 1;
 
   // Reserve top header area; column labels are drawn after cells so that
   // hover state is known (deferred draw).
@@ -2423,6 +2820,7 @@ void BotEditor::ShowBotContactWindow(bool* open) {
   // Render cells; track which row/col is hovered.
   int hoveredI = -1;
   int hoveredJ = -1;
+  bool hoveredSkinCol = false;
   ImGui::BeginDisabled(isReadOnly || _contactEstimator.IsRunning());
   for (int i = 0; i < numRows; ++i) {
     for (int j = i + 1; j < numLinks; ++j) {
@@ -2454,6 +2852,34 @@ void BotEditor::ShowBotContactWindow(bool* open) {
       }
       ImGui::PopID();
     }
+    if (hasSkin) {
+      // Skin pseudo-column (rightmost): pairs with every link row, including the root. Skin<->link
+      // contact is enabled by default, so an unchecked cell stores an opt-out (disable) override.
+      ImGui::SetCursorScreenPos(
+          ImVec2(cellsOrigin.x + (numLinks - 1) * cellSize, cellsOrigin.y + i * cellSize));
+      bool const hasFilter = builder.HasSkinOverride(i);
+      bool checked = builder.IsSkinEnabled(i);
+      ImGui::PushID(numLinks * numLinks + i);
+      if (!hasFilter) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+      }
+      if (ImGui::Checkbox("##s", &checked)) {
+        builder.SetSkinFilter(i, checked);
+        modified = true;
+      }
+      if (!hasFilter) {
+        ImGui::PopStyleVar();
+      }
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        hoveredI = i;
+        hoveredSkinCol = true;
+        ImGui::SetTooltip(
+            "%s " ICON_FA_ARROWS_ALT_H " %s  (enabled by default)",
+            prefab.links[i].name.c_str(),
+            skinLabelC);
+      }
+      ImGui::PopID();
+    }
   }
 
   // Reserve cell grid + row label area so the window sizes correctly.
@@ -2477,6 +2903,7 @@ void BotEditor::ShowBotContactWindow(bool* open) {
   if (hoveredJ >= 0) {
     colHot[hoveredJ] = true;
   }
+  bool skinColHot = hoveredSkinCol;
 
   // Hovering a row/column label highlights that link plus every link it can still
   // collide with (enabled pair) in the opposite color: a hovered row highlights the
@@ -2495,6 +2922,19 @@ void BotEditor::ShowBotContactWindow(bool* open) {
         }
       }
     }
+    // Skin column label (rightmost): highlight the links it can still contact (enabled pairs).
+    if (hasSkin) {
+      float const cellLeft = cellsOrigin.x + (numLinks - 1) * cellSize;
+      if (ImGui::IsMouseHoveringRect(
+              ImVec2(cellLeft, origin.y), ImVec2(cellLeft + cellSize, origin.y + colHeaderH))) {
+        skinColHot = true;
+        for (int k = 0; k < numLinks; ++k) {
+          if (builder.IsSkinEnabled(k)) {
+            rowHot[k] = true;
+          }
+        }
+      }
+    }
     // Row labels (links 0..numRows-1) sit in the strip to the right of the grid.
     float const rowLabelX = cellsOrigin.x + numCols * cellSize + spacing;
     for (int i = 0; i < numRows; ++i) {
@@ -2506,6 +2946,9 @@ void BotEditor::ShowBotContactWindow(bool* open) {
           if (k != i && builder.IsEnabled(i, k)) {
             colHot[k] = true;
           }
+        }
+        if (hasSkin && builder.IsSkinEnabled(i)) {
+          skinColHot = true;
         }
       }
     }
@@ -2526,6 +2969,15 @@ void BotEditor::ShowBotContactWindow(bool* open) {
     float const textY = origin.y + colHeaderH;
     ImPlot::AddTextVertical(
         drawList, ImVec2(textX, textY), labelColor(j, colHot[j], kColHoverColor), name);
+  }
+  // Skin column label (rightmost, hover-aware). The skin is not a link, so it has no render-model
+  // dimming; draw it in the normal text color unless hovered.
+  if (hasSkin) {
+    float const cellLeft = cellsOrigin.x + (numLinks - 1) * cellSize;
+    float const textX = cellLeft + (cellSize - fontSize) * 0.5f;
+    float const textY = origin.y + colHeaderH;
+    ImPlot::AddTextVertical(
+        drawList, ImVec2(textX, textY), skinColHot ? kColHoverColor : textColor, skinLabelC);
   }
   // Deferred draw of row labels (hover-aware).
   for (int i = 0; i < numRows; ++i) {

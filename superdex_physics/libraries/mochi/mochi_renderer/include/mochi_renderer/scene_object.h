@@ -52,6 +52,7 @@ class SceneObject {
   filament::math::quatf _rotation = {};
   filament::math::float3 _translation = {0.0f, 0.0f, 0.0f};
   bool _internal = false;
+  bool _visible = true;
   bool _showAABB = false;
   SceneObject* _pickProxy = nullptr;
 
@@ -92,6 +93,9 @@ class SceneObject {
   bool GetCastShadows() const;
   bool GetReceiveShadows() const;
   void SetVisible(bool visible);
+  // Whether this object is currently drawn. Scene bounds queries skip hidden objects, so a
+  // representation that is staged but not shown does not influence framing or the ground plane.
+  bool IsVisible() const;
   bool GetVisible() const;
   // Adds/removes this object's renderables from the highlight overlay pass (the reserved
   // @ref kHighlightOverlayLayer bit). Independent of SetVisible, so an object can be both normally

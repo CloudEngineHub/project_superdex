@@ -526,7 +526,14 @@ void MochiPrefabEditor::CreatePhysicsActors(mochi::Scene* scene) {
   // the actors are torn down (cancelled in DestroyPhysicsActors).
   _softQueryState.clear();
   for (auto* actor : result.actors) {
-    if (actor->GetType() != mochi::ActorType::Soft) {
+    // Soft actors expose their whole deforming surface; articulated actors expose a surface only
+    // when they carry a skin (folded into the compound entity, sharing the actor's handle). Both
+    // are read the same way and emitted as SoftMeshUpdates each step, so they share this query
+    // list.
+    bool const isSoft = actor->GetType() == mochi::ActorType::Soft;
+    bool const isSkinnedArticulated =
+        actor->GetType() == mochi::ActorType::Articulated && !actor->GetSurfaceMesh().IsEmpty();
+    if (!isSoft && !isSkinnedArticulated) {
       continue;
     }
     SoftQueryState state;
@@ -535,12 +542,15 @@ void MochiPrefabEditor::CreatePhysicsActors(mochi::Scene* scene) {
     state.normals = actor->RegisterQuery(mochi::QueryType::SurfaceNodeNormals, e);
     if (!e.IsOK()) {
       // Consistent with the EnsureFullyLoaded / AddToScene error handling above: abort setup rather
-      // than storing a half-registered soft actor whose per-frame mesh update would read nothing.
-      MOCHI_LOG_ERROR("Failed to register soft actor surface queries");
+      // than storing a half-registered actor whose per-frame mesh update would read nothing.
+      MOCHI_LOG_ERROR("Failed to register actor surface queries");
       return;
     }
     char const* const name = actor->GetName();
-    state.name = name ? name : "";
+    std::string const actorName = name ? name : "";
+    // The skin has no independent actor, so it is identified by its skin staged name to match the
+    // deforming mesh SceneStage staged for it (ApplySoftMeshUpdates matches by name).
+    state.name = isSkinnedArticulated ? SkinStagedName(actorName) : actorName;
     _softQueryState.push_back(std::move(state));
   }
 }
@@ -563,6 +573,7 @@ mochi::CallbackHandle MochiPrefabEditor::RegisterPostStepCallback(mochi::AsyncSc
         auto& data = _simData.GetProducerData();
         data.actorTransforms.clear();
         data.actorNames.clear();
+        data.skinnedPoseUpdates.clear();
         // Build the ordered transform list to match StagePrefab's staged-actor order: articulated
         // actors expand to their nested link transforms; rigid and soft actors push their root
         // transform. Soft actors are included here so their world transform is applied by name and
@@ -581,6 +592,20 @@ mochi::CallbackHandle MochiPrefabEditor::RegisterPostStepCallback(mochi::AsyncSc
               data.actorTransforms.push_back(linkTransforms[i]);
               char const* const linkName = info.scene->GetActor(links[i])->GetName();
               data.actorNames.emplace_back(linkName ? linkName : "");
+            }
+            // If this articulated actor carries a skin, add a row for it (matched by skin staged
+            // name) so its transform is applied and its row appears in the Render Scene Stage debug
+            // view; its deformed surface is additionally applied via the mesh-update channel below.
+            if (!actor->GetSurfaceMesh().IsEmpty()) {
+              char const* const actorName = actor->GetName();
+              data.actorTransforms.push_back(actor->GetRootTransform());
+              data.actorNames.push_back(SkinStagedName(actorName ? actorName : ""));
+              // Pose the skin's render model from this actor's link world transforms (nested-link
+              // order == GLB joint order). ApplySkinnedPose no-ops if the skin has no render model.
+              SkinnedPoseUpdate poseUpdate;
+              poseUpdate.name = SkinStagedName(actorName ? actorName : "");
+              poseUpdate.linkWorldTransforms.assign(linkTransforms.begin(), linkTransforms.end());
+              data.skinnedPoseUpdates.push_back(std::move(poseUpdate));
             }
           } else if (
               actor->GetType() == mochi::ActorType::Rigid ||
@@ -659,6 +684,7 @@ void MochiPrefabEditor::SyncFromPhysics() {
         mochi::MakeConstSpan(data.actorTransforms),
         converter);
     _stage.ApplySoftMeshUpdates(mochi::MakeConstSpan(data.softMeshUpdates), converter);
+    _stage.ApplySkinnedPose(mochi::MakeConstSpan(data.skinnedPoseUpdates), converter);
   }
 }
 

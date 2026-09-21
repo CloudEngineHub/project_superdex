@@ -163,7 +163,27 @@ filament::gltfio::FilamentInstance* RenderModel::CreateNewInstance() {
   }
   _instances.push_back(instance);
   _instanceInUse.push_back(false);
+  _instanceRestBounds.push_back(CaptureInstanceRestBounds(instance));
   return instance;
+}
+
+std::vector<filament::Box> RenderModel::CaptureInstanceRestBounds(
+    filament::gltfio::FilamentInstance* instance) const {
+  std::vector<filament::Box> bounds;
+  if (instance == nullptr) {
+    return bounds;
+  }
+  auto& rcm = _engine->getRenderableManager();
+  auto const* entities = instance->getEntities();
+  size_t const entityCount = instance->getEntityCount();
+  bounds.reserve(entityCount);
+  for (size_t i = 0; i < entityCount; ++i) {
+    auto ri = rcm.getInstance(entities[i]);
+    // Keep one entry per entity so indices line up with getEntities() on restore; non-renderable
+    // entities get a default box that is never applied.
+    bounds.push_back(ri.isValid() ? rcm.getAxisAlignedBoundingBox(ri) : filament::Box{});
+  }
+  return bounds;
 }
 
 void RenderModel::InitializeInitialInstance() {
@@ -171,9 +191,11 @@ void RenderModel::InitializeInitialInstance() {
   // not touch _instanceInUse; size it to match so slot indices stay in sync from the start. Do
   // this on every path (even when the initial instance is null) so the two vectors never desync.
   _instanceInUse.assign(_instances.size(), false);
-  for (auto* instance : _instances) {
-    if (instance) {
-      ConfigureInstance(instance);
+  _instanceRestBounds.assign(_instances.size(), {});
+  for (size_t i = 0; i < _instances.size(); ++i) {
+    if (_instances[i]) {
+      ConfigureInstance(_instances[i]);
+      _instanceRestBounds[i] = CaptureInstanceRestBounds(_instances[i]);
     }
   }
 }
@@ -274,11 +296,16 @@ void RenderModel::UpdateGeometry(
   // Re-point every pooled instance (both checked-out and free) at the new geometry, so all
   // live instances update and future GetInstance() calls also yield the updated mesh. The
   // instances share these buffers; per-primitive material instances are left untouched.
-  for (auto* instance : _instances) {
-    if (!instance) {
+  for (size_t i = 0; i < _instances.size(); ++i) {
+    if (!_instances[i]) {
       continue;
     }
-    ApplyGeometryToInstance(instance);
+    ApplyGeometryToInstance(_instances[i]);
+    // ApplyGeometryToInstance rebounds the instance to the new geometry, so the captured authored
+    // bounds are now stale; refresh them or checkout would restore the previous geometry's box.
+    if (i < _instanceRestBounds.size()) {
+      _instanceRestBounds[i] = CaptureInstanceRestBounds(_instances[i]);
+    }
   }
   // Free the buffers from the previous UpdateGeometry call. On the first call the old
   // geometry is owned by the gltfio asset (freed later by destroyAsset), so nothing to do.
@@ -322,9 +349,36 @@ RenderModelInstance::~RenderModelInstance() {
       }
     }
   }
+  // Leave the pooled instance in its authored state. SkinnedModelInstance::SetBoneMatrices
+  // rewrites each renderable's AABB to the posed box; without this the next user of the recycled
+  // instance would inherit that box and treat it as the model's rest bounds.
+  if (_instanceIndex >= 0 &&
+      static_cast<size_t>(_instanceIndex) < _model->_instanceRestBounds.size()) {
+    auto& rcm = _model->_engine->getRenderableManager();
+    auto const& restBounds = _model->_instanceRestBounds[_instanceIndex];
+    auto const entities = GetEntities();
+    for (size_t i = 0; i < entities.size() && i < restBounds.size(); ++i) {
+      auto ri = rcm.getInstance(entities[i]);
+      if (ri.isValid()) {
+        rcm.setAxisAlignedBoundingBox(ri, restBounds[i]);
+      }
+    }
+  }
   if (_instanceIndex >= 0) {
     _model->_instanceInUse[_instanceIndex] = false;
   }
+}
+
+filament::Box RenderModelInstance::GetAuthoredEntityBounds(size_t entityIndex) const {
+  if (_model == nullptr || _instanceIndex < 0) {
+    return {};
+  }
+  auto const& perInstance = _model->_instanceRestBounds;
+  if (static_cast<size_t>(_instanceIndex) >= perInstance.size() ||
+      entityIndex >= perInstance[_instanceIndex].size()) {
+    return {};
+  }
+  return perInstance[_instanceIndex][entityIndex];
 }
 
 utils::Entity RenderModelInstance::GetRootEntity() const {
@@ -380,7 +434,11 @@ SkinnedModelInstance::SkinnedModelInstance(
     RenderModel* model,
     filament::gltfio::FilamentInstance* instance,
     int instanceIndex)
-    : RenderModelInstance(model, instance, instanceIndex) {}
+    : RenderModelInstance(model, instance, instanceIndex) {
+  // Eager rather than lazy: a skin that is only ever displayed (a thumbnail, the model viewer)
+  // never calls SetBoneMatrices, and would otherwise keep whatever bounds gltfio produced at load.
+  EnsureJointCache();
+}
 
 void SkinnedModelInstance::EnsureJointCache() {
   if (_jointCacheReady) {
@@ -399,13 +457,16 @@ void SkinnedModelInstance::EnsureJointCache() {
   // incidental non-skinned renderable would just get a conservatively larger box, which is safe for
   // culling.
   auto& rm = _engine->getRenderableManager();
-  for (utils::Entity const entity : GetEntities()) {
-    auto ri = rm.getInstance(entity);
-    if (!ri.isValid()) {
-      continue;
+  {
+    auto const entities = GetEntities();
+    for (size_t i = 0; i < entities.size(); ++i) {
+      auto ri = rm.getInstance(entities[i]);
+      if (!ri.isValid()) {
+        continue;
+      }
+      _skinnedRenderables.push_back(entities[i]);
+      _skinnedEntityIndices.push_back(i);
     }
-    _skinnedRenderables.push_back(entity);
-    _skinnedRestBoxes.push_back(rm.getAxisAlignedBoundingBox(ri));
   }
 
   // Per-joint rest sub-AABBs (skin 0), in the GLB's model space, from the retained cgltf source:
@@ -478,6 +539,23 @@ void SkinnedModelInstance::EnsureJointCache() {
           }
         }
       }
+      // Rest bone matrices straight from the source: jointWorld_rest * inverseBind. Both come
+      // from cgltf, so this does not depend on filament's transform state having been propagated.
+      if (baseSkin->inverse_bind_matrices != nullptr &&
+          baseSkin->joints_count >= static_cast<cgltf_size>(jointCount)) {
+        std::vector<float> ibm(baseSkin->joints_count * 16);
+        cgltf_accessor_unpack_floats(baseSkin->inverse_bind_matrices, ibm.data(), ibm.size());
+        _restBoneMatrices.assign(jointCount, filament::math::mat4f{});
+        for (size_t j = 0; j < jointCount; ++j) {
+          float world[16];
+          cgltf_node_transform_world(baseSkin->joints[j], world);
+          filament::math::mat4f const jointWorld =
+              *reinterpret_cast<filament::math::mat4f const*>(world);
+          filament::math::mat4f const inverseBind =
+              *reinterpret_cast<filament::math::mat4f const*>(&ibm[j * 16]);
+          _restBoneMatrices[j] = jointWorld * inverseBind;
+        }
+      }
       _boneRestBoxes.assign(jointCount, filament::Box{{0.0f, 0.0f, 0.0f}, {-1.0f, -1.0f, -1.0f}});
       for (size_t b = 0; b < jointCount; ++b) {
         if (boneMin[b].x <= boneMax[b].x) {
@@ -486,6 +564,18 @@ void SkinnedModelInstance::EnsureJointCache() {
         }
       }
     }
+  }
+
+  // Establish the rest-pose cull box now, from source data. gltfio's own recomputeBoundingBoxes()
+  // needs the joint world transforms to have been propagated, which is not guaranteed this early --
+  // a skin drawn before that (an asset thumbnail) would otherwise be framed by bind-space bounds
+  // while rendering at its rest pose.
+  if (!_restBoneMatrices.empty()) {
+    // Upload the rest pose as well as its bounds. Instances are pooled, so this one may still hold
+    // the previous user's bone matrices -- a skin posed onto an arm, say -- which would draw the
+    // mesh far from the rest bounds the camera frames. _jointCacheReady is already set, so the
+    // EnsureJointCache() call at the top of SetBoneMatrices returns immediately.
+    SetBoneMatrices(mochi::MakeConstSpan(_restBoneMatrices));
   }
 }
 
@@ -496,90 +586,95 @@ void SkinnedModelInstance::SetBoneMatrices(mochi::Span<filament::math::mat4f con
   }
   auto& rm = _engine->getRenderableManager();
   size_t const count = std::min(boneMatrices.size(), _joints.size());
+  for (utils::Entity const entity : _skinnedRenderables) {
+    auto ri = rm.getInstance(entity);
+    if (ri.isValid()) {
+      rm.setBones(ri, boneMatrices.data(), count, 0);
+    }
+  }
+  ApplyPosedBounds(boneMatrices);
+}
 
-  // Build a tight posed AABB by transforming each bone's rest sub-box (bounds of just the vertices
-  // it influences) -- like WireframeMesh::SetBoneMatrices -- so the skin is not frustum-culled by
-  // its stale rest bounds. Falls back to the whole rest box if per-bone sub-boxes are unavailable.
+void SkinnedModelInstance::ApplyPosedBounds(mochi::Span<filament::math::mat4f const> boneMatrices) {
+  if (_skinnedRenderables.empty() || boneMatrices.empty()) {
+    return;
+  }
+  auto& rm = _engine->getRenderableManager();
+  size_t const count = std::min(boneMatrices.size(), _joints.size());
+
+  // Rebuild every renderable's cull box for this pose: skinning does not update the load-time
+  // bounds, so the skin would drift outside them and be frustum-culled.
+  //
+  // The box is built PER RENDERABLE. _boneRestBoxes spans every primitive driven by skin 0, so a
+  // bone's box is generally bigger than any one renderable; handing that union to each renderable
+  // would give them all bounds covering the whole skin, which inflates whatever reads renderable
+  // bounds (the scene floor takes the lowest AABB point). Clipping each bone box to the
+  // renderable's own rest bounds fixes that and stays correct: a vertex of renderable r weighted
+  // to bone j lies in both boxes, so it survives the clip, and every skinned vertex is a convex
+  // combination of {bone_j * v}, which the union of the transformed clipped boxes bounds. A bone
+  // whose box misses the renderable entirely contributes nothing. With a single skinned renderable
+  // the clip is a no-op.
   bool const haveSubBoxes = _boneRestBoxes.size() == _joints.size();
-  filament::math::float3 minPt{
-      std::numeric_limits<float>::max(),
-      std::numeric_limits<float>::max(),
-      std::numeric_limits<float>::max()};
-  filament::math::float3 maxPt{
-      std::numeric_limits<float>::lowest(),
-      std::numeric_limits<float>::lowest(),
-      std::numeric_limits<float>::lowest()};
-  auto accumulate = [&](filament::math::mat4f const& bone, filament::Box const& box) {
-    filament::math::float3 const c = box.center;
-    filament::math::float3 const h = box.halfExtent;
-    for (int corner = 0; corner < 8; ++corner) {
-      filament::math::float4 const p{
-          c.x + ((corner & 1) ? h.x : -h.x),
-          c.y + ((corner & 2) ? h.y : -h.y),
-          c.z + ((corner & 4) ? h.z : -h.z),
-          1.0f};
-      filament::math::float4 const tp = bone * p;
-      minPt.x = std::min(minPt.x, tp.x);
-      minPt.y = std::min(minPt.y, tp.y);
-      minPt.z = std::min(minPt.z, tp.z);
-      maxPt.x = std::max(maxPt.x, tp.x);
-      maxPt.y = std::max(maxPt.y, tp.y);
-      maxPt.z = std::max(maxPt.z, tp.z);
-    }
-  };
-  bool anyValid = false;
-  if (haveSubBoxes) {
-    for (size_t j = 0; j < count; ++j) {
-      if (_boneRestBoxes[j].halfExtent.x >= 0.0f) {
-        accumulate(boneMatrices[j], _boneRestBoxes[j]);
-        anyValid = true;
-      }
-    }
-  }
-  filament::Box posedBox;
-  if (anyValid) {
-    posedBox = filament::Box{(minPt + maxPt) * 0.5f, (maxPt - minPt) * 0.5f};
-  }
-
   for (size_t r = 0; r < _skinnedRenderables.size(); ++r) {
     auto ri = rm.getInstance(_skinnedRenderables[r]);
     if (!ri.isValid()) {
       continue;
     }
-    rm.setBones(ri, boneMatrices.data(), count, 0);
-    if (anyValid) {
-      rm.setAxisAlignedBoundingBox(ri, posedBox);
-    } else {
-      // Fallback: transform this renderable's whole rest box by every bone (conservative).
-      filament::math::float3 fbMin{
-          std::numeric_limits<float>::max(),
-          std::numeric_limits<float>::max(),
-          std::numeric_limits<float>::max()};
-      filament::math::float3 fbMax{
-          std::numeric_limits<float>::lowest(),
-          std::numeric_limits<float>::lowest(),
-          std::numeric_limits<float>::lowest()};
-      filament::Box const& rest = _skinnedRestBoxes[r];
-      filament::math::float3 const c = rest.center;
-      filament::math::float3 const h = rest.halfExtent;
-      for (size_t j = 0; j < count; ++j) {
-        for (int corner = 0; corner < 8; ++corner) {
-          filament::math::float4 const p{
-              c.x + ((corner & 1) ? h.x : -h.x),
-              c.y + ((corner & 2) ? h.y : -h.y),
-              c.z + ((corner & 4) ? h.z : -h.z),
-              1.0f};
-          filament::math::float4 const tp = boneMatrices[j] * p;
-          fbMin.x = std::min(fbMin.x, tp.x);
-          fbMin.y = std::min(fbMin.y, tp.y);
-          fbMin.z = std::min(fbMin.z, tp.z);
-          fbMax.x = std::max(fbMax.x, tp.x);
-          fbMax.y = std::max(fbMax.y, tp.y);
-          fbMax.z = std::max(fbMax.z, tp.z);
-        }
+    filament::Box const rest = GetAuthoredEntityBounds(_skinnedEntityIndices[r]);
+    filament::math::float3 const restMin = rest.center - rest.halfExtent;
+    filament::math::float3 const restMax = rest.center + rest.halfExtent;
+    filament::math::float3 minPt{
+        std::numeric_limits<float>::max(),
+        std::numeric_limits<float>::max(),
+        std::numeric_limits<float>::max()};
+    filament::math::float3 maxPt{
+        std::numeric_limits<float>::lowest(),
+        std::numeric_limits<float>::lowest(),
+        std::numeric_limits<float>::lowest()};
+    bool anyValid = false;
+    auto accumulate = [&](filament::math::mat4f const& bone,
+                          filament::math::float3 const& boxMin,
+                          filament::math::float3 const& boxMax) {
+      for (int corner = 0; corner < 8; ++corner) {
+        filament::math::float4 const p{
+            (corner & 1) ? boxMax.x : boxMin.x,
+            (corner & 2) ? boxMax.y : boxMin.y,
+            (corner & 4) ? boxMax.z : boxMin.z,
+            1.0f};
+        filament::math::float4 const tp = bone * p;
+        minPt.x = std::min(minPt.x, tp.x);
+        minPt.y = std::min(minPt.y, tp.y);
+        minPt.z = std::min(minPt.z, tp.z);
+        maxPt.x = std::max(maxPt.x, tp.x);
+        maxPt.y = std::max(maxPt.y, tp.y);
+        maxPt.z = std::max(maxPt.z, tp.z);
       }
+      anyValid = true;
+    };
+
+    if (haveSubBoxes) {
+      for (size_t j = 0; j < count; ++j) {
+        filament::Box const& bone = _boneRestBoxes[j];
+        if (bone.halfExtent.x < 0.0f) {
+          continue; // this bone influences no vertices
+        }
+        filament::math::float3 const clipMin = max(bone.center - bone.halfExtent, restMin);
+        filament::math::float3 const clipMax = min(bone.center + bone.halfExtent, restMax);
+        if (clipMin.x > clipMax.x || clipMin.y > clipMax.y || clipMin.z > clipMax.z) {
+          continue; // this bone drives no vertex of this renderable
+        }
+        accumulate(boneMatrices[j], clipMin, clipMax);
+      }
+    }
+    if (!anyValid) {
+      // No usable sub-boxes: transform the whole rest box by every bone (conservative).
+      for (size_t j = 0; j < count; ++j) {
+        accumulate(boneMatrices[j], restMin, restMax);
+      }
+    }
+    if (anyValid) {
       rm.setAxisAlignedBoundingBox(
-          ri, filament::Box{(fbMin + fbMax) * 0.5f, (fbMax - fbMin) * 0.5f});
+          ri, filament::Box{(minPt + maxPt) * 0.5f, (maxPt - minPt) * 0.5f});
     }
   }
 }
