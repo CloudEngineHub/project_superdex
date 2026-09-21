@@ -732,8 +732,10 @@ static ModelData GetTetMeshWithBlending() {
   model.blending = DynamicArray<BlendingData>{};
 
   BlendingData blending;
-  blending.weights.resize(model.mesh->GetNumNodes() * 2);
-  blending.indices.resize(model.mesh->GetNumNodes() * 2);
+  blending.weights.resize(model.mesh->GetNumNodes(), 0_r);
+  blending.indices.resize(model.mesh->GetNumNodes(), -1);
+  blending.weights[0] = 1_r;
+  blending.indices[0] = 0;
 
   blending.sourceShape = "one";
   model.blending->push_back(blending);
@@ -762,7 +764,7 @@ TEST(ModelUtils, Validate_BlendingData) {
     blending.sourceShape = prevName;
     model::Validate(model, test::ExpectOK{}); // Valid again
 
-    // weights.size() and indices.size() must be 2 * GetNumNodes()
+    // weights.size() and indices.size() must equal GetNumNodes()
     model.mesh->coordinates.push_back(0_r);
     model.mesh->coordinates.push_back(0_r);
     model.mesh->coordinates.push_back(0_r);
@@ -780,16 +782,16 @@ TEST(ModelUtils, Validate_BlendingData) {
     blending.indices.pop_back();
     model::Validate(model, test::ExpectOK{}); // Valid again
 
-    // indices can't be negative
-    for (int i = 0; i < isize(blending.indices); ++i) {
-      int prev = blending.indices[i];
-      blending.indices[i] = -1;
-      model::Validate(model, test::ExpectNotOK{});
-      blending.indices[i] = prev;
-    }
-    model::Validate(model, test::ExpectOK{}); // Valid again
+    // A negative index is invalid for a positive weight and ignored for a zero weight.
+    int const prevIndex = blending.indices[0];
+    blending.indices[0] = -1;
+    model::Validate(model, test::ExpectNotOK{});
+    blending.weights[0] = 0_r;
+    model::Validate(model, test::ExpectOK{});
+    blending.indices[0] = prevIndex;
+    blending.weights[0] = 1_r;
 
-    // weights must be finite
+    // Weights must be finite and within [0, 1].
     for (auto badVal : kNonFiniteValues) {
       for (int i = 0; i < isize(blending.weights); ++i) {
         real prev = blending.weights[i];
@@ -799,6 +801,13 @@ TEST(ModelUtils, Validate_BlendingData) {
       }
     }
     model::Validate(model, test::ExpectOK{}); // Valid again
+    for (real const badValue : {-0.1_r, 1.1_r}) {
+      real const prev = blending.weights[0];
+      blending.weights[0] = badValue;
+      model::Validate(model, test::ExpectNotOK{});
+      blending.weights[0] = prev;
+    }
+    model::Validate(model, test::ExpectOK{});
   }
 }
 

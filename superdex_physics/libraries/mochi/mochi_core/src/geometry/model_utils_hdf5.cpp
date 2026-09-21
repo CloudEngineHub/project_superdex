@@ -120,18 +120,13 @@ LoadBlendingData(GroupReader& reader, DynamicArray<BlendingData>& outDataArray, 
     auto& outData = outDataArray[i];
     outData.sourceShape = groupNames[i];
 
-    NdArray<size_t, 2> weightsDims = {};
-    reader.ReadDataSet("weights", outData.weights, weightsDims, error);
-    NdArray<size_t, 2> indicesDims = {};
-    reader.ReadDataSet("indices", outData.indices, indicesDims, error);
+    reader.ReadDataSet("weights", outData.weights, error);
+    reader.ReadDataSet("indices", outData.indices, error);
+    MOCHI_ERROR_RETURN(error);
     MOCHI_ERROR_IF(
-        indicesDims != weightsDims,
+        outData.indices.size() != outData.weights.size(),
         error,
-        "Blending dataset dimensions do not match for weights and indices.");
-    MOCHI_ERROR_IF(
-        weightsDims[1] != 2,
-        error,
-        "Blending weights and indices datasets should have dimension Nx2 for N nodes.");
+        "Blending weights and indices datasets should have the same length.");
   }
 }
 
@@ -139,9 +134,8 @@ static void SaveBlendingData(GroupWriter& writer, Span<BlendingDataView const> d
   MOCHI_ERROR_RETURN(error);
   for (auto const& item : data) {
     auto group = writer.EnterGroup(item.sourceShape, error);
-    size_t dims[2] = {item.weights.size() / 2, 2};
-    writer.AddDataSet("weights", MakeConstSpan(item.weights), MakeConstSpan(dims), error);
-    writer.AddDataSet("indices", MakeConstSpan(item.indices), MakeConstSpan(dims), error);
+    writer.AddDataSet("weights", MakeConstSpan(item.weights), error);
+    writer.AddDataSet("indices", MakeConstSpan(item.indices), error);
   }
 }
 

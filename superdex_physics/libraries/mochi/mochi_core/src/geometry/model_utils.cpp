@@ -359,20 +359,27 @@ static void ValidateBlending(BlendingDataView const& data, int numNodes, Error& 
   MOCHI_ERROR_IF(
       data.sourceShape.empty(), error, "Mesh blending must provide a source shape name.");
   MOCHI_ERROR_IF(
-      data.weights.size() != 2 * size_t(numNodes),
+      data.weights.size() != size_t(numNodes),
       error,
-      "Mesh blending weights array length is incorrect. Expected 2 values per node.");
+      "Mesh blending weights array length is incorrect. Expected 1 value per node.");
   MOCHI_ERROR_IF(
       !IsFinite(MakeConstSpan(data.weights)),
       error,
       "Mesh blending weights array contains non-finite values.");
   MOCHI_ERROR_IF(
-      data.indices.size() != 2 * size_t(numNodes),
+      data.indices.size() != size_t(numNodes),
       error,
-      "Mesh blending indices array length is incorrect. Expected 2 values per node.");
+      "Mesh blending indices array length is incorrect. Expected 1 value per node.");
   MOCHI_ERROR_RETURN(error);
-  MOCHI_ERROR_IF(
-      Min(MakeConstSpan(data.indices)) < 0, error, "Mesh blending indices cannot be negative.");
+  for (int i = 0; i < numNodes; ++i) {
+    real const weight = data.weights[i];
+    MOCHI_ERROR_IF(
+        weight < 0_r || weight > 1_r, error, "Mesh blending weights must be within [0, 1].");
+    MOCHI_ERROR_IF(
+        weight > 0_r && data.indices[i] < 0,
+        error,
+        "Mesh blending indices cannot be negative for positive weights.");
+  }
   // Index values can't be validated yet. We don't know the other mesh.
 }
 
@@ -1056,10 +1063,17 @@ static void BakeTransformMesh(MeshData& data, VMatrix4x4r const& matrix, Error& 
       error,
       "Coordinates array size must be a multiple of three.");
   MOCHI_ERROR_RETURN(error);
-  ArrayTransformPoints_MatT(
-      Unflatten<Real3>(data.coordinates),
-      Unflatten<Real3 const>(data.coordinates),
-      Transpose4x4(matrix));
+  auto const matrixT = Transpose4x4(matrix);
+  auto const coordinates = Unflatten<Real3>(data.coordinates);
+  // Do not use ArrayTransformPoints_MatT: its batch and tail kernels can round identical
+  // vertices differently depending on their array positions.
+  int constexpr kMinPerTask = 8 * 1024; // Same as ArrayTransformPoints_MatT
+  ParallelForN("BakeTransformMesh", isize(coordinates), kMinPerTask, [&](int i) {
+    auto& coordinate = coordinates[i];
+    auto const point = Load<3, Simd<real, 4>>(&coordinate[0]);
+    auto const transformed = DotVecMat4x4(ToSimdPoint(point), matrixT);
+    Store<3>(&coordinate[0], transformed);
+  });
 }
 
 static void BakeTransformElementFrameAxes(

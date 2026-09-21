@@ -138,7 +138,7 @@ static void InitBlendedMesh(
         "No blending data for this soft actor");
     MOCHI_ERROR_RETURN(error);
     int const numNodes = reg.get<CSimplicialMesh const>(soft).mesh->GetNumNodes();
-    blending.emplace_back(blendingDataTarget->second.GetSourceBlendingData<1>(numNodes));
+    blending.emplace_back(blendingDataTarget->second.GetSourceBlendingData(numNodes));
   }
 
   // If needed, emplace the per-soft-actor active node component

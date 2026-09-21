@@ -2945,6 +2945,7 @@
 /// @note Each entry's @ref mochi::SoftActorParams::name "SoftActorParams::name" is a nested soft local name. Explicit non-empty names must be unique across skeleton link local names and other nested soft local names, and must not contain forward slash, backslash, or embedded NUL characters.
 /// @note Empty names are assigned deterministically after reserving all skeleton link names and all explicit nested soft names: an empty entry at index `i` uses `soft_i` if available; otherwise it uses the first available `soft_N` found by scanning upward from `N = 0`.
 /// @note Each entry's @ref mochi::SoftActorParams::worldFromLocal "SoftActorParams::worldFromLocal" must be identity. Each nested soft actor's shape must be defined directly in the reference frame of the articulated actor. The soft-skinned actor's placement in scene world is provided by @ref mochi::ArticulatedActorParams::worldFromRoot "ArticulatedActorParams::worldFromRoot" from @ref mochi::SoftSkinnedActorParams::skeletonParams "skeletonParams".
+/// @note For a blended skin, author the skin and nested-soft shapes in the same rest frame and use the articulation skin as the canonical source for each positively blended vertex's rest position and ordered skinning data.
 ///
 /// @see @ref mochi::SoftSkinnedActorParams::hasGravity "hasGravity", @ref mochi::SoftSkinnedActorParams::hasInertia "hasInertia", @ref mochi::SoftSkinnedActorParams::hasStress "hasStress"
 ///
@@ -6899,6 +6900,7 @@
 /// @note To access nested link actors, use @ref mochi::Actor::GetNestedLinkActors "Actor::GetNestedLinkActors".
 ///
 /// @warning The skeleton must have at least one non-Hard joint.
+/// @warning For a blended skin, each vertex pair with a positive nested-soft blend weight must have exactly equal rest positions and identical ordered skinning indices and weights.
 ///
 /// @see @ref mochi::SoftSkinnedActorParams "SoftSkinnedActorParams", @ref mochi::Scene::DestroyActor "DestroyActor"
 ///

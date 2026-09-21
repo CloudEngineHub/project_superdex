@@ -442,8 +442,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
     .def("__copy__", [](mochi::BlendingData const& self) { return mochi::BlendingData(self); })
     .def("__deepcopy__", [](mochi::BlendingData const& self, nb::dict) { return mochi::BlendingData(self); })
     .def_rw("source_shape", &mochi::BlendingData::sourceShape, "Name of the soft source shape.")
-    .def_prop_rw("indices", [](mochi::BlendingData& self) -> mochi::DynamicArray<int>& { return self.indices; }, [](mochi::BlendingData& self, nb::object val) { self.indices = nb::cast<mochi::DynamicArray<int>>(val); }, "Indices for blending. Size is numNodes * 2.")
-    .def_prop_rw("weights", [](mochi::BlendingData& self) -> mochi::DynamicArray<mochi::real>& { return self.weights; }, [](mochi::BlendingData& self, nb::object val) { self.weights = nb::cast<mochi::DynamicArray<mochi::real>>(val); }, "Weights for blending. Size is numNodes * 2.")
+    .def_prop_rw("indices", [](mochi::BlendingData& self) -> mochi::DynamicArray<int>& { return self.indices; }, [](mochi::BlendingData& self, nb::object val) { self.indices = nb::cast<mochi::DynamicArray<int>>(val); }, "Nested-soft source vertex indices for each target vertex.\n\nEntry `i` identifies the vertex in the nested soft shape for target vertex `i`.\nThe index is ignored when `weights[i]` is zero. The size equals the number of\ntarget vertices.")
+    .def_prop_rw("weights", [](mochi::BlendingData& self) -> mochi::DynamicArray<mochi::real>& { return self.weights; }, [](mochi::BlendingData& self, nb::object val) { self.weights = nb::cast<mochi::DynamicArray<mochi::real>>(val); }, "Nested-soft blend weights for each target vertex.\n\nEntry `i` is in `[0, 1]`, where zero is purely articulated and one is fully\nnested-soft. The size equals the number of target vertices.")
     .def(nb::init<mochi::BlendingDataView const&>()
       , nb::arg("src")
       , "Copy from :class:`~superdex.physics.BlendingDataView`.\n\nArgs:\n    src (BlendingDataView): Source data."
@@ -468,9 +468,9 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
     .def(nb::self != nb::self)
     .def("__copy__", [](mochi::BlendingDataView const&) { throw nb::type_error("BlendingDataView cannot be copied because it contains non-owning members (Span, StringView, or pointer)."); })
     .def("__deepcopy__", [](mochi::BlendingDataView const&, nb::dict) { throw nb::type_error("BlendingDataView cannot be copied because it contains non-owning members (Span, StringView, or pointer). Shallow copy is not currently allowed either, to prevent mistakes."); })
-    .def_rw("source_shape", &mochi::BlendingDataView::sourceShape, "Name of the soft source shape.")
-    .def_prop_rw("indices", [](mochi::BlendingDataView& self) -> mochi::Span<int const>& { return self.indices; }, [](mochi::BlendingDataView& self, nb::object val) { self.indices = nb::cast<mochi::Span<int const>>(val); }, "Indices for blending. Size is numNodes * 2.")
-    .def_prop_rw("weights", [](mochi::BlendingDataView& self) -> mochi::Span<mochi::real const>& { return self.weights; }, [](mochi::BlendingDataView& self, nb::object val) { self.weights = nb::cast<mochi::Span<mochi::real const>>(val); }, "Weights for blending. Size is numNodes * 2.")
+    .def_rw("source_shape", &mochi::BlendingDataView::sourceShape, "See :attr:`~superdex.physics.BlendingData.source_shape`.")
+    .def_prop_rw("indices", [](mochi::BlendingDataView& self) -> mochi::Span<int const>& { return self.indices; }, [](mochi::BlendingDataView& self, nb::object val) { self.indices = nb::cast<mochi::Span<int const>>(val); }, "See :attr:`~superdex.physics.BlendingData.indices`.")
+    .def_prop_rw("weights", [](mochi::BlendingDataView& self) -> mochi::Span<mochi::real const>& { return self.weights; }, [](mochi::BlendingDataView& self, nb::object val) { self.weights = nb::cast<mochi::Span<mochi::real const>>(val); }, "See :attr:`~superdex.physics.BlendingData.weights`.")
     .def(nb::init<mochi::BlendingData const&>()
       , nb::arg("src"), nb::keep_alive<1, 2>()
       , "Implicit conversion from :class:`~superdex.physics.BlendingData`.\n\nArgs:\n    src (BlendingData): Source data."

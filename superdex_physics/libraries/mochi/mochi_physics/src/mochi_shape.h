@@ -179,8 +179,8 @@ struct BlendingDataMap {
   std::map<DynamicString, BlendingDataTargetMesh> perSourceShapeData;
   // Data re-copied to vectors, to enable sharing spans externally
   DynamicArray<DynamicString> sourceShapes; // size = arbitrary
-  DynamicArray<Span<int const>> perSourceShapeIndices; // size = numSourceShapes * numNodes * 2
-  DynamicArray<Span<real const>> perSourceShapeWeights; // size = numSourceShapes * numNodes * 2
+  DynamicArray<Span<int const>> perSourceShapeIndices; // each span has numNodes entries
+  DynamicArray<Span<real const>> perSourceShapeWeights; // each span has numNodes entries
 
   void CopyMapToVectors() {
     int numSourceShapes = perSourceShapeData.size();

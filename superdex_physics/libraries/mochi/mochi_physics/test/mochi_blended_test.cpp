@@ -158,11 +158,11 @@ class SkinnedVelocityTest : public test::MochiSceneTestBase {
       DynamicString const& softName,
       int numNodes) {
     BlendingDataTargetMesh target;
-    target.indices.resize(2 * numNodes, 0);
-    target.weights.resize(2 * numNodes, 0_r);
+    target.indices.resize(numNodes);
+    target.weights.resize(numNodes);
     for (int node = 0; node < numNodes; ++node) {
-      target.indices[2 * node + 1] = node;
-      target.weights[2 * node + 1] = kSoftWeight;
+      target.indices[node] = node;
+      target.weights[node] = kSoftWeight;
     }
 
     auto map = std::make_shared<BlendingDataMap>();

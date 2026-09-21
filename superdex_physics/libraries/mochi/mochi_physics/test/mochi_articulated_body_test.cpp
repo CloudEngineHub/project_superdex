@@ -2166,15 +2166,15 @@ ShapeHandle CreateUnitCubeTriMeshShapeWithSkinning(Context* context) {
 }
 
 // Build a one-to-one blending map for one soft actor. Each target node receives `softWeight`
-// from the matching source node. The blended pipeline reads slot 1 of each pair; slot 0 is unused.
+// from the matching source node.
 std::shared_ptr<BlendingDataMap const>
 MakeOneToOneBlendingMap(DynamicString const& softName, int numTargetNodes, real softWeight = 1_r) {
   BlendingDataTargetMesh target;
-  target.indices.resize(numTargetNodes * 2, 0);
-  target.weights.resize(numTargetNodes * 2, 0_r);
+  target.indices.resize(numTargetNodes);
+  target.weights.resize(numTargetNodes);
   for (int t = 0; t < numTargetNodes; ++t) {
-    target.indices[2 * t + 1] = t;
-    target.weights[2 * t + 1] = softWeight;
+    target.indices[t] = t;
+    target.weights[t] = softWeight;
   }
   auto map = std::make_shared<BlendingDataMap>();
   map->perSourceShapeData.emplace(softName, std::move(target));

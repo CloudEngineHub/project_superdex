@@ -290,6 +290,8 @@ class Scene [no_init, no_destruct] {
   // @return Pointer to the created @ref Actor, or nullptr on error.
   //
   // @warning The skeleton must have at least one non-Hard joint.
+  // @warning For a blended skin, each vertex pair with a positive nested-soft blend weight must
+  // have exactly equal rest positions and identical ordered skinning indices and weights.
   //
   // @note To access nested soft actors, use @ref Actor::GetNestedSoftActors.
   // @note To access nested link actors, use @ref Actor::GetNestedLinkActors.

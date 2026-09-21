@@ -2005,12 +2005,21 @@ class BlendingData:
     """Name of the soft source shape."""
     @property
     def indices(self) -> DynamicArrayInt:
-        """Indices for blending. Size is numNodes * 2."""
+        """Nested-soft source vertex indices for each target vertex.
+
+        Entry `i` identifies the vertex in the nested soft shape for target vertex `i`.
+        The index is ignored when `weights[i]` is zero. The size equals the number of
+        target vertices.
+        """
     @indices.setter
     def indices(self, value: ArrayLikeInt) -> None: ...
     @property
     def weights(self) -> DynamicArrayReal:
-        """Weights for blending. Size is numNodes * 2."""
+        """Nested-soft blend weights for each target vertex.
+
+        Entry `i` is in `[0, 1]`, where zero is purely articulated and one is fully
+        nested-soft. The size equals the number of target vertices.
+        """
     @weights.setter
     def weights(self, value: ArrayLikeReal) -> None: ...
     @overload
@@ -2040,15 +2049,15 @@ class BlendingDataView:
         :class:`~superdex.physics.BlendingData`
     """
     source_shape: str
-    """Name of the soft source shape."""
+    """See :attr:`~superdex.physics.BlendingData.source_shape`."""
     @property
     def indices(self) -> SpanConstInt:
-        """Indices for blending. Size is numNodes * 2."""
+        """See :attr:`~superdex.physics.BlendingData.indices`."""
     @indices.setter
     def indices(self, value: ArrayLikeInt) -> None: ...
     @property
     def weights(self) -> SpanConstReal:
-        """Weights for blending. Size is numNodes * 2."""
+        """See :attr:`~superdex.physics.BlendingData.weights`."""
     @weights.setter
     def weights(self, value: ArrayLikeReal) -> None: ...
     @overload
@@ -6261,6 +6270,11 @@ class SoftSkinnedActorParams:
             in scene world is provided by
             :attr:`~superdex.physics.ArticulatedActorParams.world_from_root` from
             :attr:`~superdex.physics.SoftSkinnedActorParams.skeleton_params`.
+
+        Note:
+            For a blended skin, author the skin and nested-soft shapes in the same rest
+            frame and use the articulation skin as the canonical source for each
+            positively blended vertex's rest position and ordered skinning data.
 
         See Also:
             :attr:`~superdex.physics.SoftSkinnedActorParams.has_gravity`,
@@ -12872,6 +12886,11 @@ class Scene:
 
         Warning:
             The skeleton must have at least one non-Hard joint.
+
+        Warning:
+            For a blended skin, each vertex pair with a positive nested-soft blend
+            weight must have exactly equal rest positions and identical ordered skinning
+            indices and weights.
 
         See Also:
             :class:`~superdex.physics.SoftSkinnedActorParams`,

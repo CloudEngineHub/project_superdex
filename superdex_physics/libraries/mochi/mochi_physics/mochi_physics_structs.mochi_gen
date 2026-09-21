@@ -820,6 +820,9 @@ struct SoftSkinnedActorParams {
   // actor's shape must be defined directly in the reference frame of the articulated actor. The
   // soft-skinned actor's placement in scene world is provided by
   // @ref ArticulatedActorParams::worldFromRoot from @ref skeletonParams.
+  // @note For a blended skin, author the skin and nested-soft shapes in the same rest frame and use
+  // the articulation skin as the canonical source for each positively blended vertex's rest
+  // position and ordered skinning data.
   //
   // @see hasGravity, hasInertia, hasStress
   DynamicArray<SoftActorParams> softParams;

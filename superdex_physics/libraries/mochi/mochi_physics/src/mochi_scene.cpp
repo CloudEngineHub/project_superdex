@@ -65,7 +65,6 @@
 #include <mochi_physics/utils/mochi_prefab.h>
 
 #include <algorithm>
-#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -2378,8 +2377,7 @@ Actor* SceneImpl::CreateArticulatedActor(ArticulatedActorParams const& params, E
 }
 
 static DynamicArray<int> FindSoftLinkParents(
-    SceneImpl* scene,
-    Span<ActorHandle const> links,
+    Span<ArticulatedLinkParams const> links,
     Span<DynamicString const> softAttachLinks,
     Error& error) {
   DynamicArray<int> outParents;
@@ -2389,14 +2387,7 @@ static DynamicArray<int> FindSoftLinkParents(
   std::unordered_map<std::string, int> linkNameToIndex;
   linkNameToIndex.reserve(links.size());
   for (int i = 0; i < isize(links); ++i) {
-    auto const* actor = scene->GetActor(links[i]);
-    MOCHI_ASSERT(actor, "Invalid actor");
-    char const* linkName = actor->GetName();
-    // The link name is formatted like "parentName/linkName".
-    // We are interested in the link name, starting after the last forward slash.
-    char const* slash = std::strrchr(linkName, '/');
-    linkName = slash ? slash + 1 : linkName;
-    linkNameToIndex[linkName] = i;
+    linkNameToIndex[std::string(links[i].name)] = i;
   }
 
   outParents.reserve(softAttachLinks.size());
@@ -2438,6 +2429,81 @@ static std::shared_ptr<TetrahedralMeshShape const> CreateDuplicateShapeWithSkinn
       srcShape->GetSampleMeshes(), // Deep copy
       srcShape->GetBoundingSphereHierarchies(), // Deep copy
       srcShape->GetSoftMaterialParamsField());
+}
+
+static void ValidateBlendedVertexConsistency(
+    Shape const& blendedShape,
+    Span<SoftActorParams const> softParams,
+    Span<std::shared_ptr<TetrahedralMeshShape const> const> softShapes,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error);
+
+  auto const& blending = blendedShape.GetMeshBlending();
+  MOCHI_ERROR_IF_NOT(blending, error, "Blended skin shape carries no blending data.");
+  MOCHI_ERROR_RETURN(error);
+
+  auto const& targetMesh = blendedShape.GetSurfaceMesh();
+  auto const& targetSkinning = blendedShape.GetMeshSkinning();
+  MOCHI_ERROR_IF_NOT(targetMesh, error, "Blended skin shape carries no mesh data.");
+  MOCHI_ERROR_IF_NOT(targetSkinning, error, "Blended skin shape carries no skinning data.");
+  MOCHI_ERROR_RETURN(error);
+
+  auto const targetCoordinates = targetMesh->GetNodeCoordinates();
+  for (int softIndex = 0; softIndex < isize(softShapes); ++softIndex) {
+    auto const& softName = softParams[softIndex].name;
+    auto const blendingIt = blending->perSourceShapeData.find(softName);
+    MOCHI_ERROR_IF(
+        blendingIt == blending->perSourceShapeData.end(),
+        error,
+        "Blended skin shape carries no blending data for a nested soft actor.");
+    MOCHI_ERROR_RETURN(error);
+
+    auto const& sourceShape = *softShapes[softIndex];
+    auto const sourceCoordinates = sourceShape.GetMesh()->GetNodeCoordinates();
+    auto const& sourceSkinning = sourceShape.GetMeshSkinning();
+    auto const& sourceBlending = blendingIt->second;
+    int const numTargetVertices = isize(targetCoordinates);
+
+    for (int targetVertex = 0; targetVertex < numTargetVertices; ++targetVertex) {
+      if (sourceBlending.weights[targetVertex] == 0_r) {
+        continue;
+      }
+
+      int const sourceVertex = sourceBlending.indices[targetVertex];
+      MOCHI_ERROR_IF(
+          sourceVertex < 0 || sourceVertex >= isize(sourceCoordinates),
+          error,
+          "Nested soft actor has an out-of-range blended source vertex");
+      MOCHI_ERROR_RETURN(error);
+      MOCHI_ERROR_IF(
+          targetCoordinates[targetVertex] != sourceCoordinates[sourceVertex],
+          error,
+          "Nested soft actor has blended vertices with different rest positions");
+      MOCHI_ERROR_IF(
+          !sourceSkinning, error, "Nested soft actor with blended vertices has no skinning data");
+      MOCHI_ERROR_RETURN(error);
+      MOCHI_ERROR_IF(
+          targetSkinning->weightsPerNode != sourceSkinning->weightsPerNode,
+          error,
+          "Nested soft actor has blended vertices with different skinning influence counts");
+      MOCHI_ERROR_RETURN(error);
+
+      int const weightsPerNode = targetSkinning->weightsPerNode;
+      for (int influence = 0; influence < weightsPerNode; ++influence) {
+        int const targetInfluence = targetVertex * weightsPerNode + influence;
+        int const sourceInfluence = sourceVertex * weightsPerNode + influence;
+        MOCHI_ERROR_IF(
+            targetSkinning->indices[targetInfluence] != sourceSkinning->indices[sourceInfluence],
+            error,
+            "Nested soft actor has blended vertices with different ordered skinning indices");
+        MOCHI_ERROR_IF(
+            targetSkinning->weights[targetInfluence] != sourceSkinning->weights[sourceInfluence],
+            error,
+            "Nested soft actor has blended vertices with different ordered skinning weights");
+        MOCHI_ERROR_RETURN(error);
+      }
+    }
+  }
 }
 
 Actor* SceneImpl::CreateSoftSkinnedActorImpl(
@@ -2484,7 +2550,7 @@ Actor* SceneImpl::CreateSoftSkinnedActorImpl(
   MOCHI_ERROR_RETURN(error, {});
 
   // Get the soft-actor shapes
-  std::vector<std::shared_ptr<TetrahedralMeshShape const>> softShapes;
+  DynamicArray<std::shared_ptr<TetrahedralMeshShape const>> softShapes;
   softShapes.reserve(numSoftActors);
   for (auto const& softParams : params.softParams) {
     auto softShapePtr = std::dynamic_pointer_cast<TetrahedralMeshShape const>(
@@ -2492,6 +2558,35 @@ Actor* SceneImpl::CreateSoftSkinnedActorImpl(
     MOCHI_ERROR_IF_NOT(softShapePtr, error, "Invalid soft shape.");
     MOCHI_ERROR_RETURN(error, {});
     softShapes.emplace_back(softShapePtr);
+  }
+
+  // If soft actors are externally attached, identify parent links
+  auto softLinkParents = FindSoftLinkParents(skeletonParams.links, params.softAttachLinks, error);
+  MOCHI_ERROR_RETURN(error, {});
+
+  // If externally given, add attachment info to soft shapes.
+  if (!softLinkParents.empty()) {
+    MOCHI_ERROR_IF(isize(softLinkParents) != numSoftActors, error, "Invalid attachments params");
+    MOCHI_ERROR_RETURN(error, {});
+    for (int i = 0; i < numSoftActors; ++i) {
+      // Create SkinningData which will attach the soft shape to the parent link.
+      SkinningData skinning;
+      int const numNodes = softShapes[i]->GetMesh()->GetNumNodes();
+      skinning.weightsPerNode = 1;
+      skinning.weights.resize(numNodes, 1_r);
+      skinning.indices.resize(numNodes, softLinkParents[i]);
+
+      // Create a new TetrahedralMeshShape which is identical to the original, except for the new
+      // SkinningData.
+      softShapes[i] = CreateDuplicateShapeWithSkinning(softShapes[i], std::move(skinning), error);
+      MOCHI_ERROR_RETURN(error, {});
+    }
+  }
+
+  if (blendedShapePtr) {
+    ValidateBlendedVertexConsistency(
+        *blendedShapePtr, MakeConstSpan(params.softParams), softShapes, error);
+    MOCHI_ERROR_RETURN(error, {});
   }
 
   // Create bone actors. Their names will be formatted like "skeletonName/linkName".
@@ -2525,32 +2620,9 @@ Actor* SceneImpl::CreateSoftSkinnedActorImpl(
   }
   MOCHI_ERROR_RETURN(error, {});
 
-  // If soft actors are externally attached, identify parent links
-  auto softLinkParents = FindSoftLinkParents(this, links, params.softAttachLinks, error);
-  MOCHI_ERROR_RETURN(error, {});
-
-  // If externally given, add attachment info to soft shapes.
-  if (!softLinkParents.empty()) {
-    MOCHI_ERROR_IF(isize(softLinkParents) != numSoftActors, error, "Invalid attachments params");
-    MOCHI_ERROR_RETURN(error, {});
-    for (int i = 0; i < numSoftActors; ++i) {
-      // Create SkinningData which will attach the soft shape to the parent link.
-      auto const numNodes = softShapes[i]->GetMesh()->GetNumNodes();
-      SkinningData skinning;
-      skinning.weightsPerNode = 1;
-      skinning.weights.resize(numNodes, 1_r);
-      skinning.indices.resize(numNodes, softLinkParents[i]);
-
-      // Create a new TetrahedralMeshShape which is identical to the original, except for the new
-      // SkinningData.
-      softShapes[i] = CreateDuplicateShapeWithSkinning(softShapes[i], std::move(skinning), error);
-      MOCHI_ERROR_RETURN(error, {});
-    }
-  }
-
   // Create the soft actors
   std::string const softParentName = GetNestedActorParentName(skeletonActor->GetName());
-  std::vector<ActorHandle> softActors(numSoftActors);
+  DynamicArray<ActorHandle> softActors(numSoftActors);
   for (int i = 0; i < numSoftActors; ++i) {
     auto softParams = params.softParams[i]; // Copy
 

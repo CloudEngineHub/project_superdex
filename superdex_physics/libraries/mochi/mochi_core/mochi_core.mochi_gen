@@ -82,9 +82,15 @@ struct BlendingData [from_mochi_core, no_capi, equality] {
   ctor BlendingData(BlendingDataView const& src) [overloaded];
   // @brief Name of the soft source shape.
   DynamicString sourceShape;
-  // @brief Indices for blending. Size is numNodes * 2.
+  // @brief Nested-soft source vertex indices for each target vertex.
+  //
+  // @details Entry `i` identifies the vertex in the nested soft shape for target vertex `i`. The
+  // index is ignored when `weights[i]` is zero. The size equals the number of target vertices.
   DynamicArray<int> indices;
-  // @brief Weights for blending. Size is numNodes * 2.
+  // @brief Nested-soft blend weights for each target vertex.
+  //
+  // @details Entry `i` is in `[0, 1]`, where zero is purely articulated and one is fully
+  // nested-soft. The size equals the number of target vertices.
   DynamicArray<real> weights;
 }
 
@@ -96,11 +102,11 @@ struct BlendingDataView [from_mochi_core, no_capi, equality] {
   //
   // @param[in] src Source data.
   ctor BlendingDataView(BlendingData const& src [keep_alive]) [implicit, overloaded];
-  // @brief Name of the soft source shape.
+  // @brief See @ref BlendingData::sourceShape.
   StringView sourceShape;
-  // @brief Indices for blending. Size is numNodes * 2.
+  // @brief See @ref BlendingData::indices.
   Span<int const> indices;
-  // @brief Weights for blending. Size is numNodes * 2.
+  // @brief See @ref BlendingData::weights.
   Span<real const> weights;
 }
 
