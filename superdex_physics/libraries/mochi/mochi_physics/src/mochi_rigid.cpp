@@ -1375,6 +1375,27 @@ void mochi::rigid::UpdateVSym(
   outVel.value.UpdateVSymIfDirty(static_cast<real>(time->DeltaTime()));
 }
 
+void mochi::rigid::UpdateMaxGeometrySpeed(
+    ecs::RequiredTag<TagRigidActor>,
+    ecs::Excluded<TagStaticActor>,
+    CRigidState<TimeStep::Current> const& state,
+    CRigidVel<TimeStep::Current> const& vel,
+    CRootTransform const& transform,
+    CBoundingVolume<TimeStep::Current> const& bounds,
+    CConservativeStepBounds& outStepBounds) {
+  Aabb const worldAabb = GetAabb(TransformShape(transform.worldFromLocal, bounds.localShape));
+  VMatrix3x3r const rotationVelocityGradientT = vel.value.GetFiniteRotationVelocityGradientT();
+
+  Vec4r const aabbCenterOffset = worldAabb.VGetCenter() - state.value.VGetTranslation();
+  Vec4r const centerVelocity =
+      vel.value.GetVCom() + DotVecMat3x3(aabbCenterOffset, rotationVelocityGradientT);
+
+  // This bounds each velocity component over the AABB, so its norm bounds every point's speed.
+  Vec4r const velocityRadius =
+      DotVecMat3x3(worldAabb.VGetHalfExtents(), Abs(rotationVelocityGradientT));
+  outStepBounds.maxGeometrySpeed = Norm<3>(Abs(centerVelocity) + velocityRadius);
+}
+
 void mochi::rigid::TransportGradient(
     ColumnVectorView<real const> delta,
     ColumnVectorView<real> outGradient,

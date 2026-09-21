@@ -381,6 +381,16 @@ void UpdateVSym(
     ecs::CtxGlobal<CSceneTime const> time,
     CRigidVel<TimeStep::Current>& outVel);
 
+// Update the maximum world-space speed over the actor's current bounding volume.
+void UpdateMaxGeometrySpeed(
+    ecs::RequiredTag<TagRigidActor>,
+    ecs::Excluded<TagStaticActor>,
+    CRigidState<TimeStep::Current> const& state,
+    CRigidVel<TimeStep::Current> const& vel,
+    CRootTransform const& transform,
+    CBoundingVolume<TimeStep::Current> const& bounds,
+    CConservativeStepBounds& outStepBounds);
+
 /*
  * [Differentiability] System to project a derived state gradient to a state gradient.
  * It computes dg/dq = dg/dx * dx/dq.

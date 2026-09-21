@@ -122,6 +122,18 @@ static ColumnVector<real, 2 * RigidSize::kDAll> SampleBoneParameterDirection() {
   return {1.0_r, 2.0_r, 3.0_r, 4.0_r, 5.0_r, 6.0_r, 1.0_r, -0.5_r, 2.0_r, -3.0_r, 4.0_r, -2.0_r};
 }
 
+static std::array<RigidBodyVel, 2> SampleBoneVelocities() {
+  ColumnVector<real, 2 * RigidSize::kDAll> const direction = SampleBoneParameterDirection();
+  std::array<RigidBodyVel, 2> velocities;
+  for (int boneId = 0; boneId < isize(velocities); ++boneId) {
+    int const offset = boneId * RigidSize::kDAll;
+    velocities[boneId].SetVCom(Load<RigidSize::kDTrans, Vec4r>(&direction[offset]));
+    velocities[boneId].SetOmega(
+        Load<RigidSize::kDRot, Vec4r>(&direction[offset + RigidSize::kDTrans]));
+  }
+  return velocities;
+}
+
 static void ExpectOnlySecondVertexWritten(
     ColumnVectorView<real const> activeResult,
     ColumnVectorView<real const> expected) {
@@ -453,37 +465,104 @@ TEST(DSkinning, ConsistencyTestDBones) {
   TestLieDerivative(func, initialParamsVec, dirVec, 0.001_r, testVec);
 }
 
-TEST(DSkinning, DTransformDBonesTimesVectorMatchesMatrix) {
-  auto [dskinning, trans, inputVec] = SampleTwoVerticesTwoBones(SamplePreTransforms());
-  auto const transSpan = MakeConstSpan(trans);
+TEST(DSkinning, DTransformDBonesTangent) {
+  auto [dskinning, transforms, unposedPositions] = SampleTwoVerticesTwoBones(SamplePreTransforms());
+  auto const transformSpan = MakeConstSpan(transforms);
   auto const direction = SampleBoneParameterDirection();
+  auto const boneVelocities = SampleBoneVelocities();
 
-  ColumnVector<real> vectorResult(inputVec.Rows());
-  dskinning.DTransformDBonesTimesVector(
-      transSpan, AsConstView(inputVec), AsConstView(direction), AsView(vectorResult));
+  for (RigidBodyVel const& velocity : boneVelocities) {
+    EXPECT_TRUE(velocity.IsVSymDirty());
+    EXPECT_EQ(ToNdArraySym3x3(velocity.GetOmegaAndVSym().second), Matrix3x3r{});
+  }
+
+  ColumnVector<real> directResult(unposedPositions.Rows());
+  dskinning.DTransformDBones</*kTangentVel=*/true>(
+      transformSpan,
+      AsConstView(unposedPositions),
+      MakeConstSpan(boneVelocities),
+      AsView(directResult));
 
   auto dbones = dskinning.CreateDBones();
-  dskinning.DTransformDBones(transSpan, AsConstView(inputVec), dbones);
+  dskinning.DTransformDBones(transformSpan, AsConstView(unposedPositions), dbones);
   ColumnVector<real> const matrixResult = dbones * direction;
-  ColumnVector<real> const matrixDifference = vectorResult - matrixResult;
-  EXPECT_NEAR_EQ(matrixDifference.Norm(), 0_r);
+  ColumnVector<real> const difference = directResult - matrixResult;
+  EXPECT_NEAR_EQ(difference.Norm(), 0_r);
 }
 
-TEST(DSkinning, DTransformDBonesTimesVectorSupportsActiveVertices) {
-  auto [dskinning, trans, inputVec] = SampleTwoVerticesTwoBones(SamplePreTransforms());
-  auto const direction = SampleBoneParameterDirection();
+TEST(DSkinning, DTransformDBonesSupportsActiveVertices) {
+  auto [dskinning, transforms, unposedPositions] = SampleTwoVerticesTwoBones(SamplePreTransforms());
+  auto const boneVelocities = SampleBoneVelocities();
 
-  ColumnVector<real> expected(inputVec.Rows());
-  dskinning.DTransformDBonesTimesVector(
-      MakeConstSpan(trans), AsConstView(inputVec), AsConstView(direction), AsView(expected));
+  ColumnVector<real> expected(unposedPositions.Rows());
+  dskinning.DTransformDBones</*kTangentVel=*/true>(
+      MakeConstSpan(transforms),
+      AsConstView(unposedPositions),
+      MakeConstSpan(boneVelocities),
+      AsView(expected));
 
-  ColumnVector<real> activeResult(inputVec.Rows());
+  ColumnVector<real> activeResult(unposedPositions.Rows());
   activeResult.SetConstant(-1_r);
   std::array<int, 1> const activeVertices = {1};
-  dskinning.DTransformDBonesTimesVector(
-      MakeConstSpan(trans),
-      AsConstView(inputVec),
-      AsConstView(direction),
+  dskinning.DTransformDBones</*kTangentVel=*/true>(
+      MakeConstSpan(transforms),
+      AsConstView(unposedPositions),
+      MakeConstSpan(boneVelocities),
+      AsView(activeResult),
+      MakeConstSpan(activeVertices));
+  ExpectOnlySecondVertexWritten(AsConstView(activeResult), AsConstView(expected));
+}
+
+TEST(DSkinning, DTransformDBonesFinite) {
+  auto const preTransforms = SamplePreTransforms();
+  auto [dskinning, transforms, unposedPositions] = SampleTwoVerticesTwoBones(preTransforms);
+  constexpr real kTimeStep = 0.2_r;
+  std::array<Quaternion, 2> const rotations = {
+      Quaternion::FromRotationVector(Real3{0.12_r, -0.08_r, 0.04_r}),
+      Quaternion::FromRotationVector(Real3{-0.06_r, 0.1_r, 0.14_r})};
+  std::array<Real3, 2> const translations = {
+      Real3{0.2_r, -0.4_r, 0.1_r}, Real3{-0.1_r, 0.3_r, 0.4_r}};
+  std::array<RigidBodyVel, 2> boneVelocities;
+  for (int boneId = 0; boneId < isize(boneVelocities); ++boneId) {
+    boneVelocities[boneId].SetFromFiniteDifferencePose(
+        TransformRT::Identity(), TransformRT{rotations[boneId], translations[boneId]}, kTimeStep);
+  }
+
+  ColumnVector<real> result(unposedPositions.Rows());
+  dskinning.DTransformDBones</*kTangentVel=*/false>(
+      MakeConstSpan(transforms),
+      AsConstView(unposedPositions),
+      MakeConstSpan(boneVelocities),
+      AsView(result));
+
+  constexpr real kWeights[2][2] = {{0.25_r, 0.75_r}, {0.75_r, 0.25_r}};
+  auto const positions = Unflatten<Real3 const>(unposedPositions.GetConstSpan());
+  ColumnVector<real> expected(result.Rows());
+  auto expected3 = Unflatten<Real3>(expected.GetSpan());
+  VMatrix3x3r const identity = ToVMatrix3x3(Quaternion::Identity());
+  for (int vertexId = 0; vertexId < isize(positions); ++vertexId) {
+    expected3[vertexId] = {};
+    for (int boneId = 0; boneId < isize(transforms); ++boneId) {
+      Real3 const transformedPoint = transforms[boneId].GetRotation() *
+          preTransforms[boneId].TransformPoint(positions[vertexId]);
+      VMatrix3x3r const rotation = ToVMatrix3x3(rotations[boneId]);
+      VMatrix3x3r const rotationVelocityGradient =
+          Dot3x3((rotation - identity) / kTimeStep, Transpose3x3(rotation));
+      Real3 const pointVelocity = translations[boneId] / kTimeStep +
+          ToReal3(DotMatVec3x3(rotationVelocityGradient, ToSimd(transformedPoint)));
+      expected3[vertexId] += kWeights[vertexId][boneId] * pointVelocity;
+    }
+  }
+
+  EXPECT_TRUE(test::NearEqualMatrices(expected, result));
+
+  ColumnVector<real> activeResult(result.Rows());
+  activeResult.SetConstant(-1_r);
+  std::array<int, 1> const activeVertices = {1};
+  dskinning.DTransformDBones</*kTangentVel=*/false>(
+      MakeConstSpan(transforms),
+      AsConstView(unposedPositions),
+      MakeConstSpan(boneVelocities),
       AsView(activeResult),
       MakeConstSpan(activeVertices));
   ExpectOnlySecondVertexWritten(AsConstView(activeResult), AsConstView(expected));

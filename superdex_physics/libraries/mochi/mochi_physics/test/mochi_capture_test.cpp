@@ -770,6 +770,18 @@ TEST_F(MochiCapture, RegisterPostRestoreCallback) {
   EXPECT_EQ(22, compA0.ival); // no change)
 }
 
+TEST_F(MochiCapture, BoundingVolumeCapturePolicy) {
+  auto const& currentType = SReflect::GetTypeInfo<CBoundingVolume<TimeStep::Current>>();
+  auto const* currentCapture = currentType.GetAttribute<attribute::CaptureState>();
+  ASSERT_NE(nullptr, currentCapture);
+  EXPECT_EQ(
+      entt::type_id<CFinalDisplacementRef<TimeStep::Current>>().hash(),
+      currentCapture->onlyCaptureWith);
+
+  auto const& previousType = SReflect::GetTypeInfo<CBoundingVolume<TimeStep::Previous>>();
+  EXPECT_EQ(nullptr, previousType.GetAttribute<attribute::CaptureState>());
+}
+
 TEST_F(MochiCapture, CaptureStateToJson) {
   // Set up some context
   reg.set<CComponentA>().ival = 111;

@@ -170,16 +170,18 @@ void ResolveAllNodeSkinningDisplacementsPipeline(
  */
 void SynchronizeAfterExternalChange(entt::registry& reg, entt::entity e);
 
-// Compute world-space skinning velocity for nested soft actors.
+// Compute world-space skinning velocity for nested soft actors. The template argument indicates if
+// the system must run on state or non-state velocities.
 template <bool kIsState>
 void UpdateSkinningVelocity(
     std::conditional_t<
         kIsState,
         ecs::Included<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>,
         ecs::Excluded<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>>,
+    ecs::CtxGlobal<CSceneTime const> time,
     ecs::PartialRegistry<
         CArticulatedLinkTransforms<TimeStep::Current> const,
-        CArticulatedFullVel const> reg,
+        CArticulatedLinkVels const> reg,
     CSkinnedComposition const& composition,
     CVelocitySlice<real, TimeStep::Current> const& softVelocity,
     CArticulatedSkinningData const& skinningData,

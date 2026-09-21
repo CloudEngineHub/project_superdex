@@ -436,38 +436,49 @@ void skinned::UpdateSkinningVelocity(
         kIsState,
         ecs::Included<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>,
         ecs::Excluded<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>>,
+    ecs::CtxGlobal<CSceneTime const> time,
     ecs::PartialRegistry<
         CArticulatedLinkTransforms<TimeStep::Current> const,
-        CArticulatedFullVel const> reg,
+        CArticulatedLinkVels const> reg,
     CSkinnedComposition const& composition,
     CVelocitySlice<real, TimeStep::Current> const& softVelocity,
     CArticulatedSkinningData const& skinningData,
     CNodePositions const& positions,
     CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>& outVelocity) {
-  // Compute the skin velocity due to the skeleton
-  auto const articulated = composition.articulated;
+  MOCHI_FILO_STACK_ALLOCATOR(allocator, 1024 * sizeof(Real3));
+  ColumnVector<real> scratch(outVelocity.value.Rows(), &allocator);
+
+  // State updates preserve tangent velocity semantics. Non-state updates are used only for
+  // conservative speed bounds and use finite-step rotational velocities.
+  entt::entity const articulated = composition.articulated;
   auto const& linkTransforms =
       reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(articulated);
-  articulated::compound::ComputeSkinningVelocityFromSkeleton(
-      linkTransforms,
-      reg.get<CArticulatedFullVel const>(articulated),
-      skinningData,
-      AsConstView(positions.value),
-      outVelocity.value);
+  auto const& linkVels = reg.get<CArticulatedLinkVels const>(articulated);
+
+  if constexpr (kIsState) {
+    skinningData.skinningTransform.DTransformDBones</*kTangentVel=*/true>(
+        linkTransforms, positions.value, linkVels, outVelocity.value);
+  } else {
+    real const timeStep = static_cast<real>(time->DeltaTime());
+    MOCHI_ASSERT_VERBOSE(IsFinite(timeStep), "Expected a finite positive time step.");
+    // Bone and soft displacements must compose at the same end-of-step unposed positions.
+    scratch = positions.value + softVelocity.value * timeStep;
+    skinningData.skinningTransform.DTransformDBones</*kTangentVel=*/false>(
+        linkTransforms, scratch, linkVels, outVelocity.value);
+  }
 
   // Add the skin velocity due to soft velocity
-  MOCHI_FILO_STACK_ALLOCATOR(allocator, 1024 * sizeof(Real3));
-  ColumnVector<real> softSkinVelocity(outVelocity.value.Rows(), &allocator);
   skinningData.skinningTransform.DTransform(
-      linkTransforms, AsConstView(softVelocity.value), softSkinVelocity);
-  outVelocity.value += softSkinVelocity;
+      linkTransforms, AsConstView(softVelocity.value), scratch);
+  outVelocity.value += scratch;
 }
 
 template void skinned::UpdateSkinningVelocity<true>(
     ecs::Included<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>,
+    ecs::CtxGlobal<CSceneTime const>,
     ecs::PartialRegistry<
         CArticulatedLinkTransforms<TimeStep::Current> const,
-        CArticulatedFullVel const>,
+        CArticulatedLinkVels const>,
     CSkinnedComposition const&,
     CVelocitySlice<real, TimeStep::Current> const&,
     CArticulatedSkinningData const&,
@@ -476,9 +487,10 @@ template void skinned::UpdateSkinningVelocity<true>(
 
 template void skinned::UpdateSkinningVelocity<false>(
     ecs::Excluded<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>,
+    ecs::CtxGlobal<CSceneTime const>,
     ecs::PartialRegistry<
         CArticulatedLinkTransforms<TimeStep::Current> const,
-        CArticulatedFullVel const>,
+        CArticulatedLinkVels const>,
     CSkinnedComposition const&,
     CVelocitySlice<real, TimeStep::Current> const&,
     CArticulatedSkinningData const&,

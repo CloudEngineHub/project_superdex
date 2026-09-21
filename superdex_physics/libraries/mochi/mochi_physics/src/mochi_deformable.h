@@ -43,6 +43,13 @@ void PreStepDeformableActorAsync(entt::registry& reg, entt::entity e);
 // actors, including (volume) soft actors, shell actors and rod actors.
 namespace deformable {
 
+// Update the maximum world-space nodal speed for an ordinary soft or shell actor.
+void UpdateMaxGeometrySpeed(
+    ecs::Included<TagDeformableActor>,
+    ecs::Excluded<TagNestedSoftActor, TagRodActor>,
+    CVelocitySlice<real, TimeStep::Current> const& velocity,
+    CConservativeStepBounds& outStepBounds);
+
 template <typename BlockSparseMatViewT, typename ElemMassMatT>
 void SetZeroMassMatrix(
     BlockSparseMatViewT& outMassMatrix,

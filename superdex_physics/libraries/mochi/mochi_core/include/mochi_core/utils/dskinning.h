@@ -74,6 +74,7 @@
 #include <mochi_core/linear_algebra/sparse_matrix.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/rigid_body_size.h>
+#include <mochi_core/utils/rigid_body_utils.h>
 #include <mochi_core/utils/transform_rt.h>
 
 #include <utility>
@@ -135,13 +136,15 @@ struct DSkinningTransform {
       RowMatrixView<real, krylov::kDynamic, RigidSize::kDim> output,
       Span<int const> activeVertices = {}) const;
 
-  // Multiply the derivative of the forward map with respect to the bone parameters by a packed
-  // vector. Input blocks contain translation followed by Lie rotation parameters. When
-  // activeVertices is non-empty, only the corresponding output entries are written.
-  inline void DTransformDBonesTimesVector(
+  // Apply the derivative of the forward map with respect to the bone parameters to an array of
+  // bone velocities. kTangentVel governs the use of tangent rotation velocities (just omega) or
+  // finite-step velocities (with vsym). When activeVertices is non-empty, only the corresponding
+  // output entries are written.
+  template <bool kTangentVel>
+  inline void DTransformDBones(
       Span<TransformRT const> worldFromBoneTransforms,
       ColumnVectorView<real const> unposedPositions,
-      ColumnVectorView<real const> input,
+      Span<RigidBodyVel const> boneVelocities,
       ColumnVectorView<real> output,
       Span<int const> activeVertices = {}) const;
 

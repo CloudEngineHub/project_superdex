@@ -196,22 +196,33 @@ void DSkinningTransform::DTransform(
   ParallelForRange("DTransform", 0, numVertices, kMinVerticesPerTask, INT_MAX, workerTask);
 }
 
-void DSkinningTransform::DTransformDBonesTimesVector(
+template <bool kTangentVel>
+void DSkinningTransform::DTransformDBones(
     Span<TransformRT const> boneTransforms,
     ColumnVectorView<real const> unposedPositions,
-    ColumnVectorView<real const> input,
+    Span<RigidBodyVel const> boneVelocities,
     ColumnVectorView<real> output,
     Span<int const> activeVertices) const {
   MOCHI_PROFILE_SCOPE();
   static_assert(RigidSize::kDim == 3, "Only supported for 3D");
   MOCHI_ASSERT_VERBOSE(boneTransforms.size() == GetBoneCount());
+  MOCHI_ASSERT_VERBOSE(boneVelocities.size() == GetBoneCount());
   MOCHI_ASSERT_VERBOSE(
       unposedPositions.Rows() % RigidSize::kDim == 0 && unposedPositions.Rows() == output.Rows());
-  MOCHI_ASSERT_VERBOSE(input.Rows() == GetBoneCount() * RigidSize::kDAll);
 
-  MOCHI_FILO_STACK_ALLOCATOR(alloc, details::kBoneTransformsStackSize);
+  constexpr size_t kStackSize =
+      details::kBoneTransformsStackSize + (kTangentVel ? 0 : details::kBoneJacobiansStackSize);
+  MOCHI_FILO_STACK_ALLOCATOR(alloc, kStackSize);
   DynamicArray<VMatrix4x4r> preMatT(&alloc); // preMatT = (R * preTransform)^T
   details::ComputeRotatedPreTransforms(*this, boneTransforms, preMatT);
+
+  DynamicArray<VMatrix3x3r> rotationVelocityGradientsT(&alloc);
+  if constexpr (!kTangentVel) {
+    rotationVelocityGradientsT.reserve(GetBoneCount());
+    for (RigidBodyVel const& boneVelocity : boneVelocities) {
+      rotationVelocityGradientsT.emplace_back(boneVelocity.GetFiniteRotationVelocityGradientT());
+    }
+  }
 
   auto workerTask = [&](int loopBegin, int loopEnd) {
     for (int i = loopBegin; i < loopEnd; ++i) {
@@ -220,32 +231,30 @@ void DSkinningTransform::DTransformDBonesTimesVector(
           ToSimdPoint(Load<RigidSize::kDim, Vec4r>(&unposedPositions[vertexId * RigidSize::kDim]));
       Vec4r result = {};
       for (auto const& [boneId, weight] : perVertexBones[vertexId]) {
-        int const boneOffset = boneId * RigidSize::kDAll;
-        Vec4r const translationVelocity = Load<RigidSize::kDTrans, Vec4r>(&input[boneOffset]);
-        Vec4r const angularVelocity =
-            Load<RigidSize::kDRot, Vec4r>(&input[boneOffset + RigidSize::kDTrans]);
         Vec4r const transformedPoint = DotVecMat4x4(unposedPosition, preMatT[boneId]);
-        Vec4r const velocity = translationVelocity + Cross3(angularVelocity, transformedPoint);
-        result += weight * velocity;
+        Vec4r pointVelocity = boneVelocities[boneId].GetVCom();
+        if constexpr (kTangentVel) {
+          pointVelocity += Cross3(boneVelocities[boneId].GetOmegaAndVSym().first, transformedPoint);
+        } else {
+          pointVelocity += DotVecMat3x3(transformedPoint, rotationVelocityGradientsT[boneId]);
+        }
+        result += weight * pointVelocity;
       }
       Store<RigidSize::kDim>(&output[vertexId * RigidSize::kDim], result);
     }
   };
 
   constexpr int kMinFlopsPerTask = 100000; // 20 μs @ 5 GFLOPs (SIMD operations).
-  // Lower bound for one bone influence: matrix-vector product, cross product, and weighted
-  // accumulation.
   constexpr int kMatrixVectorFlopsPerComponent = 2 * RigidSize::kDim - 1;
-  constexpr int kCrossProductFlopsPerComponent = 3;
+  constexpr int kRotationalFlopsPerComponent = kTangentVel ? 3 : kMatrixVectorFlopsPerComponent;
   constexpr int kWeightedAccumulationFlopsPerComponent = 2;
   constexpr int kFlopsPerVertex = RigidSize::kDim *
-      (kMatrixVectorFlopsPerComponent + kCrossProductFlopsPerComponent +
+      (kMatrixVectorFlopsPerComponent + kRotationalFlopsPerComponent +
        kWeightedAccumulationFlopsPerComponent);
   constexpr int kMinVerticesPerTask = Max(1, kMinFlopsPerTask / kFlopsPerVertex);
   int const numVertices =
       activeVertices.empty() ? unposedPositions.Rows() / RigidSize::kDim : isize(activeVertices);
-  ParallelForRange(
-      "DTransformDBonesTimesVector", 0, numVertices, kMinVerticesPerTask, INT_MAX, workerTask);
+  ParallelForRange("DTransformDBones", 0, numVertices, kMinVerticesPerTask, INT_MAX, workerTask);
 }
 
 void DSkinningTransform::DTransformDBones(

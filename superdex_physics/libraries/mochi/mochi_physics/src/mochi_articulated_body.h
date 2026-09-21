@@ -126,11 +126,9 @@ struct CArticulatedJointVels : public ArticulatedJointVelocities, NoCopy {
   MOCHI_TEMPLATE_END();
 };
 
-// World-space link velocities in [vcom.xyz, omega.xyz] order, without SIMD padding or vsym.
-struct CArticulatedFullVel : public NoCopy {
-  explicit CArticulatedFullVel(int size) : value(ColumnVector<real>::Zero(size)) {}
-
-  ColumnVector<real> value;
+// Derived world-space link velocities, mirroring each link's CRigidVel<TimeStep::Current>.
+struct CArticulatedLinkVels : public DynamicArray<RigidBodyVel>, NoCopy {
+  using DynamicArray<RigidBodyVel>::DynamicArray;
 };
 
 /// @brief Component for time integration of articulated reduced pose.
@@ -467,28 +465,14 @@ void ResolveSkinningJacobianDJoints(
     CActiveUniqueNodes const* activeNodes,
     CArticulatedSkinningData& skinningData);
 
-// Copy current rigid-link velocities to contiguous [vcom.xyz, omega.xyz] storage.
-void UpdateFullVelocity(
-    ecs::PartialRegistry<CRigidVel<TimeStep::Current> const> reg,
-    CGroupMembers const& groupMembers,
-    CArticulatedFullVel& outVelFull);
-
-// Compute world-space velocity produced by skeletal skinning.
-void ComputeSkinningVelocityFromSkeleton(
-    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
-    CArticulatedFullVel const& velFull,
-    CArticulatedSkinningData const& skinningData,
-    ColumnVectorView<real const> unposedCoords,
-    ColumnVectorView<real> outVelocity);
-
-// Compute world-space skinning velocity.
+// Compute world-space skinning velocity on demand. Use finite-step rotation velocities.
 inline void UpdateSkinningVelocity(
     CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
-    CArticulatedFullVel const& velFull,
+    CArticulatedLinkVels const& linkVels,
     CArticulatedSkinningData const& skinningData,
     CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>& outVelocity) {
-  ComputeSkinningVelocityFromSkeleton(
-      linkTransforms, velFull, skinningData, skinningData.restCoords, outVelocity.value);
+  skinningData.skinningTransform.DTransformDBones</*kTangentVel*/ false>(
+      linkTransforms, skinningData.restCoords, linkVels, outVelocity.value);
 }
 
 /*
@@ -764,12 +748,13 @@ void RecordState(
     CRecordingData& outData);
 
 /*
- * ECS system to possibly update vsym of joint velocities at the beginning of a time step.
+ * ECS system to possibly update vsym of joint and link velocities at the beginning of a time step.
  */
 void UpdateVSym(
     ecs::Included<TagArticulatedActor>,
     ecs::CtxGlobal<CSceneTime const> time,
-    CArticulatedJointVels<TimeStep::Current>& outJointVels);
+    CArticulatedJointVels<TimeStep::Current>& outJointVels,
+    CArticulatedLinkVels& outLinkVels);
 
 /*
  * [Differentiability] System to project a derived state gradient to a state gradient.

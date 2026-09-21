@@ -89,6 +89,14 @@ void mochi::PreStepDeformableActorAsync(entt::registry& reg, entt::entity e) {
   ecs::InvokeOnEntity(&UpdateDirichletBC, reg, e);
 }
 
+void deformable::UpdateMaxGeometrySpeed(
+    ecs::Included<TagDeformableActor>,
+    ecs::Excluded<TagNestedSoftActor, TagRodActor>,
+    CVelocitySlice<real, TimeStep::Current> const& velocity,
+    CConservativeStepBounds& outStepBounds) {
+  outStepBounds.maxGeometrySpeed = MaxPackedVector3Norm<kSpaceDim3>(velocity.value.GetConstSpan());
+}
+
 template <ContactType kContactType, typename DiscretizationT>
 void deformable::SetupActiveCollisionNormals(
     ecs::Excluded<TagShellActor, TagRodActor>,

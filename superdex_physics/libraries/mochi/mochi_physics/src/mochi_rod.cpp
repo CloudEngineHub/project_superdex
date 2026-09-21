@@ -40,6 +40,7 @@
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/linear_algebra/sparse_matrix.h>
 #include <mochi_core/linear_algebra/utils/assembly.h>
+#include <mochi_core/utils/array_utils.h>
 #include <mochi_core/utils/graph_utils.h>
 #include <mochi_core/utils/matrix_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
@@ -601,6 +602,110 @@ template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
     CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume<TimeStep::Current>& outBounds);
 
+// Compute max speed of skin vertices using finite-step twist velocities, not just instantaneous
+// tangent velocities.
+static real ComputeMaxSkinSpeed(
+    CRodContactSkin const& contactSkin,
+    CPolylineMesh const& polylineMesh,
+    RodPose const& rodPose,
+    ColumnVectorView<real const> dofVelocity,
+    real timeStep) {
+  static_assert(fem::kNumRodFields == 4);
+
+  auto const& surfaceMesh = *contactSkin.mesh;
+  auto const& embedding = *contactSkin.embedding;
+  int const numSurfaceNodes = surfaceMesh.GetNumNodes();
+  int const numElements = polylineMesh.NumElements();
+  int const K = embedding.weightsPerNode;
+  auto const centerlineNodes = polylineMesh.nodes;
+  auto const& displacements = rodPose.displacements;
+  auto const& frameAxes = rodPose.frameAxes;
+
+  MOCHI_ASSERT_VERBOSE(
+      dofVelocity.Rows() == fem::kNumRodFields * isize(centerlineNodes),
+      "Rod velocity size must match the rod node count");
+  MOCHI_ASSERT_VERBOSE(
+      isize(embedding.invReferenceLengths) == numElements,
+      "invReferenceLengths size must match number of elements");
+
+  // Stack memory for 256 rod elements
+  MOCHI_FILO_STACK_ALLOCATOR(allocator, 256 * sizeof(VMatrix4x4r));
+  DynamicArray<VMatrix4x4r> elemVelocityTransforms(&allocator);
+  elemVelocityTransforms.resize_noinit(numElements);
+  real const invTimeStep = timeStep != 0_r ? 1_r / timeStep : 0_r;
+  for (int e = 0; e < numElements; ++e) {
+    Int2 const en = polylineMesh.ElementNodes(e);
+    int const node0Offset = fem::kNumRodFields * en[0];
+    int const node1Offset = fem::kNumRodFields * en[1];
+    Vec4r const x0 = ToSimd(centerlineNodes[en[0]], 0_r) + Load<Vec4r>(&displacements[node0Offset]);
+    Vec4r const x1 = ToSimd(centerlineNodes[en[1]], 0_r) + Load<Vec4r>(&displacements[node1Offset]);
+    Vec4r const frameAxis = ToSimd(frameAxes[e], 0_r);
+    auto const differential = fem::ComputeRodElementFrameDifferential(x1 - x0, frameAxis);
+
+    Vec4r const velocity0 = Load<Vec4r>(&dofVelocity[node0Offset]);
+    Vec4r const velocity1 = Load<Vec4r>(&dofVelocity[node1Offset]);
+    Vec4r const edgeVelocity = velocity1 - velocity0;
+    real const twistVelocity = velocity0[fem::kRodThetaDofOffset];
+    real finiteTwistRate = twistVelocity;
+    real finiteTwistContractionRate = 0_r;
+    if (timeStep != 0_r) {
+      real const twistAngle = timeStep * twistVelocity;
+      finiteTwistRate = Sin(twistAngle) * invTimeStep;
+      finiteTwistContractionRate = -2_r * Sqr(Sin(0.5_r * twistAngle)) * invTimeStep;
+    }
+    Vec4r const frameAxisVelocity = DotMatVec3x3(differential.dFrameAxisDEdge, edgeVelocity) +
+        finiteTwistRate * differential.binormal + finiteTwistContractionRate * frameAxis;
+    Vec4r const binormalVelocity = DotMatVec3x3(differential.dBinormalDEdge, edgeVelocity) -
+        finiteTwistRate * frameAxis + finiteTwistContractionRate * differential.binormal;
+    Vec4r const scaledTangentVelocity = embedding.invReferenceLengths[e] * edgeVelocity;
+    Vec4r const midpointVelocity = 0.5_r * (velocity0 + velocity1);
+    elemVelocityTransforms[e] =
+        VMatrix4x4r{scaledTangentVelocity, frameAxisVelocity, binormalVelocity, midpointVelocity};
+  }
+
+  real maxSpeedSqr = 0_r;
+  for (int i = 0; i < numSurfaceNodes; ++i) {
+    Vec4r surfaceVelocity{};
+    for (int m = 0; m < K; ++m) {
+      int const idx = i * K + m;
+      int const elemIdx = embedding.elementIndices[idx];
+      real const w = embedding.weights[idx];
+      Real3 const xi = embedding.localCoordinates[idx];
+      surfaceVelocity +=
+          w * DotVecMat4x4(Vec4r{xi[0], xi[1], xi[2], 1_r}, elemVelocityTransforms[elemIdx]);
+    }
+    maxSpeedSqr = Max(maxSpeedSqr, NormSqr<3>(surfaceVelocity));
+  }
+  return Sqrt(maxSpeedSqr);
+}
+
+void UpdateMaxGeometrySpeed(
+    ecs::Included<TagRodActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    CPolylineMesh const& polylineMesh,
+    CRodPose<TimeStep::Current> const& rodPose,
+    CVelocitySlice<real, TimeStep::Current> const& velocity,
+    CRodContactSkin const* contactSkin,
+    CPointCloudColliderParams const* pointCloudColliderParams,
+    CConservativeStepBounds& outStepBounds) {
+  ColumnVectorView<real const> dofVelocity = velocity.value;
+
+  // Centerline speed bounds, if there's no surface contact or there's a point-cloud collider.
+  auto const centerlineMaxSpeed = (pointCloudColliderParams || !contactSkin)
+      ? MaxPackedVector3Norm<fem::kNumRodFields>(dofVelocity.GetConstSpan())
+      : 0_r;
+
+  // Surface speed bounds.
+  auto const skinMaxSpeed = contactSkin ? ComputeMaxSkinSpeed(
+                                              *contactSkin,
+                                              polylineMesh,
+                                              rodPose.value,
+                                              dofVelocity,
+                                              static_cast<real>(time->DeltaTime()))
+                                        : 0_r;
+  outStepBounds.maxGeometrySpeed = Max(centerlineMaxSpeed, skinMaxSpeed);
+}
+
 } // namespace mochi::rod
 
 RodSurfaceEmbeddingData mochi::ComputeRodSurfaceEmbedding(
@@ -772,9 +877,24 @@ void mochi::rod::ResolveContactSkinningJacobian(
   auto const& embData = *contactSkin.embedding;
   int const numContactSkinNodes = contactSkin.mesh->GetNumNodes();
   int const K = embData.weightsPerNode;
+  int const numElements = polylineMesh.NumElements();
   auto const centerlineNodes = polylineMesh.nodes;
   auto const& displacements = rodPose.value.displacements;
   auto const& frameAxes = rodPose.value.frameAxes;
+
+  // Stack memory for 256 rod elements
+  MOCHI_FILO_STACK_ALLOCATOR(allocator, 256 * sizeof(fem::RodElementFrameDifferential));
+  DynamicArray<fem::RodElementFrameDifferential> elementDifferentials(&allocator);
+  elementDifferentials.reserve(numElements);
+  for (int e = 0; e < numElements; ++e) {
+    Int2 const en = polylineMesh.ElementNodes(e);
+    int const node0Start = en[0] * fem::kNumRodFields;
+    int const node1Start = en[1] * fem::kNumRodFields;
+    Vec4r const x0 = ToSimd(centerlineNodes[en[0]], 0_r) + Load<Vec4r>(&displacements[node0Start]);
+    Vec4r const x1 = ToSimd(centerlineNodes[en[1]], 0_r) + Load<Vec4r>(&displacements[node1Start]);
+    elementDifferentials.emplace_back(
+        fem::ComputeRodElementFrameDifferential(x1 - x0, ToSimd(frameAxes[e], 0_r)));
+  }
 
   auto& jac = outSkinning.jacobian;
   jac.SetZero();
@@ -790,21 +910,11 @@ void mochi::rod::ResolveContactSkinningJacobian(
       Real3 const xi = embData.localCoordinates[idx];
 
       Int2 const en = polylineMesh.ElementNodes(elemIdx);
-      NdArray<real, 8> elemDofs;
       int const node0Start = en[0] * fem::kNumRodFields;
-      int const node1Start = en[1] * fem::kNumRodFields;
-      Store(&elemDofs[0], Load<Vec4r>(&displacements[node0Start]));
-      Store(&elemDofs[fem::kNumRodFields], Load<Vec4r>(&displacements[node1Start]));
 
       NdArray<real, 3, 8> elemJac;
       fem::ComputeEmbeddedPointElementJacobian(
-          centerlineNodes[en[0]],
-          centerlineNodes[en[1]],
-          xi,
-          embData.invReferenceLengths[elemIdx],
-          frameAxes[elemIdx],
-          MakeConstSpan(elemDofs),
-          elemJac);
+          xi, embData.invReferenceLengths[elemIdx], elementDifferentials[elemIdx], elemJac);
 
       // Find localCol0 via binary search in the pre-built sorted column indices.
       auto const* it0 = std::lower_bound(colIndices.begin(), colIndices.end(), node0Start);
@@ -814,7 +924,7 @@ void mochi::rod::ResolveContactSkinningJacobian(
       // Second node of rod element may wrap around to zero for closed-loop rod.
       int const localCol1 = (localCol0 + fem::kNumRodFields) % isize(colIndices);
       MOCHI_ASSERT_VERBOSE(
-          colIndices[localCol1] == node1Start,
+          colIndices[localCol1] == en[1] * fem::kNumRodFields,
           "node1Start DOF must be present (possibly wrapped) in sparsity pattern");
 
       for (int d = 0; d < fem::kNumRodFields; ++d) {

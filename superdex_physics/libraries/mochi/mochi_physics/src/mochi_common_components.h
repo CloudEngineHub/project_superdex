@@ -189,32 +189,6 @@ struct CRigidBodyInertia : public NoCopy, RigidBodyInertia {
   using RigidBodyInertia::RigidBodyInertia;
 };
 
-// Bounding volume that contains the entire actor at a given time.
-template <TimeStep kStep>
-struct CBoundingVolume : public NoCopy {
-  CBoundingVolume() = default;
-
-  // Construct from AnyShape, Sphere, Obb, etc...
-  template <typename ShapeT>
-  explicit CBoundingVolume(ShapeT&& s)
-    requires(std::is_constructible_v<AnyShape, ShapeT>)
-      : localShape(std::forward<ShapeT>(s)) {}
-
-  // TODO(T225595100): Replace by AnyBoundingVolume.
-  AnyShape localShape; // actor space
-
-  MOCHI_TEMPLATE_BEGIN(mochi::CBoundingVolume, kStep);
-  // CBoundingVolume is captured for deformable actors because it is used to compute the
-  // CConservativeStepBounds for the next step, which in turn affects island formation, and thus
-  // determinism. We could avoid capturing the current bounds if it was recomputed before
-  // UpdateConservativeStepBounds.
-  MOCHI_ATTRIBUTE_IF(
-      kStep == TimeStep::Current || kStep == TimeStep::Previous,
-      CaptureState(ecs::RequiredTag<TagDeformableActor>{}));
-  MOCHI_FIELD(localShape);
-  MOCHI_TEMPLATE_END();
-};
-
 // Every dynamic actor has CConservativeStepBounds. It stores a conservative world-space bounding
 // volume which must be large enough to contain the actor's movement for the current time step,
 // assuming reasonable constraints on acceleration, etc... This information is used to sort actors
@@ -222,15 +196,19 @@ struct CBoundingVolume : public NoCopy {
 struct CConservativeStepBounds : NoCopy {
   Aabb worldAabb;
 
-  // True when the next conservative step-bounds update should apply a one-step relaxation. This is
-  // needed when previous-step history is unavailable or no longer trustworthy, e.g. immediately
-  // after actor creation or after external state changes. Defaults to true so a freshly-created
-  // actor is relaxed on its next step. Captured so save/restore is deterministic.
+  // Maximum Euclidean world-space speed [m/s] of any point represented by the actor's current
+  // bounding volume. This is derived at the beginning of each simulation step.
+  real maxGeometrySpeed = 0_r;
+
+  // True when the next conservative step-bounds update should apply a one-step relaxation, e.g.
+  // immediately after actor creation or an external state change. Defaults to true so a
+  // freshly-created actor gets the relaxation on its first step.
   bool needsNextStepRelaxation = true;
 
   MOCHI_STRUCT_BEGIN(mochi::CConservativeStepBounds);
   MOCHI_ATTRIBUTE(CaptureState);
-  // `worldAabb` is a per-step derived state and intentionally omitted from reflection.
+  // `worldAabb` and `maxGeometrySpeed` are per-step derived state and intentionally omitted from
+  // reflection.
   MOCHI_FIELD(needsNextStepRelaxation);
   MOCHI_STRUCT_END();
 };
@@ -814,6 +792,31 @@ struct VectorComponentRef {
 template <TimeStep kStep>
 struct CFinalDisplacementRef : public VectorComponentRef {
   using VectorComponentRef::VectorComponentRef;
+};
+
+// Bounding volume that contains the entire actor at a given time.
+template <TimeStep kStep>
+struct CBoundingVolume : public NoCopy {
+  CBoundingVolume() = default;
+
+  // Construct from AnyShape, Sphere, Obb, etc...
+  template <typename ShapeT>
+  explicit CBoundingVolume(ShapeT&& s)
+    requires(std::is_constructible_v<AnyShape, ShapeT>)
+      : localShape(std::forward<ShapeT>(s)) {}
+
+  // TODO(T225595100): Replace by AnyBoundingVolume.
+  AnyShape localShape; // actor space
+
+  MOCHI_TEMPLATE_BEGIN(mochi::CBoundingVolume, kStep);
+  // Bounds for deforming geometry are captured because they are not recomputed during restore.
+  // Previous bounds are derived from current bounds during PreStepEcs before stage-start contact
+  // uses them.
+  MOCHI_ATTRIBUTE_IF(
+      kStep == TimeStep::Current,
+      CaptureState(ecs::Included<CFinalDisplacementRef<TimeStep::Current>>{}));
+  MOCHI_FIELD(localShape);
+  MOCHI_TEMPLATE_END();
 };
 
 /// @brief Optional component to store the color used in the debug draw.

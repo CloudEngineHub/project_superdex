@@ -21,6 +21,7 @@
 #include <mochi_physics/src/mochi_blended.h>
 #include <mochi_physics/src/mochi_common_components.h>
 #include <mochi_physics/src/mochi_context.h>
+#include <mochi_physics/src/mochi_rigid.h>
 #include <mochi_physics/src/mochi_soft_skinned.h>
 
 #include <gtest/gtest.h>
@@ -104,6 +105,17 @@ class SkinnedVelocityTest : public test::MochiSceneTestBase {
     soft.hasStress = false;
     params.softParams = {soft};
     return params;
+  }
+
+  void PrepareInfinitesimalVelocityGradients() {
+    auto& reg = GetRegistry();
+    real constexpr kGradientTimeStep = kFiniteDifferenceStep * kFiniteDifferenceStep;
+    reg.ctx<CSceneTime>().Reset(
+        /*totalSeconds=*/0.0,
+        /*deltaSecondsPrev=*/CSceneTime::kDefaultTimeStep,
+        /*deltaSeconds=*/kGradientTimeStep);
+    ecs::InvokeForEachGlobal(&rigid::UpdateVSym, reg);
+    ecs::InvokeForEachGlobal(&articulated::compound::UpdateVSym, reg);
   }
 
   static DynamicArray<real> MakeFreeJointVelocity() {
@@ -204,43 +216,32 @@ class SkinnedVelocityTest : public test::MochiSceneTestBase {
 
 } // namespace
 
-TEST_F(SkinnedVelocityTest, ArticulatedVelocityMatchesFiniteDifferenceAndOverwritesOutput) {
-  ArticulatedActorParams params = MakeRevoluteSkeletonParams();
-  params.skin = ArticulatedSkinParams{.shape = CreateSkinnedUnitCube(false)};
-
-  Actor* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
-  ASSERT_EQ(1, actor->GetNumDofs());
+TEST_F(SkinnedVelocityTest, StepSynchronizesLinkVelocityMirror) {
+  Actor* actor = _scene->CreateArticulatedActor(MakeRevoluteSkeletonParams(), test::ExpectOK{});
+  actor->SetArticulatedJointVelocities(DynamicArray<real>{1.7_r}, test::ExpectOK{});
 
   auto& reg = GetRegistry();
   entt::entity const entity = GetEntity(actor);
-  DynamicArray<real> pose = {0.37_r};
-  DynamicArray<real> velocity = {1.7_r};
+  auto& linkVelocities = reg.get<CArticulatedLinkVels>(entity);
+  ASSERT_EQ(2, isize(linkVelocities));
+  for (RigidBodyVel& linkVelocity : linkVelocities) {
+    linkVelocity.SetVCom({123_r, 123_r, 123_r});
+    linkVelocity.SetOmega({123_r, 123_r, 123_r});
+  }
 
-  actor->SetArticulatedPoseFromJoints(
-      PerturbPose(actor, pose, velocity, kFiniteDifferenceStep), test::ExpectOK{});
-  ColumnVector<real> const positionsPlus = GetFinalSkinPositionsWorld(reg, entity);
-  actor->SetArticulatedPoseFromJoints(
-      PerturbPose(actor, pose, velocity, -kFiniteDifferenceStep), test::ExpectOK{});
-  ColumnVector<real> const positionsMinus = GetFinalSkinPositionsWorld(reg, entity);
-  ColumnVector<real> const expected =
-      (positionsPlus - positionsMinus) * (0.5_r / kFiniteDifferenceStep);
-  EXPECT_GT(expected.Norm(), 0_r);
+  _scene->Step(0.01_r);
 
-  actor->SetArticulatedPoseFromJoints(pose, test::ExpectOK{});
-  actor->SetArticulatedJointVelocities(velocity, test::ExpectOK{});
-  auto& output = reg.get<CCurrentSkinnedVelocity>(entity).value;
-
-  output.SetConstant(123_r);
-  ecs::InvokeForEach(
-      &articulated::compound::UpdateSkinningVelocity, reg, MakeSingletonConstSpan(entity));
-  ColumnVector<real> const firstResult = output;
-  EXPECT_TRUE(test::NearEqualMatrices(expected, firstResult, kFiniteDifferenceTolerance));
-
-  output.SetConstant(-456_r);
-  ecs::InvokeForEach(
-      &articulated::compound::UpdateSkinningVelocity, reg, MakeSingletonConstSpan(entity));
-  EXPECT_TRUE(test::NearEqualMatrices(expected, output, kFiniteDifferenceTolerance));
-  EXPECT_TRUE(test::NearEqualMatrices(firstResult, output, kCompositionTolerance));
+  auto const& links = reg.get<CGroupMembers const>(entity).actors;
+  ASSERT_EQ(links.size(), linkVelocities.size());
+  for (int i = 0; i < isize(links); ++i) {
+    RigidBodyVel const& authoritative = reg.get<CRigidVel<TimeStep::Current> const>(links[i]).value;
+    EXPECT_NEAR_EQ(ToReal3(authoritative.GetVCom()), ToReal3(linkVelocities[i].GetVCom()));
+    auto const [authoritativeOmega, authoritativeVSym] = authoritative.GetOmegaAndVSym();
+    auto const [mirroredOmega, mirroredVSym] = linkVelocities[i].GetOmegaAndVSym();
+    EXPECT_NEAR_EQ(ToReal3(authoritativeOmega), ToReal3(mirroredOmega));
+    EXPECT_NEAR_EQ(ToNdArraySym3x3(authoritativeVSym), ToNdArraySym3x3(mirroredVSym));
+    EXPECT_EQ(authoritative.IsVSymDirty(), linkVelocities[i].IsVSymDirty());
+  }
 }
 
 TEST_F(SkinnedVelocityTest, PoseChangeUpdatesLinkVelocity) {
@@ -322,7 +323,7 @@ TEST_F(SkinnedVelocityTest, CurrentVelocityIsUniversalWhileIntegrationHistoryIsC
 
 TEST_F(
     SkinnedVelocityTest,
-    CaptureRestoreRebuildsFullVelocityAndRestoresStateBackedSkinnedVelocity) {
+    CaptureRestoreRebuildsLinkVelocitiesAndRestoresStateBackedSkinnedVelocity) {
   SoftSkinnedActorParams params = MakeSoftSkinnedParams();
   params.hasInertia = true;
   params.softParams[0].hasInertia = false;
@@ -370,7 +371,10 @@ TEST_F(
   ColumnVector<real> const expectedSkinnedVelocity = skinnedVelocity;
   StateHandle const state = _scene->CaptureState(test::ExpectOK{});
 
-  reg.get<CArticulatedFullVel>(parentEntity).value.SetConstant(123_r);
+  for (RigidBodyVel& linkVelocity : reg.get<CArticulatedLinkVels>(parentEntity)) {
+    linkVelocity.SetVCom({123_r, 123_r, 123_r});
+    linkVelocity.SetOmega({123_r, 123_r, 123_r});
+  }
   skinnedVelocity.SetConstant(456_r);
   for (entt::entity const link : links) {
     auto& linkVelocity = reg.get<CRigidVel<TimeStep::Current>>(link).value;
@@ -380,8 +384,18 @@ TEST_F(
 
   _scene->RestoreState(state, /*releaseImmediately=*/true, test::ExpectOK{});
 
-  EXPECT_SPAN_EQ(
-      expectedFullVelocity, reg.get<CArticulatedFullVel const>(parentEntity).value.GetConstSpan());
+  auto const& restoredLinkVelocities = reg.get<CArticulatedLinkVels const>(parentEntity);
+  ASSERT_EQ(links.size(), restoredLinkVelocities.size());
+  for (int i = 0; i < isize(restoredLinkVelocities); ++i) {
+    auto const expected = expectedFullVelocity.subspan(i * RigidSize::kDAll, RigidSize::kDAll);
+    RigidBodyVel const& restored = restoredLinkVelocities[i];
+    EXPECT_NEAR_EQ(
+        ToReal3(restored.GetVCom()), ToReal3(Load<RigidSize::kDTrans, Vec4r>(expected.data())));
+    EXPECT_NEAR_EQ(
+        ToReal3(restored.GetOmegaAndVSym().first),
+        ToReal3(Load<RigidSize::kDRot, Vec4r>(expected.data() + RigidSize::kDTrans)));
+    EXPECT_TRUE(restored.IsVSymDirty());
+  }
   EXPECT_SPAN_EQ(
       expectedSkinnedVelocity.GetConstSpan(),
       reg.get<CCurrentSkinnedVelocity const>(nestedEntity).value.GetConstSpan());
@@ -433,9 +447,84 @@ TEST_F(SkinnedVelocityTest, NestedSoftVelocityMatchesSimultaneousFiniteDifferenc
   rawVelocity = softVelocity;
   skinned::ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(nestedEntity));
   parent->SetArticulatedJointVelocities(articulatedVelocity, test::ExpectOK{});
+  PrepareInfinitesimalVelocityGradients();
 
   EXPECT_FALSE(ecs::CanInvokeOnEntity(&skinned::UpdateSkinningVelocity<true>, reg, nestedEntity));
   EXPECT_TRUE(ecs::CanInvokeOnEntity(&skinned::UpdateSkinningVelocity<false>, reg, nestedEntity));
+  ecs::InvokeForEach<ecs::policy::AllowReadWriteSameComponent>(
+      &skinned::UpdateSkinningVelocity<false>, reg, MakeSingletonConstSpan(nestedEntity));
+  EXPECT_TRUE(
+      test::NearEqualMatrices(
+          expected,
+          reg.get<CCurrentSkinnedVelocity const>(nestedEntity).value,
+          kFiniteDifferenceTolerance));
+}
+
+TEST_F(SkinnedVelocityTest, NestedSoftFiniteStepVelocityMatchesForwardDifference) {
+  real constexpr kTimeStep = 0.1_r;
+  Actor* parent = _scene->CreateSoftSkinnedActor(MakeSoftSkinnedParams(), test::ExpectOK{});
+  ASSERT_EQ(1, parent->GetNumDofs());
+  auto const softHandles = parent->GetNestedSoftActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(softHandles));
+
+  auto& reg = GetRegistry();
+  entt::entity const parentEntity = GetEntity(parent);
+  entt::entity const nestedEntity = GetEntity(_scene->GetActor(softHandles[0]));
+  DynamicArray<real> const pose = {-0.29_r};
+  DynamicArray<real> const articulatedVelocity = {1.25_r};
+
+  auto& rawDisplacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(nestedEntity).value;
+  ASSERT_GE(rawDisplacement.Rows(), 6);
+  rawDisplacement[3] = 0.20_r;
+  rawDisplacement[4] = 0.10_r;
+  rawDisplacement[5] = -0.15_r;
+  ColumnVector<real> const displacement = rawDisplacement;
+
+  auto& rawVelocity = reg.get<CVelocitySlice<real, TimeStep::Current>>(nestedEntity).value;
+  rawVelocity.SetZero();
+  rawVelocity[3] = 0.30_r;
+  rawVelocity[4] = -0.40_r;
+  rawVelocity[5] = 0.20_r;
+  ColumnVector<real> const softVelocity = rawVelocity;
+
+  auto const copyLinkTransforms = [&]() {
+    auto const& transforms =
+        reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(parentEntity);
+    return DynamicArray<TransformRT>(transforms.begin(), transforms.end());
+  };
+
+  parent->SetArticulatedPoseFromJoints(pose, test::ExpectOK{});
+  rawDisplacement = displacement;
+  skinned::ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(nestedEntity));
+  ColumnVector<real> const currentPositions = GetFinalSkinPositionsWorld(reg, nestedEntity);
+  DynamicArray<TransformRT> const currentLinkTransforms = copyLinkTransforms();
+
+  DynamicArray<real> const nextPose = PerturbPose(parent, pose, articulatedVelocity, kTimeStep);
+  parent->SetArticulatedPoseFromJoints(nextPose, test::ExpectOK{});
+  rawDisplacement = displacement + softVelocity * kTimeStep;
+  skinned::ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(nestedEntity));
+  ColumnVector<real> const nextPositions = GetFinalSkinPositionsWorld(reg, nestedEntity);
+  DynamicArray<TransformRT> const nextLinkTransforms = copyLinkTransforms();
+  ColumnVector<real> const expected = (nextPositions - currentPositions) * (1_r / kTimeStep);
+  EXPECT_GT(expected.Norm(), 0_r);
+
+  parent->SetArticulatedPoseFromJoints(pose, test::ExpectOK{});
+  rawDisplacement = displacement;
+  rawVelocity = softVelocity;
+  skinned::ResolveAllNodeSkinningDisplacementsPipeline(reg, MakeSingletonConstSpan(nestedEntity));
+
+  reg.ctx<CSceneTime>().Reset(
+      /*totalSeconds=*/0.0,
+      /*deltaSecondsPrev=*/CSceneTime::kDefaultTimeStep,
+      /*deltaSeconds=*/kTimeStep);
+  auto& linkVelocities = reg.get<CArticulatedLinkVels>(parentEntity);
+  ASSERT_EQ(currentLinkTransforms.size(), nextLinkTransforms.size());
+  ASSERT_EQ(currentLinkTransforms.size(), linkVelocities.size());
+  for (int i = 0; i < isize(linkVelocities); ++i) {
+    linkVelocities[i].SetFromFiniteDifferencePose(
+        nextLinkTransforms[i], currentLinkTransforms[i], -kTimeStep);
+  }
+
   ecs::InvokeForEach<ecs::policy::AllowReadWriteSameComponent>(
       &skinned::UpdateSkinningVelocity<false>, reg, MakeSingletonConstSpan(nestedEntity));
   EXPECT_TRUE(
@@ -468,6 +557,7 @@ TEST_F(SkinnedVelocityTest, BlendedVelocityIsExactAffineCompositionAfterSkinning
   softVelocity[4] = -0.15_r;
   softVelocity[7] = 0.30_r;
   parent->SetArticulatedJointVelocities(DynamicArray<real>{-0.85_r}, test::ExpectOK{});
+  PrepareInfinitesimalVelocityGradients();
 
   auto& unselectedParentVelocity = reg.get<CCurrentSkinnedVelocity>(unselectedParentEntity).value;
   unselectedParentVelocity.SetConstant(123_r);

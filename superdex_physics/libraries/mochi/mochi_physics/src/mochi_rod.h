@@ -478,6 +478,19 @@ void ComputeRodNodeCurvatureBinormals(
     bool isClosedLoop,
     Span<Real3> outCurvatureBinormals);
 
+// Computes the maximum speed of the represented rod geometry. Centerline rods reduce translational
+// node speed. Surface-contact rods evaluate embedding velocity with finite-step twist rotation so
+// material-frame motion is included, and also bound centerline motion with a point-cloud collider.
+void UpdateMaxGeometrySpeed(
+    ecs::Included<TagRodActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    CPolylineMesh const& polylineMesh,
+    CRodPose<TimeStep::Current> const& rodPose,
+    CVelocitySlice<real, TimeStep::Current> const& velocity,
+    CRodContactSkin const* contactSkin,
+    CPointCloudColliderParams const* pointCloudColliderParams,
+    CConservativeStepBounds& outStepBounds);
+
 // Update CBoundingVolume<TimeStep::Current>.localShape based on the deformation of the rod. kStep
 // defines the data to be used in the update, not the component storing the result. There's no
 // CBoundingVolume<TimeStep::StageStart>, as it's not needed. We do bound checks in stage-start
