@@ -590,10 +590,10 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
         flowParams.shiftY = 0.51221045_r;
         flowParams.shiftZ = 0.49657665_r;
         flowParams.scale = 1.3309090553162923_r;
-        flowParams.deepModelPath = test::GetAssetPath("cube/cube_minimal_flow_revised.pt");
+        flowParams.deepModelPath = test::GetAssetPath("cube/cube_minimal_flow_revised.mochi.h5");
         flowParams.numDof = 24;
-        mochi::ShapeHandle flow = CreateDeepFlowShape(
-            _scene->GetContext(), flowParams, NeuralComputeType::MochiCpu, {}, test::ExpectOK());
+        mochi::ShapeHandle flow =
+            CreateDeepFlowShape(_scene->GetContext(), flowParams, test::ExpectOK());
         experimentalParams.flow = flow;
         caparams.contact.objScale = 1_r;
         caparams.contact.distanceErrorBound = flowParams.errorBound;
@@ -1200,9 +1200,7 @@ class MochiSoftSoftContactDeepFlow : public MochiSoftSoftContact {
 };
 
 // Test of the integration of deep flow and biharmonic ROMs
-// TODO[T152549129] DISABLED because it torch::jit::load crashes or never returns in debug builds.
-// TODO Also disabled when real is type double, because the saved torch files only support floats.
-#if MOCHI_USE_TORCH && !MOCHI_DEBUG && !MOCHI_USE_DOUBLE_PRECISION && MOCHI_ENABLE_DEEP_FLOW_ACTORS
+#if MOCHI_ENABLE_DEEP_FLOW_ACTORS && MOCHI_USE_HDF5
 #define MOCHI_CAN_TEST_DEEP_FLOW 0 // TODO(T228959906): Re-enable deep flow tests
 #else
 #define MOCHI_CAN_TEST_DEEP_FLOW 0
@@ -1259,14 +1257,13 @@ class DeepFlowBiharmonicRom : public MochiContactTestBase {
         test::ExpectOK());
     DeepModelParams dflowparams;
     dflowparams.deepModelPath =
-        test::GetAssetPath("duck/duck_coarse_biharmonic_rom/duck_10handles_flow.pt");
+        test::GetAssetPath("duck/duck_coarse_biharmonic_rom/duck_10handles_flow.mochi.h5");
     dflowparams.shiftX = 0.43273339_r;
     dflowparams.shiftY = 0.290418_r;
     dflowparams.shiftZ = 0.49103763_r;
     dflowparams.scale = 0.6447050910181614_r;
     dflowparams.numDof = 30;
-    ShapeHandle flow = CreateDeepFlowShape(
-        _mochiContext, dflowparams, NeuralComputeType::MochiCpu, {}, test::ExpectOK());
+    ShapeHandle flow = CreateDeepFlowShape(_mochiContext, dflowparams, test::ExpectOK());
     SoftActorParams params;
     params.layer = "Collider";
     params.shape = duck;

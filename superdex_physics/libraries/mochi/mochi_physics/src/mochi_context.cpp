@@ -311,8 +311,6 @@ ShapeHandle ContextImpl::LoadShapeFromFile(
 ShapeHandle experimental::CreateDeepFlowShape(
     Context* context,
     DeepModelParams const& params, // Parameters of a deep model
-    NeuralComputeType computeType,
-    int preallocMemSize, // Amount of preallocated GPU memory. Only used if computeType is TorchGpu
     Error& error) {
   MOCHI_ERROR_IF(!context, error, "Invalid context");
   MOCHI_ERROR_IF(
@@ -326,8 +324,6 @@ ShapeHandle experimental::CreateDeepFlowShape(
       params.scale,
       Real3(params.shiftX, params.shiftY, params.shiftZ),
       params.numDof,
-      computeType,
-      preallocMemSize,
       error);
   MOCHI_ERROR_RETURN(error, {});
 

@@ -1101,8 +1101,7 @@ TEST_IF_P(MOCHI_DEEP_FLOW_DISABLED, MochiContextTest, CreateDeepFlowShape_Featur
   experimental::DeepModelParams params;
   params.deepModelPath = "unused_model_path";
 
-  ShapeHandle const shape = experimental::CreateDeepFlowShape(
-      _mochiContext, params, NeuralComputeType::MochiCpu, 0, ExpectNotOK{});
+  ShapeHandle const shape = experimental::CreateDeepFlowShape(_mochiContext, params, ExpectNotOK{});
   EXPECT_FALSE(shape.IsValid());
   ExpectShapeDoesNotExist(_mochiContext, shape);
 }
