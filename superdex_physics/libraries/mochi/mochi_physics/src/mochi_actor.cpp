@@ -250,11 +250,7 @@ class ActorInterfaceImpl : public ActorInterface {
     return transform ? transform->worldFromLocal : TransformRT{};
   }
 
-  static void SetRootTransformImpl(
-      entt::registry& reg,
-      entt::entity e,
-      TransformRT const& worldFromLocal,
-      Error& error) {
+  void SetRootTransformImpl(TransformRT const& worldFromLocal, Error& error) {
     MOCHI_ERROR_IF(
         reg.any_of<TagArticulatedLinkActor>(e),
         error,
@@ -265,8 +261,9 @@ class ActorInterfaceImpl : public ActorInterface {
         "The transform of a nested soft actor cannot be directly set.");
     MOCHI_ERROR_RETURN(error);
 
-    // Articulated actors: set the root and recompute derived state.
+    // Articulated actors: set the root and recompute derived state (including mesh skinning).
     if (reg.all_of<TagArticulatedActor>(e)) {
+      ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
       articulated::compound::SetArticulatedRootTransform(reg, e, worldFromLocal);
       return;
     }
@@ -284,7 +281,7 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetRootTransform(TransformRT const& worldFromLocal, Error& error) override {
-    SetRootTransformImpl(reg, e, worldFromLocal, error);
+    SetRootTransformImpl(worldFromLocal, error);
   }
 
   Real3 GetRigidCenterOfMassLocal(Error& error) const override {
@@ -324,7 +321,7 @@ class ActorInterfaceImpl : public ActorInterface {
     TransformRT rootTransform;
     rigid::RigidStateToRootTransform(
         rbInertia->GetCenterOfMassLocal(), worldFromCom, rootTransform);
-    SetRootTransformImpl(reg, e, rootTransform, error);
+    SetRootTransformImpl(rootTransform, error);
   }
 
   Real6 GetRigidMomentOfInertiaLocal(Error& error) const override {
@@ -475,6 +472,7 @@ class ActorInterfaceImpl : public ActorInterface {
       auto const prevDensity = material->density;
       material->density = density;
       if (density != prevDensity) {
+        ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
         ecs::TryInvokeOnEntity(&soft::UpdateSoftMass, reg, e);
       }
     } else {
@@ -611,6 +609,7 @@ class ActorInterfaceImpl : public ActorInterface {
     currentDisplacement->value = AsConstView(displacements);
 
     if (reg.all_of<TagNestedSoftActor>(e)) {
+      ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
       skinned::SynchronizeAfterExternalChange(reg, e);
     }
 
@@ -645,6 +644,7 @@ class ActorInterfaceImpl : public ActorInterface {
     auto prevDensity = softMaterialParams.density;
     soft::SetMaterialParams(params, softMaterialParams);
     if (softMaterialParams.density != prevDensity) {
+      ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
       ecs::TryInvokeOnEntity(&soft::UpdateSoftMass, reg, e);
     }
 
@@ -815,6 +815,8 @@ class ActorInterfaceImpl : public ActorInterface {
       Span<Real3 const> pointsWorld,
       Span<real> outDistances,
       Error& error) const override {
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     auto const numPoints = isize(pointsWorld);
     MOCHI_ERROR_IF(
         numPoints != isize(outDistances), error, "Size mismatch between input and output");
@@ -1227,6 +1229,8 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetArticulatedPoseFromLinks(Span<TransformRT const> worldFromLinks, Error& error) override {
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED();
 
     auto const& links = reg.get<CGroupMembers const>(e).actors;
@@ -1274,6 +1278,8 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetArticulatedPoseFromJoints(Span<real const> pose, Error& error) override {
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED();
 
     // If necessary, convert dofs to pose
@@ -1293,6 +1299,8 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetArticulatedJointVelocities(Span<real const> velocities, Error& error) override {
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED();
     articulated::compound::SetArticulatedJointVelocities(reg, e, velocities, error);
     MOCHI_ERROR_RETURN(error);
@@ -1832,6 +1840,7 @@ class ActorInterfaceImpl : public ActorInterface {
     prevVel->value.SetZero();
 
     if (reg.all_of<TagNestedSoftActor>(e)) {
+      ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
       skinned::SynchronizeAfterExternalChange(reg, e);
     }
 
@@ -1845,6 +1854,8 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetNodePositionsLocal(Span<real const> positionsLocal, Error& error) override {
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     mochi::SetNodePositionsLocal(reg, e, positionsLocal, error);
   }
 
@@ -2362,11 +2373,16 @@ class ActorInterfaceImpl : public ActorInterface {
 #undef MOCHI_ERROR_RETURN_IF_NO_CONTACT_QUERY
 
   QueryHandle RegisterQuery(QueryType type, Error& error) override {
+    // Bind scheduler because static actors force kComputeImmediately to true.
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     constexpr bool kComputeImmediately = false;
     return mochi::RegisterQuery(reg, e, type, kComputeImmediately, error);
   }
 
   QueryHandle RegisterQueryAndCompute(QueryType type, Error& error) override {
+    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+
     constexpr bool kComputeImmediately = true;
     return mochi::RegisterQuery(reg, e, type, kComputeImmediately, error);
   }

@@ -52,6 +52,19 @@ NB_EXPORT void InitGlobalContext(int numWorkerThreads);
 // operations must not race ordinary binding calls.
 NB_EXPORT Context* GetContext();
 
+// Binds the calling thread to the global context's task scheduler for the lifetime of
+// this object. Does nothing when Mochi has not been initialized or a scheduler is already bound.
+class NB_EXPORT ScopedPythonTaskSchedulerBinding {
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(ScopedPythonTaskSchedulerBinding);
+
+ public:
+  ScopedPythonTaskSchedulerBinding();
+  ~ScopedPythonTaskSchedulerBinding();
+
+ private:
+  Context* _context;
+};
+
 // Destroys the global context. Throws if none exists.
 NB_EXPORT void DestroyGlobalContext();
 

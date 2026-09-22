@@ -174,7 +174,9 @@ class DebugDrawInternal : public DebugDraw {
   virtual void SetThreadAffinity() = 0;
 
   // Create an implementation of this interface
-  static std::unique_ptr<DebugDrawInternal> Create(entt::registry& registry);
+  static std::unique_ptr<DebugDrawInternal> Create(
+      entt::registry& registry,
+      TaskScheduler& scheduler);
 
  protected:
   using EcsComponentSet = entt::sparse_set const*;

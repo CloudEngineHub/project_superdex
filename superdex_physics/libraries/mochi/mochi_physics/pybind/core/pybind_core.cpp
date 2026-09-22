@@ -18,6 +18,7 @@
 
 #include <mochi_core/utils/guarded.h>
 #include <mochi_core/utils/log.h>
+#include <mochi_core/utils/task_scheduler.h>
 
 #include <exception>
 #include <utility>
@@ -60,6 +61,19 @@ Context* GetContext() {
   // the still-live context, so this snapshot remains lock-free under the documented requirement
   // that lifecycle operations do not race ordinary binding calls.
   return g_context.UnsafeRead([](Context* context) { return context; });
+}
+
+ScopedPythonTaskSchedulerBinding::ScopedPythonTaskSchedulerBinding()
+    : _context(TaskScheduler::TryGet() == nullptr ? GetContext() : nullptr) {
+  if (_context) {
+    _context->BindThisThread();
+  }
+}
+
+ScopedPythonTaskSchedulerBinding::~ScopedPythonTaskSchedulerBinding() {
+  if (_context) {
+    _context->UnbindThisThread();
+  }
 }
 
 void DestroyGlobalContext() {

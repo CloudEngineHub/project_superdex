@@ -18,6 +18,8 @@
 
 #include <gtest/gtest.h>
 
+#include <mochi_core/utils/task_scheduler.h>
+
 #include <atomic>
 #include <memory>
 #include <stdexcept>
@@ -71,6 +73,59 @@ TEST(PybindContextTeardownRegistry, ConcurrentRegistrationPreservesEveryCallback
   RunContextDependentTeardowns();
 
   EXPECT_EQ(*teardownCount, kThreadCount);
+}
+
+TEST(ScopedPythonTaskSchedulerBindingTest, BindsAndUnbindsCallingThread) {
+  InitGlobalContext(0);
+
+  bool initiallyUnbound = false;
+  bool bound = false;
+  bool nestedBound = false;
+  bool stillBound = false;
+  bool finallyUnbound = false;
+  std::thread thread([&]() {
+    initiallyUnbound = TaskScheduler::TryGet() == nullptr;
+    {
+      ScopedPythonTaskSchedulerBinding binding;
+      bound = TaskScheduler::TryGet() != nullptr;
+      {
+        ScopedPythonTaskSchedulerBinding nestedBinding;
+        nestedBound = TaskScheduler::TryGet() != nullptr;
+      }
+      stillBound = TaskScheduler::TryGet() != nullptr;
+    }
+    finallyUnbound = TaskScheduler::TryGet() == nullptr;
+  });
+  thread.join();
+
+  DestroyGlobalContext();
+
+  EXPECT_TRUE(initiallyUnbound);
+  EXPECT_TRUE(bound);
+  EXPECT_TRUE(nestedBound);
+  EXPECT_TRUE(stillBound);
+  EXPECT_TRUE(finallyUnbound);
+}
+
+TEST(ScopedPythonTaskSchedulerBindingTest, PreservesExistingSchedulerBinding) {
+  InitGlobalContext(0);
+
+  bool preservedWhileGuarded = false;
+  bool preservedAfterGuard = false;
+  std::thread thread([&]() {
+    TaskScheduler callerScheduler(0);
+    {
+      ScopedPythonTaskSchedulerBinding binding;
+      preservedWhileGuarded = TaskScheduler::TryGet() == &callerScheduler;
+    }
+    preservedAfterGuard = TaskScheduler::TryGet() == &callerScheduler;
+  });
+  thread.join();
+
+  DestroyGlobalContext();
+
+  EXPECT_TRUE(preservedWhileGuarded);
+  EXPECT_TRUE(preservedAfterGuard);
 }
 
 } // namespace

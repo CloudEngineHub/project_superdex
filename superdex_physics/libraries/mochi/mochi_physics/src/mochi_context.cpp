@@ -277,6 +277,7 @@ ShapeHandle ContextImpl::LoadShapeFromFile(
   ValidateShapeTransform(bakeScale, bakeTransform, error);
   MOCHI_ERROR_IF(filePath.empty(), error, "Invalid file path");
   MOCHI_ERROR_RETURN(error, {});
+  ScopedSchedulerBinding schedulerBinding(GetTaskScheduler());
 
   auto doLoad = [&](Error& err) {
     // Load the file (any supported format)
@@ -376,6 +377,7 @@ ShapeHandle ContextImpl::LoadShapeFromBytes(
   ValidateShapeTransform(bakeScale, bakeTransform, error);
   MOCHI_ERROR_IF(fileData.empty(), error, "No data");
   MOCHI_ERROR_RETURN(error, {});
+  ScopedSchedulerBinding schedulerBinding(GetTaskScheduler());
 
   // Load the file from memory (any supported format)
   ModelData model = model::LoadFromBytes(fileData, format, error);

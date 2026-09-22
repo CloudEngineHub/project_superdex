@@ -82,30 +82,6 @@ using namespace mochi::experimental;
 namespace mochi {
 
 namespace {
-// RAII guard that binds the calling thread to the task scheduler when it is not already bound, and
-// unbinds it again on scope exit. Public API entry points that run parallel work use this so the
-// work still parallelizes when they are called from a thread that has not been bound to the
-// scheduler; otherwise the parallel primitives silently fall back to single-threaded execution.
-class ScopedSchedulerBinding {
- public:
-  explicit ScopedSchedulerBinding(ContextImpl& context)
-      : _context(TaskScheduler::TryGet() == nullptr ? &context : nullptr) {
-    if (_context != nullptr) {
-      _context->BindThisThread();
-    }
-  }
-  ~ScopedSchedulerBinding() {
-    if (_context != nullptr) {
-      _context->UnbindThisThread();
-    }
-  }
-
-  MOCHI_DECLARE_NO_COPY_NO_MOVE(ScopedSchedulerBinding);
-
- private:
-  ContextImpl* _context;
-};
-
 // Rolls back independent cleanup roots during multi-actor construction. When ownership transfers
 // to an aggregate, replace its children with that owner. Roots are destroyed in reverse
 // registration order so later-registered dependents are removed before actors they reference.
@@ -418,7 +394,7 @@ SceneImpl::SceneImpl(ContextImpl* context, std::string_view name, uint64_t uniqu
   _registry.set<CSimulationParams>();
 
   // Create the one DebugDrawImpl
-  _debugDraw = DebugDrawInternal::Create(_registry);
+  _debugDraw = DebugDrawInternal::Create(_registry, _context->GetTaskScheduler());
   RegisterDebugDrawSystems(*_debugDraw);
 }
 
@@ -606,7 +582,7 @@ void SceneImpl::Step(double timeStepSec) {
   stepCounter++;
 
   // Enforce scheduler binding to this thread, for parallel work.
-  ScopedSchedulerBinding schedulerBinding(*_context);
+  ScopedSchedulerBinding schedulerBinding(this);
 
   Timer timer;
 
@@ -780,6 +756,8 @@ Span<uint8_t const> SceneImpl::FindState(StateHandle handle, Error& error) const
 }
 
 void SceneImpl::RestoreState(StateHandle handle, bool releaseImmediately, Error& error) {
+  ScopedSchedulerBinding schedulerBinding(this);
+
   RestorePartialState(handle, releaseImmediately, {}, error);
 }
 
@@ -793,6 +771,8 @@ void SceneImpl::CaptureStateToBytes(DynamicArray<uint8_t>& outData, Error& error
 
 void SceneImpl::RestoreStateFromBytes(Span<uint8_t const> data, Error& error) {
   MOCHI_PROFILE_SCOPE();
+  ScopedSchedulerBinding schedulerBinding(this);
+
   capture::RestoreState(_registry, data, error);
 }
 
@@ -1246,7 +1226,7 @@ void SceneImpl::PrepareBackPropagate(StateHandle stateNew, StateHandle stateOld,
   MOCHI_ERROR_RETURN(error);
 
   // Enforce scheduler binding to this thread, for parallel work.
-  ScopedSchedulerBinding schedulerBinding(*_context);
+  ScopedSchedulerBinding schedulerBinding(this);
 
   RestoreStatePair(stateNew, stateOld, error);
   MOCHI_ERROR_RETURN(error);
@@ -1294,7 +1274,7 @@ void SceneImpl::BackPropagate(Error& error) {
   MOCHI_ERROR_RETURN(error);
 
   // Enforce scheduler binding to this thread, for parallel work.
-  ScopedSchedulerBinding schedulerBinding(*_context);
+  ScopedSchedulerBinding schedulerBinding(this);
 
   // Validate necessary solver settings for accurate differentiability
   WarnIfNotImprovedConvergenceSettings();
@@ -1410,7 +1390,7 @@ void SceneImpl::GetStepJacobian(
   WarnIfNotImprovedConvergenceSettings();
 
   // Enforce scheduler binding to this thread, for parallel work.
-  ScopedSchedulerBinding schedulerBinding(*_context);
+  ScopedSchedulerBinding schedulerBinding(this);
 
   // Compute scene state offset
   int dofOffset = 0;
@@ -1462,6 +1442,8 @@ Actor* SceneImpl::CreateRigidActorImpl(
     std::shared_ptr<Shape const> shapePtr,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
+  ScopedSchedulerBinding schedulerBinding(this);
+
   MOCHI_ERROR_IF(
       (isArticulatedLink || params.isStatic) && params.linearVelocity,
       error,
@@ -1525,6 +1507,7 @@ Actor* SceneImpl::CreateSoftActorImpl(
       error,
       "Deep Flow actor creation is not supported in this build. To enable, define MOCHI_ENABLE_DEEP_FLOW_ACTORS=1");
   MOCHI_ERROR_RETURN(error, {});
+  ScopedSchedulerBinding schedulerBinding(this);
 
   // Create an ECS entity
   entt::entity e = _registry.create();
@@ -1561,6 +1544,7 @@ Actor* SceneImpl::CreateShellActorImpl(
     std::shared_ptr<TriangularMeshShape const> shapePtr,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {})
+  ScopedSchedulerBinding schedulerBinding(this);
 
   // Create an ECS entity
   entt::entity e = _registry.create();
@@ -1584,6 +1568,7 @@ Actor* SceneImpl::CreateRodActorImpl(
     std::shared_ptr<PolylineShape const> shapePtr,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {})
+  ScopedSchedulerBinding schedulerBinding(this);
 
   entt::entity e = _registry.create();
   SceneHandle sceneHandle = GetHandle();
@@ -2279,6 +2264,7 @@ Actor* SceneImpl::CreateArticulatedActorImpl(
     std::shared_ptr<Shape const> skinShape,
     Error& error) {
   MOCHI_ERROR_RETURN(error, nullptr);
+  ScopedSchedulerBinding schedulerBinding(this);
 
   // Create an ECS entity
   entt::entity e = _registry.create();
@@ -2594,6 +2580,7 @@ Actor* SceneImpl::CreateSoftSkinnedActorImpl(
     std::shared_ptr<ArticulatedBodyShape const> articulatedShapePtr,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
+  ScopedSchedulerBinding schedulerBinding(this);
 
   // Validate experimental params size
   int const numSoftActors = isize(params.softParams);
@@ -3418,6 +3405,7 @@ void experimental::RestoreStateFromScene(
   MOCHI_ERROR_IF(!sceneFrom, error, "Invalid scene");
   MOCHI_ERROR_IF(!sceneTo, error, "Invalid scene");
   MOCHI_ERROR_RETURN(error);
+  ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(sceneTo));
 
   Span<uint8_t const> stateBuffer =
       assert_cast<SceneImpl const*>(sceneFrom)->FindState(handleFrom, error);

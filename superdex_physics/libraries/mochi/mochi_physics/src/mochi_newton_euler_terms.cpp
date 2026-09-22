@@ -82,6 +82,7 @@ void NewtonEulerTermsImpl::Compute(
   MOCHI_ERROR_IF(isize(outJtF) != numDofs, error, "Incorrect size of the external force term");
   MOCHI_ERROR_IF(isize(outM) != numDofs * numDofs, error, "Incorrect size of the mass matrix");
   MOCHI_ERROR_RETURN(error);
+  ScopedSchedulerBinding schedulerBinding(_scene);
 
   // Set robot configuration
   _robot->SetArticulatedPoseFromJoints(q, error);

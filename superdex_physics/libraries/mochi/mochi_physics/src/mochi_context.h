@@ -243,6 +243,34 @@ class ContextImpl final : public Context {
   std::unordered_map<std::string, FileCacheEntryPtr> _fileCache;
 };
 
+// Bind public API calls that use scheduler-aware helpers to their TaskScheduler. These
+// helpers fall back to serial execution when no scheduler is bound, so the guard is intentionally
+// a no-op when this thread already has a scheduler.
+class ScopedSchedulerBinding {
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(ScopedSchedulerBinding);
+
+ public:
+  explicit ScopedSchedulerBinding(SceneImpl* scene)
+      : ScopedSchedulerBinding(assert_cast<ContextImpl*>(scene->GetContext())->GetTaskScheduler()) {
+  }
+
+  explicit ScopedSchedulerBinding(TaskScheduler& scheduler)
+      : _scheduler(TaskScheduler::TryGet() == nullptr ? &scheduler : nullptr) {
+    if (_scheduler != nullptr) {
+      _scheduler->BindThisThread();
+    }
+  }
+
+  ~ScopedSchedulerBinding() {
+    if (_scheduler != nullptr) {
+      _scheduler->UnbindThisThread();
+    }
+  }
+
+ private:
+  TaskScheduler* _scheduler;
+};
+
 inline Handle::ValueType ContextImpl::GenerateNewHandle() {
   return ++_nextHandle;
 }
