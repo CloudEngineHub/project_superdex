@@ -20,6 +20,7 @@
 #include <mochi_core/utils/nd_array_utils.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -754,4 +755,40 @@ TEST(GridSdf, FindPointContactsExtrapolates) {
           MakeConstSpan(farPoints),
           MakeConstSpan(expectedIndices),
           std::numeric_limits<real>::infinity()));
+}
+
+// Floating-point rounding can make the grid padding equal the tolerance even
+// when the expanded query bound lies outside the grid, requiring extrapolation.
+TEST(GridSdf, FindPointContactsExtrapolatesAtRoundedGridBoundary) {
+  constexpr real kScale = 1_r / std::numeric_limits<real>::epsilon();
+  constexpr Int3 kDimensions{3, 3, 17};
+  constexpr real kGridMinZ = -0.75_r;
+  Aabb const gridBounds{
+      Real3{-2_r * kScale, -2_r * kScale, kGridMinZ},
+      Real3{4_r * kScale, 4_r * kScale, 4_r * kScale}};
+  Aabb const negativeValueBounds{
+      Real3{kScale, kScale, kScale}, Real3{2_r * kScale, 2_r * kScale, 2_r * kScale}};
+  auto grid = std::make_shared<DenseGrid3D<real>>(kDimensions, gridBounds, negativeValueBounds);
+  for (int x = 0; x < kDimensions[0]; ++x) {
+    for (int y = 0; y < kDimensions[1]; ++y) {
+      for (int z = 0; z < kDimensions[2]; ++z) {
+        (*grid)(x, y, z) = 0.25_r + StaticCast<real>(z) * kScale;
+      }
+    }
+  }
+
+  real const tolerance = std::nextafter(kScale, std::numeric_limits<real>::infinity());
+  real const expandedMinZ = negativeValueBounds.GetMin()[2] - tolerance;
+  ASSERT_LT(expandedMinZ, kGridMinZ);
+
+  DynamicArray<Real3> const points{Real3{1.5_r * kScale, 1.5_r * kScale, expandedMinZ}};
+  DynamicArray<int> const expectedIndices{0};
+  EXPECT_TRUE(
+      QueryMatches<GridExtrapolation::UpperBound>(
+          grid,
+          VEye<4>(),
+          TransformRT{},
+          MakeConstSpan(points),
+          MakeConstSpan(expectedIndices),
+          tolerance));
 }

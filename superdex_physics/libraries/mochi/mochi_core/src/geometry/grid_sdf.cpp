@@ -331,6 +331,7 @@ void GridSdf::FindPointContactsImpl(
     Span<Real3 const> points,
     TransformRT const& pointsFromActor,
     ContactDetectionParams const& params,
+    Aabb const& boundsInGridSpace,
     DynamicArray<int>& outIndices,
     DynamicArray<Real3>& outContacts,
     SdfInfo& outSdf) const {
@@ -370,13 +371,10 @@ void GridSdf::FindPointContactsImpl(
   auto const& actorFromGridRotT = _gridFromActorRotation;
 
   // Transform the SDF's AABB into point-space. This gives us a quick way to reject points that are
-  // outside the volume (often the majority) before we transform them into SDF-space. If the
-  // requested tolerance is infinite, set these bounds to infinity to avoid any culling.
-  Aabb boundsInGridSpace{-kInf3, kInf3};
+  // outside the volume (often the majority) before we transform them into SDF-space.
   Aabb boundsInPointSpace{-kInf3, kInf3};
   if (IsFinite(toleranceInGridSpace)) {
     auto const pointsFromGridT = InvertTransformationTransposed(gridFromPointsMatT);
-    boundsInGridSpace = ExpandShape(_distanceGrid->GetNegativeValueBounds(), toleranceInGridSpace);
     boundsInPointSpace = TransformShape_Transposed(pointsFromGridT, boundsInGridSpace);
   }
 
@@ -677,26 +675,36 @@ void GridSdf::FindPointContacts(
     SdfInfo& outSdf,
     bool& outIsSdfGradUnitary) const {
   MOCHI_PROFILE_SCOPE();
+  MOCHI_ASSERT_VERBOSE(
+      IsFinite(params.tolerance) || params.tolerance == kInf,
+      "Contact tolerance must be finite or positive infinity.");
 
   outIsSdfGradUnitary = false; // Grid SDF gradient may not be unitary.
 
-  // If the grid bounds are at least as large as the collider bounds + tolerance, then
-  // we can use the faster method of sampling interior points.
-  auto colliderBounds = _distanceGrid->GetNegativeValueBounds();
-  auto gridBounds = _distanceGrid->GetBounds();
-  real const minGridPadding =
+  auto const colliderBounds = _distanceGrid->GetNegativeValueBounds();
+  auto const gridBounds = _distanceGrid->GetBounds();
+  [[maybe_unused]] real const minGridPadding =
       Min(Min(colliderBounds.GetMin() - gridBounds.GetMin()),
           Min(gridBounds.GetMax() - colliderBounds.GetMax()));
   MOCHI_ASSERT_VERBOSE(
       IsFinite(minGridPadding) && minGridPadding >= 0_r,
       "Grid SDF negative-value bounds must be finite and contained within grid bounds.");
   real const toleranceInGridSpace = params.tolerance / _actorFromGridScale;
-  if (minGridPadding >= toleranceInGridSpace) {
+  Aabb const boundsInGridSpace = ExpandShape(colliderBounds, toleranceInGridSpace);
+
+  // Interior sampling is safe only when the exact bounds used to filter points are inside the grid.
+  // Due to floating-point rounding, minGridPadding >= toleranceInGridSpace does not guarantee those
+  // bounds are inside the grid.
+  bool const useInteriorSampling = AllTrue<3>(
+      (boundsInGridSpace.VGetMin() >= gridBounds.VGetMin()) &
+      (boundsInGridSpace.VGetMax() <= gridBounds.VGetMax()));
+
+  if (useInteriorSampling) {
     FindPointContactsImpl<GridExtrapolation::Unsupported>(
-        points, pointsFromActor, params, outIndices, outContacts, outSdf);
+        points, pointsFromActor, params, boundsInGridSpace, outIndices, outContacts, outSdf);
   } else {
     FindPointContactsImpl<GridExtrapolation::UpperBound>(
-        points, pointsFromActor, params, outIndices, outContacts, outSdf);
+        points, pointsFromActor, params, boundsInGridSpace, outIndices, outContacts, outSdf);
   }
 }
 

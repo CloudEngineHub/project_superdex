@@ -113,6 +113,7 @@ class GridSdf final : public Sdf {
       Span<Real3 const> points,
       TransformRT const& pointsFromActor,
       ContactDetectionParams const& params,
+      Aabb const& boundsInGridSpace,
       DynamicArray<int>& outIndices,
       DynamicArray<Real3>& outContacts,
       SdfInfo& outSdf) const;
