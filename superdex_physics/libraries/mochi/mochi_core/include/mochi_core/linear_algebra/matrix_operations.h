@@ -236,7 +236,7 @@ inline void Inverse3x3(
 }
 
 template <typename T>
-MOCHI_FORCE_INLINE bool RejectSymInversePivot(T pivot, T diagonal) {
+[[nodiscard]] MOCHI_FORCE_INLINE bool RejectSymInversePivot(T pivot, T diagonal) {
   return Abs(pivot) <= std::numeric_limits<T>::epsilon() * Abs(diagonal);
 }
 

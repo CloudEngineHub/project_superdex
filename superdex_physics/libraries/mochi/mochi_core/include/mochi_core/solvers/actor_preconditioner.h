@@ -229,7 +229,7 @@ class AMGActorPrec : public ActorPreconditioner<T> {
   static_assert(kBlockSize > 0, "Preconditioner block size must be positive");
 
   explicit AMGActorPrec(ActorPseudoMatrix<T> const& A, krylov::AMGOptions<T> const& options = {}) {
-    Afine = ToBlockSparseMatrix<kBlockSize, true>(A);
+    Afine = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::AddAbsToDiagonal>(A);
     prec = std::make_unique<krylov::AMGPrec<T, kBlockSize>>(Afine, options);
   }
 
@@ -246,14 +246,15 @@ class AMGActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update the preconditioner for the input pseudo-matrix.
    *
-   * @param[in] actorMatrix Novel actor pseudo-matrix to update the preconditioner.
+   * @param[in] actorMatrix Updated actor pseudo-matrix.
    *
    * @note See the sparsity pattern assumptions in @ref ActorPreconditioner::Update.
    */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
 #if MOCHI_ASSERT_VERBOSE_ENABLED
     // Expensive check to verify the sparsity is unchanged
-    auto Anew = ToBlockSparseMatrix<kBlockSize, true>(actorMatrix);
+    auto Anew =
+        ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::AddAbsToDiagonal>(actorMatrix);
     MOCHI_ASSERT_VERBOSE(Anew.Pointers() == Afine.Pointers(), "Sparsity pattern mismatch.");
     MOCHI_ASSERT_VERBOSE(Anew.Indices() == Afine.Indices(), "Sparsity pattern mismatch.");
 #endif
@@ -270,7 +271,7 @@ class AMGActorPrec : public ActorPreconditioner<T> {
     auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
     auto srcValues = bsp.Values();
     std::copy(srcValues.begin(), srcValues.end(), Afine.Values().begin());
-    details::AddInteractionToBlockSparseMatrix<true>(
+    details::AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::AddAbsToDiagonal>(
         actorMatrix.interactionMatrices, Afine, actorMatrix.offset);
 
     prec->Update(Afine);
@@ -291,8 +292,8 @@ class AMGActorPrec : public ActorPreconditioner<T> {
 
 /** @brief Class for the colored SSOR actor preconditioner.
  *
- * @note Per-actor colored SSOR preconditioner is only supported for actors whose @ref
- * ActorPseudoMatrix can be converted into a block sparse matrix of the desired block size.
+ * @note Per-actor colored SSOR is only supported for actors whose @ref ActorPseudoMatrix can be
+ * converted into a block sparse matrix of the desired block size.
  */
 template <typename T, int kBlockSize>
 class ColoredSSORActorPrec : public ActorPreconditioner<T> {
@@ -300,7 +301,9 @@ class ColoredSSORActorPrec : public ActorPreconditioner<T> {
   static_assert(kBlockSize > 0, "Preconditioner block size must be positive");
 
   explicit ColoredSSORActorPrec(ActorPseudoMatrix<T> const& A_) {
-    A = ToBlockSparseMatrix<kBlockSize, true>(A_);
+    // With symmetric values and a strictly positive diagonal, colored SSOR with the default omega =
+    // 1 is SPD even if A is indefinite. Diagonal compensation is therefore unnecessary.
+    A = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(A_);
     prec = std::make_unique<krylov::ColoredSSORPrec<BlockSparseMatrix<T, kBlockSize>>>(A);
   }
 
@@ -317,14 +320,14 @@ class ColoredSSORActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update the preconditioner for the input pseudo-matrix.
    *
-   * @param[in] actorMatrix Novel actor pseudo-matrix to update the preconditioner.
+   * @param[in] actorMatrix Updated actor pseudo-matrix.
    *
    * @note See the sparsity pattern assumptions in @ref ActorPreconditioner::Update.
    */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
 #if MOCHI_ASSERT_VERBOSE_ENABLED
     // Expensive check to verify the sparsity is unchanged
-    auto Anew = ToBlockSparseMatrix<kBlockSize, true>(actorMatrix);
+    auto Anew = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(actorMatrix);
     MOCHI_ASSERT_VERBOSE(Anew.Pointers() == A.Pointers(), "Sparsity pattern mismatch.");
     MOCHI_ASSERT_VERBOSE(Anew.Indices() == A.Indices(), "Sparsity pattern mismatch.");
 #endif
@@ -341,7 +344,7 @@ class ColoredSSORActorPrec : public ActorPreconditioner<T> {
     auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
     auto srcValues = bsp.Values();
     std::copy(srcValues.begin(), srcValues.end(), A.Values().begin());
-    details::AddInteractionToBlockSparseMatrix<true>(
+    details::AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::Discard>(
         actorMatrix.interactionMatrices, A, actorMatrix.offset);
 
     prec->Update(A);
@@ -371,7 +374,7 @@ class ILU0ActorPrec : public ActorPreconditioner<T> {
   static_assert(kBlockSize > 0, "Preconditioner block size must be positive");
 
   explicit ILU0ActorPrec(ActorPseudoMatrix<T> const& A_) {
-    A = ToBlockSparseMatrix<kBlockSize, true>(A_);
+    A = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(A_);
     prec = std::make_unique<krylov::RelaxedILUPrec<BlockSparseMatrix<T, kBlockSize>>>(
         A, /*fillInLevel*/ 0, /*alphaRelax*/ T{0});
   }
@@ -382,14 +385,14 @@ class ILU0ActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update the preconditioner for the input pseudo-matrix.
    *
-   * @param[in] actorMatrix Novel actor pseudo-matrix to update the preconditioner.
+   * @param[in] actorMatrix Updated actor pseudo-matrix.
    *
    * @note See the sparsity pattern assumptions in @ref ActorPreconditioner::Update.
    */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
 #if MOCHI_ASSERT_VERBOSE_ENABLED
     // Expensive check to verify the sparsity is unchanged
-    auto Anew = ToBlockSparseMatrix<kBlockSize, true>(actorMatrix);
+    auto Anew = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(actorMatrix);
     MOCHI_ASSERT_VERBOSE(Anew.Pointers() == A.Pointers(), "Sparsity pattern mismatch.");
     MOCHI_ASSERT_VERBOSE(Anew.Indices() == A.Indices(), "Sparsity pattern mismatch.");
 #endif
@@ -406,7 +409,7 @@ class ILU0ActorPrec : public ActorPreconditioner<T> {
     auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
     auto srcValues = bsp.Values();
     std::copy(srcValues.begin(), srcValues.end(), A.Values().begin());
-    details::AddInteractionToBlockSparseMatrix<true>(
+    details::AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::Discard>(
         actorMatrix.interactionMatrices, A, actorMatrix.offset);
 
     prec->Update(A);
