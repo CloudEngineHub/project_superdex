@@ -407,9 +407,8 @@ static void QueryPointCloud(
       return CollidingPointCloudDiscretization{segDisc};
     }();
 
-    // Compute sample-to-collider-point connectivity (query collider hash table at colliding sample
-    // positions)
-    DynamicArray<DynamicArray<int>> samplesToColliderPoints = ComputePointsToColliderPoints(
+    // Find colliding-point/collider-point pairs within the contact range.
+    ComputePointCloudContactIndices(
         params,
         colliderDiscretization,
         colliderDisplacements,
@@ -420,11 +419,9 @@ static void QueryPointCloud(
         indicesToQuery,
         worldFromColliding,
         colliderSpatialHashTable,
-        contactParams.GetPenaltyThresholdDist(true));
-
-    // Compute sampleIndices and colliderFeatureIndices from the collision detection output.
-    ComputePointCloudContactIndices(
-        samplesToColliderPoints, outIndices, *outColliderFeatureIndices);
+        contactParams.GetPenaltyThresholdDist(true),
+        outIndices,
+        *outColliderFeatureIndices);
   } else {
     // Skip the secondary culling based on the spatial hash table, fill in outIndices with an
     // identity mapping, and use colliderFeatureIndices as input (computed in a previous pass).
@@ -435,12 +432,11 @@ static void QueryPointCloud(
     std::iota(outIndices.begin(), outIndices.end(), 0);
   }
 
-  // Populate the remaining ContactDetectionResult fields using the computed indices.
-  // Pass the appropriate colliderFeatureIndices: if output was computed, use it; otherwise use
-  // input.
   Span<int const> colliderPointIndicesToUse = outColliderFeatureIndices != nullptr
       ? MakeConstSpan(*outColliderFeatureIndices)
       : colliderFeatureIndices;
+
+  // Compute contact fields for the selected point pairs.
   ComputePointCloudContactDetectionFields(
       colliderDiscretization,
       colliderDisplacements,

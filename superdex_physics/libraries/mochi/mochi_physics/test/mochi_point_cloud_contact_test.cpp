@@ -15,6 +15,7 @@
  */
 
 #include <mochi_core/utils/container_utils.h>
+#include <mochi_core/utils/task_scheduler.h>
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/src/mochi_point_cloud_contact.h>
 #include <mochi_physics/src/mochi_solve.h>
@@ -25,6 +26,7 @@
 
 #include <array>
 #include <functional>
+#include <numeric>
 #include <utility>
 
 using namespace mochi;
@@ -199,54 +201,58 @@ class MochiPointCloudColliderTest
     : public MochiShellContactTest,
       public ::testing::WithParamInterface<std::optional<ActorBoundaryElementType>> {};
 
-// Test CreateSpatialHashTable function
-TEST_P(MochiPointCloudColliderTest, CreateSpatialHashTable_BasicProperties) {
+TEST_P(MochiPointCloudColliderTest, SpatialHashTableLifecycleAndContactOrdering) {
   auto colliderDisc = MakeColliderDiscretization(GetParam());
   int const numColliderPoints = colliderDisc.GetNumColliderPoints();
+  real const contactThreshold = ContactParams{}.GetPenaltyThresholdDist(true);
+  SpatialHashTable hashTable = CreateSpatialHashTable(_params, colliderDisc, contactThreshold);
+  EXPECT_EQ(numColliderPoints, hashTable.GetCapacity());
+  EXPECT_EQ(0, hashTable.GetNumPoints());
 
-  SpatialHashTable hashTable =
-      CreateSpatialHashTable(_params, colliderDisc, ContactParams{}.GetPenaltyThresholdDist(true));
-
-  // Check that the hash table has the expected capacity
-  EXPECT_EQ(hashTable.GetCapacity(), numColliderPoints);
-
-  // Initially, the hash table should be empty
-  EXPECT_EQ(hashTable.GetNumPoints(), 0);
-}
-
-// Test UpdateSpatialHashTable function
-TEST_P(MochiPointCloudColliderTest, UpdateSpatialHashTable_BasicProperties) {
-  auto colliderDisc = MakeColliderDiscretization(GetParam());
-  int const numColliderPoints = colliderDisc.GetNumColliderPoints();
-  int const numNodes = isize(_discretization.femElements[0].coordinates);
-  int const numDofs = numNodes * kSpaceDim3;
-
-  // Create displacement storage (initialized to zero) and a reference view for the API.
-  CDisplacementSlice<real, TimeStep::Current> dispSlice(numDofs);
+  CDisplacementSlice<real, TimeStep::Current> dispSlice(isize(_coordinates) * kSpaceDim3);
   CFinalDisplacementRef<TimeStep::Current> dispRef(dispSlice.value);
-
-  // Create hash table with appropriate capacity
-  SpatialHashTable hashTable{_params.radius, numColliderPoints, 10};
-
-  // It should initially be empty
-  EXPECT_EQ(hashTable.GetNumPoints(), 0);
-
-  // Update the hash table; need to tag an entity as a shell actor, and add it to a potential
-  // collider list to pass the built-in filter that skips unnecessary hash table updates.
-  entt::registry reg;
-  entt::entity e = reg.create();
-  reg.emplace<TagShellActor>(e);
-  CConservativePotentialColliders<ContactType::Sync> potentialColliders;
-  potentialColliders.emplace_back(e);
   UpdateSpatialHashTable(
       ecs::Included<TagUsePointCloudContact>{}, colliderDisc, dispRef, hashTable);
+  EXPECT_EQ(numColliderPoints, hashTable.GetNumPoints());
+  UpdateSpatialHashTable(
+      ecs::Included<TagUsePointCloudContact>{}, colliderDisc, dispRef, hashTable);
+  EXPECT_EQ(numColliderPoints, hashTable.GetNumPoints());
 
-  // Check that all collider points were added
-  EXPECT_EQ(hashTable.GetNumPoints(), numColliderPoints);
+  auto const collidingPointPosition = colliderDisc.VisitCollider(
+      [](auto const& disc) { return disc.femElements[0].mapEvaluated[0]; });
 
-  // Test reset functionality
+  // Use 257 matching points to exercise ordered merging across the 256-point range boundary, then
+  // append one out-of-range point to verify it is rejected.
+  int constexpr kNumExpectedContacts = 257;
+  DynamicArray<Real3> collidingPointPositions(kNumExpectedContacts, collidingPointPosition);
+  collidingPointPositions.push_back(Real3{10_r, 10_r, 10_r});
+  CFemSurfaceDiscretization collidingDisc{std::move(_discretization)};
+  DynamicArray<int> pointIndices;
+  DynamicArray<int> colliderPointIndices;
+  TaskScheduler taskScheduler(1);
+  ComputePointCloudContactIndices(
+      _params,
+      colliderDisc,
+      dispRef.value,
+      TransformRT{},
+      CollidingPointCloudDiscretization{&collidingDisc},
+      false,
+      MakeConstSpan(collidingPointPositions),
+      {},
+      TransformRT{},
+      hashTable,
+      contactThreshold,
+      pointIndices,
+      colliderPointIndices);
+
+  DynamicArray<int> expectedPointIndices(kNumExpectedContacts);
+  std::iota(expectedPointIndices.begin(), expectedPointIndices.end(), 0);
+  DynamicArray<int> expectedColliderPointIndices(kNumExpectedContacts, 0);
+  EXPECT_SPAN_EQ(expectedPointIndices, pointIndices);
+  EXPECT_SPAN_EQ(expectedColliderPointIndices, colliderPointIndices);
+
   hashTable.Reset();
-  EXPECT_EQ(hashTable.GetNumPoints(), 0);
+  EXPECT_EQ(0, hashTable.GetNumPoints());
 }
 
 INSTANTIATE_TEST_SUITE_P(
