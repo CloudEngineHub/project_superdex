@@ -201,7 +201,7 @@ class MochiPointCloudColliderTest
     : public MochiShellContactTest,
       public ::testing::WithParamInterface<std::optional<ActorBoundaryElementType>> {};
 
-TEST_P(MochiPointCloudColliderTest, SpatialHashTableLifecycleAndContactOrdering) {
+TEST_P(MochiPointCloudColliderTest, SpatialHashTablePopulationAndContactIndexQueries) {
   auto colliderDisc = MakeColliderDiscretization(GetParam());
   int const numColliderPoints = colliderDisc.GetNumColliderPoints();
   real const contactThreshold = ContactParams{}.GetPenaltyThresholdDist(true);
@@ -218,38 +218,76 @@ TEST_P(MochiPointCloudColliderTest, SpatialHashTableLifecycleAndContactOrdering)
       ecs::Included<TagUsePointCloudContact>{}, colliderDisc, dispRef, hashTable);
   EXPECT_EQ(numColliderPoints, hashTable.GetNumPoints());
 
-  auto const collidingPointPosition = colliderDisc.VisitCollider(
+  auto const contactPosition = colliderDisc.VisitCollider(
       [](auto const& disc) { return disc.femElements[0].mapEvaluated[0]; });
 
   // Use 257 matching points to exercise ordered merging across the 256-point range boundary, then
   // append one out-of-range point to verify it is rejected.
   int constexpr kNumExpectedContacts = 257;
-  DynamicArray<Real3> collidingPointPositions(kNumExpectedContacts, collidingPointPosition);
+  DynamicArray<Real3> collidingPointPositions(kNumExpectedContacts, contactPosition);
   collidingPointPositions.push_back(Real3{10_r, 10_r, 10_r});
-  CFemSurfaceDiscretization collidingDisc{std::move(_discretization)};
+
   DynamicArray<int> pointIndices;
   DynamicArray<int> colliderPointIndices;
   TaskScheduler taskScheduler(1);
-  ComputePointCloudContactIndices(
-      _params,
-      colliderDisc,
-      dispRef.value,
-      TransformRT{},
-      CollidingPointCloudDiscretization{&collidingDisc},
-      false,
-      MakeConstSpan(collidingPointPositions),
-      {},
-      TransformRT{},
-      hashTable,
-      contactThreshold,
-      pointIndices,
-      colliderPointIndices);
+  auto expectContactIndices = [&](auto const& collidingDisc,
+                                  bool selfContact,
+                                  Span<Real3 const> positions,
+                                  Span<int const> sampleIndices,
+                                  auto const& expectedPoints,
+                                  auto const& expectedColliderPoints) {
+    ComputePointCloudContactIndices(
+        _params,
+        colliderDisc,
+        dispRef.value,
+        TransformRT{},
+        CollidingPointCloudDiscretization{&collidingDisc},
+        selfContact,
+        positions,
+        sampleIndices,
+        TransformRT{},
+        hashTable,
+        contactThreshold,
+        pointIndices,
+        colliderPointIndices);
+    EXPECT_SPAN_EQ(expectedPoints, pointIndices);
+    EXPECT_SPAN_EQ(expectedColliderPoints, colliderPointIndices);
+  };
+
+  CFemSurfaceDiscretization surfaceDisc{std::move(_discretization)};
+  surfaceDisc.Visit([&](auto& disc) {
+    using DiscretizationT = std::decay_t<decltype(disc)>;
+    disc.femElements[0].mapEvaluated[0] = Real3{10_r, 10_r, 10_r};
+    disc.femElements[1 / DiscretizationT::kNumQuads].mapEvaluated[1 % DiscretizationT::kNumQuads] =
+        contactPosition;
+  });
 
   DynamicArray<int> expectedPointIndices(kNumExpectedContacts);
   std::iota(expectedPointIndices.begin(), expectedPointIndices.end(), 0);
   DynamicArray<int> expectedColliderPointIndices(kNumExpectedContacts, 0);
-  EXPECT_SPAN_EQ(expectedPointIndices, pointIndices);
-  EXPECT_SPAN_EQ(expectedColliderPointIndices, colliderPointIndices);
+  expectContactIndices(
+      surfaceDisc,
+      false,
+      MakeConstSpan(collidingPointPositions),
+      {},
+      expectedPointIndices,
+      expectedColliderPointIndices);
+
+  DynamicArray<Real3> const selfContactPositions(2, contactPosition);
+  auto const selfPositions = MakeConstSpan(selfContactPositions);
+  std::array<int, 2> const remappedSampleIndices{1, 0};
+  auto const remappedSamples = MakeConstSpan(remappedSampleIndices);
+  std::array<int, 1> const index0{0};
+  std::array<int, 1> const index1{1};
+  expectContactIndices(surfaceDisc, true, selfPositions, {}, index0, index0);
+
+  auto segmentDisc =
+      CFemSegmentDiscretization::Create(ActorSegmentElementType::P1Q2, _coordinates, false);
+  segmentDisc.Visit([&](auto& disc) {
+    disc.femElements[0].mapEvaluated[0] = Real3{10_r, 10_r, 10_r};
+    disc.femElements[0].mapEvaluated[1] = contactPosition;
+  });
+  expectContactIndices(segmentDisc, true, selfPositions, remappedSamples, index1, index0);
 
   hashTable.Reset();
   EXPECT_EQ(0, hashTable.GetNumPoints());
