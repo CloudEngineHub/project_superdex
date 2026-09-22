@@ -24,6 +24,7 @@
 #include <mochi_physics/src/mochi_ecs_utils.h>
 #include <mochi_physics/src/mochi_hdf5.h>
 #include <mochi_physics/src/mochi_scene.h>
+#include <mochi_physics/src/mochi_soft_rom_components.h>
 #include <mochi_physics/utils/mochi_prefab.h>
 
 #include <limits>
@@ -137,6 +138,10 @@ TEST(Prefab, ArticulatedActor_Serialization) {
               "penaltyCoefficient": 4e9
             },
             "boundaryElementType": "P1Q6",
+            "boundarySubsampling": {
+              "subsamplingDensity": 0.25,
+              "strategy": "AreaProportional"
+            },
             "nonCollidingLinks": ["parentLink", "childLink"]
           }
         }
@@ -186,6 +191,10 @@ TEST(Prefab, ArticulatedActor_Serialization) {
     EXPECT_STREQ("mySkinLayer", art.skin->layer.c_str());
     EXPECT_NEAR_EQ(4e9_r, art.skin->contact.penaltyCoefficient);
     EXPECT_EQ(ActorBoundaryElementType::P1Q6, art.skin->boundaryElementType);
+    ASSERT_TRUE(art.skin->boundarySubsampling.has_value());
+    EXPECT_NEAR_EQ(0.25_r, art.skin->boundarySubsampling->subsamplingDensity);
+    EXPECT_EQ(
+        BoundarySubsamplingStrategy::AreaProportional, art.skin->boundarySubsampling->strategy);
     ASSERT_TRUE(art.skin->nonCollidingLinks.has_value());
     ASSERT_EQ(2, static_cast<int>(art.skin->nonCollidingLinks->size()));
     EXPECT_STREQ("parentLink", (*art.skin->nonCollidingLinks)[0].c_str());
@@ -1520,6 +1529,99 @@ TEST_IF(MOCHI_INTERNAL, Prefab, SoftActor_AddToScene) {
   scene->ForEachActor(checkActor);
   ASSERT_EQ(1, isize(result.actors));
   EXPECT_EQ(actorHandle, result.actors[0]->GetHandle());
+}
+
+TEST_IF(MOCHI_ENABLE_ROM_ACTORS, Prefab, ExperimentalAddToScene_AppliesRomToAllSoftActors) {
+  auto* context = mochi::CreateContext(0);
+  MOCHI_DEFER(mochi::DestroyContext(context));
+  auto* scene = context->CreateScene("my scene");
+  MOCHI_DEFER(context->DestroyScene(scene));
+
+  auto tempDir = CreateTempDirectory("experimental_rom_prefab_test", ExpectOK{});
+  prefab::ScenePrefab childPrefab;
+  childPrefab.actors.soft.push_back().shapeFile = "cube/cube_mesh.mochi.json";
+  auto const childPath = tempDir.Path() / "child.mochi_scene";
+  prefab::SaveToJsonFile(childPrefab, childPath.string(), ExpectOK{});
+
+  prefab::ScenePrefab parentPrefab;
+  parentPrefab.actors.soft.push_back().shapeFile = "cube/cube_mesh.mochi.json";
+  parentPrefab.prefabs.push_back().path = childPath.string();
+  auto const parentPath = tempDir.Path() / "parent.mochi_scene";
+  prefab::SaveToJsonFile(parentPrefab, parentPath.string(), ExpectOK{});
+
+  experimental::RomParams const romParams{
+      .source = "polynomial_crom_order_1",
+      .romProjectionStrategy = experimental::RomProjectionStrategy::ElementLevelProjection};
+  auto const result = experimental::AddToScene(
+      parentPath.string(),
+      test::GetAssetsDir(),
+      scene,
+      prefab::PrefabParams{},
+      romParams,
+      test::ExpectOK{});
+
+  ASSERT_EQ(2, isize(result.actors));
+  auto const& reg = static_cast<SceneImpl*>(scene)->GetRegistry();
+  for (auto const* actor : result.actors) {
+    auto const entity = GetEntityUnchecked(actor->GetHandle());
+    ASSERT_TRUE(reg.all_of<TagRomActor>(entity));
+    ASSERT_TRUE(reg.all_of<CRomProjectionStrategy>(entity));
+    EXPECT_EQ(
+        experimental::RomProjectionStrategy::ElementLevelProjection,
+        reg.get<CRomProjectionStrategy>(entity).value);
+  }
+}
+
+TEST_IF(MOCHI_ENABLE_ROM_ACTORS, Prefab, ExperimentalAddToScene_AppliesRomToNestedSoftActors) {
+  auto* context = mochi::CreateContext(0);
+  MOCHI_DEFER(mochi::DestroyContext(context));
+  auto* scene = context->CreateScene("my scene");
+  MOCHI_DEFER(context->DestroyScene(scene));
+
+  prefab::ScenePrefab scenePrefab;
+  auto& actor = scenePrefab.actors.softSkinned.push_back();
+  actor.skeletonParams.name = "RomSkeleton";
+  actor.skeletonParams.joints.push_back().type = ArticulatedJointType::Free;
+
+  auto& link = actor.skeletonParams.links.push_back();
+  link.name = "Root";
+  link.parentLink = -1;
+  link.shapeFile = "cube/cube_mesh.mochi.json";
+  link.colliderType = ColliderType::None;
+
+  auto& soft = actor.softParams.push_back();
+  soft.name = "Soft";
+  soft.shapeFile = "cube/cube_mesh.mochi.json";
+  soft.colliderType = ColliderType::None;
+  soft.hasGravity = false;
+  soft.hasInertia = true;
+  actor.softAttachLinks.push_back("Root");
+
+  auto tempDir = CreateTempDirectory("experimental_nested_rom_prefab_test", ExpectOK{});
+  auto const prefabPath = tempDir.Path() / "nested_rom.mochi_scene";
+  prefab::SaveToJsonFile(scenePrefab, prefabPath.string(), ExpectOK{});
+
+  experimental::RomParams const romParams{
+      .source = "polynomial_crom_order_1",
+      .romProjectionStrategy = experimental::RomProjectionStrategy::ActorLevelProjection};
+  auto const result = experimental::AddToScene(
+      prefabPath.string(),
+      test::GetAssetsDir(),
+      scene,
+      prefab::PrefabParams{},
+      romParams,
+      test::ExpectOK{});
+
+  ASSERT_EQ(1, isize(result.actors));
+  auto const nestedSoftActors = result.actors[0]->GetNestedSoftActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(nestedSoftActors));
+  auto const& reg = static_cast<SceneImpl*>(scene)->GetRegistry();
+  auto const entity = GetEntityUnchecked(nestedSoftActors[0]);
+  ASSERT_TRUE(reg.all_of<TagRomActor>(entity));
+  ASSERT_TRUE(reg.all_of<CRomProjectionStrategy>(entity));
+  EXPECT_EQ(
+      experimental::RomProjectionStrategy::ActorLevelProjection,
+      reg.get<CRomProjectionStrategy>(entity).value);
 }
 
 TEST_IF(MOCHI_HDF5_AND_INTERNAL, Prefab, SoftSkinnedActor_AddToScene) {

@@ -41,12 +41,18 @@
 #include <any>
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <variant>
 
 namespace mochi {
 // Forwards
 struct QPSolverParams;
 struct NewtonSolverParams;
+
+namespace prefab {
+struct AddToSceneResult;
+struct PrefabParams;
+} // namespace prefab
 
 /**
  * @brief Default finite-difference epsilon used by @ref BackPropagationSolverParams::epsFiniteDiff.
@@ -418,6 +424,14 @@ struct RomParams {
   MOCHI_FIELD(romProjectionStrategy)
   MOCHI_STRUCT_END()
 };
+
+MOCHI_API prefab::AddToSceneResult AddToScene(
+    std::string_view prefabPath,
+    std::string_view rootPath,
+    Scene* scene,
+    prefab::PrefabParams const& params,
+    RomParams const& romParams,
+    Error& error);
 
 struct DeepModelParams {
   // Path of the file containing the deep model.

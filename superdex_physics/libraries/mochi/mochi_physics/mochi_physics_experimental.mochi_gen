@@ -14,6 +14,32 @@
 
 namespace experimental;
 
+// @brief [Experimental] Parameters defining a Reduced-Order Model (ROM) actor.
+//
+// @warning ROMs are experimental and may change or be removed without warning.
+struct experimental::RomParams [no_cpp_definition, no_reflection, no_capi, no_python] {}
+
+// @brief Load and instantiate a scene prefab with a uniform ROM override.
+//
+// @details Applies the provided ROM parameters to every standalone and nested soft actor in the
+// prefab hierarchy.
+//
+// @param[in] prefabPath File path to the prefab file.
+// @param[in] rootPath Root directory for resolving relative paths, except those resolved against
+// a prefab file.
+// @param[in,out] scene The @ref Scene to add things to.
+// @param[in] params Parameters for how and where to instantiate the prefab.
+// @param[in] romParams ROM parameters applied to every soft actor in the prefab hierarchy.
+//
+// @return An @ref prefab::AddToSceneResult containing pointers to all created actors and constraints.
+//
+// @warning This function is not transactional. If it returns an error, the prefab may have been
+// partially instantiated in the scene.
+// @warning This function requires `MOCHI_ENABLE_ROM_ACTORS=1`.
+//
+// @see prefab::AddToScene, experimental::RomParams
+fn experimental::AddToScene(StringView prefabPath, StringView rootPath, Scene* scene, prefab::PrefabParams const& params, experimental::RomParams const& romParams) -> prefab::AddToSceneResult [mochi_error, no_capi, no_python];
+
 fn experimental::RestoreStateFromScene(Scene* sceneTo, Scene const* sceneFrom, StateHandle handleFrom) -> void [mochi_error];
 fn experimental::ApplyImprovedConvergenceSettings(Scene* scene) -> void [mochi_error];
 

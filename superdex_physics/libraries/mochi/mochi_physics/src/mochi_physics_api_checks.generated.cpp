@@ -463,6 +463,9 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::co
 // struct mochi::experimental::DebugStats
 static_assert(std::is_same_v<decltype(&mochi::experimental::DebugStats::maxResidualNormRelativeError), mochi::real mochi::experimental::DebugStats::*>, "\n  ERROR: Field mochi::experimental::DebugStats::maxResidualNormRelativeError is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
+// free function mochi::experimental::AddToScene
+static_assert(std::is_same_v<decltype(&mochi::experimental::AddToScene), mochi::prefab::AddToSceneResult (*)(std::string_view, std::string_view, mochi::Scene*, mochi::prefab::PrefabParams const&, mochi::experimental::RomParams const&, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::AddToScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
 // free function mochi::experimental::RestoreStateFromScene
 static_assert(std::is_same_v<decltype(&mochi::experimental::RestoreStateFromScene), void (*)(mochi::Scene*, mochi::Scene const*, mochi::StateHandle, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::RestoreStateFromScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 

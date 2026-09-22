@@ -1188,6 +1188,7 @@ static void AddToSceneImpl(
     ScenePrefab const& prefab,
     Scene* scene,
     PrefabParams const& params,
+    RomParams const* romParams,
     ActorNameRegistry& outActorNames,
     ActorPrefabMetricScaleMap& actorPrefabMetricScale,
     AddToSceneResult& outResult,
@@ -1244,6 +1245,7 @@ static void AddToSceneImpl(
           *nested.prefab,
           scene,
           nestedParams,
+          romParams,
           nestedActorNames,
           actorPrefabMetricScale,
           outResult,
@@ -1403,6 +1405,9 @@ static void AddToSceneImpl(
     experimentalParams.colliderType = actor.colliderType;
     experimentalParams.sdf = actor.sdf;
     experimentalParams.flow = actor.flow;
+    if (romParams != nullptr) {
+      experimentalParams.rom = *romParams;
+    }
     experimentalParams.useRecentering = actor.useRecentering;
 
     Actor* newActor = CreateSoftActor(scene, actorParams, experimentalParams, error);
@@ -1443,6 +1448,9 @@ static void AddToSceneImpl(
       experimentalParams.softParams[i].colliderType = actor.softParams[i].colliderType;
       experimentalParams.softParams[i].sdf = actor.softParams[i].sdf;
       experimentalParams.softParams[i].flow = actor.softParams[i].flow;
+      if (romParams != nullptr) {
+        experimentalParams.softParams[i].rom = *romParams;
+      }
       experimentalParams.softParams[i].useRecentering = actor.softParams[i].useRecentering;
     }
     actorParams.softAttachLinks = actor.softAttachLinks;
@@ -1582,7 +1590,7 @@ DynamicArray<Constraint*> AddToSceneResult::Filter(ConstraintType type) const {
   return FilterImpl<Constraint>(constraints, type);
 }
 
-// Owns the result/actor-map/AddToSceneImpl tail shared by both AddToScene overloads, which differ
+// Owns the result/actor-map/AddToSceneImpl tail shared by three AddToScene overloads, which differ
 // only in how they obtain and validate the prefab before instantiating it.
 // TODO: Decide whether prefab::AddToScene should be transactional on error. Today failures after
 // instantiation has begun, including constraint, pose-controller, and contact-filter errors, can
@@ -1591,6 +1599,7 @@ static AddToSceneResult AddToSceneFromLoaded(
     ScenePrefab const& prefab,
     Scene* scene,
     PrefabParams const& params,
+    RomParams const* romParams,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
   AddToSceneResult result;
@@ -1598,7 +1607,15 @@ static AddToSceneResult AddToSceneFromLoaded(
   ActorPrefabMetricScaleMap actorPrefabMetricScale;
   DynamicArray<ScenePrefab const*> activePrefabs;
   AddToSceneImpl(
-      prefab, scene, params, actorNames, actorPrefabMetricScale, result, activePrefabs, error);
+      prefab,
+      scene,
+      params,
+      romParams,
+      actorNames,
+      actorPrefabMetricScale,
+      result,
+      activePrefabs,
+      error);
   return result;
 }
 
@@ -1621,7 +1638,7 @@ AddToSceneResult prefab::AddToScene(
   // geometry has already been baked.
   auto identityScaleParams = params;
   identityScaleParams.scale = 1_r;
-  return AddToSceneFromLoaded(prefab, scene, identityScaleParams, error);
+  return AddToSceneFromLoaded(prefab, scene, identityScaleParams, nullptr, error);
 }
 
 AddToSceneResult prefab::AddToScene(
@@ -1630,10 +1647,30 @@ AddToSceneResult prefab::AddToScene(
     Scene* scene,
     PrefabParams const& params,
     Error& error) {
+  MOCHI_ERROR_IF(!scene, error, "Invalid scene");
   MOCHI_VALIDATE_POSITIVE_SCALE(params.scale, "PrefabParams::scale", error);
   MOCHI_ERROR_RETURN(error, {});
   auto* context = scene->GetContext();
   auto prefab = LoadFromFileImpl(prefabPath, rootPath, context, params.scale, error);
   MOCHI_ERROR_RETURN(error, {});
-  return AddToSceneFromLoaded(prefab, scene, params, error);
+  return AddToSceneFromLoaded(prefab, scene, params, nullptr, error);
+}
+
+AddToSceneResult experimental::AddToScene(
+    std::string_view prefabPath,
+    std::string_view rootPath,
+    Scene* scene,
+    PrefabParams const& params,
+    RomParams const& romParams,
+    Error& error) {
+  MOCHI_ERROR_IF(
+      !MOCHI_ENABLE_ROM_ACTORS, error, "ROM actor creation is not supported in this build.");
+  MOCHI_ERROR_IF(!scene, error, "Invalid scene");
+  MOCHI_ERROR_IF(romParams.source.empty(), error, "RomParams::source must not be empty.");
+  MOCHI_VALIDATE_POSITIVE_SCALE(params.scale, "PrefabParams::scale", error);
+  MOCHI_ERROR_RETURN(error, {});
+  auto* context = scene->GetContext();
+  auto prefab = LoadFromFileImpl(prefabPath, rootPath, context, params.scale, error);
+  MOCHI_ERROR_RETURN(error, {});
+  return AddToSceneFromLoaded(prefab, scene, params, &romParams, error);
 }

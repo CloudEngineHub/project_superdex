@@ -1506,6 +1506,12 @@ Actor* SceneImpl::CreateSoftActorImpl(
       !MOCHI_ENABLE_DEEP_FLOW_ACTORS && experimentalParams.flow.IsValid(),
       error,
       "Deep Flow actor creation is not supported in this build. To enable, define MOCHI_ENABLE_DEEP_FLOW_ACTORS=1");
+  MOCHI_ERROR_IF(
+      isNestedSoft && experimentalParams.rom &&
+          experimentalParams.rom->romProjectionStrategy ==
+              experimental::RomProjectionStrategy::ElementLevelProjection,
+      error,
+      "Nested soft ROM actors require actor-level projection.");
   MOCHI_ERROR_RETURN(error, {});
   ScopedSchedulerBinding schedulerBinding(this);
 
