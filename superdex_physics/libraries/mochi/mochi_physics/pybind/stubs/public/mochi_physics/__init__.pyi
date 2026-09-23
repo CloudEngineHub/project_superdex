@@ -2543,12 +2543,13 @@ class ModelData:
     mesh: Optional[MeshData]
     visual_mesh: Optional[MeshData]
     contact_skin_mesh: Optional[MeshData]
-    """Optional triangular mesh used for surface queries and, when selected as the
-    rod's contact geometry, for contact quadrature.
+    """Optional triangular mesh used for surface queries and, when selected as a shell
+    or rod actor's contact geometry, for contact quadrature.
 
-    The skinning indices reference primary-mesh nodes for triangular and tetrahedral
-    meshes, and primary-mesh elements for polylines. Currently consumed only by rod
-    actors.
+    For triangular and tetrahedral primary meshes, the skinning data is a node-based
+    linear embedding whose indices reference primary-mesh nodes. For polylines, the
+    indices reference primary-mesh elements and define the rod's element-based
+    embedding.
     """
     @property
     def blending(self) -> Optional[DynamicArrayBlendingData]: ...
@@ -2610,12 +2611,13 @@ class ModelDataView:
     mesh: Optional[MeshDataView]
     visual_mesh: Optional[MeshDataView]
     contact_skin_mesh: Optional[MeshDataView]
-    """Optional triangular mesh used for surface queries and, when selected as the
-    rod's contact geometry, for contact quadrature.
+    """Optional triangular mesh used for surface queries and, when selected as a shell
+    or rod actor's contact geometry, for contact quadrature.
 
-    The skinning indices reference primary-mesh nodes for triangular and tetrahedral
-    meshes, and primary-mesh elements for polylines. Currently consumed only by rod
-    actors.
+    For triangular and tetrahedral primary meshes, the skinning data is a node-based
+    linear embedding whose indices reference primary-mesh nodes. For polylines, the
+    indices reference primary-mesh elements and define the rod's element-based
+    embedding.
     """
     @property
     def blending(self) -> Optional[DynamicArrayBlendingDataView]: ...
@@ -7283,8 +7285,14 @@ class ContactPoint:
         value.
     """
     element_index: int
-    """Element index on the surface mesh of
+    """Element index in the mesh used for colliding samples on
     :attr:`~superdex.physics.ContactPoint.actor_a`.
+
+    Note:
+        For shell actors, this is the physics mesh returned by
+        :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
+        enabled, in which case it is the compact contact skin returned by
+        :meth:`~superdex.physics.Actor.get_surface_mesh`.
 
     Note:
         For rod actors, this field is not populated and is reported as 0. Use
@@ -7346,8 +7354,13 @@ class NodeContactForce:
         :meth:`~superdex.physics.Actor.get_node_contact_forces_world`
     """
     index: int
-    """Node index in the volumetric mesh (for actors with a volumetric mesh) or surface
-    mesh (for actors without a volumetric mesh).
+    """Node index in the volumetric mesh or the mesh used for colliding samples.
+
+    Note:
+        For shell actors, this is the physics mesh returned by
+        :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
+        enabled, in which case it is the compact contact skin returned by
+        :meth:`~superdex.physics.Actor.get_surface_mesh`.
     """
     @property
     def force(self) -> Real3:
@@ -9769,9 +9782,11 @@ class Actor:
         simulation meshes, the surface is the boundary triangles. For triangular
         simulation meshes, the surface has the same triangle elements as the simulation
         mesh, but nodes not referenced by any surface triangle are omitted and remaining
-        nodes may be reindexed. For rod actors with an authored contact skin, returns
-        that skin regardless of the actor's selected collision representation. Returns
-        an empty view if the actor does not have a surface mesh.
+        nodes may be reindexed. For shell and rod actors with an embedded
+        :attr:`~superdex.physics.ModelData.contact_skin_mesh`, returns that contact skin
+        regardless of the actor's selected collision representation. For articulated
+        actors with a skinned simulation surface, returns that surface. Returns an empty
+        view if the actor does not have a surface mesh.
 
         Returns:
             A non-owning view of the actor's reference surface mesh, or an empty view if
@@ -9866,8 +9881,8 @@ class Actor:
             :meth:`~superdex.physics.Actor.get_surface_mesh`.
 
         Note:
-            Supported for rod actors whose shape has an authored contact skin,
-            regardless of whether that skin is selected for collision.
+            Supported for shell and rod actors whose shape has an authored usable
+            contact skin, regardless of whether that skin is selected for collision.
 
         See Also:
             :meth:`~superdex.physics.Actor.register_query`,
@@ -9904,8 +9919,8 @@ class Actor:
             :meth:`~superdex.physics.Actor.get_surface_mesh`.
 
         Note:
-            Supported for rod actors whose shape has an authored contact skin,
-            regardless of whether that skin is selected for collision.
+            Supported for shell and rod actors whose shape has an authored usable
+            contact skin, regardless of whether that skin is selected for collision.
 
         See Also:
             :meth:`~superdex.physics.Actor.register_query`, :class:`SURFACE_NODE_NORMALS
@@ -10029,11 +10044,12 @@ class Actor:
             without a simulation mesh are not supported.
 
         Note:
-            Requires query registration before the simulation step. Register
-            :class:`NODE_POSITIONS <superdex.physics.QueryType>` when ``boundary_only``
-            is false, or :class:`SURFACE_NODE_POSITIONS <superdex.physics.QueryType>`
-            when ``boundary_only`` is true. Results are available after the simulation
-            step completes.
+            When ``boundary_only`` is false, requires registering :class:`NODE_POSITIONS
+            <superdex.physics.QueryType>` before the simulation step. When true,
+            requires registering :class:`SURFACE_NODE_POSITIONS
+            <superdex.physics.QueryType>` unless the surface mesh is linearly embedded
+            in the simulation mesh. Results are available after the simulation step
+            completes.
 
         Warning:
             This is a synchronous call and may be expensive.
@@ -10067,11 +10083,12 @@ class Actor:
             without a simulation mesh are not supported.
 
         Note:
-            Requires query registration before the simulation step. Register
-            :class:`NODE_POSITIONS <superdex.physics.QueryType>` when ``boundary_only``
-            is false, or :class:`SURFACE_NODE_POSITIONS <superdex.physics.QueryType>`
-            when ``boundary_only`` is true. Results are available after the simulation
-            step completes.
+            When ``boundary_only`` is false, requires registering :class:`NODE_POSITIONS
+            <superdex.physics.QueryType>` before the simulation step. When true,
+            requires registering :class:`SURFACE_NODE_POSITIONS
+            <superdex.physics.QueryType>` unless the surface mesh is linearly embedded
+            in the simulation mesh. Results are available after the simulation step
+            completes.
 
         Warning:
             This is a synchronous call and may be expensive.
@@ -10105,11 +10122,12 @@ class Actor:
             without a simulation mesh are not supported.
 
         Note:
-            Requires query registration before the simulation step. Register
-            :class:`NODE_POSITIONS <superdex.physics.QueryType>` when ``boundary_only``
-            is false, or :class:`SURFACE_NODE_POSITIONS <superdex.physics.QueryType>`
-            when ``boundary_only`` is true. Results are available after the simulation
-            step completes.
+            When ``boundary_only`` is false, requires registering :class:`NODE_POSITIONS
+            <superdex.physics.QueryType>` before the simulation step. When true,
+            requires registering :class:`SURFACE_NODE_POSITIONS
+            <superdex.physics.QueryType>` unless the surface mesh is linearly embedded
+            in the simulation mesh. Results are available after the simulation step
+            completes.
 
         Warning:
             This is a synchronous call and may be expensive.

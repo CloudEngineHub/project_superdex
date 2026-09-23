@@ -459,6 +459,7 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::co
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::pointCloudCollider), mochi::experimental::PointCloudColliderParams mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::pointCloudCollider is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::hasGravity), bool mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::hasGravity is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::contactElementType), mochi::ActorBoundaryElementType mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::contactElementType is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::useContactSkin), bool mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::useContactSkin is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
 // struct mochi::experimental::DebugStats
 static_assert(std::is_same_v<decltype(&mochi::experimental::DebugStats::maxResidualNormRelativeError), mochi::real mochi::experimental::DebugStats::*>, "\n  ERROR: Field mochi::experimental::DebugStats::maxResidualNormRelativeError is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
@@ -1547,6 +1548,7 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT((params.colliderType == mochi::ColliderType::PointCloud), "DSL default value for ShellActorParams::colliderType doesn't match C++ default. DSL says PointCloud, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.hasGravity == bool(true)), "DSL default value for ShellActorParams::hasGravity doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.contactElementType == mochi::ActorBoundaryElementType::Default), "DSL default value for ShellActorParams::contactElementType doesn't match C++ default. DSL says Default, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.useContactSkin == bool(false)), "DSL default value for ShellActorParams::useContactSkin doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
 #if MOCHI_INTERNAL
   {

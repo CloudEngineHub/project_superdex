@@ -226,10 +226,10 @@ GetNodeCoordinates(entt::registry const& reg, entt::entity e, int index, Error& 
       // an authored surface mesh.
       MOCHI_ASSERT_VERBOSE(reg.all_of<TagRodActor>(e), "Expected a rod actor");
       return polylineMesh->nodes;
-    } else if (auto const* surfMesh = reg.try_get<CSurfaceMesh const>(e)) {
+    } else if (auto const* triMesh = reg.try_get<CTriangularMesh const>(e)) {
       // Shell actor
       MOCHI_ASSERT_VERBOSE(reg.all_of<TagShellActor>(e), "Expected a shell actor");
-      return surfMesh->mesh->GetNodeCoordinates();
+      return triMesh->mesh->GetNodeCoordinates();
     } else {
       MOCHI_ERROR_SET(error, "Expected a soft, shell, or rod actor");
       return Span<Real3 const>{};

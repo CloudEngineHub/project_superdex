@@ -34,6 +34,7 @@
 #include "mochi_soft_rom_systems.h"
 #include "mochi_soft_skinned.h"
 
+#include <mochi_core/contact/dmap.h>
 #include <mochi_core/geometry/batch_sphere.h>
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/geometry/grid_sdf.h>
@@ -59,6 +60,99 @@ using namespace mochi;
 using namespace mochi::experimental;
 
 /*************************************************************************************************/
+
+void mochi::InitializeLinearContactSkinningJacobian(
+    LinearMeshEmbedding const& embedding,
+    int numPhysicsNodes,
+    Span<int const> skinNodeIndices,
+    CContactSkinningData& outSkinning) {
+  int const weightsPerNode = static_cast<int>(embedding.GetNumSkinningWeightsPerEntry());
+  Span<int const> const indices = embedding.GetIndices();
+  Span<real const> const weights = embedding.GetWeights();
+  int const numEmbeddedNodes = isize(indices) / weightsPerNode;
+  int const numSkinNodes = skinNodeIndices.empty() ? numEmbeddedNodes : isize(skinNodeIndices);
+
+  DynamicArray<int> rowPointers(numSkinNodes + 1, 0);
+  DynamicArray<int> columnIndices;
+  DynamicArray<Real3> values;
+  columnIndices.reserve(indices.size() * kSpaceDim3);
+  values.reserve(indices.size() * kSpaceDim3);
+
+  DynamicArray<std::pair<int, real>> influences;
+  influences.reserve(weightsPerNode);
+  for (int skinNode = 0; skinNode < numSkinNodes; ++skinNode) {
+    int const embeddedNode = skinNodeIndices.empty() ? skinNode : skinNodeIndices[skinNode];
+    MOCHI_ASSERT_VERBOSE(embeddedNode >= 0 && embeddedNode < numEmbeddedNodes);
+    influences.clear();
+    for (int influence = 0; influence < weightsPerNode; ++influence) {
+      int const embeddingIndex = embeddedNode * weightsPerNode + influence;
+      int const physicsNode = indices[embeddingIndex];
+      MOCHI_ASSERT_VERBOSE(
+          physicsNode >= 0 && physicsNode < numPhysicsNodes,
+          "Contact-skin embedding index is outside the physics mesh.");
+      influences.emplace_back(physicsNode, weights[embeddingIndex]);
+    }
+    std::sort(influences.begin(), influences.end());
+
+    for (int influence = 0; influence < isize(influences);) {
+      int const physicsNode = influences[influence].first;
+      real combinedWeight = 0_r;
+      do {
+        combinedWeight += influences[influence].second;
+        ++influence;
+      } while (influence < isize(influences) && influences[influence].first == physicsNode);
+
+      for (int component = 0; component < kSpaceDim3; ++component) {
+        columnIndices.push_back(kSpaceDim3 * physicsNode + component);
+        Real3 derivative{};
+        derivative[component] = combinedWeight;
+        values.push_back(derivative);
+      }
+    }
+    rowPointers[skinNode + 1] = isize(columnIndices);
+  }
+
+  outSkinning.jacobian = SparseMatrix<Real3>(
+      numPhysicsNodes * kSpaceDim3,
+      std::move(rowPointers),
+      std::move(columnIndices),
+      std::move(values));
+}
+
+void mochi::SetupContactSkinCollidingJacobians(
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CRootTransform const& transform,
+    CDofOffset const& dofOffset,
+    CContactSkinningData const& skinningData,
+    CCollJacs<CollRole::Colliding>& outJacobians) {
+  MOCHI_PROFILE_SCOPE();
+
+  MOCHI_FILO_STACK_ALLOCATOR(tempAlloc, 256 * sizeof(JacData*));
+  auto const allJacs = outJacobians.GetPtrsNonEmpty(&tempAlloc);
+  if (allJacs.empty()) {
+    return;
+  }
+
+  auto const skinJacView = AsConstView(skinningData.jacobian);
+  dmap::DMapSparseSkinning sparseSkinning(0, dofOffset.dofsOffset, skinJacView);
+  dmap::DMapRTConst dtransform(transform.worldFromLocal);
+
+  surfaceDisc.Visit([&](auto const& discImpl) {
+    using DiscT = std::decay_t<decltype(discImpl)>;
+    using DQuad = dmap::DMapQuad<typename DiscT::ElementT>;
+
+    ParallelForEach("SetupContactSkinCollidingJacobians Range", allJacs, 1, [&](JacData* jac) {
+      DQuad dquad(discImpl.femElements, jac->query->jacColliderFromWorld);
+      dmap::DMap<DQuad, dmap::DMapRTConst, dmap::DMapSparseSkinning> dmap(
+          &dquad, &dtransform, &sparseSkinning);
+
+      auto& jacs = *jac->jacs;
+      dmap.GetJac(jac->query->sampleIndices, jacs);
+      jacs[0].CompressIndices();
+    });
+  });
+}
 
 // Maximum number of consecutive sample points to process together by ContactDResXYZ utilities if
 // they all affect the same DoFs. Processing them together reduces the number of write operations
@@ -1305,13 +1399,16 @@ static void InitCollidingJacobians(
       &deformable::SetupCollidingJacobians<TagRodActor, CFemSegmentDiscretization>,
       reg,
       descendants.rodActors);
-  // Jacobians for rods with surface contact.
-  ecs::ScheduleInvokeForEach(
-      sem,
-      "rod::SetupSurfaceCollidingJacobians",
-      &rod::SetupSurfaceCollidingJacobians,
-      reg,
-      descendants.rodActors);
+  std::array<Span<entt::entity const>, 2> contactSkinActors = {
+      descendants.shellActors, descendants.rodActors};
+  for (auto actors : contactSkinActors) {
+    ecs::ScheduleInvokeForEach(
+        sem,
+        "SetupContactSkinCollidingJacobians",
+        &SetupContactSkinCollidingJacobians,
+        reg,
+        actors);
+  }
   ecs::ScheduleInvokeForEach(
       sem,
       "rom::SetupCollidingJacobians",
@@ -2335,9 +2432,13 @@ void mochi::AssembleCollisionResponse(
       isSyncRigid);
 }
 
-template <bool kUpdateOnlyActiveFaces, typename DiscretizationType, int kNumFields>
-void mochi::UpdateCollisionSamplePositionsImpl(
-    ColumnVectorView<real const> currSol,
+template <
+    bool kUpdateOnlyActiveFaces,
+    bool kNodeValuesArePositions,
+    typename DiscretizationType,
+    int kNumFields>
+static void UpdateCollisionSamplePositionsImplInternal(
+    ColumnVectorView<real const> nodeValues,
     DiscretizationType const& boundaryDiscrVariant,
     CActiveBoundaryFaces const* activeBoundaryFaces,
     ContactSamples& outSamples) {
@@ -2382,10 +2483,9 @@ void mochi::UpdateCollisionSamplePositionsImpl(
       auto const dofIndices = kNumFields * element.Nodes();
       auto const localNodes = element.LocalNodes();
 
-      // Load the displacements for each node
-      NdArray<Vec4r, kNumNodesPerFace> nodeDisplacements;
+      NdArray<Vec4r, kNumNodesPerFace> elementNodeValues;
       for (int i = 0; i < kNumNodesPerFace; ++i) {
-        nodeDisplacements[i] = Load<3, Vec4r>(&currSol[dofIndices[i]]);
+        elementNodeValues[i] = Load<3, Vec4r>(&nodeValues[dofIndices[i]]);
       }
 
       // Store the element quad weights scaled (if applicable) by the boundary face weight.
@@ -2394,14 +2494,13 @@ void mochi::UpdateCollisionSamplePositionsImpl(
           kUpdateOnlyActiveFaces ? activeBoundaryFaces->ViewWeights()[boundaryFaceIdx] : 1_r;
       auto const quadWeights = element.quadWeights * thisFaceWeight;
 
-      // Interpolate displacement field at quadrature points.
+      // Interpolate the node values at quadrature points.
       for (int q = 0; q < kNumQuadsPerFace; ++q) {
         int const sampleIndex = boundaryFaceOffset + q;
 
-        // Compute local position
-        Vec4r samplePos = ToSimd(element.mapEvaluated[q]);
+        Vec4r samplePos = kNodeValuesArePositions ? Vec4r{} : ToSimd(element.mapEvaluated[q]);
         for (int i = 0; i < kNumNodesPerFace; ++i) {
-          samplePos += nodeDisplacements[i] * element.basisEvaluated[q][localNodes[i]];
+          samplePos += elementNodeValues[i] * element.basisEvaluated[q][localNodes[i]];
         }
         outSamples.positions[sampleIndex] = ToReal3(samplePos);
 
@@ -2423,23 +2522,49 @@ void mochi::UpdateCollisionSamplePositionsImpl(
       "(e.g. an AABB tree).");
 }
 
-#define MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(activeFaces, discretization, numFields)     \
-  template void mochi::UpdateCollisionSamplePositionsImpl<activeFaces, discretization, numFields>( \
-      ColumnVectorView<real const>,                                                                \
-      discretization const&,                                                                       \
-      CActiveBoundaryFaces const*,                                                                 \
-      ContactSamples&);
-MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(false, CFemBoundaryDiscretization, 3);
-MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(true, CFemBoundaryDiscretization, 3);
-MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(false, CFemSurfaceDiscretization, 3);
-MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(true, CFemSurfaceDiscretization, 3);
-MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(false, CFemSegmentDiscretization, 4);
-MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL(true, CFemSegmentDiscretization, 4);
-#undef MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES_IMPL
+template <bool kUpdateOnlyActiveFaces, typename DiscretizationType, int kNumFields>
+void mochi::UpdateCollisionSamplePositionsFromNodeDisplacements(
+    ColumnVectorView<real const> currSol,
+    DiscretizationType const& boundaryDiscrVariant,
+    CActiveBoundaryFaces const* activeBoundaryFaces,
+    ContactSamples& outSamples) {
+  UpdateCollisionSamplePositionsImplInternal<
+      kUpdateOnlyActiveFaces,
+      /*kNodeValuesArePositions=*/false,
+      DiscretizationType,
+      kNumFields>(currSol, boundaryDiscrVariant, activeBoundaryFaces, outSamples);
+}
+
+#define MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(activeFaces, discretization, numFields)          \
+  template void mochi::                                                                            \
+      UpdateCollisionSamplePositionsFromNodeDisplacements<activeFaces, discretization, numFields>( \
+          ColumnVectorView<real const>,                                                            \
+          discretization const&,                                                                   \
+          CActiveBoundaryFaces const*,                                                             \
+          ContactSamples&);
+MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(false, CFemBoundaryDiscretization, 3);
+MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(true, CFemBoundaryDiscretization, 3);
+MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(false, CFemSurfaceDiscretization, 3);
+MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(true, CFemSurfaceDiscretization, 3);
+MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(false, CFemSegmentDiscretization, 4);
+MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(true, CFemSegmentDiscretization, 4);
+#undef MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES
+
+void mochi::UpdateCollisionSamplePositionsFromNodePositions(
+    Span<Real3 const> nodePositions,
+    CFemSurfaceDiscretization const& surfaceDiscretization,
+    ContactSamples& outSamples) {
+  UpdateCollisionSamplePositionsImplInternal<
+      /*kUpdateOnlyActiveFaces=*/false,
+      /*kNodeValuesArePositions=*/true,
+      CFemSurfaceDiscretization,
+      kSpaceDim3>(AsConstView(Flatten(nodePositions)), surfaceDiscretization, nullptr, outSamples);
+}
 
 template <typename DiscretizationType, TimeStep kTimeStep, int kNumFields>
 void mochi::UpdateCollisionSamplePositions(
     ecs::RequiredTag<TagUseContact>,
+    ecs::Excluded<TagUseDeformableContactSkin>,
     CFinalDisplacementRef<kTimeStep> const& currSol,
     DiscretizationType const& discretization,
     CActiveBoundaryFaces const* activeBoundaryFaces,
@@ -2447,21 +2572,22 @@ void mochi::UpdateCollisionSamplePositions(
   MOCHI_PROFILE_SCOPE();
 
   if (!activeBoundaryFaces) {
-    UpdateCollisionSamplePositionsImpl</*kUpdateOnlyActiveFaces*/ false,
-                                       DiscretizationType,
-                                       kNumFields>(
-        currSol.value, discretization, activeBoundaryFaces, outSamples);
+    UpdateCollisionSamplePositionsFromNodeDisplacements<
+        /*kUpdateOnlyActiveFaces*/ false,
+        DiscretizationType,
+        kNumFields>(currSol.value, discretization, activeBoundaryFaces, outSamples);
   } else {
-    UpdateCollisionSamplePositionsImpl</*kUpdateOnlyActiveFaces*/ true,
-                                       DiscretizationType,
-                                       kNumFields>(
-        currSol.value, discretization, activeBoundaryFaces, outSamples);
+    UpdateCollisionSamplePositionsFromNodeDisplacements<
+        /*kUpdateOnlyActiveFaces*/ true,
+        DiscretizationType,
+        kNumFields>(currSol.value, discretization, activeBoundaryFaces, outSamples);
   }
 }
 
 #define MOCHI_SPECIALIZE_UPDATE_COLLISION_SAMPLES(dicretization, timeStep, numFields)      \
   template void mochi::UpdateCollisionSamplePositions<dicretization, timeStep, numFields>( \
       ecs::RequiredTag<TagUseContact>,                                                     \
+      ecs::Excluded<TagUseDeformableContactSkin>,                                          \
       CFinalDisplacementRef<timeStep> const&,                                              \
       dicretization const&,                                                                \
       CActiveBoundaryFaces const*,                                                         \
@@ -3891,6 +4017,8 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CContactPartitions>(reg);
   ecs::RegisterComponent<CContactSamples<TimeStep::Current>>(reg);
   ecs::RegisterComponent<CContactSamples<TimeStep::StageStart>>(reg);
+  ecs::RegisterComponent<CContactSkinningData>(reg);
+  ecs::RegisterComponent<CDeformedContactSkinNodes>(reg);
   ecs::RegisterComponent<CContactCorrespondence<ContactType::Async>>(reg);
   ecs::RegisterComponent<CContactCorrespondence<ContactType::Sync>>(reg);
   ecs::RegisterComponent<CMeshCollider>(reg);
@@ -4095,6 +4223,12 @@ void mochi::UpdateStageStartDataPipeline(
       rod::UpdateSurfaceContactPositions<TimeStep::StageStart>,
       reg,
       descendants.rodActors);
+  ecs::ScheduleInvokeForEach(
+      sem,
+      "shell::UpdateContactSkinPositions<TimeStep::StageStart>",
+      shell::UpdateContactSkinPositions<TimeStep::StageStart>,
+      reg,
+      descendants.shellActors);
   // Update stage-start contact samples of shell and compound actors (with a tri-mesh skin).
   std::array<Span<entt::entity const>, 2> shellAndCompoundActors = {
       descendants.shellActors, descendants.compoundActors};
@@ -4147,7 +4281,7 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
     ecs::ScheduleInvokeForEach(
         sem, "shell::UpdateBounds", &shell::UpdateBounds<kTimeStep>, reg, descendants.shellActors);
     // Schedule contact-skin bounds first, then centerline bounds.
-    // ECS component matching ensures rod actors with TagRodSurfaceContact match
+    // ECS component matching ensures rod actors with TagUseDeformableContactSkin match
     // UpdateSurfaceContactBounds; those without match UpdateBounds.
     ecs::ScheduleInvokeForEach(
         sem,
@@ -4238,6 +4372,12 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
       } else if (ecs::CanInvokeOnEntity(rod::UpdateSurfaceContactPositions<kTimeStep>, reg, e)) {
         Schedule(sem, "rod::UpdateSurfaceContactPositions", [&, e, sem]() {
           ecs::InvokeOnEntity(rod::UpdateSurfaceContactPositions<kTimeStep>, reg, e);
+          Schedule(sem, "AsyncCollisionAndResponse", [&, e]() { asyncCollisionAndResponse(e); });
+          syncCollisionAndResponse(e);
+        });
+      } else if (ecs::CanInvokeOnEntity(shell::UpdateContactSkinSamples<kTimeStep>, reg, e)) {
+        Schedule(sem, "shell::UpdateContactSkinSamples", [&, e, sem]() {
+          ecs::InvokeOnEntity(shell::UpdateContactSkinSamples<kTimeStep>, reg, e);
           Schedule(sem, "AsyncCollisionAndResponse", [&, e]() { asyncCollisionAndResponse(e); });
           syncCollisionAndResponse(e);
         });

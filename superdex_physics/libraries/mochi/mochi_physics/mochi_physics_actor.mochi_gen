@@ -380,9 +380,10 @@ class Actor [no_init, no_destruct, use_scene] {
   // @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation
   // meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface
   // has the same triangle elements as the simulation mesh, but nodes not referenced by any surface
-  // triangle are omitted and remaining nodes may be reindexed. For rod actors with an authored
-  // contact skin, returns that skin regardless of the actor's selected collision representation.
-  // Returns an empty view if the actor does not have a surface mesh.
+  // triangle are omitted and remaining nodes may be reindexed. For shell and rod actors with an
+  // embedded @ref ModelData::contactSkinMesh, returns that contact skin regardless of the actor's
+  // selected collision representation. For articulated actors with a skinned simulation surface,
+  // returns that surface. Returns an empty view if the actor does not have a surface mesh.
   //
   // @return A non-owning view of the actor's reference surface mesh, or an empty view if the actor
   // has no surface mesh.
@@ -434,8 +435,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // are available after the simulation step completes.
   // @note Requires the actor to support @ref QueryType::SurfaceNodePositions.
   // @note The node ordering corresponds to the mesh connectivity from @ref GetSurfaceMesh.
-  // @note Supported for rod actors whose shape has an authored contact skin, regardless of whether
-  // that skin is selected for collision.
+  // @note Supported for shell and rod actors whose shape has an authored usable contact skin,
+  // regardless of whether that skin is selected for collision.
   //
   // @see RegisterQuery, QueryType::SurfaceNodePositions, GetSurfaceMesh,
   // GetSurfaceMeshNodeNormalsLocal
@@ -452,8 +453,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // are available after the simulation step completes.
   // @note Requires the actor to support @ref QueryType::SurfaceNodeNormals.
   // @note The node ordering corresponds to the mesh connectivity from @ref GetSurfaceMesh.
-  // @note Supported for rod actors whose shape has an authored contact skin, regardless of whether
-  // that skin is selected for collision.
+  // @note Supported for shell and rod actors whose shape has an authored usable contact skin,
+  // regardless of whether that skin is selected for collision.
   //
   // @see RegisterQuery, QueryType::SurfaceNodeNormals, GetSurfaceMesh,
   // GetSurfaceMeshNodePositionsLocal
@@ -524,9 +525,10 @@ class Actor [no_init, no_destruct, use_scene] {
   // true, it also supports articulated actors with a skin mesh, soft-skinned actors with a
   // blended skin mesh, and rigid actors (dynamic or static) with tetrahedral or triangular mesh
   // shapes. Rod actors and actors without a simulation mesh are not supported.
-  // @note Requires query registration before the simulation step. Register @ref
-  // QueryType::NodePositions when @ref boundaryOnly is false, or @ref QueryType::SurfaceNodePositions
-  // when @ref boundaryOnly is true. Results are available after the simulation step completes.
+  // @note When @ref boundaryOnly is false, requires registering @ref QueryType::NodePositions
+  // before the simulation step. When true, requires registering @ref
+  // QueryType::SurfaceNodePositions unless the surface mesh is linearly embedded in the simulation
+  // mesh. Results are available after the simulation step completes.
   fn QueryNodesInVolumeLocal(Aabb const& volume, bool boundaryOnly, Function<void, int, Real3> const& callback) -> void [pure, virtual, const, mochi_error, overloaded];
 
   // @brief Find the actor's nodes that are inside an oriented bounding box (OBB).
@@ -543,9 +545,10 @@ class Actor [no_init, no_destruct, use_scene] {
   // true, it also supports articulated actors with a skin mesh, soft-skinned actors with a
   // blended skin mesh, and rigid actors (dynamic or static) with tetrahedral or triangular mesh
   // shapes. Rod actors and actors without a simulation mesh are not supported.
-  // @note Requires query registration before the simulation step. Register @ref
-  // QueryType::NodePositions when @ref boundaryOnly is false, or @ref QueryType::SurfaceNodePositions
-  // when @ref boundaryOnly is true. Results are available after the simulation step completes.
+  // @note When @ref boundaryOnly is false, requires registering @ref QueryType::NodePositions
+  // before the simulation step. When true, requires registering @ref
+  // QueryType::SurfaceNodePositions unless the surface mesh is linearly embedded in the simulation
+  // mesh. Results are available after the simulation step completes.
   fn QueryNodesInVolumeLocal(Obb const& volume, bool boundaryOnly, Function<void, int, Real3> const& callback) -> void [pure, virtual, const, mochi_error, overloaded];
 
   // @brief Find the actor's nodes that are inside a sphere.
@@ -562,9 +565,10 @@ class Actor [no_init, no_destruct, use_scene] {
   // true, it also supports articulated actors with a skin mesh, soft-skinned actors with a
   // blended skin mesh, and rigid actors (dynamic or static) with tetrahedral or triangular mesh
   // shapes. Rod actors and actors without a simulation mesh are not supported.
-  // @note Requires query registration before the simulation step. Register @ref
-  // QueryType::NodePositions when @ref boundaryOnly is false, or @ref QueryType::SurfaceNodePositions
-  // when @ref boundaryOnly is true. Results are available after the simulation step completes.
+  // @note When @ref boundaryOnly is false, requires registering @ref QueryType::NodePositions
+  // before the simulation step. When true, requires registering @ref
+  // QueryType::SurfaceNodePositions unless the surface mesh is linearly embedded in the simulation
+  // mesh. Results are available after the simulation step completes.
   fn QueryNodesInVolumeLocal(Sphere const& volume, bool boundaryOnly, Function<void, int, Real3> const& callback) -> void [pure, virtual, const, mochi_error, overloaded];
 
   // @brief Query the signed distance to the closest point on the actor's surface.

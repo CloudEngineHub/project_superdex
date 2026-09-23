@@ -28,7 +28,6 @@
 #include "mochi_simulation.h"
 #include "mochi_snle.h"
 
-#include <mochi_core/contact/dmap.h>
 #include <mochi_core/element_operations/element_assembler.h>
 #include <mochi_core/element_operations/fem_rod.h>
 #include <mochi_core/geometry/mesh_data.h>
@@ -93,9 +92,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CRodVisualMeshEmbedding>(reg);
   ecs::RegisterComponent<CRodSurfaceMeshEmbedding>(reg);
   ecs::RegisterComponent<CRodContactSkin>(reg);
-  ecs::RegisterComponent<CRodContactSkinningData>(reg);
-  ecs::RegisterComponent<CRodDeformedContactSkinNodes>(reg);
-  ecs::RegisterComponent<TagRodSurfaceContact>(reg);
 }
 
 // Serializes frame axes to the packed pose vector layout [displacement_twist | axes].
@@ -455,12 +451,12 @@ static void ComputeDeformedSurfaceNodePositions(
 template <TimeStep kTimeStep>
 void UpdateSurfaceContactPositions(
     ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<kTimeStep> const& rodPose,
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
-    CRodDeformedContactSkinNodes& deformedNodes,
+    CDeformedContactSkinNodes& deformedNodes,
     CContactSamples<kTimeStep>& outSamples) {
   MOCHI_PROFILE_SCOPE();
 
@@ -477,76 +473,40 @@ void UpdateSurfaceContactPositions(
   Span<real const> restPositions = Flatten(contactSkin.mesh->GetNodeCoordinates());
   contactSkinNodeDisplacements = AsConstView(deformedNodes.positions) - AsConstView(restPositions);
 
-  UpdateCollisionSamplePositionsImpl</*kUpdateOnlyActiveFaces*/ false,
-                                     CFemSurfaceDiscretization,
-                                     /*kNumFields*/ 3>(
-      contactSkinNodeDisplacements, surfaceDisc, nullptr, outSamples);
+  UpdateCollisionSamplePositionsFromNodeDisplacements<
+      /*kUpdateOnlyActiveFaces*/ false,
+      CFemSurfaceDiscretization,
+      /*kNumFields*/ 3>(contactSkinNodeDisplacements, surfaceDisc, nullptr, outSamples);
 }
 
 template void UpdateSurfaceContactPositions<TimeStep::Current>(
     ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<TimeStep::Current> const& rodPose,
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
-    CRodDeformedContactSkinNodes& deformedNodes,
+    CDeformedContactSkinNodes& deformedNodes,
     CContactSamples<TimeStep::Current>& outSamples);
 
 template void UpdateSurfaceContactPositions<TimeStep::StageStart>(
     ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<TimeStep::StageStart> const& rodPose,
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
-    CRodDeformedContactSkinNodes& deformedNodes,
+    CDeformedContactSkinNodes& deformedNodes,
     CContactSamples<TimeStep::StageStart>& outSamples);
-
-void SetupSurfaceCollidingJacobians(
-    ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
-    CFemSurfaceDiscretization const& surfaceDisc,
-    CRootTransform const& transform,
-    CDofOffset const& dofOffset,
-    CRodContactSkinningData const& skinningData,
-    CCollJacs<CollRole::Colliding>& outJacobians) {
-  MOCHI_PROFILE_SCOPE();
-
-  auto skinJacView = AsConstView(skinningData.jacobian);
-  dmap::DMapSparseSkinning sparseSkinning(0, dofOffset.dofsOffset, skinJacView);
-  dmap::DMapRTConst dtransform(transform.worldFromLocal);
-
-  surfaceDisc.Visit([&](auto const& discImpl) {
-    using DiscT = std::decay_t<decltype(discImpl)>;
-    using DQuad = dmap::DMapQuad<typename DiscT::ElementT>;
-
-    MOCHI_FILO_STACK_ALLOCATOR(tempAlloc, 256 * sizeof(JacData*));
-    auto allJacs = outJacobians.GetPtrsNonEmpty(&tempAlloc);
-    if (allJacs.empty()) {
-      return;
-    }
-
-    ParallelForEach("rod::SetupSurfaceCollidingJacobians Range", allJacs, 1, [&](JacData* jac) {
-      DQuad dquad(discImpl.femElements, jac->query->jacColliderFromWorld);
-      dmap::DMap<DQuad, dmap::DMapRTConst, dmap::DMapSparseSkinning> dmap(
-          &dquad, &dtransform, &sparseSkinning);
-
-      auto& jacs = *(jac->jacs);
-      dmap.GetJac(jac->query->sampleIndices, jacs);
-      jacs[0].CompressIndices();
-    });
-  });
-}
 
 template <TimeStep kStep>
 void UpdateSurfaceContactBounds(
     ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CRodPose<kStep> const& rodPose,
-    CRodDeformedContactSkinNodes& deformedNodes,
+    CDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
@@ -554,7 +514,7 @@ void UpdateSurfaceContactBounds(
 
   MOCHI_ASSERT_VERBOSE(
       contactSkin.mesh->GetNumNodes() > 0,
-      "TagRodSurfaceContact requires a non-empty contact skin.");
+      "TagUseDeformableContactSkin requires a non-empty contact skin.");
 
   ComputeDeformedSurfaceNodePositions(
       *contactSkin.mesh,
@@ -584,21 +544,21 @@ void UpdateSurfaceContactBounds(
 
 template void UpdateSurfaceContactBounds<TimeStep::Current>(
     ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
-    CRodDeformedContactSkinNodes& deformedNodes,
+    CDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume& outBounds);
 
 template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
     ecs::Included<TagRodActor>,
-    ecs::RequiredTag<TagRodSurfaceContact>,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::StageStart> const& rodPose,
-    CRodDeformedContactSkinNodes& deformedNodes,
+    CDeformedContactSkinNodes& deformedNodes,
     CPointCloudColliderParams const* pointCloudColliderParams,
     CBoundingVolume& outBounds);
 
@@ -813,7 +773,7 @@ void mochi::rod::UpdateQuerySurfaceNodePositions(
 void mochi::rod::InitializeContactSkinningJacobian(
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
-    CRodContactSkinningData& outSkinning) {
+    CContactSkinningData& outSkinning) {
   auto const& embData = *contactSkin.embedding;
   int const numContactSkinNodes = contactSkin.mesh->GetNumNodes();
   int const K = embData.weightsPerNode;
@@ -871,7 +831,7 @@ void mochi::rod::ResolveContactSkinningJacobian(
     CRodContactSkin const& contactSkin,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
-    CRodContactSkinningData& outSkinning) {
+    CContactSkinningData& outSkinning) {
   MOCHI_PROFILE_SCOPE();
 
   auto const& embData = *contactSkin.embedding;
@@ -1507,13 +1467,13 @@ void mochi::InitRodActor(
 
     auto& contactSkin =
         reg.emplace<CRodContactSkin>(e, shapeContactSkinMesh, shapeContactSkinEmbedding);
-    auto& skinningData = reg.emplace<CRodContactSkinningData>(e);
+    auto& skinningData = reg.emplace<CContactSkinningData>(e);
     rod::InitializeContactSkinningJacobian(contactSkin, mesh, skinningData);
-    reg.emplace<TagRodSurfaceContact>(e);
+    reg.emplace<TagUseDeformableContactSkin>(e);
     reg.emplace<CSkinnedContactSnle>(e);
     reg.emplace<TagSkinnedContact>(e);
 
-    auto& deformedNodes = reg.emplace<CRodDeformedContactSkinNodes>(e);
+    auto& deformedNodes = reg.emplace<CDeformedContactSkinNodes>(e);
     deformedNodes.positions.resize(
         static_cast<size_t>(kSpaceDim3) * shapeContactSkinMesh->GetNumNodes());
   }

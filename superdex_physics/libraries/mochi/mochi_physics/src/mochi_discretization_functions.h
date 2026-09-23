@@ -45,6 +45,12 @@ void UpdateQueryNodePositions(
     CSimplicialMesh const& simplicial,
     CFinalDisplacementRef<TimeStep::Current> const& currSol,
     CQueryNodePositions& outQuery);
+void UpdateLinearEmbeddedNodePositionsFromDisplacements(
+    LinearMeshEmbedding const& embedding,
+    Span<Real3 const> embeddedReferencePositions,
+    Span<Real3 const> displacements,
+    Span<int const> outputNodeIndices,
+    Span<Real3> outPositions);
 
 // Compute the local-space positions of each node in the surface mesh
 // and store them in CQuerySurfaceNodePositions

@@ -1094,10 +1094,10 @@ static void RegisterDebugDrawSystem_ActiveContactPositions(DebugDrawInternal& de
     }
 
 #if MOCHI_ASSERT_VERBOSE_ENABLED
-    // Get the actor's surface mesh for validation, unless it's a rod actor
     Span<Real3 const> coords = {};
     Span<Int3 const> faces = {};
     TransformRT const* transform = {};
+    DynamicArray<Real3> shellContactPositions;
     bool const isRodActor = reg.all_of<TagRodActor>(e);
     // Contact samples are computed from the DIRK stage variable during the Newton
     // solve, while surface node positions reflect the full-step displacement computed
@@ -1108,9 +1108,27 @@ static void RegisterDebugDrawSystem_ActiveContactPositions(DebugDrawInternal& de
       return intState && isize(intState->bTilde) == 1 && intState->bTilde[0] == 1_r;
     }();
     if (!isRodActor && stageEqualsStepEnd) {
-      coords = Unflatten<Real3 const>(reg.get<CQuerySurfaceNodePositions const>(e).nodePositions);
-      faces = Unflatten<Int3 const>(
-          reg.get<CSurfaceMesh const>(e).mesh->GetActiveNodesFlatConnectivity());
+      if (reg.all_of<TagUseDeformableContactSkin>(e)) {
+        auto const& surfaceMesh = reg.get<CSurfaceMesh const>(e).mesh;
+        coords = Unflatten<Real3 const>(reg.get<CDeformedContactSkinNodes const>(e).positions);
+        faces = Unflatten<Int3 const>(surfaceMesh->GetActiveNodesFlatConnectivity());
+      } else if (reg.all_of<TagShellActor>(e)) {
+        auto const& physicsMesh = reg.get<CTriangularMesh const>(e).mesh;
+        auto const& displacements =
+            reg.get<CFinalDisplacementRef<TimeStep::Current> const>(e).value;
+        auto const referencePositions = physicsMesh->GetNodeCoordinates();
+        auto const displacementVectors = Unflatten<Real3 const>(displacements.GetConstSpan());
+        shellContactPositions.resize_noinit(referencePositions.size());
+        for (int i = 0; i < isize(referencePositions); ++i) {
+          shellContactPositions[i] = referencePositions[i] + displacementVectors[i];
+        }
+        coords = MakeConstSpan(shellContactPositions);
+        faces = physicsMesh->GetElementConnectivity();
+      } else {
+        coords = Unflatten<Real3 const>(reg.get<CQuerySurfaceNodePositions const>(e).nodePositions);
+        faces = Unflatten<Int3 const>(
+            reg.get<CSurfaceMesh const>(e).mesh->GetActiveNodesFlatConnectivity());
+      }
       transform = &reg.get<CRootTransform const>(e).worldFromLocal;
     }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
@@ -1196,9 +1214,10 @@ static void RegisterDebugDrawSystem_NodeContactForces(DebugDrawInternal& debugDr
         auto const& contacts = reg.get<CQueryNodeContactForces const>(e).nodeContactForces;
         auto const& volumePositions = reg.get<CQueryNodePositions const>(e);
         auto const& surfacePositions = reg.get<CQuerySurfaceNodePositions const>(e);
+        bool const useSurfacePositions =
+            volumePositions.nodePositions.empty() || reg.all_of<TagUseDeformableContactSkin>(e);
         auto positions = Unflatten<Real3 const>(MakeSpan(
-            volumePositions.nodePositions.empty() ? surfacePositions.nodePositions
-                                                  : volumePositions.nodePositions));
+            useSurfacePositions ? surfacePositions.nodePositions : volumePositions.nodePositions));
         std::vector<LineVertex> verts(contacts.size() * 2);
         size_t vi = 0;
         for (auto const& contact : contacts) {

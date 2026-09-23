@@ -39,6 +39,7 @@
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/geometry/sphere_tree.h>
 #include <mochi_core/linear_algebra/block_sparse_matrix.h>
+#include <mochi_core/linear_algebra/sparse_matrix.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/dynamic_array.h>
@@ -545,6 +546,18 @@ struct ContactSamples : public NoCopy {
   std::optional<SphereOctTree> bsh;
 };
 
+// Sparse Jacobian from embedded contact-skin nodes to actor DoFs. Each row corresponds to one skin
+// node, and each Real3 entry is that node's derivative with respect to one actor DoF.
+struct CContactSkinningData : public NoCopy {
+  SparseMatrix<Real3> jacobian;
+};
+
+// Cached contact-skin node positions, pre-allocated during actor creation.
+struct CDeformedContactSkinNodes : public NoCopy {
+  DynamicArray<real> referencePositions;
+  DynamicArray<real> positions;
+};
+
 /**
  * @brief Component that contains a vector of potential contact points of an actor in local space,
  * templatized according to TimeStep.
@@ -765,7 +778,7 @@ using ContactAssemblyReg = ecs::PartialRegistry<
     CFemSurfaceDiscretization const,
     TagStaticActor const,
     TagShellActor const,
-    TagRodSurfaceContact const,
+    TagUseDeformableContactSkin const,
     TagRodActor const,
     CRootTransform const,
     CRigidState<TimeStep::Current> const,
@@ -779,7 +792,7 @@ using ContactAssemblyReg = ecs::PartialRegistry<
   // contact lump contact traction on the centerline, taking a 1D line integral. All other actor
   // types currently integrate contact on 2D surfaces.
   if (reg.all_of<TagRodActor>(colliding)) {
-    return reg.all_of<TagRodSurfaceContact>(colliding) ? 2 : 1;
+    return reg.all_of<TagUseDeformableContactSkin>(colliding) ? 2 : 1;
   }
   return 2;
   // NOTE: Contact with point masses would return 0 here, but it's not supported.
@@ -969,10 +982,15 @@ void FarSdfCollisionDetection(
 */
 
 template <bool kUpdateOnlyActiveFaces, typename DiscretizationType, int kNumFields>
-void UpdateCollisionSamplePositionsImpl(
+void UpdateCollisionSamplePositionsFromNodeDisplacements(
     ColumnVectorView<real const> currSol,
     DiscretizationType const& boundaryDiscrVariant,
     CActiveBoundaryFaces const* activeBoundaryFaces,
+    ContactSamples& outSamples);
+
+void UpdateCollisionSamplePositionsFromNodePositions(
+    Span<Real3 const> nodePositions,
+    CFemSurfaceDiscretization const& surfaceDiscretization,
     ContactSamples& outSamples);
 
 // Updates the collision sample positions, having them match 1:1 the quadrature points of the
@@ -980,6 +998,7 @@ void UpdateCollisionSamplePositionsImpl(
 template <typename DiscretizationType, TimeStep kTimeStep, int kNumFields>
 void UpdateCollisionSamplePositions(
     ecs::RequiredTag<TagUseContact>,
+    ecs::Excluded<TagUseDeformableContactSkin>,
     CFinalDisplacementRef<kTimeStep> const& currSol,
     DiscretizationType const& discretization,
     CActiveBoundaryFaces const* activeBoundaryFaces,
@@ -1087,10 +1106,26 @@ void AssembleIslandSyncContact(
     CIslandDescendants const& descendants,
     CIslandContactSnle& outContactSnle);
 
+// Builds the constant sparse Jacobian for a node-based linear contact-skin embedding.
+void InitializeLinearContactSkinningJacobian(
+    LinearMeshEmbedding const& embedding,
+    int numPhysicsNodes,
+    Span<int const> skinNodeIndices,
+    CContactSkinningData& outSkinning);
+
+// Sets up colliding Jacobians through DMap<DQuad, DMapRTConst, DMapSparseSkinning>.
+void SetupContactSkinCollidingJacobians(
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CRootTransform const& transform,
+    CDofOffset const& dofOffset,
+    CContactSkinningData const& skinningData,
+    CCollJacs<CollRole::Colliding>& outJacobians);
+
 // Assemble async contact for a single colliding actor whose contact samples are tied to its DoFs
 // through skinning/embedding (i.e. it carries CSkinnedContactSnle). Currently used for articulated
-// actors with skinned contact meshes, nested soft actors configured as colliding actors, and rod
-// actors that use contact-skin surface contact. Results are written to CSkinnedContactSnle.
+// actors with skinned contact meshes, nested soft actors configured as colliding actors, and rod or
+// shell actors that use contact-skin surface contact. Results are written to CSkinnedContactSnle.
 void AssembleAsyncSkinnedContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,

@@ -67,6 +67,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<TagRodActor>(reg);
   ecs::RegisterComponent<TagDeformableActor>(reg);
   ecs::RegisterComponent<TagStaticActor>(reg);
+  ecs::RegisterComponent<TagUseDeformableContactSkin>(reg);
   ecs::RegisterComponent<TagExcludedFromDebugDraw>(reg);
   ecs::RegisterComponent<TagSkinnedContact>(reg);
   ecs::RegisterComponent<CNodalBasedStructure>(reg);

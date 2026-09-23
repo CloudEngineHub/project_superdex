@@ -1421,7 +1421,7 @@ class MochiRodSurfaceMeshes : public test::MochiSceneTestBase {
     auto const& contactSkin = reg.get<CRodContactSkin const>(entity);
     CVisualMesh visualLike{contactSkin.mesh};
     CRodVisualMeshEmbedding embeddingLike{contactSkin.embedding};
-    CRodContactSkinningData skinningData;
+    CContactSkinningData skinningData;
     rod::InitializeContactSkinningJacobian(contactSkin, polylineMesh, skinningData);
     rod::ResolveContactSkinningJacobian(contactSkin, polylineMesh, basePose, skinningData);
 
@@ -1599,7 +1599,7 @@ TEST_F(
   auto const& contactSkin = reg.get<CRodContactSkin const>(entity);
   auto const& polylineMesh = reg.get<CPolylineMesh const>(entity);
   auto const& rodPose = reg.get<CRodPose<TimeStep::Current> const>(entity);
-  auto& skinningData = reg.get<CRodContactSkinningData>(entity);
+  auto& skinningData = reg.get<CContactSkinningData>(entity);
   rod::ResolveContactSkinningJacobian(contactSkin, polylineMesh, rodPose, skinningData);
 
   auto const& dofVelocity = reg.get<CVelocitySlice<real, TimeStep::Current> const>(entity).value;
@@ -1721,9 +1721,9 @@ TEST_F(MochiRodSurfaceMeshes, VisualOnlyRodHasNoSurfaceMesh) {
   auto const entity = mochi::GetEntity(reg, actor->GetHandle(), test::ExpectOK{});
   EXPECT_TRUE(reg.all_of<CFemSegmentDiscretization>(entity));
   EXPECT_FALSE(reg.all_of<CRodContactSkin>(entity));
-  EXPECT_FALSE(reg.all_of<CRodContactSkinningData>(entity));
+  EXPECT_FALSE(reg.all_of<CContactSkinningData>(entity));
   EXPECT_FALSE(reg.all_of<CFemSurfaceDiscretization>(entity));
-  EXPECT_FALSE(reg.all_of<TagRodSurfaceContact>(entity));
+  EXPECT_FALSE(reg.all_of<TagUseDeformableContactSkin>(entity));
 }
 
 TEST_F(MochiRodSurfaceMeshes, QueryWithoutVisualMeshFails) {
@@ -1761,9 +1761,9 @@ TEST_F(MochiRodSurfaceMeshes, UnskinnedVisualMeshIsIgnored) {
   EXPECT_FALSE(reg.all_of<CVisualMesh>(entity));
   EXPECT_FALSE(reg.all_of<CRodVisualMeshEmbedding>(entity));
   EXPECT_FALSE(reg.all_of<CRodContactSkin>(entity));
-  EXPECT_FALSE(reg.all_of<CRodContactSkinningData>(entity));
+  EXPECT_FALSE(reg.all_of<CContactSkinningData>(entity));
   EXPECT_FALSE(reg.all_of<CFemSurfaceDiscretization>(entity));
-  EXPECT_FALSE(reg.all_of<TagRodSurfaceContact>(entity));
+  EXPECT_FALSE(reg.all_of<TagUseDeformableContactSkin>(entity));
 }
 
 TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_InitializesSkinningJacobianSparsity) {
@@ -1775,13 +1775,13 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_InitializesSkinningJacobianSpar
 
   ASSERT_TRUE((reg.all_of<
                CRodContactSkin,
-               CRodContactSkinningData,
+               CContactSkinningData,
                CFemSurfaceDiscretization,
-               TagRodSurfaceContact>(entity)));
+               TagUseDeformableContactSkin>(entity)));
   EXPECT_FALSE(reg.all_of<CFemSegmentDiscretization>(entity));
 
   auto const& contactSkin = reg.get<CRodContactSkin const>(entity);
-  auto const& skinningData = reg.get<CRodContactSkinningData const>(entity);
+  auto const& skinningData = reg.get<CContactSkinningData const>(entity);
 
   auto const& jac = skinningData.jacobian;
 
@@ -1889,9 +1889,9 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_UsesDedicatedSurface) {
   auto const entity = mochi::GetEntity(reg, actor->GetHandle(), test::ExpectOK{});
   ASSERT_TRUE((reg.all_of<
                CRodContactSkin,
-               CRodContactSkinningData,
+               CContactSkinningData,
                CFemSurfaceDiscretization,
-               TagRodSurfaceContact>(entity)));
+               TagUseDeformableContactSkin>(entity)));
   EXPECT_FALSE(reg.all_of<CFemSegmentDiscretization>(entity));
 
   auto const& visualMesh = reg.get<CVisualMesh const>(entity);
@@ -1995,8 +1995,8 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_WithoutVisualMesh) {
 
   auto& reg = GetRegistry();
   auto const entity = mochi::GetEntity(reg, actor->GetHandle(), test::ExpectOK{});
-  EXPECT_TRUE(
-      (reg.all_of<CRodContactSkin, CFemSurfaceDiscretization, TagRodSurfaceContact>(entity)));
+  EXPECT_TRUE((
+      reg.all_of<CRodContactSkin, CFemSurfaceDiscretization, TagUseDeformableContactSkin>(entity)));
   EXPECT_FALSE((reg.all_of<CVisualMesh, CFemSegmentDiscretization>(entity)));
   EXPECT_EQ(4, actor->GetSurfaceMesh().GetNumNodes());
   _scene->Step(0_r);
@@ -2423,7 +2423,7 @@ TEST_F(MochiRodSurfaceMeshes, DistinctVisualAndContactMeshesSupportMultiElementS
     auto const& polylineMesh = reg.get<CPolylineMesh const>(entity);
     auto const& basePose = reg.get<CRodPose<TimeStep::Current> const>(entity);
 
-    CRodContactSkinningData skinningData;
+    CContactSkinningData skinningData;
     rod::InitializeContactSkinningJacobian(contactSkin, polylineMesh, skinningData);
     rod::ResolveContactSkinningJacobian(contactSkin, polylineMesh, basePose, skinningData);
 

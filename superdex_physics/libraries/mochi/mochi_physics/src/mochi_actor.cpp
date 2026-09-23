@@ -140,13 +140,33 @@ static void QueryNodesInVolumeLocalImpl(
     std::function<void(int, Real3)> const& callback,
     Error& error) {
   if (boundaryOnly) {
-    auto const* queryPos = MOCHI_TRY_GET(CQuerySurfaceNodePositions, reg, e, error);
-    MOCHI_ERROR_RETURN(error);
-    Span<Real3 const> positions = Unflatten<Real3 const>(queryPos->nodePositions);
     auto const* surfaceMeshComponent = MOCHI_TRY_GET(CSurfaceMesh, reg, e, error);
     MOCHI_ERROR_RETURN(error);
 
     ActorMeshSource const actorMeshSource = GetActorMeshSource(reg, e);
+    bool const hasEmbeddedSurfaceMesh = surfaceMeshComponent->embedding != nullptr;
+    if (hasEmbeddedSurfaceMesh && actorMeshSource == ActorMeshSource::Simplicial) {
+      auto const& physicsMesh = reg.get<CSimplicialMesh const>(e).mesh;
+      auto const& displacements = reg.get<CFinalDisplacementRef<TimeStep::Current> const>(e).value;
+      auto const referencePositions = physicsMesh->GetNodeCoordinates();
+      auto const displacementVectors = Unflatten<Real3 const>(displacements.GetConstSpan());
+      // All active triangular-mesh nodes are surface nodes; tetrahedral meshes use only boundary
+      // nodes.
+      auto const nodeIndices = physicsMesh->GetNumVolumes() == 0 ? physicsMesh->GetActiveNodes()
+                                                                 : physicsMesh->GetBoundaryNodes();
+      for (int nodeIndex : nodeIndices) {
+        Real3 const position = referencePositions[nodeIndex] + displacementVectors[nodeIndex];
+        if (ContainsPoint(volumeLocal, position)) {
+          callback(nodeIndex, position);
+        }
+      }
+      return;
+    }
+
+    auto const* queryPos = MOCHI_TRY_GET(CQuerySurfaceNodePositions, reg, e, error);
+    MOCHI_ERROR_RETURN(error);
+    Span<Real3 const> positions = Unflatten<Real3 const>(queryPos->nodePositions);
+
     MOCHI_ERROR_IF(
         actorMeshSource != ActorMeshSource::Simplicial &&
             actorMeshSource != ActorMeshSource::Surface,

@@ -1381,8 +1381,11 @@ struct ContactPoint {
   // @note @ref force is already weighted by this value.
   real intWeight;
 
-  // @brief Element index on the surface mesh of @ref actorA.
+  // @brief Element index in the mesh used for colliding samples on @ref actorA.
   //
+  // @note For shell actors, this is the physics mesh returned by @ref Actor::GetMesh unless
+  // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
+  // Actor::GetSurfaceMesh.
   // @note For rod actors, this field is not populated and is reported as 0. Use @ref sampleIndex
   // to identify the contact location.
   int elementIndex = -1;
@@ -1406,8 +1409,11 @@ struct ContactPoint {
 // @see QueryType::NodeContactForces, Actor::RegisterQuery, Actor::GetNodeContactForcesWorld
 struct NodeContactForce {
 
-  // @brief Node index in the volumetric mesh (for actors with a volumetric mesh) or surface mesh
-  // (for actors without a volumetric mesh).
+  // @brief Node index in the volumetric mesh or the mesh used for colliding samples.
+  //
+  // @note For shell actors, this is the physics mesh returned by @ref Actor::GetMesh unless
+  // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
+  // Actor::GetSurfaceMesh.
   int index;
 
   // @brief Contact force [N] applied to the node.

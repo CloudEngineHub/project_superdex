@@ -476,7 +476,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
   ;
 
   registry.GetClass<mochi::experimental::ShellActorParams>()
-    .def("__init__", [](mochi::experimental::ShellActorParams* self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object collider_type, nb::object contact, nb::object point_cloud_collider, nb::object has_gravity, nb::object contact_element_type) {
+    .def("__init__", [](mochi::experimental::ShellActorParams* self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object collider_type, nb::object contact, nb::object point_cloud_collider, nb::object has_gravity, nb::object contact_element_type, nb::object use_contact_skin) {
       mochi::experimental::ShellActorParams result{};
       result.name = nb::cast<mochi::DynamicString>(name);
       result.layer = nb::cast<mochi::DynamicString>(layer);
@@ -488,6 +488,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       result.pointCloudCollider = nb::cast<mochi::experimental::PointCloudColliderParams>(point_cloud_collider);
       result.hasGravity = nb::cast<bool>(has_gravity);
       result.contactElementType = nb::cast<mochi::ActorBoundaryElementType>(contact_element_type);
+      result.useContactSkin = nb::cast<bool>(use_contact_skin);
       new (self) mochi::experimental::ShellActorParams(std::move(result));
     }
       , nb::kw_only()
@@ -501,6 +502,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("point_cloud_collider").sig("...") = mochi::experimental::ShellActorParams{}.pointCloudCollider
       , nb::arg("has_gravity") = mochi::experimental::ShellActorParams{}.hasGravity
       , nb::arg("contact_element_type") = mochi::experimental::ShellActorParams{}.contactElementType
+      , nb::arg("use_contact_skin") = mochi::experimental::ShellActorParams{}.useContactSkin
     )
     .def(nb::init<>())
     .def("__copy__", [](mochi::experimental::ShellActorParams const& self) { return mochi::experimental::ShellActorParams(self); })
@@ -514,7 +516,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     .def_rw("contact", &mochi::experimental::ShellActorParams::contact, "Contact mechanics properties.")
     .def_rw("point_cloud_collider", &mochi::experimental::ShellActorParams::pointCloudCollider, "Geometric and logical properties of the point-cloud collider.")
     .def_rw("has_gravity", &mochi::experimental::ShellActorParams::hasGravity, "Enables gravity.")
-    .def_rw("contact_element_type", &mochi::experimental::ShellActorParams::contactElementType, "Element type controlling the number of contact samples per triangle.")
+    .def_rw("contact_element_type", &mochi::experimental::ShellActorParams::contactElementType, "Element type controlling the number of contact samples per triangle on the\nselected contact mesh.")
+    .def_rw("use_contact_skin", &mochi::experimental::ShellActorParams::useContactSkin, "Use the shape's authored contact skin for colliding contact samples.\n\nActor creation fails unless the shape has a triangular contact skin with\nnode-based linear skinning data. This changes the shell's colliding contact\nsamples. The point-cloud collider, when enabled, remains discretized on the\nphysics mesh.")
   ;
 
   registry.GetClass<mochi::experimental::DebugStats>()

@@ -89,12 +89,41 @@ void mochi::PreStepDeformableActorAsync(entt::registry& reg, entt::entity e) {
   ecs::InvokeOnEntity(&UpdateDirichletBC, reg, e);
 }
 
+static real ComputeMaxContactSkinSpeed(
+    CContactSkinningData const& contactSkinning,
+    ColumnVectorView<real const> velocity) {
+  auto const& jacobian = contactSkinning.jacobian;
+  MOCHI_ASSERT_VERBOSE(
+      jacobian.Cols() == velocity.Rows(),
+      "Contact-skin Jacobian and velocity dimensions must match.");
+
+  real maxSpeedSqr = 0_r;
+  for (int row = 0; row < jacobian.Rows(); ++row) {
+    Vec4r skinVelocity{};
+    auto const indices = jacobian.Indices(row);
+    auto const values = jacobian.Values(row);
+    for (int i = 0; i < isize(indices); ++i) {
+      skinVelocity += velocity[indices[i]] * ToSimd(values[i]);
+    }
+    maxSpeedSqr = Max(maxSpeedSqr, NormSqr<3>(skinVelocity));
+  }
+  return Sqrt(maxSpeedSqr);
+}
+
 void deformable::UpdateMaxGeometrySpeed(
     ecs::Included<TagDeformableActor>,
     ecs::Excluded<TagNestedSoftActor, TagRodActor>,
     CVelocitySlice<real, TimeStep::Current> const& velocity,
+    CColliderInfo const& collider,
+    CContactSkinningData const* contactSkinning,
     CConservativeStepBounds& outStepBounds) {
-  outStepBounds.maxGeometrySpeed = MaxPackedVector3Norm<kSpaceDim3>(velocity.value.GetConstSpan());
+  // Match tight bounds: skin-only actors use the skin, while colliders also use the physics mesh.
+  real const physicsMaxSpeed = (collider.type != ColliderType::None || !contactSkinning)
+      ? MaxPackedVector3Norm<kSpaceDim3>(velocity.value.GetConstSpan())
+      : 0_r;
+  real const contactSkinMaxSpeed =
+      contactSkinning ? ComputeMaxContactSkinSpeed(*contactSkinning, velocity.value) : 0_r;
+  outStepBounds.maxGeometrySpeed = Max(physicsMaxSpeed, contactSkinMaxSpeed);
 }
 
 template <ContactType kContactType, typename DiscretizationT>
@@ -396,7 +425,7 @@ MOCHI_COMPUTE_ASYNC_CONTACT_RESPONSE_INST(CFemSegmentDiscretization, 4);
 template <typename ActorTag, typename DiscretizationType>
 void deformable::SetupCollidingJacobians(
     ecs::Included<ActorTag>,
-    ecs::Excluded<TagRomActor, TagNestedSoftActor, TagRodSurfaceContact>,
+    ecs::Excluded<TagRomActor, TagNestedSoftActor, TagUseDeformableContactSkin>,
     DiscretizationType const& discretization,
     CRootTransform const& transform,
     CDofOffset const& dofOffset,
@@ -443,7 +472,7 @@ void deformable::SetupCollidingJacobians(
 #define MOCHI_SETUP_COLLIDING_JACOBIANS_INST(ACTOR_TAG, DISCRETIZATION_TYPE)         \
   template void deformable::SetupCollidingJacobians<ACTOR_TAG, DISCRETIZATION_TYPE>( \
       ecs::Included<ACTOR_TAG>,                                                      \
-      ecs::Excluded<TagRomActor, TagNestedSoftActor, TagRodSurfaceContact>,          \
+      ecs::Excluded<TagRomActor, TagNestedSoftActor, TagUseDeformableContactSkin>,   \
       DISCRETIZATION_TYPE const& discretization,                                     \
       CRootTransform const& transform,                                               \
       CDofOffset const& dofOffset,                                                   \

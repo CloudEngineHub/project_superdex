@@ -3256,21 +3256,34 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
         _registry.all_of<CPotentialColliders<ContactType::Sync>>(e), "Missing required component");
   }
 
+  bool const usesContactSkin = _registry.all_of<TagUseDeformableContactSkin>(e);
+  bool const hasContactSkinComponents = _registry.all_of<
+      CContactSkinningData,
+      CDeformedContactSkinNodes,
+      CSkinnedContactSnle,
+      TagSkinnedContact>(e);
+  MOCHI_ASSERT(
+      usesContactSkin == hasContactSkinComponents,
+      "Contact-skin tag and shared components must be installed together.");
+  if (usesContactSkin) {
+    auto const& surfaceMesh = _registry.get<CSurfaceMesh const>(e);
+    MOCHI_ASSERT(surfaceMesh.embedding != nullptr || _registry.all_of<TagRodActor>(e));
+  }
+
   if (_registry.all_of<TagRodActor>(e)) {
-    bool const usesContactSkin = _registry.all_of<TagRodSurfaceContact>(e);
-    bool const hasContactSkinComponents = _registry.all_of<
-        CRodContactSkin,
-        CRodContactSkinningData,
-        CRodDeformedContactSkinNodes,
-        CFemSurfaceDiscretization,
-        CSkinnedContactSnle,
-        TagSkinnedContact>(e);
     MOCHI_ASSERT(
-        usesContactSkin == hasContactSkinComponents,
-        "Rod contact-skin tag and components must be installed together.");
+        usesContactSkin == _registry.all_of<CRodContactSkin>(e),
+        "Rod contact skin requires its nonlinear embedding component.");
     MOCHI_ASSERT(
         usesContactSkin != _registry.all_of<CFemSegmentDiscretization>(e),
         "Rod contact must use exactly one of contact-skin or centerline discretization.");
+  }
+  if (_registry.all_of<TagShellActor>(e)) {
+    bool const hasDirectContactAssembly =
+        _registry.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(e);
+    MOCHI_ASSERT(
+        usesContactSkin != hasDirectContactAssembly,
+        "Shell contact must use exactly one of contact-skin or direct assembly.");
   }
 
   // All actors must have a CConvergenceStatus, except static actors and internal-only compounds

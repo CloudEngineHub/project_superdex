@@ -590,6 +590,7 @@ struct ShellActorParams {
   PointCloudColliderParams pointCloudCollider = {};
   bool hasGravity = true;
   ActorBoundaryElementType contactElementType = ActorBoundaryElementType::Default;
+  bool useContactSkin = false;
 
   MOCHI_STRUCT_BEGIN(mochi::experimental::ShellActorParams)
   MOCHI_FIELD(name)
@@ -602,6 +603,7 @@ struct ShellActorParams {
   MOCHI_FIELD(pointCloudCollider)
   MOCHI_FIELD(hasGravity)
   MOCHI_FIELD(contactElementType)
+  MOCHI_FIELD(useContactSkin)
   MOCHI_STRUCT_END()
 };
 

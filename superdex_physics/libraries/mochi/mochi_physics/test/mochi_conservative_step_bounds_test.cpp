@@ -31,6 +31,23 @@
 using namespace mochi;
 
 namespace {
+void InitializeTwoNodeContactSkinningJacobian(
+    real weight0,
+    real weight1,
+    CContactSkinningData& outSkinning) {
+  outSkinning.jacobian = SparseMatrix<Real3>(
+      /*nCol=*/6,
+      DynamicArray<int>{0, 6},
+      DynamicArray<int>{0, 1, 2, 3, 4, 5},
+      DynamicArray<Real3>{
+          {weight0, 0_r, 0_r},
+          {0_r, weight0, 0_r},
+          {0_r, 0_r, weight0},
+          {weight1, 0_r, 0_r},
+          {0_r, weight1, 0_r},
+          {0_r, 0_r, weight1}});
+}
+
 ShapeHandle CreateUnitCubeTetMeshShapeWithSkinning(Context* context) {
   auto&& [coords, connectivity] = test::CreateMinimalTetMeshUnitCube();
   auto mesh = std::make_shared<TetrahedralMesh const>(coords, connectivity);
@@ -244,10 +261,54 @@ TEST(ConservativeStepBoundsVelocitySystemTest, DeformableMaxGeometrySpeedUsesEuc
   CVelocitySlice<real, TimeStep::Current> velocity(6);
   velocity.value[3] = 3_r;
   velocity.value[4] = -4_r;
+  CColliderInfo const collider;
   CConservativeStepBounds stepBounds;
   stepBounds.maxGeometrySpeed = std::numeric_limits<real>::quiet_NaN();
 
-  deformable::UpdateMaxGeometrySpeed({}, {}, velocity, stepBounds);
+  deformable::UpdateMaxGeometrySpeed({}, {}, velocity, collider, nullptr, stepBounds);
+
+  EXPECT_NEAR_EQ(5_r, stepBounds.maxGeometrySpeed);
+}
+
+TEST(ConservativeStepBoundsVelocitySystemTest, DeformableSkinOnlyMaxGeometrySpeedUsesContactSkin) {
+  CVelocitySlice<real, TimeStep::Current> velocity(6);
+  velocity.value[0] = 1_r;
+  velocity.value[3] = -1_r;
+  CColliderInfo const collider;
+  CContactSkinningData contactSkinning;
+  InitializeTwoNodeContactSkinningJacobian(2_r, -1_r, contactSkinning);
+  CConservativeStepBounds stepBounds;
+
+  deformable::UpdateMaxGeometrySpeed({}, {}, velocity, collider, &contactSkinning, stepBounds);
+
+  EXPECT_NEAR_EQ(3_r, stepBounds.maxGeometrySpeed);
+}
+
+TEST(ConservativeStepBoundsVelocitySystemTest, DeformableSkinOnlyExcludesPhysicsMeshSpeed) {
+  CVelocitySlice<real, TimeStep::Current> velocity(6);
+  velocity.value[0] = 5_r;
+  velocity.value[3] = -3_r;
+  CColliderInfo const collider;
+  CContactSkinningData contactSkinning;
+  InitializeTwoNodeContactSkinningJacobian(0.5_r, 0.5_r, contactSkinning);
+  CConservativeStepBounds stepBounds;
+
+  deformable::UpdateMaxGeometrySpeed({}, {}, velocity, collider, &contactSkinning, stepBounds);
+
+  EXPECT_NEAR_EQ(1_r, stepBounds.maxGeometrySpeed);
+}
+
+TEST(ConservativeStepBoundsVelocitySystemTest, DeformableSdfColliderIncludesPhysicsMeshSpeed) {
+  CVelocitySlice<real, TimeStep::Current> velocity(6);
+  velocity.value[0] = 5_r;
+  velocity.value[3] = -3_r;
+  CColliderInfo collider;
+  collider.type = ColliderType::Sdf;
+  CContactSkinningData contactSkinning;
+  InitializeTwoNodeContactSkinningJacobian(0.5_r, 0.5_r, contactSkinning);
+  CConservativeStepBounds stepBounds;
+
+  deformable::UpdateMaxGeometrySpeed({}, {}, velocity, collider, &contactSkinning, stepBounds);
 
   EXPECT_NEAR_EQ(5_r, stepBounds.maxGeometrySpeed);
 }

@@ -575,9 +575,9 @@ AssembleRodActorPipeline(AssemblyParams const& params, entt::registry& reg, entt
   }
 
   // Centerline async contact (uses CFemSegmentDiscretization). Contact-skin async contact
-  // is assembled at the island level (AssembleIslandRodAsyncContact) to avoid merging
+  // is assembled through CSkinnedContactSnle to avoid merging
   // contact sparsity into the rod's incompatible pentadiagonal body matrix.
-  if (!reg.all_of<TagRodSurfaceContact>(e)) {
+  if (!reg.all_of<TagUseDeformableContactSkin>(e)) {
     ecs::TryInvokeOnEntity(rod::AssembleAsyncContact, reg, e, std::cref(params));
   }
 }
@@ -709,8 +709,11 @@ void mochi::solver::AssembleIslandPipeline(
   }
 
   // Start a task for each actor with async skinned contact.
-  std::array<Span<entt::entity const>, 3> skinnedActors = {
-      descendants.compoundActors, descendants.nestedSoftActors, descendants.rodActors};
+  std::array<Span<entt::entity const>, 4> skinnedActors = {
+      descendants.compoundActors,
+      descendants.nestedSoftActors,
+      descendants.shellActors,
+      descendants.rodActors};
   for (auto actors : skinnedActors) {
     ecs::ScheduleInvokeForEach<ecs::policy::AllowFullRegistryAccess>(
         masterSemaphore,

@@ -512,8 +512,16 @@ struct experimental::ShellActorParams [no_reflection] {
   // @brief Enables gravity.
   bool hasGravity = true;
 
-  // @brief Element type controlling the number of contact samples per triangle.
+  // @brief Element type controlling the number of contact samples per triangle on the selected
+  // contact mesh.
   ActorBoundaryElementType contactElementType = Default;
+
+  // @brief Use the shape's authored contact skin for colliding contact samples.
+  //
+  // @details Actor creation fails unless the shape has a triangular contact skin with node-based
+  // linear skinning data. This changes the shell's colliding contact samples. The point-cloud
+  // collider, when enabled, remains discretized on the physics mesh.
+  bool useContactSkin = false;
 }
 
 fn experimental::CreateShellActor(Scene* scene, experimental::ShellActorParams const& params) -> Actor* [mochi_error, nullable];
