@@ -17,6 +17,7 @@
 #include "mochi_physics_test_fixture.h"
 
 #include <mochi_core/geometry/tetrahedral_mesh.h>
+#include <mochi_core/geometry/triangular_mesh.h>
 #include <mochi_core/utils/rand_utils.h>
 #include <mochi_core/utils/rigid_body_utils.h>
 #include <mochi_physics/mochi_physics.h>
@@ -38,11 +39,13 @@
 #include <mochi_physics/src/mochi_step.h>
 
 #include <gtest/gtest.h>
-
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <limits>
 #include <numeric>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -1579,6 +1582,119 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"CoulombExplicit", GradTarget::Current, 0.5_r, 0_r, 0_r, true, 2e-3_r, 1e-2_r},
         TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 10_r, true, 2e-3_r, 1e-2_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class SkinnedContactPairCapacityTest : public test::MochiSceneTestBase {
+ protected:
+  static constexpr int kNumActiveBones = 5;
+  static constexpr int kNumPartitions = (1 << kNumActiveBones) - 1;
+
+  ShapeHandle CreatePartitionedSkinShape() {
+    DynamicArray<Real3> coordinates;
+    DynamicArray<Int3> connectivity;
+    SkinningData skinning;
+    skinning.weightsPerNode = kNumActiveBones;
+    coordinates.reserve(3 * kNumPartitions);
+    connectivity.reserve(kNumPartitions);
+    skinning.indices.reserve(3 * kNumPartitions * kNumActiveBones);
+    skinning.weights.reserve(3 * kNumPartitions * kNumActiveBones);
+
+    for (int partition = 0; partition < kNumPartitions; ++partition) {
+      auto const boneMask = static_cast<unsigned int>(partition + 1);
+      real const boneWeight = 1_r / static_cast<real>(std::popcount(boneMask));
+
+      real const y = 0.08_r + 0.14_r * static_cast<real>(partition % 6);
+      real const z = 0.08_r + 0.14_r * static_cast<real>(partition / 6);
+      int const firstNode = isize(coordinates);
+      coordinates.emplace_back(Real3{0.01_r, y, z});
+      coordinates.emplace_back(Real3{0.01_r, y + 0.04_r, z});
+      coordinates.emplace_back(Real3{0.01_r, y, z + 0.04_r});
+      connectivity.emplace_back(Int3{firstNode, firstNode + 1, firstNode + 2});
+
+      for (int vertex = 0; vertex < 3; ++vertex) {
+        for (int bone = 0; bone < kNumActiveBones; ++bone) {
+          skinning.indices.emplace_back(bone + 1);
+          skinning.weights.emplace_back(((boneMask >> bone) & 1U) != 0 ? boneWeight : 0_r);
+        }
+      }
+    }
+
+    auto mesh = std::make_unique<TriangularMesh>(coordinates, connectivity);
+    auto shape = std::make_shared<TriangularMeshShape>(
+        std::move(mesh), std::make_shared<SkinningData const>(std::move(skinning)));
+    return assert_cast<ContextImpl*>(_mochiContext)->RegisterShape(shape, test::ExpectOK{});
+  }
+
+  ArticulatedActorParams MakeArticulationParams(
+      ShapeHandle skinShape,
+      std::string_view skinLayer,
+      std::string_view linkLayer) {
+    ArticulatedActorParams params;
+    params.joints.resize(kNumActiveBones + 1);
+    params.links.resize(kNumActiveBones + 1);
+    params.joints[0].type = ArticulatedJointType::Hard;
+
+    ShapeHandle const linkShape = test::CreateUnitCubeTetMeshShape(_mochiContext);
+    for (int bone = 0; bone < kNumActiveBones; ++bone) {
+      int const link = bone + 1;
+      params.joints[link].type = ArticulatedJointType::Prismatic;
+      params.joints[link].axis = Real3{1_r, 0_r, 0_r};
+      params.links[link].parentLink = 0;
+      params.links[link].shape = linkShape;
+      params.links[link].layer = linkLayer;
+      params.links[link].colliderType = ColliderType::Box;
+      params.links[link].hasGravity = false;
+      params.links[link].contact.penaltyThresholdDefault = 0_r;
+    }
+
+    ArticulatedSkinParams skin;
+    skin.shape = skinShape;
+    skin.layer = skinLayer;
+    skin.nonCollidingLinks = DynamicArray<DynamicString>{};
+    skin.contact.penaltyThresholdDefault = 0_r;
+    params.skin = std::move(skin);
+    return params;
+  }
+};
+
+TEST_F(SkinnedContactPairCapacityTest, PartitionedPairsCanExceedActorPairs) {
+  _scene->SetGravity(Real3{});
+  ShapeHandle const skinShape = CreatePartitionedSkinShape();
+  Actor* const actorA = _scene->CreateArticulatedActor(
+      MakeArticulationParams(skinShape, "SkinA", "LinksA"), test::ExpectOK{});
+  Actor* const actorB = _scene->CreateArticulatedActor(
+      MakeArticulationParams(skinShape, "SkinB", "LinksB"), test::ExpectOK{});
+  ASSERT_NE(nullptr, actorA);
+  ASSERT_NE(nullptr, actorB);
+
+  std::array<std::string_view, 4> const layers{"SkinA", "LinksA", "SkinB", "LinksB"};
+  for (auto const collidingLayer : layers) {
+    for (auto const colliderLayer : layers) {
+      _scene->EnableLayerContactAsymmetric(collidingLayer, colliderLayer, false, test::ExpectOK{});
+    }
+  }
+  _scene->EnableLayerContactAsymmetric("SkinA", "LinksB", true, test::ExpectOK{});
+  _scene->EnableLayerContactAsymmetric("SkinB", "LinksA", true, test::ExpectOK{});
+
+  auto& reg = GetRegistry();
+  entt::entity const entityA = GetEntity(actorA->GetHandle());
+  entt::entity const entityB = GetEntity(actorB->GetHandle());
+  EXPECT_EQ(kNumPartitions, isize(reg.get<CContactPartitions const>(entityA)));
+  EXPECT_EQ(kNumPartitions, isize(reg.get<CContactPartitions const>(entityB)));
+
+  _scene->Step(1e-3_r);
+
+  entt::entity const island = reg.get<CIslandMemberInfo const>(entityA).island;
+  ASSERT_EQ(island, reg.get<CIslandMemberInfo const>(entityB).island);
+  auto const& actors = reg.get<CIslandDescendants const>(island).actors;
+  int numActiveCollisions = 0;
+  for (auto actor : actors) {
+    if (auto const* activeCollisions =
+            reg.try_get<CActiveCollisions<ContactType::Sync, TimeStep::Current> const>(actor)) {
+      numActiveCollisions += isize(*activeCollisions);
+    }
+  }
+  EXPECT_GT(numActiveCollisions, Sqr(isize(actors)));
+}
 
 // Verify consistency of contact torque queries on a rigid cube constrained at its center of mass,
 // contacted by another orbiting rigid cube. Checks:

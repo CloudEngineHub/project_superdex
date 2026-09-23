@@ -3219,13 +3219,27 @@ static void AssembleAllSyncContactPairs(
     double costPerPoint = 0;
   };
 
-  // Start by enumerating the contacting pairs and their ContactJacs
+  // Count contact pairs before reserving storage for them and their ContactJacs.
+  int numContactPairs = 0;
+  for (auto entity0 : actors) {
+    if (auto const* activeCollisions =
+            regActiveColls.try_get<CActiveCollisions<ContactType::Sync, TimeStep::Current>>(
+                entity0)) {
+      numContactPairs += isize(*activeCollisions);
+    }
+  }
+  if (numContactPairs == 0) {
+    return; // No contact
+  }
+
   DynamicArray<ContactJac const*> allJacs;
   DynamicArray<ContactPair> allPairs(filoAllocator);
   if (needJacs) {
-    allJacs.reserve(2 * JacData::kMaxJacs * isize(actors) * isize(actors)); // worst case
+    allJacs.reserve(2 * JacData::kMaxJacs * numContactPairs);
   }
-  allPairs.reserve(isize(actors) * isize(actors)); // worst case
+  allPairs.reserve(numContactPairs);
+
+  // Enumerate the contacting pairs and their ContactJacs.
   for (auto entity0 : actors) {
     if (auto* activeCollisions =
             regActiveColls.try_get<CActiveCollisions<ContactType::Sync, TimeStep::Current>>(
@@ -3247,9 +3261,6 @@ static void AssembleAllSyncContactPairs(
         allPairs.emplace_back(pair);
       }
     }
-  }
-  if (allPairs.empty()) {
-    return; // No contact
   }
 
   // Estimate the cost of each pair.
