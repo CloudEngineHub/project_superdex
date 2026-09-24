@@ -313,7 +313,7 @@ class Scene [no_init, no_destruct] {
   // @note After the actor is destroyed, do not use the pointer or its handle.
   //
   // @see GetActor, Actor::GetHandle
-  fn DestroyActor(Actor* actor [nullable]) -> void [overloaded, no_mochi_error];
+  fn DestroyActor(Actor* actor [nullable]) -> void [pure, virtual, overloaded, no_mochi_error];
 
   // @brief Destroy an actor and remove it from the scene.
   //

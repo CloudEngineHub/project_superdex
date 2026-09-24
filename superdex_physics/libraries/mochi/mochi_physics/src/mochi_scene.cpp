@@ -2781,6 +2781,12 @@ Actor* SceneImpl::CreateSoftSkinnedActorImpl(
   return skeletonActor;
 }
 
+void SceneImpl::DestroyActor(Actor* actor) {
+  if (actor) {
+    DestroyActor(actor->GetHandle());
+  }
+}
+
 void SceneImpl::DestroyActor(ActorHandle actorHandle) {
   if (!actorHandle.IsValid()) {
     return;

@@ -104,7 +104,7 @@ class Scene {
 
   virtual void DestroyActor(ActorHandle actor) = 0;
 
-  void DestroyActor(Actor* actor);
+  virtual void DestroyActor(Actor* actor) = 0;
 
   [[nodiscard]] virtual Actor* GetActor(ActorHandle actor) = 0;
 
@@ -286,5 +286,3 @@ class Scene {
 };
 
 } // namespace mochi
-
-#include "mochi_scene_inl.h"

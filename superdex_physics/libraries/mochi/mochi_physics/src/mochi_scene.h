@@ -83,6 +83,7 @@ class SceneImpl final : public Scene {
   Actor* CreateSoftActor(SoftActorParams const& params, Error& error) override;
   Actor* CreateArticulatedActor(ArticulatedActorParams const& params, Error& error) override;
   Actor* CreateSoftSkinnedActor(SoftSkinnedActorParams const& params, Error& error) override;
+  void DestroyActor(Actor* actor) override;
   void DestroyActor(ActorHandle actor) override;
   Actor* GetActor(ActorHandle actor) override;
   Actor const* GetActor(ActorHandle actor) const override;
