@@ -257,7 +257,7 @@ def main():
         type=pathlib.Path,
         default=None,
         help=(
-            "Path to save video output (defaults to output/ folder if ony --video is "
+            "Path to save video output (defaults to output/ folder if only --video is "
             "used). This argument implies --video"
         ),
     )
