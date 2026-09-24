@@ -136,8 +136,35 @@ static void ExportMochiPrefab(
     botLinksByName.emplace(link.name, &link);
   }
 
-  // Copy each link's original render and physics source files (with their original names) into
-  // _render and _mochi, and point the exported prefab at those copies.
+  // Points destFile at a copy of the bot's original source file, placed in <prefabDir>/<subdir>
+  // under its original name. An unset source clears destFile: whatever ExportScene put there
+  // refers to the staging dir, which is deleted when this function returns.
+  auto retarget = [&](mochi::DynamicString const& srcFile,
+                      std::string_view subdir,
+                      mochi::DynamicString& destFile) {
+    if (srcFile.empty()) {
+      destFile = {};
+      return;
+    }
+    fs::path const fileName = fs::path(srcFile.c_str()).filename();
+    fs::copy_file(
+        srcFile.c_str(),
+        prefabDir / fs::path(subdir) / fileName,
+        fs::copy_options::overwrite_existing,
+        ec);
+    if (ec) {
+      MOCHI_LOG_ERROR(
+          "Failed to copy '%s' into the exported prefab: %s",
+          srcFile.c_str(),
+          ec.message().c_str());
+      MOCHI_ERROR_SET(error, "Failed to copy a source asset into the exported prefab.");
+      return;
+    }
+    destFile = mochi::DynamicString("./" + std::string(subdir) + "/" + fileName.string());
+  };
+
+  // Copy each link's (and the skin's) original render and physics source files (with their original
+  // names) into _render and _mochi, and point the exported prefab at those copies.
   for (auto& actor : prefab.actors.articulated) {
     for (auto& link : actor.links) {
       auto const it = botLinksByName.find(link.name);
@@ -145,36 +172,28 @@ static void ExportMochiPrefab(
         continue;
       }
       superdex::robotics::BotLinkPrefab const& botLink = *it->second;
-      if (!botLink.renderModelFile.empty()) {
-        fs::path const fileName = fs::path(botLink.renderModelFile.c_str()).filename();
-        fs::copy_file(
-            botLink.renderModelFile.c_str(),
-            renderDir / fileName,
-            fs::copy_options::overwrite_existing,
-            ec);
-        MOCHI_ERROR_IF(ec, error, "Failed to copy render model into render.");
-        MOCHI_ERROR_RETURN(error);
-        link.renderModelFile = mochi::DynamicString(
-            "./" + std::string(superdex::robotics::kRenderSubdir) + "/" + fileName.string());
-        link.renderModelScale = botLink.renderModelScale;
-        link.renderModelRotation = botLink.renderModelRotation;
-        link.renderModelTranslation = botLink.renderModelTranslation;
-      }
-      if (!botLink.shapeFile.empty()) {
-        fs::path const fileName = fs::path(botLink.shapeFile.c_str()).filename();
-        fs::copy_file(
-            botLink.shapeFile.c_str(),
-            collisionDir / fileName,
-            fs::copy_options::overwrite_existing,
-            ec);
-        MOCHI_ERROR_IF(ec, error, "Failed to copy physics shape into collision.");
-        MOCHI_ERROR_RETURN(error);
-        link.shapeFile = mochi::DynamicString(
-            "./" + std::string(superdex::robotics::kCollisionSubdir) + "/" + fileName.string());
-        link.shapeScale = botLink.shapeScale;
-        link.shapeRotation = botLink.shapeRotation;
-        link.shapeTranslation = botLink.shapeTranslation;
-      }
+      retarget(botLink.renderModelFile, superdex::robotics::kRenderSubdir, link.renderModelFile);
+      retarget(botLink.shapeFile, superdex::robotics::kCollisionSubdir, link.shapeFile);
+      MOCHI_ERROR_RETURN(error);
+      link.renderModelScale = botLink.renderModelScale;
+      link.renderModelRotation = botLink.renderModelRotation;
+      link.renderModelTranslation = botLink.renderModelTranslation;
+      link.shapeScale = botLink.shapeScale;
+      link.shapeRotation = botLink.shapeRotation;
+      link.shapeTranslation = botLink.shapeTranslation;
+    }
+    // The skin is a single unnamed sibling of the links, so the bot's skin is unambiguously the
+    // source for the exported one. ExportScene writes the skin shape into the staging dir and emits
+    // no render model at all, so both have to be retargeted here.
+    if (actor.skin.has_value() && botPrefab.skin.has_value()) {
+      auto const& botSkin = *botPrefab.skin;
+      retarget(botSkin.shapeFile, superdex::robotics::kCollisionSubdir, actor.skin->shapeFile);
+      retarget(
+          botSkin.renderModelFile, superdex::robotics::kRenderSubdir, actor.skin->renderModelFile);
+      MOCHI_ERROR_RETURN(error);
+      actor.skin->renderModelScale = botSkin.renderModelScale;
+      actor.skin->renderModelRotation = botSkin.renderModelRotation;
+      actor.skin->renderModelTranslation = botSkin.renderModelTranslation;
     }
   }
 
@@ -529,6 +548,8 @@ void BotEditor::ShowMainMenuItems() {
         ExportMochiPrefab(_studio, _botAsset, outputDir.ToString(), error);
       }
     }
+    // Export Simulation Prefab
+    _mochiScene.ShowExportSimulationPrefabMenuItem(_botAsset->GetName());
     // Export URDF
     if (ImGui::MenuItem("Export URDF")) {
       constexpr auto filters = std::to_array<char const*>({"*.urdf"});

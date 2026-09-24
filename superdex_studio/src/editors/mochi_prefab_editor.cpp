@@ -326,7 +326,12 @@ void MochiPrefabEditor::ShowAuxiliaryWindows() {
   }
 }
 
-void MochiPrefabEditor::ShowMainMenuItems() {}
+void MochiPrefabEditor::ShowMainMenuItems() {
+  if (ImGui::BeginMenu("Prefab")) {
+    _mochiScene.ShowExportSimulationPrefabMenuItem(_prefabAsset->GetName());
+    ImGui::EndMenu();
+  }
+}
 
 bool MochiPrefabEditor::CanUndoRedo() const {
   return !_mochiScene.IsSimulating();

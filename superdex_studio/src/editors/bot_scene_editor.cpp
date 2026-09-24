@@ -259,6 +259,13 @@ bool BotSceneEditor::CanUndoRedo() const {
   return !_mochiScene.IsSimulating();
 }
 
+void BotSceneEditor::ShowMainMenuItems() {
+  if (ImGui::BeginMenu("Bot Scene")) {
+    _mochiScene.ShowExportSimulationPrefabMenuItem(_sceneAsset->GetName());
+    ImGui::EndMenu();
+  }
+}
+
 void BotSceneEditor::ApplySceneViewSettings(mochi_renderer::SceneViewSettings const& viewSettings) {
   if (_viewport && _viewport->GetRenderScene()) {
     _viewport->GetRenderScene()->ApplyViewSettings(viewSettings);
