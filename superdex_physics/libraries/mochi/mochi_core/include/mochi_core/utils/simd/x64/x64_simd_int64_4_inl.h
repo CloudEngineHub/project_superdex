@@ -149,6 +149,9 @@ class Simd<int64_t, 4> {
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Load(Scalar const* ptr, int n) {
     MOCHI_ASSERT_VERBOSE(n >= 0 && n <= kSize, "Invalid size parameter");
+#if MOCHI_ARCH_X64_AVX512
+    return _mm256_maskz_loadu_epi64(x64_simd::kLaneMasksS8[n], ptr); // AVX512VL
+#else
     switch (n) { // clang-format off
                 case 1: return Load<1>(ptr);
                 case 2: return Load<2>(ptr);
@@ -156,6 +159,7 @@ class Simd<int64_t, 4> {
                 case 4: return Load<4>(ptr);
                 MOCHI_UNLIKELY default: return Zero();
             } // clang-format on
+#endif
   }
 
   template <int kTupleCount = kSize>
@@ -241,15 +245,19 @@ class Simd<int64_t, 4> {
 
   static MOCHI_FORCE_INLINE void Store(Scalar* ptr, Simd v, int n) {
     MOCHI_ASSERT_VERBOSE(n >= 0 && n <= kSize, "Invalid size parameter");
-    // Faster than masked store on AMD.
-    // clang-format off
-            switch (n) {
-                case 1: Store<1>(ptr, v); break;
-                case 2: Store<2>(ptr, v); break;
-                case 3: Store<3>(ptr, v); break;
-                case 4: Store<4>(ptr, v); break;
-                MOCHI_UNLIKELY default: break;
-            } // clang-format on
+#if MOCHI_ARCH_X64_AVX512
+    _mm256_mask_storeu_epi64(ptr, x64_simd::kLaneMasksS8[n], v.raw); // AVX512VL
+#else
+    // With AVX2, this is faster than masked store for a predictable value of n.
+    // It is much slower for a random value of n.
+    switch (n) { // clang-format off
+      case 1: Store<1>(ptr, v); break;
+      case 2: Store<2>(ptr, v); break;
+      case 3: Store<3>(ptr, v); break;
+      case 4: Store<4>(ptr, v); break;
+      MOCHI_UNLIKELY default: break;
+    } // clang-format on
+#endif
   }
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {

@@ -159,6 +159,7 @@ class Simd<double, 4> {
     }
   }
 
+#if !MOCHI_ARCH_X64_AVX512
 #if MOCHI_COMPILER_MSVC
   // MSVC defines __m128i as a union. Byte arrays are required to initialize it this way.
   // clang-format off
@@ -178,10 +179,15 @@ class Simd<double, 4> {
       {-1LL, -1LL, -1LL, 0LL},
       {-1LL, -1LL, -1LL, -1LL}};
 #endif
+#endif
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Load(Scalar const* ptr, int n) {
     MOCHI_ASSERT_VERBOSE(n >= 0 && n <= kSize, "Invalid size parameter");
+#if MOCHI_ARCH_X64_AVX512
+    return _mm256_maskz_loadu_pd(x64_simd::kLaneMasksS8[n], ptr); // AVX512VL
+#else
     return _mm256_maskload_pd(ptr, kLoadMasks[n]); // AVX
+#endif
   }
 
   [[nodiscard]] static Simd LoadIndexed(Scalar const* ptr, Simd<int, 4> const& indices) {
@@ -231,7 +237,7 @@ class Simd<double, 4> {
     static_assert(N >= 0 && N <= kSize);
     if constexpr (N == 0) {
     } else if constexpr (N < kSize) {
-      // About 3X faster than a masked store on AMD. About the same on Intel.
+      // About 3X faster than a masked store on older AMD CPUs. About the same on others.
       memcpy(ptr, &v, sizeof(Scalar) * N);
     } else {
       _mm256_storeu_pd(ptr, v.raw); // AVX
@@ -240,7 +246,9 @@ class Simd<double, 4> {
 
   static MOCHI_FORCE_INLINE void Store(Scalar* ptr, Simd v, int n) {
     MOCHI_ASSERT_VERBOSE(n >= 0 && n <= kSize, "Invalid size parameter");
-    // Faster than masked store on AMD.
+#if MOCHI_ARCH_X64_AVX512
+    _mm256_mask_storeu_pd(ptr, x64_simd::kLaneMasksS8[n], v.raw); // AVX512VL
+#else
     switch (n) { // clang-format off
       case 1: Store<1>(ptr, v); break;
       case 2: Store<2>(ptr, v); break;
@@ -248,6 +256,7 @@ class Simd<double, 4> {
       case 4: Store<4>(ptr, v); break;
       MOCHI_UNLIKELY default: break;
     } // clang-format on
+#endif
   }
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {

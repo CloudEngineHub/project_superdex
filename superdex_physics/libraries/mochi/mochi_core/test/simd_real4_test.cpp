@@ -730,6 +730,7 @@ TEST(Vec4r, Load) {
   EXPECT_VEC4R(1_r, 2_r, 3_r, 4_r, (Load<4, Vec4r>(values + 1)));
   EXPECT_VEC4R(1_r, 2_r, 3_r, 4_r, (Load<Vec4r>(values + 1)));
 
+  EXPECT_VEC4R(0_r, 0_r, 0_r, 0_r, (Load<Vec4r>(values + 1, 0)));
   EXPECT_VEC4R(1_r, 0_r, 0_r, 0_r, (Load<Vec4r>(values + 1, 1)));
   EXPECT_VEC4R(1_r, 2_r, 0_r, 0_r, (Load<Vec4r>(values + 1, 2)));
   EXPECT_VEC4R(1_r, 2_r, 3_r, 0_r, (Load<Vec4r>(values + 1, 3)));

@@ -571,6 +571,7 @@ TEST(Vec8i, Load) {
   EXPECT_VEC8I(1, 2, 3, 4, 5, 6, 7, 8, (Load<8, Vec8i>(values + 1)));
   EXPECT_VEC8I(1, 2, 3, 4, 5, 6, 7, 8, (Load<Vec8i>(values + 1)));
 
+  EXPECT_VEC8I(0, 0, 0, 0, 0, 0, 0, 0, (Load<Vec8i>(values + 1, 0)));
   EXPECT_VEC8I(1, 0, 0, 0, 0, 0, 0, 0, (Load<Vec8i>(values + 1, 1)));
   EXPECT_VEC8I(1, 2, 0, 0, 0, 0, 0, 0, (Load<Vec8i>(values + 1, 2)));
   EXPECT_VEC8I(1, 2, 3, 0, 0, 0, 0, 0, (Load<Vec8i>(values + 1, 3)));

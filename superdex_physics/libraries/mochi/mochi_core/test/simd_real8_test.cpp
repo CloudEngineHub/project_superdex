@@ -936,6 +936,7 @@ TEST(Vec8r, Load) {
   EXPECT_VEC8R(1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r, (Load<8, Vec8r>(values + 1)));
   EXPECT_VEC8R(1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r, (Load<Vec8r>(values + 1)));
 
+  EXPECT_VEC8R(0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, (Load<Vec8r>(values + 1, 0)));
   EXPECT_VEC8R(1_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, (Load<Vec8r>(values + 1, 1)));
   EXPECT_VEC8R(1_r, 2_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, (Load<Vec8r>(values + 1, 2)));
   EXPECT_VEC8R(1_r, 2_r, 3_r, 0_r, 0_r, 0_r, 0_r, 0_r, (Load<Vec8r>(values + 1, 3)));

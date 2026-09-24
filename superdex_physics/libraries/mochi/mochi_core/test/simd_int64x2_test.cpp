@@ -388,10 +388,15 @@ TEST(Vec2l, Store) {
   EXPECT_SPAN_EQ((std::array<int64_t, 2>{1, 0}), Span(&result[1], 2));
   Store<2>(&result[1], v);
   EXPECT_SPAN_EQ((std::array<int64_t, 2>{1, 2}), Span(&result[1], 2));
-  result.clear();
-  result.resize(5);
-  Store(&result[1], v, 0);
-  EXPECT_SPAN_EQ((std::array<int64_t, 2>{0, 0}), Span(&result[1], 2));
+  for (int n = 0; n <= Vec2l::kSize; ++n) {
+    result.assign(4, 911);
+    auto expected = result;
+    for (int i = 0; i < n; ++i) {
+      expected[i + 1] = i + 1;
+    }
+    Store(&result[1], v, n);
+    EXPECT_EQ(expected, result);
+  }
   Store(&result[1], v);
   EXPECT_SPAN_EQ((std::array<int64_t, 2>{1, 2}), Span(&result[1], 2));
 }
