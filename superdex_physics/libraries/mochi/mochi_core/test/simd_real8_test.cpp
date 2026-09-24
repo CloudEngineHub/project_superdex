@@ -48,7 +48,8 @@ TEST(Vec8r, Class) {
   static_assert(Vec8r::kIsSupported, "Should be supported");
 
 #if MOCHI_USE_SIMD
-  bool constexpr kExpectNativeSize = (MOCHI_ARCH_X64_AVX2 && !MOCHI_USE_DOUBLE_PRECISION);
+  bool constexpr kExpectNativeSize =
+      MOCHI_ARCH_X64_AVX512 || (MOCHI_ARCH_X64_AVX2 && !MOCHI_USE_DOUBLE_PRECISION);
   static_assert(Vec8r::kIsComposite == !kExpectNativeSize);
   static_assert(!Vec8r::kIsEmulated);
 #else
@@ -864,6 +865,12 @@ TEST(Vec8r, HSum) {
   EXPECT_NEAR_EQ(21_r, HSum<6>(a));
   EXPECT_NEAR_EQ(28_r, HSum<7>(a));
   EXPECT_NEAR_EQ(36_r, HSum(a));
+}
+
+TEST(Vec8r, Dot) {
+  auto a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
+  auto b = Vec8r{0.5_r, -2_r, 3_r, -0.25_r, 1.5_r, -1_r, 2_r, 0.125_r};
+  EXPECT_NEAR_EQ(21_r, Dot(a, b));
 }
 
 // HProd is not implemented for Vec8f (only Vec2d/Vec4d/Vec4f, per simd.h support matrix).

@@ -433,7 +433,8 @@ void DenseGrid3D<T>::TrilinearSample(
     Span<Real3 const> points,
     Span<T> outValues,
     TrilinearSamplerOptions<kExtrapolationType>) const {
-  int constexpr kBatchSize = Simd<T>::kSize;
+  // TODO[T289584846] VectorizePoints does not support > 8. Update this function or delete it.
+  int constexpr kBatchSize = Min(Simd<T>::kSize, 8);
   using TVec = Simd<T, kBatchSize>;
   int const numPoints = isize(points);
   for (int i = 0; i < numPoints; i += kBatchSize) {
@@ -451,7 +452,8 @@ void DenseGrid3D<T>::TrilinearSampleGradient(
     Span<Real3 const> points,
     Span<Scalar3> outGradients,
     TrilinearSamplerOptions<kExtrapolationType>) const {
-  int constexpr kBatchSize = Simd<T>::kSize;
+  // TODO[T289584846] VectorizePoints does not support > 8. Update this function or delete it.
+  int constexpr kBatchSize = Min(Simd<T>::kSize, 8);
   using TVec = Simd<T, kBatchSize>;
   using TVec3 = NdArray<TVec, 3>;
   int const numPoints = isize(points);

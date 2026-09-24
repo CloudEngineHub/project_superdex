@@ -181,5 +181,6 @@ namespace mochi {
 // Aliases for Simd<Half> types.
 using Vec8h = Simd<Half, 8>;
 using Vec16h = Simd<Half, 16>;
+using Vec32h = Simd<Half, 32>;
 
 } // namespace mochi

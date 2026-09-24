@@ -138,13 +138,19 @@ class Simd<int64_t, 2> {
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Min(Simd a, Simd b) {
-    // TODO: Use _mm_min_epi64 for AVX512
+#if MOCHI_ARCH_X64_AVX512
+    return _mm_min_epi64(a.raw, b.raw); // AVX512VL
+#else
     return Simd{mochi::Min(Get<0>(a), Get<0>(b)), mochi::Min(Get<1>(a), Get<1>(b))};
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Max(Simd a, Simd b) {
-    // TODO: Use _mm_max_epi64 for AVX512
+#if MOCHI_ARCH_X64_AVX512
+    return _mm_max_epi64(a.raw, b.raw); // AVX512VL
+#else
     return Simd{mochi::Max(Get<0>(a), Get<0>(b)), mochi::Max(Get<1>(a), Get<1>(b))};
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Select(Simd mask, Simd a, Simd b) {
@@ -187,6 +193,11 @@ class Simd<int64_t, 2> {
   }
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {
+#if MOCHI_ARCH_X64_AVX512
+    auto const mask = _mm_movepi64_mask(condition.raw);
+    _mm_mask_compressstoreu_epi64(ptr, mask, values.raw); // AVX512VL
+    return _mm_popcnt_u32(mask);
+#else
     auto mask = _mm_movemask_pd(_mm_castsi128_pd(condition.raw));
     auto swapped = _mm_castpd_si128(_mm_shuffle_pd(
         _mm_castsi128_pd(values.raw), _mm_castsi128_pd(values.raw), 1)); // swap halves
@@ -194,6 +205,7 @@ class Simd<int64_t, 2> {
     auto packed = _mm_blendv_epi8(values.raw, swapped, blendMask);
     _mm_storeu_si128(reinterpret_cast<__m128i*>(ptr), packed);
     return _mm_popcnt_u32(mask);
+#endif
   }
 
   template <int kTupleCount = kSize>
@@ -270,9 +282,11 @@ class Simd<int64_t, 2> {
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator*(Simd rhs) const {
-    // Fallback
-    // Requires AVX512 _mm_mullo_epi64
+#if MOCHI_ARCH_X64_AVX512
+    return _mm_mullo_epi64(raw, rhs.raw); // AVX512VL
+#else
     return Simd{Get<0>(*this) * Get<0>(rhs), Get<1>(*this) * Get<1>(rhs)};
+#endif
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator/(Simd rhs) const {
@@ -306,11 +320,14 @@ class Simd<int64_t, 2> {
     if constexpr (kShift == 0) {
       return a;
     } else {
-      // TODO: Use _mm_srai_epi64 for AVX512.
+#if MOCHI_ARCH_X64_AVX512
+      return _mm_srai_epi64(a.raw, kShift); // AVX512VL
+#else
       auto shifted = _mm_srli_epi64(a.raw, kShift); // SSE2
       auto signMask = _mm_cmpgt_epi64(_mm_setzero_si128(), a.raw); // SSE4.2
       auto signFill = _mm_slli_epi64(signMask, 64 - kShift); // SSE2
       return _mm_or_si128(shifted, signFill); // SSE2
+#endif
     }
   }
 

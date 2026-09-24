@@ -797,6 +797,10 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N> VIsFinite(Simd<T, N> a) {
       auto high2i64 = Shuffle<1, 1, 3, 3>(GetHalf<1>(temp8i32));
       auto temp4i64 = Simd<int, 8>(low2i64, high2i64);
       return ReinterpretCast<Simd<double, 4>>(temp4i64);
+    } else if constexpr (N == 8 && Simd<int64_t, 8>::kIsSupported) {
+      auto mask = Simd<int64_t, 8>{INT64_C(0x7FF0000000000000)};
+      auto bits = ReinterpretCast<Simd<int64_t, 8>>(a);
+      return ReinterpretCast<Simd<double, 8>>(VNotEqual(bits & mask, mask));
     } else if constexpr (Simd<T, N>::kIsComposite) {
       return Simd<T, N>{VIsFinite(a.first), VIsFinite(a.second)};
     } else if constexpr (!MOCHI_USE_SIMD) {
@@ -921,14 +925,28 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 4> OrthogonalVector3(Simd<T, 4> a) {
 namespace details {
 
 /**
-  Utilities to determine the smallest supported SIMD size that is greater than or equal to a given
-  size.
+  Determines the smallest supported SIMD size that uses the minimum possible number of native
+  registers for the requested lane count.
 */
+template <typename T, int kSize, bool kExceedsNativeSize = (kSize > kSimdDefaultSize<T>)>
+struct NextSupportedSimdSizeHelper;
+
 template <typename T, int kSize>
-struct NextSupportedSimdSizeHelper {
+struct NextSupportedSimdSizeHelper<T, kSize, true> {
+  static_assert(kSize > 0, "SIMD size must be positive.");
   static_assert(Simd<T>::kIsSupported, "Type T is not supported for any size N.");
+  static constexpr int value =
+      kSimdDefaultSize<T> + NextSupportedSimdSizeHelper<T, kSize - kSimdDefaultSize<T>>::value;
+};
+
+template <typename T, int kSize>
+struct NextSupportedSimdSizeHelper<T, kSize, false> {
+  static_assert(kSize > 0, "SIMD size must be positive.");
+  static_assert(Simd<T>::kIsSupported, "Type T is not supported for any size N.");
+  static constexpr bool kIsSingleRegister =
+      Simd<T, kSize>::kIsSupported && !Simd<T, kSize>::kIsComposite;
   static constexpr int value = std::conditional_t<
-      Simd<T, kSize>::kIsSupported,
+      kIsSingleRegister,
       std::integral_constant<int, kSize>,
       NextSupportedSimdSizeHelper<T, kSize + 1>>::value;
 };

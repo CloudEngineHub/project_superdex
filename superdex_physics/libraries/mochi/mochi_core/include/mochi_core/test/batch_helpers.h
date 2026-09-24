@@ -118,5 +118,11 @@ auto GetLane(NdArray<V, D0, Dims...> const& a, int lane) {
     TestFn<7>();                              \
     TestFn<8>();                              \
     TestFn<9>();                              \
+    TestFn<10>();                             \
+    TestFn<11>();                             \
+    TestFn<12>();                             \
+    TestFn<13>();                             \
+    TestFn<14>();                             \
+    TestFn<15>();                             \
     TestFn<test::kBatchTestMaxSize>();        \
   }

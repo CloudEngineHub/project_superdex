@@ -187,21 +187,27 @@ class Simd<int64_t, 4> {
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Min(Simd a, Simd b) {
-    // TODO: Use _mm256_min_epi64 for AVX512
+#if MOCHI_ARCH_X64_AVX512
+    return _mm256_min_epi64(a.raw, b.raw); // AVX512VL
+#else
     return Simd{
         mochi::Min(Get<0>(a), Get<0>(b)),
         mochi::Min(Get<1>(a), Get<1>(b)),
         mochi::Min(Get<2>(a), Get<2>(b)),
         mochi::Min(Get<3>(a), Get<3>(b))};
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Max(Simd a, Simd b) {
-    // TODO: Use _mm256_min_epi64 for AVX512
+#if MOCHI_ARCH_X64_AVX512
+    return _mm256_max_epi64(a.raw, b.raw); // AVX512VL
+#else
     return Simd{
         mochi::Max(Get<0>(a), Get<0>(b)),
         mochi::Max(Get<1>(a), Get<1>(b)),
         mochi::Max(Get<2>(a), Get<2>(b)),
         mochi::Max(Get<3>(a), Get<3>(b))};
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Select(Simd mask, Simd a, Simd b) {
@@ -247,6 +253,11 @@ class Simd<int64_t, 4> {
   }
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {
+#if MOCHI_ARCH_X64_AVX512
+    auto const mask = _mm256_movepi64_mask(condition.raw);
+    _mm256_mask_compressstoreu_epi64(ptr, mask, values.raw); // AVX512VL
+    return _mm_popcnt_u32(mask);
+#else
     auto mask = _mm256_movemask_pd(_mm256_castsi256_pd(condition.raw));
     // Load 8 bytes from the table, then zero-exend to get the shuffle pattern.
     auto const* tableRow =
@@ -255,6 +266,7 @@ class Simd<int64_t, 4> {
     auto packed = _mm256_permutevar8x32_epi32(values.raw, pattern);
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(ptr), packed);
     return _mm_popcnt_u32(mask);
+#endif
   }
 
   template <int kTupleCount = kSize>
@@ -340,13 +352,15 @@ class Simd<int64_t, 4> {
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator*(Simd rhs) const {
-    // Fallback
-    // Requires AVX512 _mm256_mullo_epi64
+#if MOCHI_ARCH_X64_AVX512
+    return _mm256_mullo_epi64(raw, rhs.raw); // AVX512VL
+#else
     return Simd{
         Get<0>(*this) * Get<0>(rhs),
         Get<1>(*this) * Get<1>(rhs),
         Get<2>(*this) * Get<2>(rhs),
         Get<3>(*this) * Get<3>(rhs)};
+#endif
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator/(Simd rhs) const {
@@ -384,11 +398,14 @@ class Simd<int64_t, 4> {
     if constexpr (kShift == 0) {
       return a;
     } else {
-      // TODO: Use _mm256_srai_epi64 for AVX512.
+#if MOCHI_ARCH_X64_AVX512
+      return _mm256_srai_epi64(a.raw, kShift); // AVX512VL
+#else
       auto shifted = _mm256_srli_epi64(a.raw, kShift); // AVX2
       auto signMask = _mm256_cmpgt_epi64(_mm256_setzero_si256(), a.raw); // AVX2
       auto signFill = _mm256_slli_epi64(signMask, 64 - kShift); // AVX2
       return _mm256_or_si256(shifted, signFill); // AVX2
+#endif
     }
   }
 

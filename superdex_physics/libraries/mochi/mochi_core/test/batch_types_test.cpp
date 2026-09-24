@@ -35,8 +35,7 @@ void TestBatchTypesProperties() {
   using Vi = typename B::Int;
 
   static_assert(V::kSize >= kBatchSize, "Scalar register must fit kBatchSize lanes");
-  static_assert(
-      V::kSize % Simd<real>::kSize == 0, "Scalar width must be a multiple of native width");
+  static_assert(V::kIsSupported, "Scalar width must be supported");
   static_assert(Vd::kSize == V::kSize, "Double must have same lane count as Scalar");
   static_assert(Vi::kSize == V::kSize, "Int must have same lane count as Scalar");
 

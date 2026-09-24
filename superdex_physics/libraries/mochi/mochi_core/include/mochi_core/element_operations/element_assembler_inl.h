@@ -191,8 +191,7 @@ MOCHI_FORCE_INLINE void GatherBatchElementSolution(
             globalSol[indicesFlat[globalElemIndices[Min(1, kBatchSize - 1)] * kNumEleDofs + d]],
             globalSol[indicesFlat[globalElemIndices[Min(2, kBatchSize - 1)] * kNumEleDofs + d]],
             globalSol[indicesFlat[globalElemIndices[Min(3, kBatchSize - 1)] * kNumEleDofs + d]]};
-    } else {
-      static_assert(V::kSize == 8, "Unsupported SIMD size");
+    } else if constexpr (V::kSize == 8) {
       outBatchElemSol[d] =
           V{globalSol[indicesFlat[globalElemIndices[Min(0, kBatchSize - 1)] * kNumEleDofs + d]],
             globalSol[indicesFlat[globalElemIndices[Min(1, kBatchSize - 1)] * kNumEleDofs + d]],
@@ -202,6 +201,25 @@ MOCHI_FORCE_INLINE void GatherBatchElementSolution(
             globalSol[indicesFlat[globalElemIndices[Min(5, kBatchSize - 1)] * kNumEleDofs + d]],
             globalSol[indicesFlat[globalElemIndices[Min(6, kBatchSize - 1)] * kNumEleDofs + d]],
             globalSol[indicesFlat[globalElemIndices[Min(7, kBatchSize - 1)] * kNumEleDofs + d]]};
+    } else {
+      static_assert(V::kSize == 16, "Unsupported SIMD size");
+      outBatchElemSol[d] =
+          V{globalSol[indicesFlat[globalElemIndices[Min(0, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(1, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(2, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(3, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(4, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(5, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(6, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(7, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(8, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(9, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(10, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(11, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(12, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(13, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(14, kBatchSize - 1)] * kNumEleDofs + d]],
+            globalSol[indicesFlat[globalElemIndices[Min(15, kBatchSize - 1)] * kNumEleDofs + d]]};
     }
   }
 }

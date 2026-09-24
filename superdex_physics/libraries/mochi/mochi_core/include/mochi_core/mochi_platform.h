@@ -61,6 +61,7 @@
     - MOCHI_ARCH_ARM_SVE    Compiling for an ARM CPU with SVE (mandatory for ARMv9 or newer)
     - MOCHI_ARCH_ARM_SME    Compiling for an ARM CPU with SME (scalable matrix extension)
     - MOCHI_ARCH_X64        Compiling for an x64 CPU (64-bit x86, also called x86_64)
+    - MOCHI_ARCH_X64_AVX512 Compiling for an x64 CPU with AVX-512 F, CD, BW, DQ, and VL
     - MOCHI_ARCH_X64_AVX2   Compiling for an x64 CPU with AVX2 vector extension
     - MOCHI_ARCH_X64_FMA    Compiling for an x64 CPU with FMA (fused multiply add) extension
     - MOCHI_ARCH_X64_SVML   Compiling for an x64 CPU with SVML (small vector math library) extension
@@ -125,7 +126,15 @@
 #define MOCHI_ARCH_X64 0
 #endif
 
-#if MOCHI_ARCH_CPU && MOCHI_ARCH_X64 && (defined(__AVX2__) || MOCHI_UNREAL_ARCH_AVX2)
+#if MOCHI_ARCH_CPU && MOCHI_ARCH_X64 && defined(__AVX512F__) && defined(__AVX512CD__) && \
+    defined(__AVX512BW__) && defined(__AVX512DQ__) && defined(__AVX512VL__)
+#define MOCHI_ARCH_X64_AVX512 1
+#else
+#define MOCHI_ARCH_X64_AVX512 0
+#endif
+
+#if MOCHI_ARCH_CPU && MOCHI_ARCH_X64 && \
+    (MOCHI_ARCH_X64_AVX512 || defined(__AVX2__) || MOCHI_UNREAL_ARCH_AVX2)
 #define MOCHI_ARCH_X64_AVX2 1
 #else
 #define MOCHI_ARCH_X64_AVX2 0
@@ -450,7 +459,10 @@
   MOCHI_SIMD_REGISTER_COUNT       Number of floating-point SIMD registers.
   MOCHI_SIMD_REGISTER_SIZE_BYTES  Size (in bytes) of each floating-point SIMD register.
 */
-#if MOCHI_ARCH_X64_AVX2
+#if MOCHI_ARCH_X64_AVX512
+#define MOCHI_SIMD_REGISTER_COUNT 32
+#define MOCHI_SIMD_REGISTER_SIZE_BYTES 64
+#elif MOCHI_ARCH_X64_AVX2
 #define MOCHI_SIMD_REGISTER_COUNT 16
 #define MOCHI_SIMD_REGISTER_SIZE_BYTES 32
 #elif MOCHI_ARCH_ARM_NEON

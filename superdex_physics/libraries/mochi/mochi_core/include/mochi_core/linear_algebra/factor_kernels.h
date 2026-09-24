@@ -338,11 +338,11 @@ MOCHI_FORCE_INLINE Matrix<Scalar, kBlockSize, kBlockSize> FactorBlock(
     MatrixViewDynLD<Scalar, kBlockSize, kBlockSize, Direction::ColMajor> A,
     int& singularities,
     CheckFtor&& singularDetection = {}) {
-  // Use the native SIMD size, except if the block size is smaller and also SIMD-supported.
-  constexpr int kVecSize =
-      Simd<Scalar, kBlockSize>::kIsSupported && kBlockSize < Simd<Scalar>::kSize
+  // Use the native SIMD size unless the block requires a smaller supported divisor.
+  constexpr int kNativeVecSize = Simd<Scalar>::kSize;
+  constexpr int kVecSize = Simd<Scalar, kBlockSize>::kIsSupported && kBlockSize < kNativeVecSize
       ? kBlockSize
-      : Simd<Scalar>::kSize;
+      : (kBlockSize % kNativeVecSize == 0 ? kNativeVecSize : kNativeVecSize / 2);
   using VecT = Simd<Scalar, kVecSize>;
   static_assert(kBlockSize % kVecSize == 0, "Block size must be a multiple of SIMD size");
   static_assert(kVecSize % 2 == 0);
