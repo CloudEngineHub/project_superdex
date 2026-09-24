@@ -369,9 +369,9 @@ bool MochiModelAsset::ReloadFromDisk() {
     return false;
   }
   _modelData = std::move(reloaded);
-  // Physics shapes were baked from the previous model data; drop them so consumers re-bake from the
-  // reloaded data on their next GetShape.
-  ClearShapeCache();
+  // Physics shapes were baked from the previous model data; drop them everywhere they are cached so
+  // consumers re-bake from the reloaded data on their next physics load.
+  _manager->InvalidateShapeCachesForPath(_path);
   // Re-point the single render mesh (and every live instance -- open editors, staged bot scenes) at
   // the reloaded geometry.
   if (_renderModel) {

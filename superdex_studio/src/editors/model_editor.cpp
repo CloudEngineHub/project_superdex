@@ -683,6 +683,9 @@ void ModelEditor::PollSlotFileChanges() {
       assetManager.UnloadAssetByPath(path);
     }
     assetManager.LoadAsset(path);
+    // The freshly loaded asset has no cached shapes, but Mochi's context file cache and the
+    // ShapeHandles pinned on loaded prefabs still refer to the pre-change file.
+    assetManager.InvalidateShapeCachesForPath(path);
   };
   if (cadChanged) {
     reload(_cadModelPath);

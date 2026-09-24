@@ -414,26 +414,6 @@ int MochiPrefabEditor::GetUndoSelectionIndex() const {
 // Prefab Staging
 //------------------------------------------------------------------------------------------------
 
-// Forward declaration; defined below near the gizmo handlers. Clears an articulated actor's cached
-// link/skin shapes so they re-bake at the current scale on the next physics load.
-static void InvalidateArticulatedActorShapes(mochi::prefab::ArticulatedActorPrefab& actor);
-
-// Clear cached shape handles on all actors of a prefab so they re-bake from their shape files on
-// the next physics load. Nested prefab scale is baked into these shapes, and EnsureFullyLoaded
-// skips already-loaded shapes, so a copied-from-memory nested prefab (whose shapes may have been
-// baked in its own editor) must be cleared to pick up the parent reference's scale.
-static void ClearPrefabShapes(mochi::prefab::ScenePrefab& prefab) {
-  for (auto& actor : prefab.actors.rigid) {
-    actor.shape = {};
-  }
-  for (auto& actor : prefab.actors.soft) {
-    actor.shape = {};
-  }
-  for (auto& actor : prefab.actors.articulated) {
-    InvalidateArticulatedActorShapes(actor);
-  }
-}
-
 // Populate each nested prefab reference's loaded data, preferring the live in-memory prefab of a
 // loaded MochiPrefabAsset (so unsaved edits made in a nested prefab's own editor propagate here
 // without saving) and falling back to a fresh disk load otherwise. Recurses so deeper nested edits
@@ -459,7 +439,7 @@ static void ResolveNestedPrefabsFromMemory(
           mochi::prefab::ShallowLoadFromFile(fullPath, error));
     }
     // Clear cached shapes so the nested reference's scale re-bakes correctly on the next sim.
-    ClearPrefabShapes(*nested.prefab);
+    ClearCachedShapes(*nested.prefab);
     ResolveNestedPrefabsFromMemory(*nested.prefab, manager, rootPath);
   }
 }
