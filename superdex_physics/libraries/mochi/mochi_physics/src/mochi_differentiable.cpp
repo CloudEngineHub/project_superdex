@@ -277,11 +277,15 @@ static void KrylovSolveZ(
     GetHessianVectorProduct(reg, island, GradTarget::Current, problemForward, in, out);
   };
 
+  // Only the first solve has a new operator: the island preconditioner was last used with another
+  // matrix (e.g., by the forward solve), and later solves use the same approxHessian.
+  bool hasOperatorChanged = true;
+
   // Create callable preconditioner: solves hat(dres) * z = r using the inner linear solver
   auto precOp = [&](ColumnVectorView<real const> in, ColumnVectorView<real> out) {
     out.SetZero();
-    precLinearSolver.Solve(
-        approxHessian, in, out, /*hasOperatorChanged*/ false, InitialGuessHint::Zero);
+    precLinearSolver.Solve(approxHessian, in, out, hasOperatorChanged, InitialGuessHint::Zero);
+    hasOperatorChanged = false;
   };
 
   // Initialize solution
