@@ -188,6 +188,10 @@ struct AMGPrec : Preconditioner<Scalar> {
       ColumnVectorView<Scalar> Px,
       ParallelWorkerInfo const& data) const override;
 
+  /// @brief Return how many times each worker waits on @c data.barrier in one
+  /// @ref ConcurrentSolve call.
+  [[nodiscard]] int NumConcurrentSolveBarriers() const;
+
   constexpr PreconditionerType GetType() const override {
     return kType;
   }
@@ -695,6 +699,38 @@ void AMGPrec<Scalar, kDofsPerNode>::VCycle(
   } else {
     Smoothing<true>(_options.numPostSmoothingSteps, b, x, r, z, s, data);
   }
+}
+
+template <typename Scalar, int kDofsPerNode>
+int AMGPrec<Scalar, kDofsPerNode>::NumConcurrentSolveBarriers() const {
+  int const numPre = _options.numPreSmoothingSteps;
+  int const numPost = _options.numPostSmoothingSteps;
+  int numBarriers = 0;
+  if (numPre > 0) {
+    // The first pre-smoothing step waits once. Later steps also publish the previous x.
+    numBarriers += 2 * numPre - 1;
+  }
+  // Publish x before restriction, g/h before the coarse solve, and h before interpolation.
+  numBarriers += 3;
+  switch (_options.smoother) {
+    case Smoother::ApproximateJacobi:
+      // Publish the worker-0 transpose result.
+      ++numBarriers;
+      break;
+    case Smoother::BlockJacobi:
+      // Each post-smoothing step publishes x and then r.
+      numBarriers += 2 * numPost;
+      break;
+    case Smoother::SSOR: {
+      auto const& finestSmoother = std::get<1>(_relaxOps.front());
+      // Post-smoothing has the same outer x/r barriers as block Jacobi.
+      numBarriers += 2 * numPost;
+      // Every smoothing step also executes the finest-level colored SSOR barriers.
+      numBarriers += (numPre + numPost) * finestSmoother.NumConcurrentSolveBarriers();
+      break;
+    }
+  }
+  return numBarriers;
 }
 
 template <typename Scalar, int kDofsPerNode>

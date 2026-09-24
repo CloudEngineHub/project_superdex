@@ -382,9 +382,7 @@ TEST(ActorPreconditionerTest, AMGCompensatesMissingInteractionEntries) {
   ActorPseudoMatrix<real> pseudoMatrix{
       5, AsConstView(actor), {{5, 5, interaction, /*symmetricPair*/ std::nullopt}}};
 
-  krylov::AMGOptions<real> options{
-      .relaxationFactor = krylov::AMGPrec<real, 3>::kDefaultRelaxationFactor};
-  AMGActorPrec<real, 3> preconditioner(pseudoMatrix, options);
+  AMGActorPrec<real, 3> preconditioner(pseudoMatrix);
   auto expected = actorDense;
   expected(0, 0) += 2_r;
   expected(3, 3) += 2_r;

@@ -270,6 +270,31 @@ class AMG1Access : public krylov::AMGPrec<real, 1> {
   FRIEND_TEST(AMG1Test, Example1);
 };
 
+TEST(AMG, ConcurrentSolveBarriersReflectOptions) {
+  auto A = MakeWeightedTridiagonalBlockSparseMatrix(15, 0.5_r);
+  auto numBarriers = [&](krylov::AMGOptions<real> const& options) {
+    auto suppressWarnings = mochi::test::SuppressLogWarning();
+    return krylov::AMGPrec<real, 1>(A, options).NumConcurrentSolveBarriers();
+  };
+
+  krylov::AMGOptions<real> options;
+  EXPECT_EQ(6, numBarriers(options));
+
+  options.numPreSmoothingSteps = 0;
+  options.numPostSmoothingSteps = 0;
+  EXPECT_EQ(3, numBarriers(options));
+
+  options = {};
+  options.smoother = krylov::Smoother::ApproximateJacobi;
+  options.numPostSmoothingSteps = 7;
+  EXPECT_EQ(5, numBarriers(options));
+
+  options = {};
+  options.smoother = krylov::Smoother::SSOR;
+  krylov::ColoredSSORPrec<decltype(A)> finestSmoother(A);
+  EXPECT_EQ(6 + 2 * finestSmoother.NumConcurrentSolveBarriers(), numBarriers(options));
+}
+
 /// @brief Class to test the AMG preconditioner with 1D Laplace equation
 class AMG1Test : public testing::Test {
  protected:

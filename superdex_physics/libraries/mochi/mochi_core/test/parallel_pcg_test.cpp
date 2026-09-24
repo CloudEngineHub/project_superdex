@@ -16,7 +16,10 @@
 
 #include <mochi_core/linear_algebra/krylov/parallel_pcg.h>
 #include <mochi_core/linear_algebra/matrix.h>
+#include <mochi_core/linear_algebra/utils/matrix_conversions.h>
+#include <mochi_core/solvers/actor_preconditioner.h>
 #include <mochi_core/solvers/linear_solver.h>
+#include <mochi_core/solvers/per_actor_preconditioner.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/span.h>
@@ -328,14 +331,14 @@ TEST_P(ParallelPcgConvergenceTest, SolvesKnownSystem) {
   }
   auto const result = RunConfiguration(problem, GetParam());
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Converged, result.status.convergence);
   EXPECT_GT(result.status.numIterDone, 2);
   ColumnVector<real> const residual = problem.b - problem.A * result.x;
   real const relativeResidual = residual.Norm() / problem.b.Norm();
   EXPECT_LE(relativeResidual, 6_r * kRelativeTolerance);
   EXPECT_NEAR(
-      result.status.relativeResidualNorm,
       ExpectedRelativeResidualNorm(std::get<0>(GetParam()), problem, residual),
+      result.status.relativeResidualNorm,
       5_r * kRelativeTolerance);
   ExpectValidExecution(result, problem.A.Rows());
   if (result.prepareCalls != 0) {
@@ -370,8 +373,8 @@ TEST_F(ParallelPcgTest, KeepsConfiguredDotInstancesDistinct) {
       {},
       ScaledDot{1_r});
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
-  EXPECT_EQ(result.status.numIterDone, 1);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Converged, result.status.convergence);
+  EXPECT_EQ(1, result.status.numIterDone);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
   ExpectValidExecution(result, problem.A.Rows());
 }
@@ -385,8 +388,8 @@ TEST_F(ParallelPcgTest, ConvergesImmediatelyFromExactInitialGuess) {
       MakeCriterion<krylov::StatusPreconditionedResidualL2>(),
       {.initialGuessHint = InitialGuessHint::Unknown});
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
-  EXPECT_EQ(result.status.numIterDone, 0);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Converged, result.status.convergence);
+  EXPECT_EQ(0, result.status.numIterDone);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
   ExpectValidExecution(result, problem.A.Rows());
 }
@@ -399,8 +402,8 @@ TEST_F(ParallelPcgTest, ConvergesImmediatelyForZeroSystemWithPreconditionedResid
   auto const result =
       RunParallelPcg(problem, MakeCriterion<krylov::StatusPreconditionedResidualL2>());
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
-  EXPECT_EQ(result.status.numIterDone, 0);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Converged, result.status.convergence);
+  EXPECT_EQ(0, result.status.numIterDone);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
   ExpectValidExecution(result, problem.A.Rows());
   if (result.prepareCalls != 0) {
@@ -422,10 +425,10 @@ TEST_P(ParallelPcgNonSpdTest, HonorsAbortPolicy) {
       problem, MakeCriterion<krylov::StatusResidualL2>(), {.abortIfNotSpd = abortIfNotSpd});
 
   EXPECT_EQ(
-      result.status.convergence,
       abortIfNotSpd ? LinearSolverConvergenceStatus::Diverged
-                    : LinearSolverConvergenceStatus::Converged);
-  EXPECT_EQ(result.status.numIterDone, 1);
+                    : LinearSolverConvergenceStatus::Converged,
+      result.status.convergence);
+  EXPECT_EQ(1, result.status.numIterDone);
   EXPECT_TRUE(
       mochi::test::NearEqualMatrices(
           result.x, abortIfNotSpd ? problem.initialGuess : problem.expectedSolution));
@@ -449,10 +452,10 @@ TEST_F(ParallelPcgTest, ReportsSingularPreconditionerBreakdown) {
   ASSERT_GE(krylov::parallel_pcg::GetNumParallelWorkers(problem.A), 3);
   auto const result = RunParallelPcg(problem, MakeCriterion<krylov::StatusResidualL2>());
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Diverged);
-  EXPECT_EQ(result.status.numIterDone, 1);
-  EXPECT_NEAR(result.x[0], 1_r, kRelativeTolerance);
-  EXPECT_NEAR(result.x[1], 0_r, kRelativeTolerance);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Diverged, result.status.convergence);
+  EXPECT_EQ(1, result.status.numIterDone);
+  EXPECT_NEAR(1_r, result.x[0], kRelativeTolerance);
+  EXPECT_NEAR(0_r, result.x[1], kRelativeTolerance);
   ExpectValidExecution(result, problem.A.Rows());
 }
 
@@ -467,13 +470,13 @@ TEST_F(ParallelPcgTest, StopsAtIterationLimit) {
       {.maxIter = 1, .initialGuessHint = InitialGuessHint::Unknown},
       ScaledDot{1_r});
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Stopped);
-  EXPECT_EQ(result.status.numIterDone, 1);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Stopped, result.status.convergence);
+  EXPECT_EQ(1, result.status.numIterDone);
   EXPECT_FALSE(mochi::test::NearEqualMatrices(result.x, problem.initialGuess));
   auto const residual = problem.b - problem.A * result.x;
   EXPECT_NEAR(
-      result.status.relativeResidualNorm,
       ExpectedRelativeResidualNorm(CriterionKind::PreconditionedResidualL2, problem, residual),
+      result.status.relativeResidualNorm,
       kRelativeTolerance);
   EXPECT_EQ(criterion.GetLatestRelativeResidualNorm(), result.status.relativeResidualNorm);
   ExpectValidExecution(result, problem.A.Rows());
@@ -499,9 +502,75 @@ TEST(ParallelPcg, FallsBackWhenWorkIsInsufficient) {
   auto const result =
       RunParallelPcg(problem, MakeCriterion<krylov::StatusPreconditionedResidualL2>());
 
-  EXPECT_EQ(result.status.convergence, LinearSolverConvergenceStatus::Converged);
+  EXPECT_EQ(LinearSolverConvergenceStatus::Converged, result.status.convergence);
   EXPECT_TRUE(mochi::test::NearEqualMatrices(result.x, problem.expectedSolution));
-  EXPECT_EQ(result.serialSolveCalls, 2);
+  EXPECT_EQ(2, result.serialSolveCalls);
   EXPECT_EQ(0, result.prepareCalls);
-  EXPECT_EQ(result.concurrentSolveCalls, 0);
+  EXPECT_EQ(0, result.concurrentSolveCalls);
+}
+
+TEST_F(ParallelPcgTest, SolvesWithMixedModePerActorPreconditioner) {
+  constexpr int kBlockSize = 3;
+  // Wider than any of the three equal worker ranges, so the single-worker actor writes rows that
+  // other workers own.
+  constexpr int kSingleWorkerActorSize = 180;
+  constexpr int kActorSize = 120;
+  constexpr int kNumRows = kSingleWorkerActorSize + 2 * kActorSize;
+
+  Matrix<real> A = Matrix<real>::Zero(kNumRows, kNumRows);
+  auto makeActorMatrix = [&A](int offset, int size) {
+    auto actorMatrix = Matrix<real>::Zero(size, size);
+    for (int row = 0; row < size; ++row) {
+      actorMatrix(row, row) = 4_r + static_cast<real>(row % 5);
+      if (row + kBlockSize < size) {
+        actorMatrix(row, row + kBlockSize) = -1_r;
+        actorMatrix(row + kBlockSize, row) = -1_r;
+      }
+    }
+    for (int row = 0; row < size; ++row) {
+      for (int col = 0; col < size; ++col) {
+        A(offset + row, offset + col) = actorMatrix(row, col);
+      }
+    }
+    return ToBlockSparseMatrix<kBlockSize>(actorMatrix, true);
+  };
+  // Last, so no worker boundary splits the independent-row actor off its row blocks.
+  constexpr int kSynchronizedOffset = kSingleWorkerActorSize;
+  constexpr int kIndependentOffset = kSingleWorkerActorSize + kActorSize;
+  auto const singleWorkerMatrix = makeActorMatrix(0, kSingleWorkerActorSize);
+  auto const independentMatrix = makeActorMatrix(kIndependentOffset, kActorSize);
+  auto const synchronizedMatrix = makeActorMatrix(kSynchronizedOffset, kActorSize);
+  ILU0ActorPrec<real, kBlockSize> singleWorkerPrec{
+      {0, AnyMatrixView<real const>{AsConstView(singleWorkerMatrix)}, {}}};
+  BlockJacobiActorPrec<real, kBlockSize> independentPrec{
+      {kIndependentOffset, AnyMatrixView<real const>{AsConstView(independentMatrix)}, {}}};
+  AMGActorPrec<real, kBlockSize> synchronizedPrec{
+      {kSynchronizedOffset, AnyMatrixView<real const>{AsConstView(synchronizedMatrix)}, {}}};
+  ASSERT_EQ(
+      ActorPreconditionerParallelMode::SingleWorker,
+      singleWorkerPrec.GetConcurrentSolveRequirements().mode);
+  ASSERT_EQ(
+      ActorPreconditionerParallelMode::IndependentRows,
+      independentPrec.GetConcurrentSolveRequirements().mode);
+  ASSERT_EQ(
+      ActorPreconditionerParallelMode::SynchronizedTeam,
+      synchronizedPrec.GetConcurrentSolveRequirements().mode);
+  ASSERT_EQ(3, krylov::parallel_pcg::GetNumParallelWorkers(A));
+  PerActorPrec<real> prec({
+      {0, kSingleWorkerActorSize, singleWorkerPrec},
+      {kSynchronizedOffset, kActorSize, synchronizedPrec},
+      {kIndependentOffset, kActorSize, independentPrec},
+  });
+
+  ColumnVector<real> b(kNumRows);
+  b.SetRandom(24);
+  auto x = ColumnVector<real>::Zero(kNumRows);
+  auto xView = AsView(x);
+  auto criterion = MakeCriterion<krylov::StatusResidualL2>();
+  auto const status = krylov::ParallelPCG(
+      A, b, xView, details::PrecApplyer<real>{prec}, /*maxIter*/ 100, criterion);
+
+  EXPECT_EQ(LinearSolverConvergenceStatus::Converged, status.convergence);
+  ColumnVector<real> const residual = b - A * x;
+  EXPECT_LE(residual.Norm() / b.Norm(), 6_r * kRelativeTolerance);
 }

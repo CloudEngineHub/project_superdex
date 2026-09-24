@@ -15,7 +15,7 @@
  */
 
 #include <mochi_core/linear_algebra/utils/matrix_conversions.h>
-#include <mochi_core/solvers/island_operators.h>
+#include <mochi_core/solvers/per_actor_preconditioner.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
 
@@ -23,7 +23,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <future>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -31,16 +35,14 @@ using namespace mochi;
 
 namespace {
 
-struct ActorOrderLog {
-  std::mutex mutex;
-  DynamicArray<int> actorIds;
-};
+thread_local int gPhysicalWorkerId = -1;
 
 struct ConcurrentCall {
   int workerId;
   int numWorkers;
   int rowBegin;
   int rowEnd;
+  int physicalWorkerId;
 
   friend bool operator==(ConcurrentCall const&, ConcurrentCall const&) = default;
 };
@@ -52,22 +54,34 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
       int rowBlockSize,
       real scale,
       int barrierWaits = 0,
-      ActorOrderLog* orderLog = nullptr,
-      int actorId = 0)
+      std::optional<ActorPreconditionerCost> cost = std::nullopt)
       : _parallelism{mode, rowBlockSize},
+        _cost(cost.value_or(DefaultCost(mode))),
         _scale(scale),
-        _barrierWaits(barrierWaits),
-        _orderLog(orderLog),
-        _actorId(actorId) {}
+        _barrierWaits(barrierWaits) {
+    if (!cost.has_value()) {
+      _cost.numTeamBarriers = barrierWaits;
+    }
+  }
 
   [[nodiscard]] ActorPreconditionerParallelism GetConcurrentSolveRequirements() const override {
     return _parallelism;
   }
 
+  ActorPreconditionerCost GetConcurrentSolveCost() const override {
+    return _cost;
+  }
+
   void Solve(ColumnVectorView<real const> x, ColumnVectorView<real> Px) const override {
-    ++solveCalls;
+    {
+      std::lock_guard lock(_callsMutex);
+      _solvePhysicalWorkerIds.push_back(gPhysicalWorkerId);
+    }
     for (int row = 0; row < x.Rows(); ++row) {
       Px(row, 0) = _scale * x(row, 0);
+    }
+    if (auto* signal = _solveCompletionSignal.exchange(nullptr); signal != nullptr) {
+      signal->set_value();
     }
   }
 
@@ -77,11 +91,7 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
       ParallelWorkerInfo const& data) const override {
     {
       std::lock_guard lock(_callsMutex);
-      _calls.push_back({data.workerId, data.numWorkers, data.rBegin, data.rEnd});
-    }
-    if (_orderLog != nullptr && data.workerId == 0) {
-      std::lock_guard lock(_orderLog->mutex);
-      _orderLog->actorIds.push_back(_actorId);
+      _calls.push_back({data.workerId, data.numWorkers, data.rBegin, data.rEnd, gPhysicalWorkerId});
     }
     for (int wait = 0; wait < _barrierWaits; ++wait) {
       data.BarrierWait();
@@ -102,16 +112,37 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
     return _calls;
   }
 
-  mutable std::atomic<int> solveCalls{0};
+  DynamicArray<int> SolvePhysicalWorkerIds() const {
+    std::lock_guard lock(_callsMutex);
+    return _solvePhysicalWorkerIds;
+  }
+
+  void SignalAfterNextSolve(std::promise<void>& signal) const {
+    std::promise<void>* expected = nullptr;
+    [[maybe_unused]] bool const installed =
+        _solveCompletionSignal.compare_exchange_strong(expected, &signal);
+    MOCHI_ASSERT(installed, "A solve completion signal is already armed.");
+  }
 
  private:
+  static ActorPreconditionerCost DefaultCost(ActorPreconditionerParallelMode mode) {
+    if (mode == ActorPreconditionerParallelMode::SingleWorker) {
+      return {.fixedCost = 100000.0, .parallelCost = 0.0, .maxUsefulWorkers = 1};
+    }
+    if (mode == ActorPreconditionerParallelMode::IndependentRows) {
+      return {.fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 64};
+    }
+    return {.fixedCost = 25000.0, .parallelCost = 100000.0, .maxUsefulWorkers = 64};
+  }
+
   ActorPreconditionerParallelism _parallelism;
+  ActorPreconditionerCost _cost;
   real _scale;
   int _barrierWaits;
-  ActorOrderLog* _orderLog;
-  int _actorId;
+  mutable std::atomic<std::promise<void>*> _solveCompletionSignal = nullptr;
   mutable std::mutex _callsMutex;
   mutable DynamicArray<ConcurrentCall> _calls;
+  mutable DynamicArray<int> _solvePhysicalWorkerIds;
 };
 
 } // namespace
@@ -121,7 +152,11 @@ static void RunWithExactWorkers(int numWorkers, Fn const& fn) {
   DynamicArray<std::thread> threads;
   threads.reserve(numWorkers);
   for (int workerId = 0; workerId < numWorkers; ++workerId) {
-    threads.emplace_back([&fn, workerId] { fn(workerId); });
+    threads.emplace_back([&fn, workerId] {
+      gPhysicalWorkerId = workerId;
+      fn(workerId);
+      gPhysicalWorkerId = -1;
+    });
   }
   for (auto& thread : threads) {
     thread.join();
@@ -155,6 +190,28 @@ static void RunConcurrentSolve(
   });
 }
 
+static std::future<void> StartConcurrentSolveWorker(
+    PerActorPrec<real> const& prec,
+    ColumnVector<real> const& x,
+    ColumnVector<real>& Px,
+    DynamicArray<int> const& workerRowRanges,
+    ParallelBarrier const& barrier,
+    int workerId) {
+  auto workerBarrier = barrier;
+  return std::async(std::launch::async, [&, workerBarrier, workerId] {
+    gPhysicalWorkerId = workerId;
+    prec.ConcurrentSolve(
+        x,
+        Px,
+        {workerId,
+         static_cast<int>(workerRowRanges.size()) - 1,
+         workerRowRanges[workerId],
+         workerRowRanges[workerId + 1],
+         workerBarrier});
+    gPhysicalWorkerId = -1;
+  });
+}
+
 static DynamicArray<ConcurrentCall> SortedCalls(RecordingActorPreconditioner const& prec) {
   auto calls = prec.Calls();
   std::sort(calls.begin(), calls.end(), [](auto const& lhs, auto const& rhs) {
@@ -163,87 +220,241 @@ static DynamicArray<ConcurrentCall> SortedCalls(RecordingActorPreconditioner con
   return calls;
 }
 
-TEST(PerActorPreconditioner, IndependentRowsPreserveAlignedMatVecRangesAcrossActors) {
-  RecordingActorPreconditioner actor0(ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
-  RecordingActorPreconditioner actor1(ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
-  PerActorPrec<real> prec({
-      {0, 6, actor0},
-      {6, 6, actor1},
-  });
-  ColumnVector<real> x(12), Px(12);
+static DynamicArray<int> SortedUniquePhysicalWorkerIds(DynamicArray<ConcurrentCall> const& calls) {
+  DynamicArray<int> result;
+  result.reserve(calls.size());
+  for (auto const& call : calls) {
+    result.push_back(call.physicalWorkerId);
+  }
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
+static void ExpectCost(
+    ActorPreconditionerCost const& actual,
+    ActorPreconditionerCost const& expected) {
+  EXPECT_DOUBLE_EQ(expected.fixedCost, actual.fixedCost);
+  EXPECT_DOUBLE_EQ(expected.parallelCost, actual.parallelCost);
+  EXPECT_EQ(expected.maxUsefulWorkers, actual.maxUsefulWorkers);
+  EXPECT_EQ(expected.numTeamBarriers, actual.numTeamBarriers);
+}
+
+TEST(PerActorPreconditioner, ReuseMatVecRangesCoverRowsWithoutFinalSynchronization) {
+  ActorPreconditionerCost const suffixCost{
+      .fixedCost = 0.0, .parallelCost = 1000.0, .maxUsefulWorkers = 1};
+  RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
+  RecordingActorPreconditioner suffix(
+      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r, 0, suffixCost);
+  PerActorPrec<real> prec({{0, 12, actor}, {12, 2, suffix}});
+  ColumnVector<real> x(14), Px(14);
   x.SetRandom(11);
   Px.SetZero();
+  DynamicArray<int> const workerRowRanges{0, 0, 4, 8, 14};
+  prec.PrepareConcurrentSolve(MakeConstSpan(workerRowRanges));
+  ParallelBarrier barrier(4);
 
-  RunConcurrentSolve(prec, x, Px, {0, 0, 4, 8, 12});
+  // An owner can finish before an empty worker starts because every write is local.
+  StartConcurrentSolveWorker(prec, x, Px, workerRowRanges, barrier, 1).get();
+  auto worker0 = StartConcurrentSolveWorker(prec, x, Px, workerRowRanges, barrier, 0);
+  auto worker2 = StartConcurrentSolveWorker(prec, x, Px, workerRowRanges, barrier, 2);
+  auto worker3 = StartConcurrentSolveWorker(prec, x, Px, workerRowRanges, barrier, 3);
+  worker0.get();
+  worker2.get();
+  worker3.get();
 
-  EXPECT_EQ((DynamicArray<ConcurrentCall>{{1, 4, 0, 4}, {2, 4, 4, 6}}), SortedCalls(actor0));
-  EXPECT_EQ((DynamicArray<ConcurrentCall>{{2, 4, 0, 2}, {3, 4, 2, 6}}), SortedCalls(actor1));
+  auto const calls = SortedCalls(actor);
+  EXPECT_EQ(
+      (DynamicArray<ConcurrentCall>{{1, 4, 0, 4, 1}, {2, 4, 4, 8, 2}, {3, 4, 8, 12, 3}}), calls);
+  EXPECT_EQ((DynamicArray<ConcurrentCall>{{3, 4, 0, 2, 3}}), SortedCalls(suffix));
   ColumnVector<real> const expected = 2_r * x;
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
-  EXPECT_EQ(0, actor0.solveCalls);
-  EXPECT_EQ(0, actor1.solveCalls);
+  EXPECT_TRUE(actor.SolvePhysicalWorkerIds().empty());
+  EXPECT_TRUE(suffix.SolvePhysicalWorkerIds().empty());
 }
 
-TEST(PerActorPreconditioner, IndependentRowsPreserveRowRangeLocality) {
-  RecordingActorPreconditioner prefix(ActorPreconditionerParallelMode::IndependentRows, 1, 1_r);
-  RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
-  PerActorPrec<real> prec({
-      {0, 3, prefix},
-      {3, 12, actor},
-  });
-  ColumnVector<real> x(15), Px(15), expected(15);
-  x.SetRandom(18);
+TEST(PerActorPreconditioner, ReuseMatVecRangesWinsCostTie) {
+  // Four times the two-worker barrier cost makes a 1:3 ownership split tie Broad's balanced
+  // 2:2 split plus its final barrier.
+  ActorPreconditionerCost const cost{
+      .fixedCost = 0.0, .parallelCost = 15280.0, .maxUsefulWorkers = 2};
+  RecordingActorPreconditioner actor(
+      ActorPreconditionerParallelMode::IndependentRows, 1, 2_r, 0, cost);
+  PerActorPrec<real> prec({{0, 4, actor}});
+  ColumnVector<real> x(4), Px(4);
+  x.SetRandom(25);
   Px.SetZero();
-  expected.TopRows(3) = x.TopRows(3);
-  expected.BottomRows(12) = 2_r * x.BottomRows(12);
 
-  RunConcurrentSolve(prec, x, Px, {0, 3, 3, 8, 11, 15});
+  RunConcurrentSolve(prec, x, Px, {0, 1, 4});
 
-  EXPECT_EQ((DynamicArray<ConcurrentCall>{{0, 5, 0, 3}}), prefix.Calls());
-  EXPECT_EQ(
-      (DynamicArray<ConcurrentCall>{{2, 5, 0, 4}, {3, 5, 4, 8}, {4, 5, 8, 12}}),
-      SortedCalls(actor));
+  EXPECT_EQ((DynamicArray<ConcurrentCall>{{0, 2, 0, 1, 0}, {1, 2, 1, 4, 1}}), SortedCalls(actor));
+  ColumnVector<real> const expected = 2_r * x;
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 }
 
-TEST(PerActorPreconditioner, IndependentRowsDoNotScheduleEmptyRanges) {
-  RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::IndependentRows, 3, 2_r);
-  PerActorPrec<real> prec({ActorPrecApplyer<real>{0, 9, actor}});
-  ColumnVector<real> x(9), Px(9), expected(9);
-  x.SetRandom(19);
+TEST(PerActorPreconditioner, BroadWinsWhenReuseMatVecRangesIsSlower) {
+  // Just above the tie cost, Broad's balanced 2:2 split plus its final barrier beats the 1:3
+  // ownership split.
+  ActorPreconditionerCost const cost{
+      .fixedCost = 0.0, .parallelCost = 16000.0, .maxUsefulWorkers = 2};
+  RecordingActorPreconditioner actor(
+      ActorPreconditionerParallelMode::IndependentRows, 1, 2_r, 0, cost);
+  PerActorPrec<real> prec({{0, 4, actor}});
+  ColumnVector<real> x(4), Px(4);
+  x.SetRandom(27);
   Px.SetZero();
-  expected = 2_r * x;
 
-  RunConcurrentSolve(prec, x, Px, {0, 4, 4, 9});
+  RunConcurrentSolve(prec, x, Px, {0, 1, 4});
 
-  EXPECT_EQ((DynamicArray<ConcurrentCall>{{0, 3, 0, 3}, {2, 3, 3, 9}}), SortedCalls(actor));
+  EXPECT_EQ((DynamicArray<ConcurrentCall>{{0, 2, 0, 2, 0}, {1, 2, 2, 4, 1}}), SortedCalls(actor));
+  ColumnVector<real> const expected = 2_r * x;
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+}
+
+TEST(PerActorPreconditioner, IndependentRowsHonorsMaxUsefulWorkers) {
+  ActorPreconditionerCost const cost{
+      .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 2};
+  RecordingActorPreconditioner actor(
+      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r, 0, cost);
+  PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 8, actor}});
+  ColumnVector<real> x(8), Px(8);
+  x.SetRandom(23);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 2, 4, 6, 8});
+
+  EXPECT_EQ((DynamicArray<ConcurrentCall>{{1, 4, 0, 4, 1}, {2, 4, 4, 8, 2}}), SortedCalls(actor));
+  ColumnVector<real> const expected = 2_r * x;
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+}
+
+TEST(PerActorPreconditioner, IndependentRowsAvoidsAlreadyLoadedWorker) {
+  ActorPreconditionerCost const singleCost{
+      .fixedCost = 100.0, .parallelCost = 0.0, .maxUsefulWorkers = 1};
+  ActorPreconditionerCost const independentCost{
+      .fixedCost = 0.0, .parallelCost = 50.0, .maxUsefulWorkers = 2};
+  RecordingActorPreconditioner single(
+      ActorPreconditionerParallelMode::SingleWorker, 0, 2_r, 0, singleCost);
+  RecordingActorPreconditioner independent(
+      ActorPreconditionerParallelMode::IndependentRows, 1, 3_r, 0, independentCost);
+  PerActorPrec<real> prec({{0, 2, single}, {2, 2, independent}});
+  ColumnVector<real> x(4), Px(4), expected(4);
+  x.SetRandom(12);
+  Px.SetZero();
+  expected.TopRows(2) = 2_r * x.TopRows(2);
+  expected.BottomRows(2) = 3_r * x.BottomRows(2);
+
+  RunConcurrentSolve(prec, x, Px, {0, 2, 4});
+
+  EXPECT_EQ((DynamicArray<int>{0}), single.SolvePhysicalWorkerIds());
+  EXPECT_EQ((DynamicArray<ConcurrentCall>{{1, 2, 0, 2, 1}}), independent.Calls());
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 }
 
 TEST(PerActorPreconditioner, IndependentRowsPlanningDoesNotScaleWithRowCount) {
   // A per-row or per-block planning loop would make this input impractical.
-  int constexpr kNumRows = 2147483646;
+  int constexpr kNumRows = std::numeric_limits<int>::max() - 1;
+  int constexpr kNumBlocks = kNumRows / 6;
   RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::IndependentRows, 6, 1_r);
-  PerActorPrec<real> prec({ActorPrecApplyer<real>{0, kNumRows, actor}});
-  DynamicArray<int> const workerRowRanges{0, 536870911, 1073741823, 1610612734, kNumRows};
+  PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, kNumRows, actor}});
+  DynamicArray<int> const workerRowRanges{
+      0, 6 * (kNumBlocks / 4), 6 * (kNumBlocks / 2), 6 * ((3 * kNumBlocks) / 4), kNumRows};
 
   prec.PrepareConcurrentSolve(MakeConstSpan(workerRowRanges));
 
   EXPECT_TRUE(actor.Calls().empty());
 }
 
-TEST(PerActorPreconditioner, SingleWorkerCallsOneWholeSolve) {
+TEST(PerActorPreconditioner, OneWorkerHandlesEveryExecutionMode) {
+  RecordingActorPreconditioner independent(
+      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
+  RecordingActorPreconditioner single(ActorPreconditionerParallelMode::SingleWorker, 1, 3_r);
+  RecordingActorPreconditioner synchronized(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 4_r, 2);
+  PerActorPrec<real> prec({
+      {0, 4, independent},
+      {4, 2, single},
+      {6, 4, synchronized},
+  });
+  ColumnVector<real> x(10), Px(10), expected(10);
+  x.SetRandom(24);
+  Px.SetZero();
+  expected.TopRows(4) = 2_r * x.TopRows(4);
+  expected.MiddleRows(4, 2) = 3_r * x.MiddleRows(4, 2);
+  expected.BottomRows(4) = 4_r * x.BottomRows(4);
+
+  RunConcurrentSolve(prec, x, Px, {0, 10});
+
+  EXPECT_EQ(1, independent.Calls().size());
+  EXPECT_EQ(1, single.SolvePhysicalWorkerIds().size());
+  auto const synchronizedCalls = synchronized.Calls();
+  ASSERT_EQ(1, synchronizedCalls.size());
+  EXPECT_EQ(1, synchronizedCalls.front().numWorkers);
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+}
+
+TEST(PerActorPreconditioner, SingleWorkerUsesLocalityToBreakLoadTies) {
   RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::SingleWorker, 0, 3_r);
-  PerActorPrec<real> prec({ActorPrecApplyer<real>{0, 6, actor}});
-  ColumnVector<real> x(6), Px(6);
-  x.SetRandom(12);
+  PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 10, actor}});
+  ColumnVector<real> x(10), Px(10);
+  x.SetRandom(21);
   Px.SetZero();
 
-  RunConcurrentSolve(prec, x, Px, {0, 2, 4, 6});
+  RunConcurrentSolve(prec, x, Px, {0, 2, 8, 10});
 
-  EXPECT_EQ(1, actor.solveCalls);
-  EXPECT_TRUE(actor.Calls().empty());
+  EXPECT_EQ((DynamicArray<int>{1}), actor.SolvePhysicalWorkerIds());
   ColumnVector<real> const expected = 3_r * x;
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+}
+
+TEST(PerActorPreconditioner, SingleWorkerPrefersMidpointOwnerForUnevenRanges) {
+  ActorPreconditionerCost const cheapCost{
+      .fixedCost = 1.0, .parallelCost = 0.0, .maxUsefulWorkers = 1};
+  ActorPreconditionerCost const targetCost{
+      .fixedCost = 100.0, .parallelCost = 0.0, .maxUsefulWorkers = 1};
+  RecordingActorPreconditioner prefix(
+      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, 0, cheapCost);
+  RecordingActorPreconditioner target(
+      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, 0, targetCost);
+  RecordingActorPreconditioner suffix(
+      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, 0, cheapCost);
+  PerActorPrec<real> prec({
+      {0, 9, prefix},
+      {9, 1, target},
+      {10, 1, suffix},
+  });
+  ColumnVector<real> x(11), Px(11);
+  x.SetRandom(22);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 9, 11});
+
+  EXPECT_EQ((DynamicArray<int>{1}), target.SolvePhysicalWorkerIds());
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, x, real{0}));
+}
+
+TEST(PerActorPreconditioner, NonlocalWritesCompleteBeforeWorkersReturn) {
+  RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::SingleWorker, 1, 2_r);
+  PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 4, actor}});
+  ColumnVector<real> x(4), Px(4);
+  x.SetRandom(26);
+  Px.SetZero();
+  ColumnVector<real> const expected = 2_r * x;
+  DynamicArray<int> const workerRowRanges{0, 1, 4};
+  prec.PrepareConcurrentSolve(MakeConstSpan(workerRowRanges));
+  ParallelBarrier barrier(2);
+
+  // Wait until worker 1 completes the nonlocal solve, then verify the wrapper still blocks it.
+  std::promise<void> firstSolveCompletedPromise;
+  auto firstSolveCompleted = firstSolveCompletedPromise.get_future();
+  actor.SignalAfterNextSolve(firstSolveCompletedPromise);
+  auto firstWorker = StartConcurrentSolveWorker(prec, x, Px, workerRowRanges, barrier, 1);
+  firstSolveCompleted.wait();
+  EXPECT_EQ(std::future_status::timeout, firstWorker.wait_for(std::chrono::seconds{0}));
+  auto secondWorker = StartConcurrentSolveWorker(prec, x, Px, workerRowRanges, barrier, 0);
+  firstWorker.get();
+  secondWorker.get();
+
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 }
 
@@ -253,20 +464,12 @@ TEST(PerActorPreconditioner, SynchronizedTeamUsesDenseIdsAndReusableBarrier) {
       2,
       4_r,
       /*barrierWaits*/ 2);
-  RecordingActorPreconditioner singleWorkerTeam(
-      ActorPreconditionerParallelMode::SynchronizedTeam,
-      2,
-      5_r,
-      /*barrierWaits*/ 2);
-  PerActorPrec<real> prec({
-      {0, 10, actor},
-      {10, 2, singleWorkerTeam},
-  });
-  ColumnVector<real> x(12), Px(12), expected(12);
+  PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 10, actor}});
+  ColumnVector<real> x(10), Px(10);
   x.SetRandom(13);
   Px.SetZero();
 
-  RunConcurrentSolve(prec, x, Px, {0, 4, 12}, /*repetitions*/ 8);
+  RunConcurrentSolve(prec, x, Px, {0, 5, 10}, /*repetitions*/ 8);
 
   auto const calls = actor.Calls();
   ASSERT_FALSE(calls.empty());
@@ -297,24 +500,23 @@ TEST(PerActorPreconditioner, SynchronizedTeamUsesDenseIdsAndReusableBarrier) {
       EXPECT_EQ(laneCalls[i - 1].rowEnd, laneCalls[i].rowBegin);
     }
   }
-  auto const singleWorkerCalls = singleWorkerTeam.Calls();
-  EXPECT_EQ(8, singleWorkerCalls.size());
-  for (auto const& call : singleWorkerCalls) {
-    EXPECT_EQ((ConcurrentCall{0, 1, 0, 2}), call);
-  }
-  expected.TopRows(10) = 4_r * x.TopRows(10);
-  expected.BottomRows(2) = 5_r * x.BottomRows(2);
+  ColumnVector<real> const expected = 4_r * x;
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 }
 
 TEST(PerActorPreconditioner, OverlappingSynchronizedTeamsCompleteWithoutDeadlock) {
-  ActorOrderLog orderLog;
+  ActorPreconditionerCost const actor0Cost{
+      .fixedCost = 40000.0, .parallelCost = 80000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
+  ActorPreconditionerCost const actor1Cost{
+      .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
+  ActorPreconditionerCost const actor2Cost{
+      .fixedCost = 0.0, .parallelCost = 160000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
   RecordingActorPreconditioner actor0(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 2_r, 2, &orderLog, 0);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 2_r, 2, actor0Cost);
   RecordingActorPreconditioner actor1(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 3_r, 2, &orderLog, 1);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 3_r, 2, actor1Cost);
   RecordingActorPreconditioner actor2(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 4_r, 2, &orderLog, 2);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 4_r, 2, actor2Cost);
   PerActorPrec<real> prec({
       {0, 4, actor0},
       {4, 4, actor1},
@@ -329,12 +531,15 @@ TEST(PerActorPreconditioner, OverlappingSynchronizedTeamsCompleteWithoutDeadlock
 
   RunConcurrentSolve(prec, x, Px, {0, 3, 6, 9, 12}, /*repetitions*/ 8);
 
-  EXPECT_EQ(16, actor0.Calls().size());
-  EXPECT_EQ(16, actor1.Calls().size());
-  EXPECT_EQ(16, actor2.Calls().size());
-  DynamicArray<int> const expectedOrder{0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2,
-                                        0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2};
-  EXPECT_EQ(expectedOrder, orderLog.actorIds);
+  auto const calls0 = actor0.Calls();
+  auto const calls1 = actor1.Calls();
+  auto const calls2 = actor2.Calls();
+  EXPECT_EQ(16, calls0.size());
+  EXPECT_EQ(16, calls1.size());
+  EXPECT_EQ(16, calls2.size());
+  EXPECT_EQ((DynamicArray<int>{0, 1}), SortedUniquePhysicalWorkerIds(calls0));
+  EXPECT_EQ((DynamicArray<int>{1, 2}), SortedUniquePhysicalWorkerIds(calls1));
+  EXPECT_EQ((DynamicArray<int>{2, 3}), SortedUniquePhysicalWorkerIds(calls2));
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 }
 
@@ -358,36 +563,140 @@ TEST(PerActorPreconditioner, MixedModesMatchSerialSolve) {
   RunConcurrentSolve(prec, x, parallelResult, {0, 3, 6, 9, 12});
 
   EXPECT_TRUE(mochi::test::NearEqualMatrices(parallelResult, serialResult, real{0}));
-  EXPECT_EQ(2, single.solveCalls);
+  EXPECT_EQ(2, single.SolvePhysicalWorkerIds().size());
   EXPECT_FALSE(independent.Calls().empty());
   EXPECT_FALSE(synchronized.Calls().empty());
 }
 
 TEST(PerActorPreconditioner, RepreparesForDifferentWorkerCount) {
-  RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
-  PerActorPrec<real> prec({ActorPrecApplyer<real>{0, 8, actor}});
-  ColumnVector<real> x(8), Px(8);
+  ActorPreconditionerCost const cost{
+      .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4, .numTeamBarriers = 2};
+  RecordingActorPreconditioner actor(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, 2, cost);
+  PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 12, actor}});
+  ColumnVector<real> x(12), Px(12);
   x.SetRandom(16);
   ColumnVector<real> const expected = 2_r * x;
 
   Px.SetZero();
-  RunConcurrentSolve(prec, x, Px, {0, 4, 8});
+  RunConcurrentSolve(prec, x, Px, {0, 6, 12});
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 
   Px.SetZero();
-  RunConcurrentSolve(prec, x, Px, {0, 0, 4, 8});
+  RunConcurrentSolve(prec, x, Px, {0, 0, 4, 8, 12});
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
 
   auto const calls = actor.Calls();
-  EXPECT_TRUE(std::any_of(calls.begin(), calls.end(), [](ConcurrentCall const& call) {
-    return call.numWorkers == 2;
-  }));
-  EXPECT_TRUE(std::any_of(calls.begin(), calls.end(), [](ConcurrentCall const& call) {
-    return call.numWorkers == 3;
-  }));
+  ASSERT_EQ(6, calls.size());
+  EXPECT_EQ(2, std::count_if(calls.begin(), calls.end(), [](auto const& call) {
+              return call.numWorkers == 2;
+            }));
+  EXPECT_EQ(4, std::count_if(calls.begin(), calls.end(), [](auto const& call) {
+              return call.numWorkers == 4;
+            }));
 }
 
-TEST(PerActorPreconditioner, BuiltInPreconditionersMatchSerialExecution) {
+TEST(PerActorPreconditioner, EqualSynchronizedActorsUseSingleWorkerTeams) {
+  ActorPreconditionerCost const cost{
+      .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4};
+  RecordingActorPreconditioner actor0(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor1(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor2(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor3(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  PerActorPrec<real> prec({
+      {0, 4, actor0},
+      {4, 4, actor1},
+      {8, 4, actor2},
+      {12, 4, actor3},
+  });
+  ColumnVector<real> x(16), Px(16);
+  x.SetRandom(18);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 4, 8, 12, 16});
+
+  DynamicArray<int> physicalWorkers;
+  for (auto const* actor : {&actor0, &actor1, &actor2, &actor3}) {
+    auto const calls = actor->Calls();
+    ASSERT_EQ(1, calls.size());
+    EXPECT_EQ(0, calls.front().workerId);
+    EXPECT_EQ(1, calls.front().numWorkers);
+    physicalWorkers.push_back(calls.front().physicalWorkerId);
+  }
+  std::sort(physicalWorkers.begin(), physicalWorkers.end());
+  EXPECT_EQ((DynamicArray<int>{0, 1, 2, 3}), physicalWorkers);
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, x, real{0}));
+}
+
+TEST(PerActorPreconditioner, IdleWorkersJoinRemainingSynchronizedActor) {
+  ActorPreconditionerCost const cost{
+      .fixedCost = 25000.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4};
+  RecordingActorPreconditioner actor0(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor1(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor2(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor3(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  RecordingActorPreconditioner actor4(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+  PerActorPrec<real> prec({
+      {0, 4, actor0},
+      {4, 4, actor1},
+      {8, 4, actor2},
+      {12, 4, actor3},
+      {16, 4, actor4},
+  });
+  ColumnVector<real> x(20), Px(20);
+  x.SetRandom(19);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 5, 10, 15, 20});
+
+  for (auto const* actor : {&actor0, &actor1, &actor2, &actor3}) {
+    auto const calls = actor->Calls();
+    ASSERT_EQ(1, calls.size());
+    EXPECT_EQ(1, calls.front().numWorkers);
+  }
+  auto const finalCalls = actor4.Calls();
+  EXPECT_EQ(4, finalCalls.size());
+  for (auto const& call : finalCalls) {
+    EXPECT_EQ(4, call.numWorkers);
+  }
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, x, real{0}));
+}
+
+TEST(PerActorPreconditioner, SynchronizedBarrierCostLimitsTeamWidth) {
+  auto selectedWidth = [](int numTeamBarriers) {
+    ActorPreconditionerCost const cost{
+        .fixedCost = 0.0,
+        .parallelCost = 100000.0,
+        .maxUsefulWorkers = 4,
+        .numTeamBarriers = numTeamBarriers};
+    RecordingActorPreconditioner actor(
+        ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, numTeamBarriers, cost);
+    PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 4, actor}});
+    ColumnVector<real> x(4), Px(4);
+    x.SetRandom(27);
+    Px.SetZero();
+
+    RunConcurrentSolve(prec, x, Px, {0, 1, 2, 3, 4});
+
+    ColumnVector<real> const expected = 2_r * x;
+    EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+    return actor.Calls().size();
+  };
+
+  EXPECT_EQ(4, selectedWidth(0));
+  EXPECT_EQ(1, selectedWidth(100));
+}
+
+TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSerialExecution) {
   int constexpr kBlockSize = 3;
   int constexpr kActorSize = 2 * kBlockSize;
 
@@ -401,13 +710,14 @@ TEST(PerActorPreconditioner, BuiltInPreconditionersMatchSerialExecution) {
   auto actorMatrix = ToBlockSparseMatrix<kBlockSize>(denseActorMatrix, true);
   AnyMatrixView<real const> const actorMatrixView{AsConstView(actorMatrix)};
 
-  // ILU0 uses one worker. Colored SSOR and AMG use synchronized teams.
-  ActorPseudoMatrix<real> const ilu0Matrix{0, actorMatrixView, {}};
-  ActorPseudoMatrix<real> const coloredSSORMatrix{kActorSize, actorMatrixView, {}};
-  ActorPseudoMatrix<real> const amgMatrix{2 * kActorSize, actorMatrixView, {}};
-  ILU0ActorPrec<real, kBlockSize> ilu0Prec{ilu0Matrix};
-  ColoredSSORActorPrec<real, kBlockSize> coloredSSORPrec{coloredSSORMatrix};
-  AMGActorPrec<real, kBlockSize> amgPrec{amgMatrix};
+  ActorPseudoMatrix<real> const firstActorMatrix{0, actorMatrixView, {}};
+  ActorPseudoMatrix<real> const secondActorMatrix{kActorSize, actorMatrixView, {}};
+  ActorPseudoMatrix<real> const thirdActorMatrix{2 * kActorSize, actorMatrixView, {}};
+  BlockJacobiActorPrec<real, kBlockSize> blockJacobiPrec{firstActorMatrix};
+  SymInverseActorPrec<real> symInversePrec{firstActorMatrix};
+  AMGActorPrec<real, kBlockSize> amgPrec{thirdActorMatrix};
+  ILU0ActorPrec<real, kBlockSize> ilu0Prec{firstActorMatrix};
+  ColoredSSORActorPrec<real, kBlockSize> coloredSSORPrec{secondActorMatrix};
 
   ASSERT_EQ(
       ActorPreconditionerParallelMode::SingleWorker,
@@ -420,7 +730,14 @@ TEST(PerActorPreconditioner, BuiltInPreconditionersMatchSerialExecution) {
       ActorPreconditionerParallelMode::SynchronizedTeam,
       amgPrec.GetConcurrentSolveRequirements().mode);
   ASSERT_EQ(kBlockSize, amgPrec.GetConcurrentSolveRequirements().rowBlockSize);
+  ExpectCost(blockJacobiPrec.GetConcurrentSolveCost(), {0.0, 36.0, 2, 0});
+  ExpectCost(symInversePrec.GetConcurrentSolveCost(), {0.0, 66.0, 6, 0});
+  ExpectCost(amgPrec.GetConcurrentSolveCost(), {14.4, 201.6, 2, 6});
+  ExpectCost(ilu0Prec.GetConcurrentSolveCost(), {78.0, 0.0, 1, 0});
+  ExpectCost(coloredSSORPrec.GetConcurrentSolveCost(), {84.0, 0.0, 1, 6});
+  EXPECT_EQ(2, coloredSSORPrec.prec->NumColors());
 
+  // ILU0 covers SingleWorker; colored SSOR and AMG cover SynchronizedTeam.
   PerActorPrec<real> prec({
       {0, kActorSize, ilu0Prec},
       {kActorSize, kActorSize, coloredSSORPrec},

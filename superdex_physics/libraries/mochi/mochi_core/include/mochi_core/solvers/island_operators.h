@@ -23,9 +23,8 @@
 #include <mochi_core/mochi_platform.h>
 #include <mochi_core/solvers/actor_preconditioner.h>
 #include <mochi_core/solvers/interaction_matrix_info.h>
-#include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/solvers/per_actor_preconditioner.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -37,299 +36,6 @@
 #include <vector>
 
 namespace mochi {
-
-// Forward declaration.
-template <typename T>
-struct IslandOperators;
-
-template <typename T>
-struct ActorPrecApplyer {
-  int offset;
-  int size;
-  std::reference_wrapper<ActorPreconditioner<T>> prec;
-
-  void Solve(ColumnVectorView<T const> x, ColumnVectorView<T> y) const {
-    prec.get().Solve(x.MiddleRows(offset, size), y.MiddleRows(offset, size));
-  }
-
-  void ConcurrentSolve(
-      ColumnVectorView<T const> x,
-      ColumnVectorView<T> Px,
-      ParallelWorkerInfo const& data) const {
-    MOCHI_ASSERT_VERBOSE(
-        data.rBegin >= 0 && data.rBegin <= data.rEnd && data.rEnd <= size,
-        "Invalid actor row range.");
-    prec.get().ConcurrentSolve(x.MiddleRows(offset, size), Px.MiddleRows(offset, size), data);
-  }
-};
-
-/** @brief Applies one actor preconditioner per actor.
- *
- * @note Moving an instance transfers the state created by @ref PrepareConcurrentSolve to the
- * destination and leaves the source unprepared.
- *
- * @warning An instance must not participate in multiple linear solves concurrently.
- */
-template <typename T>
-struct PerActorPrec final : Preconditioner<T> {
- private:
-  static_assert(
-      static_cast<int>(ActorPreconditionerParallelMode::Count) == 3,
-      "Please update PerActorPrec if ActorPreconditionerParallelMode changes.");
-
-  struct ConcurrentSolveTask {
-    int actorIndex = 0;
-    ActorPreconditionerParallelMode mode = ActorPreconditionerParallelMode::Count;
-    // Half-open row range relative to the actor.
-    int actorRowBegin = 0;
-    int actorRowEnd = 0;
-    int teamWorkerId = 0;
-    int teamSize = 0;
-    std::optional<ParallelBarrier> teamBarrier = std::nullopt;
-  };
-
-  struct ConcurrentSolvePlan {
-    DynamicArray<DynamicArray<ConcurrentSolveTask>> workerTasks;
-    bool requiresFinalBarrier = false;
-  };
-
- public:
-  static constexpr auto kType = PreconditionerType::PerActor;
-
-  /// @warning Modifying this vector invalidates concurrent preparation. Call
-  /// @ref PrepareConcurrentSolve before the next @ref ConcurrentSolve.
-  std::vector<ActorPrecApplyer<T>> actorPrecs;
-
-  explicit PerActorPrec(std::vector<ActorPrecApplyer<T>>&& actorPrecs)
-      : actorPrecs(std::move(actorPrecs)) {}
-
-  ~PerActorPrec() override = default;
-  MOCHI_DECLARE_NO_COPY(PerActorPrec);
-
-  PerActorPrec(PerActorPrec&& other) noexcept
-      : actorPrecs(std::move(other.actorPrecs)),
-        _concurrentSolvePlan(std::move(other._concurrentSolvePlan)) {
-    other._concurrentSolvePlan.reset();
-  }
-
-  PerActorPrec& operator=(PerActorPrec&& other) noexcept {
-    if (this != &other) {
-      actorPrecs = std::move(other.actorPrecs);
-      _concurrentSolvePlan.reset();
-      if (other._concurrentSolvePlan) {
-        _concurrentSolvePlan.emplace(std::move(*other._concurrentSolvePlan));
-      }
-      other._concurrentSolvePlan.reset();
-    }
-    return *this;
-  }
-
-  void Solve(ColumnVectorView<T const> x, ColumnVectorView<T> y) const override {
-    // TODO[T175051452]: Introduce efficient parallelization.
-    for (auto const& prec : actorPrecs) {
-      prec.Solve(x, y);
-    }
-  }
-
-  void ConcurrentSolve(
-      ColumnVectorView<T const> x,
-      ColumnVectorView<T> Px,
-      ParallelWorkerInfo const& data) const override {
-    MOCHI_ASSERT_VERBOSE(_concurrentSolvePlan, "Concurrent solve was not prepared.");
-    auto const& plan = *_concurrentSolvePlan;
-    [[maybe_unused]] int const planNumWorkers = isize(plan.workerTasks);
-    MOCHI_ASSERT_VERBOSE(
-        data.numWorkers == planNumWorkers && data.workerId >= 0 && data.workerId < planNumWorkers,
-        "Invalid parallel worker information.");
-
-    for (auto const& task : plan.workerTasks[data.workerId]) {
-      auto const& actor = actorPrecs[task.actorIndex];
-      switch (task.mode) {
-        case ActorPreconditionerParallelMode::SingleWorker:
-          actor.Solve(x, Px);
-          break;
-        case ActorPreconditionerParallelMode::IndependentRows:
-          actor.ConcurrentSolve(
-              x,
-              Px,
-              ParallelWorkerInfo{
-                  data.workerId,
-                  data.numWorkers,
-                  task.actorRowBegin,
-                  task.actorRowEnd,
-                  data.barrier});
-          break;
-        case ActorPreconditionerParallelMode::SynchronizedTeam:
-          MOCHI_ASSERT_VERBOSE(task.teamBarrier.has_value(), "Team barrier is not set.");
-          actor.ConcurrentSolve(
-              x,
-              Px,
-              ParallelWorkerInfo{
-                  task.teamWorkerId,
-                  task.teamSize,
-                  task.actorRowBegin,
-                  task.actorRowEnd,
-                  *task.teamBarrier});
-          break;
-        default:
-          MOCHI_ASSERT(false, "Invalid actor preconditioner parallel mode.");
-          break;
-      }
-    }
-
-    if (plan.requiresFinalBarrier) {
-      data.BarrierWait();
-    }
-  }
-
-  void PrepareConcurrentSolve(Span<int const> workerRowRanges) const override {
-    _concurrentSolvePlan.emplace(MakeConcurrentSolvePlan(workerRowRanges));
-  }
-
-  /// @note Invalidates any state created by @ref PrepareConcurrentSolve.
-  void Update(IslandOperators<T> const& A) {
-    // Note that MakePerActorPrec updates the actor preconditioners if they already exist.
-    *this = std::move(A.MakePerActorPrec());
-  }
-
-  constexpr PreconditionerType GetType() const override {
-    return kType;
-  }
-
- private:
-  [[nodiscard]] ConcurrentSolvePlan MakeConcurrentSolvePlan(Span<int const> workerRowRanges) const {
-    int const numWorkers = isize(workerRowRanges) - 1;
-    MOCHI_ASSERT(numWorkers > 0, "At least one worker is required.");
-
-    int numRows = 0;
-    for (auto const& actor : actorPrecs) {
-      MOCHI_ASSERT(
-          actor.offset == numRows,
-          "Actor preconditioners must have contiguous row ranges in offset order.");
-      numRows += actor.size;
-    }
-    MOCHI_ASSERT(
-        workerRowRanges[0] == 0 && workerRowRanges[numWorkers] == numRows,
-        "Worker row ranges do not cover the preconditioner.");
-    MOCHI_ASSERT_VERBOSE(
-        std::is_sorted(workerRowRanges.begin(), workerRowRanges.end()),
-        "Worker row ranges must be nondecreasing.");
-
-    ConcurrentSolvePlan plan{DynamicArray<DynamicArray<ConcurrentSolveTask>>(numWorkers), false};
-
-    auto findWorker = [&](int globalRow) {
-      MOCHI_ASSERT_VERBOSE(globalRow >= 0 && globalRow < numRows, "Row is out of range.");
-      auto const nextWorker =
-          std::ranges::upper_bound(workerRowRanges.begin() + 1, workerRowRanges.end(), globalRow);
-      return static_cast<int>(nextWorker - workerRowRanges.begin()) - 1;
-    };
-
-    auto addTask = [&](int workerId, ConcurrentSolveTask task) {
-      auto const& actor = actorPrecs[task.actorIndex];
-      int const globalRowBegin = actor.offset + task.actorRowBegin;
-      int const globalRowEnd = actor.offset + task.actorRowEnd;
-      plan.requiresFinalBarrier = plan.requiresFinalBarrier ||
-          globalRowBegin < workerRowRanges[workerId] ||
-          globalRowEnd > workerRowRanges[workerId + 1];
-      plan.workerTasks[workerId].push_back(std::move(task));
-    };
-
-    // A common actor order prevents barrier cycles between overlapping synchronized teams.
-    for (int actorIndex = 0; actorIndex < isize(actorPrecs); ++actorIndex) {
-      auto const& actor = actorPrecs[actorIndex];
-      auto const parallelism = actor.prec.get().GetConcurrentSolveRequirements();
-      switch (parallelism.mode) {
-        case ActorPreconditionerParallelMode::SingleWorker: {
-          MOCHI_ASSERT_VERBOSE(actor.size > 0, "Actor size must be positive.");
-          int const workerId = findWorker(actor.offset + actor.size / 2);
-          addTask(
-              workerId,
-              ConcurrentSolveTask{
-                  .actorIndex = actorIndex,
-                  .mode = parallelism.mode,
-                  .actorRowBegin = 0,
-                  .actorRowEnd = actor.size,
-                  .teamWorkerId = 0,
-                  .teamSize = 1,
-                  .teamBarrier = std::nullopt});
-          break;
-        }
-        case ActorPreconditionerParallelMode::IndependentRows: {
-          int const rowBlockSize = parallelism.rowBlockSize;
-          MOCHI_ASSERT_VERBOSE(
-              rowBlockSize > 0, "Actor preconditioner row block size must be positive.");
-          MOCHI_ASSERT_VERBOSE(
-              actor.size > 0 && actor.size % rowBlockSize == 0,
-              "Actor size must be positive and divisible by the preconditioner row block size.");
-          int const numActorBlocks = actor.size / rowBlockSize;
-          int taskBlockBegin = 0;
-          while (taskBlockBegin < numActorBlocks) {
-            int const taskWorkerId =
-                findWorker(actor.offset + taskBlockBegin * rowBlockSize + rowBlockSize / 2);
-            int const actorRowAtWorkerEnd =
-                Clamp(workerRowRanges[taskWorkerId + 1] - actor.offset, 0, actor.size);
-            // A block whose midpoint is on this boundary is excluded from the current worker task.
-            int const taskBlockEnd = static_cast<int>(
-                (static_cast<int64_t>(actorRowAtWorkerEnd) + (rowBlockSize - 1) / 2) /
-                rowBlockSize);
-            MOCHI_ASSERT_VERBOSE(
-                taskBlockEnd > taskBlockBegin && taskBlockEnd <= numActorBlocks,
-                "Invalid independent-row task range.");
-            addTask(
-                taskWorkerId,
-                ConcurrentSolveTask{
-                    .actorIndex = actorIndex,
-                    .mode = parallelism.mode,
-                    .actorRowBegin = taskBlockBegin * rowBlockSize,
-                    .actorRowEnd = taskBlockEnd * rowBlockSize,
-                    .teamWorkerId = taskWorkerId,
-                    .teamSize = numWorkers,
-                    .teamBarrier = std::nullopt});
-            taskBlockBegin = taskBlockEnd;
-          }
-          break;
-        }
-        case ActorPreconditionerParallelMode::SynchronizedTeam: {
-          int const rowBlockSize = parallelism.rowBlockSize;
-          MOCHI_ASSERT_VERBOSE(
-              rowBlockSize > 0, "Actor preconditioner row block size must be positive.");
-          MOCHI_ASSERT_VERBOSE(
-              actor.size > 0 && actor.size % rowBlockSize == 0,
-              "Actor size must be positive and divisible by the preconditioner row block size.");
-          int const numActorBlocks = actor.size / rowBlockSize;
-          int const teamSize = Min(numWorkers, numActorBlocks);
-          int const midpointWorker = findWorker(actor.offset + actor.size / 2);
-          int const teamBegin = Clamp(midpointWorker - teamSize / 2, 0, numWorkers - teamSize);
-          ParallelBarrier const teamBarrier(teamSize);
-          for (int teamWorkerId = 0; teamWorkerId < teamSize; ++teamWorkerId) {
-            int const blockBegin =
-                static_cast<int>(static_cast<int64_t>(teamWorkerId) * numActorBlocks / teamSize);
-            int const blockEnd = static_cast<int>(
-                static_cast<int64_t>(teamWorkerId + 1) * numActorBlocks / teamSize);
-            addTask(
-                teamBegin + teamWorkerId,
-                ConcurrentSolveTask{
-                    .actorIndex = actorIndex,
-                    .mode = parallelism.mode,
-                    .actorRowBegin = blockBegin * rowBlockSize,
-                    .actorRowEnd = blockEnd * rowBlockSize,
-                    .teamWorkerId = teamWorkerId,
-                    .teamSize = teamSize,
-                    .teamBarrier = std::optional<ParallelBarrier>{teamBarrier}});
-          }
-          break;
-        }
-        default:
-          MOCHI_ASSERT(false, "Invalid actor preconditioner parallel mode.");
-          break;
-      }
-    }
-
-    return plan;
-  }
-
-  mutable std::optional<ConcurrentSolvePlan> _concurrentSolvePlan;
-};
 
 /*******************************************************************
   IslandOperators
@@ -420,8 +126,9 @@ struct IslandOperators {
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
   }
 
-  // Construct or update the per-actor preconditioner.
-  auto MakePerActorPrec() const {
+  // Construct missing actor preconditioners, update existing ones, and return each
+  // preconditioner with its island-wide row offset and row count.
+  auto MakePerActorPreconditionerEntries() const {
     auto const numActors = isize(_actorMatrices);
     MOCHI_ASSERT(
         _actorPreconditioners.size() == numActors,
@@ -470,15 +177,15 @@ struct IslandOperators {
       }
     });
 
-    // Construct the per-actor preconditioner.
-    std::vector<ActorPrecApplyer<T>> actorPrecApplyiers;
-    actorPrecApplyiers.reserve(numActors);
+    std::vector<ActorPreconditionerEntry<T>> actorPreconditionerEntries;
+    actorPreconditionerEntries.reserve(numActors);
     for (int aIndex = 0; aIndex < numActors; ++aIndex) {
       auto const& [offset, A] = _actorMatrices[aIndex];
-      actorPrecApplyiers.push_back({offset, GetNumRows(A), *_actorPreconditioners[aIndex].get()});
+      actorPreconditionerEntries.push_back(
+          {offset, GetNumRows(A), *_actorPreconditioners[aIndex].get()});
     }
 
-    return PerActorPrec<T>{std::move(actorPrecApplyiers)};
+    return actorPreconditionerEntries;
   }
 
   // Return the number of rows of the global system.
@@ -525,6 +232,12 @@ struct IslandOperators {
   template <typename InVector, typename OutVector, typename Idx>
   void ApplyToRange(InVector const& x, OutVector&& Ax, Idx rowBegin, Idx rowEnd) const;
 };
+
+template <typename T>
+void PerActorPrec<T>::Update(IslandOperators<T> const& A) {
+  _actorPrecs = A.MakePerActorPreconditionerEntries();
+  _concurrentSolvePlan.reset();
+}
 
 template <typename T>
 int IslandOperators<T>::Rows() const {

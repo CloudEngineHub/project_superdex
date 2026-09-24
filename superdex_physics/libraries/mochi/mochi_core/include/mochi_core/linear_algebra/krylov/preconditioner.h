@@ -77,7 +77,8 @@ struct Preconditioner {
   /// For N > 0 workers, the span contains N + 1 nondecreasing entries. The first is zero, the last
   /// is the number of rows processed by the preconditioner, and equal adjacent entries represent
   /// empty partitions.
-  /// @note The partitions are locality hints. Preconditioners may distribute rows differently.
+  /// @note The partitions are locality hints. Implementations may distribute rows differently and
+  /// document additional alignment requirements for these boundaries.
   /// @note The caller must invoke this method once on a single thread and synchronize the workers
   /// before calling @ref ConcurrentSolve.
   /// @note Implementations must not retain @p workerRowRanges.

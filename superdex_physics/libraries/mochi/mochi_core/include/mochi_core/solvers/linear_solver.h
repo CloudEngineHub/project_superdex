@@ -172,9 +172,9 @@ namespace mochi {
 /// @note The input matrix must be a supported matrix or linear operator type. For the particular
 /// case of an IslandOperators, the preconditioner is constructed (or updated) in the linear solver
 /// for consistency with the case in which the input is a matrix type. That is, the caller is NOT
-/// responsible for calling @ref IslandOperators::MakePerActorPrec before @ref LinearSolver::Solve.
-/// Doing so would be inefficient (the preconditioner would be computed or updated twice) but not
-/// incorrect.
+/// responsible for calling @ref IslandOperators::MakePerActorPreconditionerEntries before @ref
+/// LinearSolver::Solve. Doing so would be inefficient (the preconditioner would be computed or
+/// updated twice) but not incorrect.
 /// @note It provides a unified interface for solving a linear system with various solver and
 /// preconditioner types.
 /// @note It manages internal state for preconditioner recycling and Krylov subspace recycling.

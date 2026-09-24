@@ -183,7 +183,7 @@ std::unique_ptr<Preconditioner<T>> CreatePreconditioner(
     }
   } else if constexpr (IsIslandOperators<MatrixType>) {
     if (preconType == PreconditionerType::PerActor) {
-      return std::make_unique<PerActorPrec<T>>(std::move(A.MakePerActorPrec()));
+      return std::make_unique<PerActorPrec<T>>(A.MakePerActorPreconditionerEntries());
     } else {
       MOCHI_ASSERT(
           !PreconditionerStoresInputView(preconType),
