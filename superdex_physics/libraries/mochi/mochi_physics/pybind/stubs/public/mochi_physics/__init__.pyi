@@ -8862,8 +8862,49 @@ def get_shape_surface_mesh(shape: ShapeHandle) -> MeshDataView:
     See Also:
         :class:`~superdex.physics.MeshDataView`,
         :func:`~superdex.physics.get_shape_mesh`,
+        :func:`~superdex.physics.get_shape_contact_skin_mesh`,
         :func:`~superdex.physics.get_shape_visual_mesh`,
         :meth:`~superdex.physics.Actor.get_surface_mesh`
+    """
+
+def get_shape_contact_skin_mesh(shape: ShapeHandle) -> MeshDataView:
+    """Get a view of the shape's contact-skin mesh data, including linear skinning data
+    if available.
+
+    Returns a triangle mesh (3 nodes per element) intended for contact handling.
+    Coordinates and connectivity are returned in contact-skin node-index space,
+    including any contact-skin nodes not referenced by the contact-skin
+    connectivity. The mesh includes linear skinning data for deformation when
+    available. Nonlinear skinning data, such as rod contact-skin embeddings, is not
+    exposed. For shapes without a contact skin, returns an empty view.
+
+    Args:
+        shape (ShapeHandle): Handle to a valid shape.
+
+    Returns:
+        A non-owning view of the shape's contact-skin mesh data, or an empty view if
+        the shape has no contact skin.
+
+    Raises:
+        :class:`~superdex.physics.Error`: If an error occurs.
+
+    Note:
+        Can be called on any thread.
+
+    Note:
+        The returned view will be invalid after the shape handle has been released.
+
+    Note:
+        When linear contact-skin skinning data is present, skinning indices refer to
+        the node ordering returned by :func:`~superdex.physics.get_shape_mesh`, not
+        to the compact surface-node ordering returned by
+        :func:`~superdex.physics.get_shape_surface_mesh`.
+
+    See Also:
+        :class:`~superdex.physics.MeshDataView`,
+        :func:`~superdex.physics.get_shape_mesh`,
+        :func:`~superdex.physics.get_shape_surface_mesh`,
+        :func:`~superdex.physics.get_shape_visual_mesh`
     """
 
 def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
@@ -8896,8 +8937,9 @@ def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
         When linear visual-mesh skinning data is present, skinning indices refer to
         the node ordering returned by :func:`~superdex.physics.get_shape_mesh`, not
         to the compact surface-node ordering returned by
-        :func:`~superdex.physics.get_shape_surface_mesh`. Rod visual mesh embeddings
-        are nonlinear and are not exposed through this linear skinning field.
+        :func:`~superdex.physics.get_shape_surface_mesh`. Polyline visual mesh
+        embeddings are nonlinear and are not exposed through this linear skinning
+        field.
 
     See Also:
         :class:`~superdex.physics.MeshDataView`,

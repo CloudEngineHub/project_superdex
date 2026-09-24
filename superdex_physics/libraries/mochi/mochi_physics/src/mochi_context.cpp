@@ -1070,6 +1070,24 @@ static MeshDataView MakeMeshDataView(MeshPtr const& mesh) {
   return view;
 }
 
+static MeshDataView MakeAuxiliaryMeshDataView(
+    TriangularMesh const* mesh,
+    MeshEmbedding const* embedding) {
+  if (!mesh) {
+    return {};
+  }
+
+  auto view = MakeMeshDataView(mesh);
+  if (auto const* linearEmbedding = dynamic_cast<LinearMeshEmbedding const*>(embedding)) {
+    view.skinning.emplace();
+    view.skinning->weightsPerNode =
+        static_cast<int>(linearEmbedding->GetNumSkinningWeightsPerEntry());
+    view.skinning->indices = linearEmbedding->GetIndices();
+    view.skinning->weights = linearEmbedding->GetWeights();
+  }
+  return view;
+}
+
 MeshDataView ContextImpl::GetShapeMesh(ShapeHandle shape, Error& error) const {
   MOCHI_ERROR_RETURN(error, {});
 
@@ -1117,6 +1135,29 @@ MeshDataView ContextImpl::GetShapeSurfaceMesh(ShapeHandle shape, Error& error) c
   return shapePtr->GetSurfaceMeshData();
 }
 
+MeshDataView ContextImpl::GetShapeContactSkinMesh(ShapeHandle shape, Error& error) const {
+  MOCHI_ERROR_RETURN(error, {});
+
+  ConstShapePtr shapePtr = GetShapeSharedPtr(shape);
+  MOCHI_ERROR_IF_NOT(shapePtr, error, "Cannot get shape contact skin. Invalid shape handle.");
+  MOCHI_ERROR_RETURN(error, {});
+
+  TriangularMesh const* contactSkinPtr = nullptr;
+  MeshEmbedding const* embeddingPtr = nullptr;
+
+  if (auto const* tetmesh = dynamic_cast<TetrahedralMeshShape const*>(shapePtr.get())) {
+    contactSkinPtr = tetmesh->GetContactSkin().get();
+    embeddingPtr = tetmesh->GetContactSkinEmbedding().get();
+  } else if (auto const* trimesh = dynamic_cast<TriangularMeshShape const*>(shapePtr.get())) {
+    contactSkinPtr = trimesh->GetContactSkin().get();
+    embeddingPtr = trimesh->GetContactSkinEmbedding().get();
+  } else if (auto const* polyline = dynamic_cast<PolylineShape const*>(shapePtr.get())) {
+    contactSkinPtr = polyline->GetContactSkin().get();
+  }
+
+  return MakeAuxiliaryMeshDataView(contactSkinPtr, embeddingPtr);
+}
+
 MeshDataView ContextImpl::GetShapeVisualMesh(ShapeHandle shape, Error& error) const {
   MOCHI_ERROR_RETURN(error, {});
 
@@ -1135,25 +1176,10 @@ MeshDataView ContextImpl::GetShapeVisualMesh(ShapeHandle shape, Error& error) co
     embeddingPtr = trimesh->GetVisualEmbedding().get();
   } else if (auto const* polyline = dynamic_cast<PolylineShape const*>(shapePtr.get())) {
     visualMeshPtr = polyline->GetVisualMesh().get();
-    // Rod visual mesh embedding is nonlinear and incompatible with SkinningDataView.
+    // Polyline visual mesh embeddings are nonlinear and are not exposed by this view.
   }
 
-  if (!visualMeshPtr) {
-    // Shape doesn't have a visual mesh.
-    return {};
-  }
-
-  auto view = MakeMeshDataView(visualMeshPtr);
-  if (auto const* linearEmbedding = dynamic_cast<LinearMeshEmbedding const*>(embeddingPtr)) {
-    view.skinning.emplace();
-    view.skinning->weightsPerNode =
-        static_cast<int>(linearEmbedding->GetNumSkinningWeightsPerEntry());
-    view.skinning->indices = linearEmbedding->GetIndices();
-    view.skinning->weights = linearEmbedding->GetWeights();
-  }
-  // LinearMeshEmbedding is the only MeshEmbedding type.
-
-  return view;
+  return MakeAuxiliaryMeshDataView(visualMeshPtr, embeddingPtr);
 }
 
 Aabb ContextImpl::GetShapeAabb(ShapeHandle shape, Error& error) const {
