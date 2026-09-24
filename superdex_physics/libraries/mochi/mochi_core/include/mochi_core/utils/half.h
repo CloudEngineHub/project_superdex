@@ -58,6 +58,13 @@ struct Half {
   /// Half does not default initialize on the stack, similar to other arithmetic types.
   /// However, Half{} is guaranteed to be zero-initialized.
   Half() = default;
+  MOCHI_ANY ~Half() = default;
+  MOCHI_ANY Half(Half const&) = default;
+  MOCHI_ANY Half(Half&&) = default;
+
+  // Match built-in scalar behavior by rejecting assignments to temporary `Half` values.
+  MOCHI_ANY Half& operator=(Half const&) & = default;
+  MOCHI_ANY Half& operator=(Half&&) & = default;
 
   /// Explicit conversion from float.
   MOCHI_ANY explicit Half(float f);
