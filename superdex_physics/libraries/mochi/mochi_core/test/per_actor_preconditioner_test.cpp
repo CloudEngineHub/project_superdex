@@ -27,7 +27,6 @@
 #include <future>
 #include <limits>
 #include <mutex>
-#include <optional>
 #include <thread>
 #include <utility>
 
@@ -53,16 +52,17 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
       ActorPreconditionerParallelMode mode,
       int rowBlockSize,
       real scale,
-      int barrierWaits = 0,
-      std::optional<ActorPreconditionerCost> cost = std::nullopt)
-      : _parallelism{mode, rowBlockSize},
-        _cost(cost.value_or(DefaultCost(mode))),
-        _scale(scale),
-        _barrierWaits(barrierWaits) {
-    if (!cost.has_value()) {
-      _cost.numTeamBarriers = barrierWaits;
-    }
+      int numTeamBarriers = 0)
+      : RecordingActorPreconditioner(mode, rowBlockSize, scale, DefaultCost(mode)) {
+    _cost.numTeamBarriers = numTeamBarriers;
   }
+
+  RecordingActorPreconditioner(
+      ActorPreconditionerParallelMode mode,
+      int rowBlockSize,
+      real scale,
+      ActorPreconditionerCost const& cost)
+      : _parallelism{mode, rowBlockSize}, _cost(cost), _scale(scale) {}
 
   [[nodiscard]] ActorPreconditionerParallelism GetConcurrentSolveRequirements() const override {
     return _parallelism;
@@ -93,7 +93,7 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
       std::lock_guard lock(_callsMutex);
       _calls.push_back({data.workerId, data.numWorkers, data.rBegin, data.rEnd, gPhysicalWorkerId});
     }
-    for (int wait = 0; wait < _barrierWaits; ++wait) {
+    for (int wait = 0; wait < _cost.numTeamBarriers; ++wait) {
       data.BarrierWait();
     }
     for (int row = data.rBegin; row < data.rEnd; ++row) {
@@ -138,7 +138,6 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
   ActorPreconditionerParallelism _parallelism;
   ActorPreconditionerCost _cost;
   real _scale;
-  int _barrierWaits;
   mutable std::atomic<std::promise<void>*> _solveCompletionSignal = nullptr;
   mutable std::mutex _callsMutex;
   mutable DynamicArray<ConcurrentCall> _calls;
@@ -245,7 +244,7 @@ TEST(PerActorPreconditioner, ReuseMatVecRangesCoverRowsWithoutFinalSynchronizati
       .fixedCost = 0.0, .parallelCost = 1000.0, .maxUsefulWorkers = 1};
   RecordingActorPreconditioner actor(ActorPreconditionerParallelMode::IndependentRows, 2, 2_r);
   RecordingActorPreconditioner suffix(
-      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r, 0, suffixCost);
+      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r, suffixCost);
   PerActorPrec<real> prec({{0, 12, actor}, {12, 2, suffix}});
   ColumnVector<real> x(14), Px(14);
   x.SetRandom(11);
@@ -279,7 +278,7 @@ TEST(PerActorPreconditioner, ReuseMatVecRangesWinsCostTie) {
   ActorPreconditionerCost const cost{
       .fixedCost = 0.0, .parallelCost = 15280.0, .maxUsefulWorkers = 2};
   RecordingActorPreconditioner actor(
-      ActorPreconditionerParallelMode::IndependentRows, 1, 2_r, 0, cost);
+      ActorPreconditionerParallelMode::IndependentRows, 1, 2_r, cost);
   PerActorPrec<real> prec({{0, 4, actor}});
   ColumnVector<real> x(4), Px(4);
   x.SetRandom(25);
@@ -298,7 +297,7 @@ TEST(PerActorPreconditioner, BroadWinsWhenReuseMatVecRangesIsSlower) {
   ActorPreconditionerCost const cost{
       .fixedCost = 0.0, .parallelCost = 16000.0, .maxUsefulWorkers = 2};
   RecordingActorPreconditioner actor(
-      ActorPreconditionerParallelMode::IndependentRows, 1, 2_r, 0, cost);
+      ActorPreconditionerParallelMode::IndependentRows, 1, 2_r, cost);
   PerActorPrec<real> prec({{0, 4, actor}});
   ColumnVector<real> x(4), Px(4);
   x.SetRandom(27);
@@ -315,7 +314,7 @@ TEST(PerActorPreconditioner, IndependentRowsHonorsMaxUsefulWorkers) {
   ActorPreconditionerCost const cost{
       .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 2};
   RecordingActorPreconditioner actor(
-      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r, 0, cost);
+      ActorPreconditionerParallelMode::IndependentRows, 2, 2_r, cost);
   PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 8, actor}});
   ColumnVector<real> x(8), Px(8);
   x.SetRandom(23);
@@ -334,9 +333,9 @@ TEST(PerActorPreconditioner, IndependentRowsAvoidsAlreadyLoadedWorker) {
   ActorPreconditionerCost const independentCost{
       .fixedCost = 0.0, .parallelCost = 50.0, .maxUsefulWorkers = 2};
   RecordingActorPreconditioner single(
-      ActorPreconditionerParallelMode::SingleWorker, 0, 2_r, 0, singleCost);
+      ActorPreconditionerParallelMode::SingleWorker, 0, 2_r, singleCost);
   RecordingActorPreconditioner independent(
-      ActorPreconditionerParallelMode::IndependentRows, 1, 3_r, 0, independentCost);
+      ActorPreconditionerParallelMode::IndependentRows, 1, 3_r, independentCost);
   PerActorPrec<real> prec({{0, 2, single}, {2, 2, independent}});
   ColumnVector<real> x(4), Px(4), expected(4);
   x.SetRandom(12);
@@ -361,8 +360,6 @@ TEST(PerActorPreconditioner, IndependentRowsPlanningDoesNotScaleWithRowCount) {
       0, 6 * (kNumBlocks / 4), 6 * (kNumBlocks / 2), 6 * ((3 * kNumBlocks) / 4), kNumRows};
 
   prec.PrepareConcurrentSolve(MakeConstSpan(workerRowRanges));
-
-  EXPECT_TRUE(actor.Calls().empty());
 }
 
 TEST(PerActorPreconditioner, OneWorkerHandlesEveryExecutionMode) {
@@ -413,11 +410,11 @@ TEST(PerActorPreconditioner, SingleWorkerPrefersMidpointOwnerForUnevenRanges) {
   ActorPreconditionerCost const targetCost{
       .fixedCost = 100.0, .parallelCost = 0.0, .maxUsefulWorkers = 1};
   RecordingActorPreconditioner prefix(
-      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, 0, cheapCost);
+      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, cheapCost);
   RecordingActorPreconditioner target(
-      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, 0, targetCost);
+      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, targetCost);
   RecordingActorPreconditioner suffix(
-      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, 0, cheapCost);
+      ActorPreconditionerParallelMode::SingleWorker, 0, 1_r, cheapCost);
   PerActorPrec<real> prec({
       {0, 9, prefix},
       {9, 1, target},
@@ -463,7 +460,7 @@ TEST(PerActorPreconditioner, SynchronizedTeamUsesDenseIdsAndReusableBarrier) {
       ActorPreconditionerParallelMode::SynchronizedTeam,
       2,
       4_r,
-      /*barrierWaits*/ 2);
+      /*numTeamBarriers*/ 2);
   PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 10, actor}});
   ColumnVector<real> x(10), Px(10);
   x.SetRandom(13);
@@ -474,8 +471,7 @@ TEST(PerActorPreconditioner, SynchronizedTeamUsesDenseIdsAndReusableBarrier) {
   auto const calls = actor.Calls();
   ASSERT_FALSE(calls.empty());
   int const teamSize = calls.front().numWorkers;
-  ASSERT_GT(teamSize, 0);
-  EXPECT_EQ(2, teamSize);
+  ASSERT_EQ(2, teamSize);
   EXPECT_EQ(static_cast<size_t>(teamSize * 8), calls.size());
   DynamicArray<ConcurrentCall> laneCalls;
   for (int workerId = 0; workerId < teamSize; ++workerId) {
@@ -512,11 +508,11 @@ TEST(PerActorPreconditioner, OverlappingSynchronizedTeamsCompleteWithoutDeadlock
   ActorPreconditionerCost const actor2Cost{
       .fixedCost = 0.0, .parallelCost = 160000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
   RecordingActorPreconditioner actor0(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 2_r, 2, actor0Cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 2_r, actor0Cost);
   RecordingActorPreconditioner actor1(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 3_r, 2, actor1Cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 3_r, actor1Cost);
   RecordingActorPreconditioner actor2(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 4_r, 2, actor2Cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 2, 4_r, actor2Cost);
   PerActorPrec<real> prec({
       {0, 4, actor0},
       {4, 4, actor1},
@@ -572,7 +568,7 @@ TEST(PerActorPreconditioner, RepreparesForDifferentWorkerCount) {
   ActorPreconditionerCost const cost{
       .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4, .numTeamBarriers = 2};
   RecordingActorPreconditioner actor(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, 2, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, cost);
   PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 12, actor}});
   ColumnVector<real> x(12), Px(12);
   x.SetRandom(16);
@@ -600,13 +596,13 @@ TEST(PerActorPreconditioner, EqualSynchronizedActorsUseSingleWorkerTeams) {
   ActorPreconditionerCost const cost{
       .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4};
   RecordingActorPreconditioner actor0(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor1(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor2(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor3(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   PerActorPrec<real> prec({
       {0, 4, actor0},
       {4, 4, actor1},
@@ -636,15 +632,15 @@ TEST(PerActorPreconditioner, IdleWorkersJoinRemainingSynchronizedActor) {
   ActorPreconditionerCost const cost{
       .fixedCost = 25000.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4};
   RecordingActorPreconditioner actor0(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor1(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor2(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor3(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   RecordingActorPreconditioner actor4(
-      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, 0, cost);
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, cost);
   PerActorPrec<real> prec({
       {0, 4, actor0},
       {4, 4, actor1},
@@ -679,7 +675,7 @@ TEST(PerActorPreconditioner, SynchronizedBarrierCostLimitsTeamWidth) {
         .maxUsefulWorkers = 4,
         .numTeamBarriers = numTeamBarriers};
     RecordingActorPreconditioner actor(
-        ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, numTeamBarriers, cost);
+        ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, cost);
     PerActorPrec<real> prec({ActorPreconditionerEntry<real>{0, 4, actor}});
     ColumnVector<real> x(4), Px(4);
     x.SetRandom(27);

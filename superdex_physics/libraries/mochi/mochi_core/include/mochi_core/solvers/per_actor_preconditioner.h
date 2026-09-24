@@ -1002,8 +1002,14 @@ struct PerActorPrec final : Preconditioner<T> {
   // - MakeActorOrder orders by serial cost, ignoring how widely each actor can spread. An actor
   //   with a long shortest duration, such as a single-worker actor, that is slightly cheaper than
   //   spreadable actors is scheduled after them on top of the loads they balanced, approaching
-  //   twice the optimal duration. Ordering by EstimatedDuration(info, info.maxConcurrentWorkers)
-  //   would schedule such actors first.
+  //   twice the optimal duration. Also estimating Broad in decreasing
+  //   EstimatedDuration(info, info.maxConcurrentWorkers) order fixes such cases, but preliminary
+  //   analysis on synthetic islands found the measured gain too rare and small to justify
+  //   doubling the planning cost. See D121469076.
+  // - TeamReuse, which runs synchronized actors on nested teams drawn from a shared worker prefix,
+  //   measured slower than Broad overall in preliminary analysis on synthetic islands. At 2
+  //   workers, however, running each synchronized actor on both workers in turn often beat Broad,
+  //   for reasons not yet understood. See D120605491.
   // - ScheduleSingleWorker: When no final barrier is required yet, consider comparing the
   //   least-loaded worker with the local owner. The first nonlocal assignment adds one full-worker
   //   barrier every time the preconditioner is applied and can cost more than the load imbalance

@@ -280,6 +280,9 @@ TEST(AMG, ConcurrentSolveBarriersReflectOptions) {
   krylov::AMGOptions<real> options;
   EXPECT_EQ(6, numBarriers(options));
 
+  options.numPreSmoothingSteps = 2;
+  EXPECT_EQ(8, numBarriers(options));
+
   options.numPreSmoothingSteps = 0;
   options.numPostSmoothingSteps = 0;
   EXPECT_EQ(3, numBarriers(options));
