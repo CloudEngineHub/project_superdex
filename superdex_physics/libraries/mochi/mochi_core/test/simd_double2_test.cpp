@@ -395,11 +395,7 @@ TEST(Vec2d, Get) {
   EXPECT_EQ(1.0, Get<0>(a));
   EXPECT_EQ(2.0, Get<1>(a));
 
-  // Slower runtime version
-  EXPECT_EQ(1.0, Get(a, 0));
-  EXPECT_EQ(2.0, Get(a, 1));
-
-  // Same but with operator[] (read only)
+  // Runtime version
   EXPECT_EQ(1.0, a[0]);
   EXPECT_EQ(2.0, a[1]);
 }
@@ -713,9 +709,7 @@ TEST(Vec2d, ExpExtreme) {
   auto expv = Exp(v), expmv = Exp(-v);
   auto tol = double(2.0) * std::numeric_limits<double>::epsilon();
   for (int i = 0; i < 2; ++i) {
-    EXPECT_NEAR_RTOL(Vec2d::Get(expv, i), std::exp(x[i]), tol);
-    EXPECT_LE(
-        Abs(Vec2d::Get(expmv, i) - std::exp(-x[i])),
-        Max(Vec2d::Get(expmv, i), std::exp(-x[i])) * tol);
+    EXPECT_NEAR_RTOL(expv[i], std::exp(x[i]), tol);
+    EXPECT_LE(Abs(expmv[i] - std::exp(-x[i])), Max(expmv[i], std::exp(-x[i])) * tol);
   }
 }

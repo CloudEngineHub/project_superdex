@@ -130,7 +130,7 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N> Broadcast(Simd<T, N> v) {
 template <class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N> Broadcast(Simd<T, N> v, int i) {
   // TODO: Other implementations may be faster for specific vector sizes, but this covers the bases.
-  return Simd<T, N>{Simd<T, N>::Get(v, i)};
+  return Simd<T, N>{v[i]};
 }
 
 template <class V, class... MoreBools>
@@ -302,11 +302,6 @@ MOCHI_ANY MOCHI_FORCE_INLINE T Get0(Simd<T, N> v) {
 template <int i, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T Get(Simd<T, N> v) {
   return Simd<T, N>::template Get<i>(v);
-}
-
-template <class T, int N>
-MOCHI_ANY MOCHI_FORCE_INLINE T Get(Simd<T, N> v, int i) {
-  return Simd<T, N>::Get(v, i);
 }
 
 template <int iHalf, class T, int N>

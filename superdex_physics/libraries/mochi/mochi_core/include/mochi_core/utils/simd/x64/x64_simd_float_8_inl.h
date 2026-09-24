@@ -50,44 +50,15 @@ class Simd<float, 8> {
   template <int i>
   [[nodiscard]] static MOCHI_FORCE_INLINE float Get(Simd v) {
     static_assert(i >= 0 && i < 8, "Index out of range");
-    if constexpr (i == 0) {
-      return _mm256_cvtss_f32(v.raw); // AVX
-    } else if constexpr (i == 1) {
-      return _mm256_cvtss_f32(_mm256_shuffle_ps(v.raw, v.raw, 0x01)); // AVX, AVX
-    } else if constexpr (i == 2) {
-      return _mm256_cvtss_f32(_mm256_shuffle_ps(v.raw, v.raw, 0x02)); // AVX, AVX
-    } else if constexpr (i == 3) {
-      return _mm256_cvtss_f32(_mm256_shuffle_ps(v.raw, v.raw, 0x03)); // AVX, AVX
-    } else if constexpr (i == 4) {
-      return _mm256_cvtss_f32(_mm256_permute2f128_ps(v.raw, v.raw, 0x01)); // AVX, AVX
-    } else if constexpr (i == 5) {
-      auto tmp = _mm256_permute2f128_ps(v.raw, v.raw, 0x01); // AVX
-      return _mm256_cvtss_f32(_mm256_shuffle_ps(tmp, tmp, 0x01)); // AVX, AVX
-    } else if constexpr (i == 6) {
-      auto tmp = _mm256_permute2f128_ps(v.raw, v.raw, 0x01); // AVX
-      return _mm256_cvtss_f32(_mm256_shuffle_ps(tmp, tmp, 0x02)); // AVX, AVX
-    } else if constexpr (i == 7) {
-      auto tmp = _mm256_permute2f128_ps(v.raw, v.raw, 0x01); // AVX
-      return _mm256_cvtss_f32(_mm256_shuffle_ps(tmp, tmp, 0x03)); // AVX, AVX
-    }
+    return v[i];
   }
 
-  [[nodiscard]] static MOCHI_FORCE_INLINE float Get(Simd v, int i) {
+  [[nodiscard]] MOCHI_FORCE_INLINE Scalar operator[](int i) const {
     MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range");
 #if MOCHI_COMPILER_MSVC
-    return v.raw.m256_f32[i];
+    return raw.m256_f32[i];
 #else
-    switch (i) { // clang-format off
-      case 0: return Get<0>(v);
-      case 1: return Get<1>(v);
-      case 2: return Get<2>(v);
-      case 3: return Get<3>(v);
-      case 4: return Get<4>(v);
-      case 5: return Get<5>(v);
-      case 6: return Get<6>(v);
-      case 7: return Get<7>(v);
-      MOCHI_UNLIKELY default: return 0;
-    } // clang-format on
+    return raw[i];
 #endif
   }
 

@@ -383,10 +383,6 @@ MOCHI_ANY MOCHI_FORCE_INLINE T Get0(Simd<T, N> v);
 template <int i, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T Get(Simd<T, N> v);
 
-// Return the ith component of a vector (e.g. a[i]).
-template <class T, int N>
-MOCHI_ANY MOCHI_FORCE_INLINE T Get(Simd<T, N> v, int i);
-
 // Return the low or high half of a vector via GetHalf<0>(a) or GetHalf<1>(a)
 template <int iHalf, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N / 2> GetHalf(Simd<T, N> a);

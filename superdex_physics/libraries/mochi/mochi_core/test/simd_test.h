@@ -68,7 +68,7 @@ static void TestUnaryFunction(
   auto result = vectorFn(Load<VecType>(&kValues[0]));
   for (int i = 0; i < VecType::kSize; ++i) {
     T expected = scalarFn(kValues[i]);
-    T actual = Get(result, i);
+    T actual = result[i];
     EXPECT_TRUE(compareFn(expected, actual)) << "exepcted " << expected << ", but got " << actual;
   }
   // Also test +/- zero
@@ -77,7 +77,7 @@ static void TestUnaryFunction(
     result = vectorFn(VecType{val});
     T expected = scalarFn(val);
     for (int i = 0; i < VecType::kSize; ++i) {
-      T actual = Get(result, i);
+      T actual = result[i];
       EXPECT_TRUE(compareFn(expected, actual));
     }
   }
@@ -133,7 +133,7 @@ static void TestBinaryFunction(
   auto result = vectorFn(va, vb);
   for (int i = 0; i < VecType::kSize; ++i) {
     T expected = scalarFn(kValuesA[i], kValuesB[i]);
-    T actual = Get(result, i);
+    T actual = result[i];
     EXPECT_TRUE(compareFn(expected, actual));
   }
 }
@@ -152,7 +152,7 @@ static void TestTernaryFunction(
   auto result = vectorFn(va, vb, vc);
   for (int i = 0; i < VecType::kSize; ++i) {
     T expected = scalarFn(kValuesA[i], kValuesB[i], kValuesC[i]);
-    T actual = Get(result, i);
+    T actual = result[i];
     EXPECT_TRUE(compareFn(expected, actual));
   }
 }

@@ -37,23 +37,15 @@ class Simd<double, 2> {
   template <int i>
   [[nodiscard]] static MOCHI_FORCE_INLINE double Get(Simd v) {
     static_assert(i >= 0 && i < 2, "Index out of range");
-    if constexpr (i == 0) {
-      return _mm_cvtsd_f64(v.raw); // AVX
-    } else if constexpr (i == 1) {
-      return _mm_cvtsd_f64(_mm_shuffle_pd(v.raw, v.raw, 0x01)); // AVX, AVX
-    }
+    return v[i];
   }
 
-  [[nodiscard]] static MOCHI_FORCE_INLINE double Get(Simd v, int i) {
+  [[nodiscard]] MOCHI_FORCE_INLINE Scalar operator[](int i) const {
     MOCHI_ASSERT_VERBOSE(i >= 0 && i < 2, "Index out of range");
 #if MOCHI_COMPILER_MSVC
-    return v.raw.m128d_f64[i];
+    return raw.m128d_f64[i];
 #else
-    switch (i) { // clang-format off
-                case 0: return Get<0>(v);
-                case 1: return Get<1>(v);
-                MOCHI_UNLIKELY default: return 0.0;
-            } // clang-format on
+    return raw[i];
 #endif
   }
 

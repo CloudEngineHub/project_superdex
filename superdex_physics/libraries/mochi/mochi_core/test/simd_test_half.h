@@ -62,7 +62,6 @@ void TestGet(Span<Half const> values) {
   ASSERT_EQ(V::kSize, isize(values));
   auto v = Load<V>(values.data());
   for (int i = 0; i < V::kSize; ++i) {
-    EXPECT_EQ(values[i], Get(v, i));
     EXPECT_EQ(values[i], v[i]);
   }
 }

@@ -47,16 +47,16 @@ class Simd<int, 4> {
     }
   }
 
-  [[nodiscard]] static MOCHI_FORCE_INLINE int Get(Simd v, int i) {
+  [[nodiscard]] MOCHI_FORCE_INLINE Scalar operator[](int i) const {
     MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range");
 #if MOCHI_COMPILER_MSVC
-    return v.raw.m128i_i32[i];
+    return raw.m128i_i32[i];
 #else
     switch (i) { // clang-format off
-      case 0: return Get<0>(v);
-      case 1: return Get<1>(v);
-      case 2: return Get<2>(v);
-      case 3: return Get<3>(v);
+      case 0: return Get<0>(*this);
+      case 1: return Get<1>(*this);
+      case 2: return Get<2>(*this);
+      case 3: return Get<3>(*this);
       MOCHI_UNLIKELY default: return 0;
     } // clang-format on
 #endif

@@ -160,19 +160,8 @@ class Simd<
 
   template <int i>
   [[nodiscard]] static MOCHI_ANY MOCHI_FORCE_INLINE Scalar Get(Simd a) {
-    if constexpr (i < kSizeFirst) {
-      return First::template Get<i>(a.first);
-    } else {
-      return Second::template Get<i - kSizeFirst>(a.second);
-    }
-  }
-
-  [[nodiscard]] static MOCHI_ANY MOCHI_FORCE_INLINE Scalar Get(Simd a, int i) {
-    if (i < kSizeFirst) {
-      return First::Get(a.first, i);
-    } else {
-      return Second::Get(a.second, i - kSizeFirst);
-    }
+    static_assert(i >= 0 && i < kSize, "Index out of range");
+    return a[i];
   }
 
   template <int i>
@@ -544,7 +533,8 @@ class Simd<
   }
 
   [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE Scalar operator[](int i) const {
-    return Get(*this, i); /* return by value */
+    MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range");
+    return i < kSizeFirst ? first[i] : second[i - kSizeFirst];
   }
 
   [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE Simd operator<<(int i) const {

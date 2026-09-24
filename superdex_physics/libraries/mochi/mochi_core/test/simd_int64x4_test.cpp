@@ -218,13 +218,7 @@ TEST(Vec4l, Get) {
   EXPECT_EQ(3, Get<2>(a));
   EXPECT_EQ(-4, Get<3>(a));
 
-  // Slower runtime version
-  EXPECT_EQ(1, Get(a, 0));
-  EXPECT_EQ(2, Get(a, 1));
-  EXPECT_EQ(3, Get(a, 2));
-  EXPECT_EQ(-4, Get(a, 3));
-
-  // Same but with operator[] (read only)
+  // Runtime version
   EXPECT_EQ(1, a[0]);
   EXPECT_EQ(2, a[1]);
   EXPECT_EQ(3, a[2]);

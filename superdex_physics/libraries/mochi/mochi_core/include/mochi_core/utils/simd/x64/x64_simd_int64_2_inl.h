@@ -39,23 +39,15 @@ class Simd<int64_t, 2> {
   template <int i>
   [[nodiscard]] static MOCHI_FORCE_INLINE Scalar Get(Simd v) {
     static_assert(i >= 0 && i < kSize, "Index out of range");
-    if constexpr (i == 0) {
-      return _mm_cvtsi128_si64(v.raw); // SSE2
-    } else if constexpr (i == 1) {
-      return _mm_cvtsi128_si64(_mm_unpackhi_epi64(v.raw, v.raw)); // SSE2, SSE2
-    }
+    return v[i];
   }
 
-  [[nodiscard]] static MOCHI_FORCE_INLINE Scalar Get(Simd v, int i) {
+  [[nodiscard]] MOCHI_FORCE_INLINE Scalar operator[](int i) const {
     MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range");
 #if MOCHI_COMPILER_MSVC
-    return v.raw.m128i_i64[i];
+    return raw.m128i_i64[i];
 #else
-    switch (i) { // clang-format off
-                case 0: return Get<0>(v);
-                case 1: return Get<1>(v);
-                MOCHI_UNLIKELY default: return 0;
-            } // clang-format on
+    return static_cast<Scalar>(raw[i]);
 #endif
   }
 

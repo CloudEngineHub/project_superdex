@@ -172,22 +172,14 @@ class Simd<T, N> {
   }
 
   [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE Scalar constexpr operator[](int i) const {
-    return raw[i];
-  }
-
-  [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE Scalar constexpr Get(int i) const {
+    MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range.");
     return raw[i];
   }
 
   template <int i>
   [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE static constexpr Scalar Get(Simd v) {
     static_assert(i >= 0 && i < kSize, "Index out of range");
-    return v.raw[i];
-  }
-
-  [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE static constexpr Scalar Get(Simd v, int i) {
-    MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range.");
-    return v.raw[i];
+    return v[i];
   }
 
   template <int i>

@@ -43,33 +43,15 @@ class Simd<int64_t, 4> {
   template <int i>
   [[nodiscard]] static MOCHI_FORCE_INLINE Scalar Get(Simd v) {
     static_assert(i >= 0 && i < kSize, "Index out of range");
-#if MOCHI_COMPILER_MSVC
-    // Do not use _mm256_extract_epi64 for MSVC builds because of a bug in the optimizer. It tries
-    // to use register XMM18 even though "/arch:AVX2" was specified (AVX2 only has 16 vector
-    // registers). Microsoft claims that the behavior is "by design" when an AVX-512 intrinsic is
-    // used. However, _mm256_extract_epi64 is an AVX intrinsic. Maybe MSVC misclassified it?
-    if constexpr (i < 2) {
-      return _mm_extract_epi64(_mm256_castsi256_si128(v.raw), i);
-    } else {
-      return _mm_extract_epi64(_mm256_extracti128_si256(v.raw, 1), i - 2);
-    }
-#else
-    return _mm256_extract_epi64(v.raw, i);
-#endif
+    return v[i];
   }
 
-  [[nodiscard]] static MOCHI_FORCE_INLINE Scalar Get(Simd v, int i) {
+  [[nodiscard]] MOCHI_FORCE_INLINE Scalar operator[](int i) const {
     MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range");
 #if MOCHI_COMPILER_MSVC
-    return v.raw.m256i_i64[i];
+    return raw.m256i_i64[i];
 #else
-    switch (i) { // clang-format off
-                case 0: return Get<0>(v);
-                case 1: return Get<1>(v);
-                case 2: return Get<2>(v);
-                case 3: return Get<3>(v);
-                MOCHI_UNLIKELY default: return 0;
-            } // clang-format on
+    return static_cast<Scalar>(raw[i]);
 #endif
   }
 

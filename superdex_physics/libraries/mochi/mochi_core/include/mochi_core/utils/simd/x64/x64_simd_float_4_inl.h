@@ -36,29 +36,15 @@ class Simd<float, 4> {
   template <int i>
   [[nodiscard]] static MOCHI_FORCE_INLINE float Get(Simd v) {
     static_assert(i >= 0 && i < 4, "Index out of range");
-    if constexpr (i == 0) {
-      return _mm_cvtss_f32(v.raw); // SSE
-    } else if constexpr (i == 1) {
-      return _mm_cvtss_f32(_mm_shuffle_ps(v.raw, v.raw, _MM_SHUFFLE(1, 1, 1, 1))); // SSE, SSE
-    } else if constexpr (i == 2) {
-      return _mm_cvtss_f32(_mm_shuffle_ps(v.raw, v.raw, _MM_SHUFFLE(2, 2, 2, 2))); // SSE, SSE
-    } else if constexpr (i == 3) {
-      return _mm_cvtss_f32(_mm_shuffle_ps(v.raw, v.raw, _MM_SHUFFLE(3, 3, 3, 3))); // SSE, SSE
-    }
+    return v[i];
   }
 
-  [[nodiscard]] static MOCHI_FORCE_INLINE float Get(Simd v, int i) {
+  [[nodiscard]] MOCHI_FORCE_INLINE Scalar operator[](int i) const {
     MOCHI_ASSERT_VERBOSE(i >= 0 && i < kSize, "Index out of range");
 #if MOCHI_COMPILER_MSVC
-    return v.raw.m128_f32[i];
+    return raw.m128_f32[i];
 #else
-    switch (i) { // clang-format off
-      case 0: return Get<0>(v);
-      case 1: return Get<1>(v);
-      case 2: return Get<2>(v);
-      case 3: return Get<3>(v);
-      MOCHI_UNLIKELY default: return 0.0f;
-    } // clang-format on
+    return raw[i];
 #endif
   }
 
