@@ -31,11 +31,7 @@ struct BatchTypes {
   static_assert(kBatchSize > 0, "Invalid batch size");
 
   /** @brief Batched scalar type. */
-#if MOCHI_USE_SIMD && MOCHI_ARCH_X64_AVX512
   using Real = Simd<real, ::mochi::details::kNextSupportedSimdSize<real, kBatchSize>>;
-#else
-  using Real = Simd<real, RoundUp(kBatchSize, Simd<real>::kSize)>;
-#endif
 
   /** @brief Batched double-precision type. */
   using Double = Simd<double, Real::kSize>;
