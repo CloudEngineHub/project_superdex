@@ -17,6 +17,7 @@
 #include "editors/bot_editor.h"
 #include "app/app.h"
 #include "io/glb_export.h"
+#include "rendering/measure_tool.h"
 #include "ui/asset_browser.h"
 #include "ui/imgui_widgets.h"
 
@@ -301,6 +302,12 @@ void BotEditor::Initialize() {
   // selection/hover highlights to it (the stage owns the per-link highlight clones).
   _stage.BindRenderScene(_viewport->GetRenderScene());
   _viewport->SetSceneStage(&_stage);
+  // Measure tool (Ctrl+M): pick vertices/faces on the staged links' render and collision meshes.
+  BindSceneStageMeasureTargets(
+      *_viewport,
+      _stage,
+      [this] { return _mochiScene.IsSimulating(); },
+      [this] { return _mochiScene.IsPaused(); });
   // Stage the bot
   RecomputeModBuildStatus();
   RestageBot(); // also positions the ground plane at the bot's lowest point
@@ -406,6 +413,7 @@ std::vector<AssetEditor::WindowDeclaration> BotEditor::GetDefaultWindows() {
       {"Bot Contact", false, Dock::SidePanelBottom, false},
       {"Bot Transmissions", false, Dock::SidePanelBottom, false},
       {"Physics Settings", false, Dock::SidePanelBottom, false},
+      MeasureWindowDeclaration(),
       // debug windows
       {"Render Scene Hierarchy", false, Dock::SidePanelTop, true},
       {"Render Scene Details", false, Dock::SidePanelBottom, true},
@@ -462,6 +470,7 @@ void BotEditor::ShowAuxiliaryWindows() {
     // A BotPrefab carries no scene settings, so the editor's override always applies.
     _mochiScene.ShowPhysicsSettingsWindow("Physics Settings", &open);
   }
+  ShowMeasureWindow();
   // debug windows
   if (bool& open = _studio->GetWindowVisible("Render Scene Hierarchy")) {
     _viewport->ShowSceneHierarchyWindow("Render Scene Hierarchy", &open);

@@ -79,6 +79,19 @@ class DebugDraw {
       filament::math::float4 color,
       bool overlay = false);
 
+  /// Draws a single solid triangle, shaded with its own (flat) geometric normal.
+  /// @param v0 First vertex in world space
+  /// @param v1 Second vertex in world space
+  /// @param v2 Third vertex in world space
+  /// @param color RGBA color (alpha < 1 for translucency)
+  /// @param overlay If true, renders on top of everything (no depth testing)
+  void DrawSolidTriangle(
+      filament::math::float3 v0,
+      filament::math::float3 v1,
+      filament::math::float3 v2,
+      filament::math::float4 color,
+      bool overlay = false);
+
   /// Draws a solid oriented box
   /// @param center Center of the box in world space
   /// @param axisX Local X axis direction and length (halfExtent.x)

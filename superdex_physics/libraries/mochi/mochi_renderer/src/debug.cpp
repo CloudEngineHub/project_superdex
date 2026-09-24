@@ -619,6 +619,39 @@ void DebugDraw::DrawSolidAxisAlignedBox(
   dirty = true;
 }
 
+void DebugDraw::DrawSolidTriangle(
+    filament::math::float3 v0,
+    filament::math::float3 v1,
+    filament::math::float3 v2,
+    filament::math::float4 color,
+    bool overlay) {
+  // Select target buffers based on overlay flag
+  auto& positions = overlay ? _overlayPositions : _solidPositions;
+  auto& normals = overlay ? _overlayNormals : _solidNormals;
+  auto& colors = overlay ? _overlayColors : _solidColors;
+  auto& indices = overlay ? _overlayIndices : _solidIndices;
+  auto& dirty = overlay ? _overlayDirty : _solidDirty;
+
+  filament::math::float3 const edge = cross(v1 - v0, v2 - v0);
+  float const edgeLength = length(edge);
+  // A degenerate triangle has no usable normal; keep the vertices (they still paint at the
+  // caller's color) and fall back to an arbitrary unit normal rather than emitting a NaN.
+  filament::math::float3 const normal =
+      edgeLength > 0.0f ? edge / edgeLength : filament::math::float3{0.0f, 1.0f, 0.0f};
+
+  auto const baseIndex = static_cast<uint32_t>(positions.size());
+  for (filament::math::float3 const& v : {v0, v1, v2}) {
+    positions.push_back(v);
+    normals.push_back(normal);
+    colors.push_back(color);
+  }
+  indices.push_back(baseIndex + 0);
+  indices.push_back(baseIndex + 1);
+  indices.push_back(baseIndex + 2);
+
+  dirty = true;
+}
+
 void DebugDraw::DrawSolidOrientedBox(
     filament::math::float3 center,
     filament::math::float3 axisX,

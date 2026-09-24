@@ -2401,6 +2401,31 @@ void ImGui::ItemTooltipWrapped(char const* text) {
   ImGui::EndTooltip();
 }
 
+void ImGui::ReadOnlyTextBlock(char const* id, std::string const& text, ImFont* font, int maxLines) {
+  if (font != nullptr) {
+    ImGui::PushFont(font);
+  }
+  int lineCount = 1;
+  for (char const c : text) {
+    if (c == '\n') {
+      ++lineCount;
+    }
+  }
+  float const height =
+      ImGui::GetTextLineHeight() * static_cast<float>(std::min(lineCount, maxLines)) +
+      ImGui::GetStyle().FramePadding.y * 2.0f;
+  // ReadOnly: ImGui never writes back, so pointing at the immutable string's buffer is safe.
+  ImGui::InputTextMultiline(
+      id,
+      const_cast<char*>(text.c_str()),
+      text.size() + 1,
+      ImVec2(-FLT_MIN, height),
+      ImGuiInputTextFlags_ReadOnly);
+  if (font != nullptr) {
+    ImGui::PopFont();
+  }
+}
+
 static char const* CamelCaseToDisplayName(char const* name, char* buf, int bufSize) {
   // Serialization names sometimes carry a leading underscore to sort a key first in JSON (e.g.
   // "_comment"); it is not part of the human-readable name.

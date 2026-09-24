@@ -18,6 +18,7 @@
 #include "app/app.h"
 #include "assets/asset.h"
 #include "assets/mochi_prefab_asset.h"
+#include "rendering/measure_tool.h"
 #include "ui/imgui_widgets.h"
 
 #include <mochi_core/utils/basic_utils.h>
@@ -160,6 +161,12 @@ void MochiPrefabEditor::Initialize() {
   // hover highlights route to it (the stage owns the per-link highlight clones).
   _stage.BindRenderScene(_viewport->GetRenderScene());
   _viewport->SetSceneStage(&_stage);
+  // Measure tool (Ctrl+M): pick vertices/faces on the staged actors' render and collision meshes.
+  BindSceneStageMeasureTargets(
+      *_viewport,
+      _stage,
+      [this] { return _mochiScene.IsSimulating(); },
+      [this] { return _mochiScene.IsPaused(); });
   RestagePrefab();
   _viewport->FocusCameraOnScene();
 }
@@ -269,6 +276,7 @@ std::vector<AssetEditor::WindowDeclaration> MochiPrefabEditor::GetDefaultWindows
       {"Actor Details", true, Dock::SidePanelBottom, false},
       {"Contact Filter", false, Dock::SidePanelBottom, false},
       {"Physics Settings", false, Dock::SidePanelBottom, false},
+      MeasureWindowDeclaration(),
       // debug windows
       {"Render Scene Hierarchy", false, Dock::SidePanelTop, true},
       {"Render Scene Details", false, Dock::SidePanelBottom, true},
@@ -304,6 +312,7 @@ void MochiPrefabEditor::ShowAuxiliaryWindows() {
   if (bool& open = _studio->GetWindowVisible("Physics Settings")) {
     _mochiScene.ShowPhysicsSettingsWindow("Physics Settings", &open, GetAssetSceneOverrides());
   }
+  ShowMeasureWindow();
   // debug windows
   if (bool& open = _studio->GetWindowVisible("Render Scene Hierarchy")) {
     _viewport->ShowSceneHierarchyWindow("Render Scene Hierarchy", &open);
