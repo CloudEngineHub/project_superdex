@@ -9096,8 +9096,10 @@ def clear_file_from_cache(file_path: str) -> None:
     combinations.
 
     Args:
-        file_path (str): Path to a file that may have been loaded. The match is
-            case-sensitive and must equal the path used at load time exactly.
+        file_path (str): Path to a file that may have been loaded. It is matched
+            against the path used at load time after lexical normalization, so
+            separator style and "." / ".." segments may differ. The match is
+            case-sensitive.
 
     Note:
         Call on any thread.

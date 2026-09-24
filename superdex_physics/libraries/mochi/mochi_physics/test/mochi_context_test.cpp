@@ -460,6 +460,28 @@ TEST_IF_P(MOCHI_INTERNAL, MochiContextTest, ClearFileFromCache) {
   EXPECT_EQ(shapePtr2a, shapePtr2d); // Same path and scale. Same address (from cache)
 }
 
+// The cache test meshes are not shipped externally.
+TEST_IF_P(MOCHI_INTERNAL, MochiContextTest, ClearFileFromCacheNormalizesPathSpelling) {
+  _mochiContext->EnableFileCache(true);
+
+  // Paths reach the cache through several composition helpers (prefab resolution, asset managers),
+  // so the spelling passed to ClearFileFromCache rarely matches the spelling used at load time byte
+  // for byte. Cache keys are lexically normalized so that equivalent spellings agree.
+  auto const path = test::GetAssetPath("cube/cube_minimal.mochi.json");
+  auto const equivalentPath = test::GetAssetPath("cube/../cube/cube_minimal.mochi.json");
+  ASSERT_NE(path, equivalentPath);
+
+  auto const* contextImpl = assert_cast<ContextImpl const*>(_mochiContext);
+  auto const handleA = _mochiContext->LoadShapeFromFile(path, test::ExpectOK{});
+  auto const handleB = _mochiContext->LoadShapeFromFile(equivalentPath, test::ExpectOK{});
+  EXPECT_EQ(contextImpl->GetShapeSharedPtr(handleA), contextImpl->GetShapeSharedPtr(handleB));
+
+  // Clearing under either spelling evicts the shared entry.
+  _mochiContext->ClearFileFromCache(equivalentPath);
+  auto const handleC = _mochiContext->LoadShapeFromFile(path, test::ExpectOK{});
+  EXPECT_NE(contextImpl->GetShapeSharedPtr(handleA), contextImpl->GetShapeSharedPtr(handleC));
+}
+
 void MochiContextTest::TestFileCacheConcurrency(std::initializer_list<std::string_view> paths) {
   // Multiple threads can attempt to load shapes while the cache is enabled. Threads should be able
   // to load different files concurrently, but if they request the same file, then only one of the

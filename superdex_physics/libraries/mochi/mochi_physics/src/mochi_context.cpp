@@ -189,12 +189,20 @@ static void ValidateShapeTransform(Real3 const& scale, TransformRT const& rt, Er
       "Invalid shape scale. Scale must be non-zero on all 3 axes.");
 }
 
+// The path component of a file cache key. Normalizing it lets different spellings of one file
+// (mixed separators, "a/../b") share a cache entry, and lets ClearFileFromCache evict a file it
+// was given under a different spelling than the load used. Case is deliberately not folded: that
+// would be wrong on a case-sensitive filesystem.
+static std::string NormalizeFileCachePath(std::string_view path) {
+  return std::filesystem::path(path).lexically_normal().generic_string();
+}
+
 // Format a key for lookup in the file cache.
 static std::string
 GetFileCacheKey(std::string_view path, Real3 const& scale, TransformRT const& transform) {
   return Format(
       "%s:%s:%s:%s",
-      std::string(path).c_str(),
+      NormalizeFileCachePath(path).c_str(),
       SReflect::ToJsonString(scale).c_str(),
       SReflect::ToJsonString(transform.GetRotation()).c_str(),
       SReflect::ToJsonString(transform.GetTranslation()).c_str());
@@ -558,16 +566,11 @@ void ContextImpl::ClearFileCache() {
 
 void ContextImpl::ClearFileFromCache(std::string_view filePath) {
   std::lock_guard lock(_mutex);
-  // Non-articulated shapes are cached with key = "<filePath>:<scale>:<rotation>:<translation>".
-  // Articulated shapes are cached with key = "<filePath>".
-  // Remove all keys that match these patterns.
-  std::string keyPrefix;
-  keyPrefix.reserve(filePath.length() + 1);
-  keyPrefix.assign(filePath);
+  // Keys are "<normalized path>:<scale>:<rotation>:<translation>" (see GetFileCacheKey), so every
+  // bake variant of this file is matched by the normalized path plus the separator.
+  std::string keyPrefix = NormalizeFileCachePath(filePath);
   keyPrefix.push_back(':');
-  std::erase_if(_fileCache, [&](auto const& pair) {
-    return pair.first == filePath || pair.first.starts_with(keyPrefix);
-  });
+  std::erase_if(_fileCache, [&](auto const& pair) { return pair.first.starts_with(keyPrefix); });
 }
 
 Scene* ContextImpl::CreateScene(std::string_view name) {

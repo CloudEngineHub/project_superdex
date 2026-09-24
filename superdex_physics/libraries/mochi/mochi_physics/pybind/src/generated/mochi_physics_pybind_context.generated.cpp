@@ -541,7 +541,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsContext([[maybe_unused]] nb::module_&
       GetContext()->ClearFileFromCache(file_path);
     }
       , nb::arg("file_path")
-      , "Release all cached entries for a given shape file.\n\nUse this to free up memory, or to force the next file request to be loaded from\ndisk, in case the file had been modified. All entries for ``file_path`` are\nremoved, including every variant produced by different bake scale/transform\ncombinations.\n\nArgs:\n    file_path (str): Path to a file that may have been loaded. The match is\n        case-sensitive and must equal the path used at load time exactly.\n\nNote:\n    Call on any thread.\n\nSee Also:\n    :func:`~superdex.physics.is_file_cache_enabled`,\n    :func:`~superdex.physics.clear_file_cache`"
+      , "Release all cached entries for a given shape file.\n\nUse this to free up memory, or to force the next file request to be loaded from\ndisk, in case the file had been modified. All entries for ``file_path`` are\nremoved, including every variant produced by different bake scale/transform\ncombinations.\n\nArgs:\n    file_path (str): Path to a file that may have been loaded. It is matched\n        against the path used at load time after lexical normalization, so\n        separator style and \".\" / \"..\" segments may differ. The match is\n        case-sensitive.\n\nNote:\n    Call on any thread.\n\nSee Also:\n    :func:`~superdex.physics.is_file_cache_enabled`,\n    :func:`~superdex.physics.clear_file_cache`"
     );
 
     m.def("create_scene", [](std::string_view name) {
