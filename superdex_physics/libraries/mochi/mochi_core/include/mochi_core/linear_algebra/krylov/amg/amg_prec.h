@@ -255,6 +255,52 @@ struct AMGPrec : Preconditioner<Scalar> {
   template <bool kWithInitialX, typename VectorIn, typename VectorOut>
   void VCycle(VectorIn const& b, VectorOut& x, int s, ParallelWorkerInfo const& data) const;
 
+  /// @brief Return whether @ref Solve, @ref operator() and @ref ConcurrentSolve run
+  /// @ref FusedFineCycle.
+  [[nodiscard]] bool UsesFusedFineCycle() const {
+    return _options.smoother == Smoother::BlockJacobi && _options.numPreSmoothingSteps == 1 &&
+        _options.numPostSmoothingSteps == 1;
+  }
+
+  /**
+   * @brief @ref VCycle at level 0 from a zero initial guess, specialized to one block Jacobi pre-
+   * and post-smoothing step.
+   *
+   * @details Drops two of the barriers of @ref VCycle. Pre-smoothing from zero, y = omega D^{-1} b,
+   * is row-local, so it needs no barrier before it. The post-smoothing residual reads the corrected
+   * iterate from a separate buffer, so the smoothed result can be written to @p x without waiting
+   * for the other workers to finish reading it.
+   *
+   * @param[in] b RHS.
+   * @param[out] x Output vector.
+   * @param[in] data Parallel worker info.
+   */
+  void FusedFineCycle(
+      ColumnVectorView<Scalar const> b,
+      ColumnVectorView<Scalar> x,
+      ParallelWorkerInfo const& data) const;
+
+  /**
+   * @brief Coarse-grid correction e = P h on this worker's rows, where h is @ref VCycle at level
+   * s + 1 applied to Pt (b - A_s x).
+   *
+   * @details Uses three barriers, the first of which publishes @p x. @p e is written last, so it
+   * may alias the r/z workspace that the coarse V-cycle uses.
+   *
+   * @param[in] b RHS at level @p s.
+   * @param[in] x Iterate at level @p s.
+   * @param[out] e Correction at level @p s.
+   * @param[in] s Level.
+   * @param[in] data Parallel worker info.
+   */
+  template <typename VectorB, typename VectorX>
+  void CoarseCorrection(
+      VectorB const& b,
+      VectorX const& x,
+      ColumnVectorView<Scalar> e,
+      int s,
+      ParallelWorkerInfo const& data) const;
+
   /**
    * @brief Smoothing.
    *
@@ -562,9 +608,7 @@ AMGPrec<Scalar, kDofsPerNode>::AMGPrec(
 template <typename Scalar, int kDofsPerNode>
 template <typename VectorIn, typename VectorOut>
 void AMGPrec<Scalar, kDofsPerNode>::operator()(VectorIn const& x, VectorOut&& Px) const {
-  Preconditioner<Scalar>::ValidateInputOutput(_Af.Rows(), x, Px);
-  Px.SetZero();
-  VCycle<false>(x, Px, 0, ParallelWorkerInfo{0, 1, 0, Px.Rows(), ParallelBarrier(1)});
+  ConcurrentSolve(x, Px, ParallelWorkerInfo{0, 1, 0, Px.Rows(), ParallelBarrier(1)});
 }
 
 template <typename Scalar, int kDofsPerNode>
@@ -573,6 +617,10 @@ void AMGPrec<Scalar, kDofsPerNode>::ConcurrentSolve(
     ColumnVectorView<Scalar> Px,
     ParallelWorkerInfo const& data) const {
   Preconditioner<Scalar>::ValidateInputOutput(_Af.Rows(), x, Px);
+  if (UsesFusedFineCycle()) {
+    FusedFineCycle(x, Px, data);
+    return;
+  }
   Px.MiddleRows(data.rBegin, data.rEnd - data.rBegin).SetZero();
   VCycle<false>(x, Px, 0, data);
 }
@@ -649,45 +697,19 @@ void AMGPrec<Scalar, kDofsPerNode>::VCycle(
   }
 
   auto const n = x.Rows(); // Fine size
-  auto const nodeBegin = data.rBegin / kDofsPerNode;
-  auto const nodeEnd = data.rEnd / kDofsPerNode;
-
-  // Uniform division of rows in the coarser level among workers.
-  auto const N = _coarsenings[s].PtAP.Rows(); // Coarse size
-  MOCHI_ASSERT_VERBOSE(N % kDofsPerNode == 0, "Inconsistent coarse size.");
-  auto const numCoarseNodes = N / kDofsPerNode;
-  auto const coarseNodeBegin = (data.workerId * numCoarseNodes) / data.numWorkers;
-  auto const coarseNodeEnd = ((data.workerId + 1) * numCoarseNodes) / data.numWorkers;
-  auto const coarseRowBegin = coarseNodeBegin * kDofsPerNode;
-  auto const coarseRowEnd = coarseNodeEnd * kDofsPerNode;
-  auto const numCoarseRows = coarseRowEnd - coarseRowBegin;
-
   ColumnVectorView<Scalar> r(_workspace.data.get() + _workspace.rOffset, n);
   ColumnVectorView<Scalar> z(_workspace.data.get() + _workspace.zOffset, n);
-  ColumnVectorView<Scalar> g(_workspace.data.get() + _workspace.gOffset[s], N);
-  ColumnVectorView<Scalar> h(_workspace.data.get() + _workspace.hOffset[s], N);
 
   Smoothing<kWithInitialX>(_options.numPreSmoothingSteps, b, x, r, z, s, data);
 
-  data.BarrierWait(); // Wait for 'x' to be up-to-date.
-  _coarsenings[s].T.RestrictToNodeRange(b, g, coarseNodeBegin, coarseNodeEnd);
-  _coarsenings[s].PtA.ApplyToRange(x, h, coarseRowBegin, coarseRowEnd);
-  g.MiddleRows(coarseRowBegin, numCoarseRows) -= h.MiddleRows(coarseRowBegin, numCoarseRows);
-  //
-  h.MiddleRows(coarseRowBegin, numCoarseRows).SetZero();
-  data.BarrierWait(); // Wait for 'g' and 'h' to be up-to-date.
-  if (data.workerId == 0) {
-    // TODO(T185403857): Use VCycle with a subset of the workers.
-    VCycle<false>(g, h, s + 1, ParallelWorkerInfo{0, 1, 0, N, ParallelBarrier(1)});
-  }
-  //
-  data.BarrierWait(); // Wait for 'h' to be up-to-date.
-  _coarsenings[s].T.InterpolateToNodeRange(h, r, nodeBegin, nodeEnd);
+  CoarseCorrection(b, x, r, s, data);
   x.MiddleRows(data.rBegin, numRows) += r.MiddleRows(data.rBegin, numRows);
   //
   if (_options.smoother == Smoother::ApproximateJacobi) {
     // TODO(T185403857): Parallelize TransposeApply.
     if (data.workerId == 0) {
+      ColumnVectorView<Scalar const> h(
+          _workspace.data.get() + _workspace.hOffset[s], _coarsenings[s].PtAP.Rows());
       _coarsenings[s].PtA.TransposeApply(h, z);
     }
     //
@@ -704,7 +726,81 @@ void AMGPrec<Scalar, kDofsPerNode>::VCycle(
 }
 
 template <typename Scalar, int kDofsPerNode>
+void AMGPrec<Scalar, kDofsPerNode>::FusedFineCycle(
+    ColumnVectorView<Scalar const> b,
+    ColumnVectorView<Scalar> x,
+    ParallelWorkerInfo const& data) const {
+  MOCHI_ASSERT_VERBOSE(UsesFusedFineCycle(), "Fused cycle requires 1+1 block Jacobi smoothing.");
+
+  auto const& smoother = std::get<0>(_relaxOps.front());
+  auto const omega = _relaxationFactors.front();
+  auto const n = x.Rows();
+  auto const rowBegin = data.rBegin;
+  auto const rowEnd = data.rEnd;
+  auto const numRows = rowEnd - rowBegin;
+  ColumnVectorView<Scalar> u(_workspace.data.get() + _workspace.rOffset, n);
+  ColumnVectorView<Scalar> r(_workspace.data.get() + _workspace.zOffset, n);
+
+  // 'x' holds the pre-smoothed iterate y until post-smoothing.
+  smoother.ConcurrentSolve(b, x, data);
+  x.MiddleRows(rowBegin, numRows) *= omega;
+  CoarseCorrection(b, x, u, 0, data);
+  u.MiddleRows(rowBegin, numRows) += x.MiddleRows(rowBegin, numRows);
+  data.BarrierWait(); // Wait for 'u' to be up-to-date.
+  _Af.ApplyToRange(u, r, rowBegin, rowEnd);
+  r.MiddleRows(rowBegin, numRows) =
+      b.MiddleRows(rowBegin, numRows) - r.MiddleRows(rowBegin, numRows);
+  smoother.ConcurrentSolve(r, x, data);
+  x.MiddleRows(rowBegin, numRows) =
+      u.MiddleRows(rowBegin, numRows) + omega * x.MiddleRows(rowBegin, numRows);
+}
+
+template <typename Scalar, int kDofsPerNode>
+template <typename VectorB, typename VectorX>
+void AMGPrec<Scalar, kDofsPerNode>::CoarseCorrection(
+    VectorB const& b,
+    VectorX const& x,
+    ColumnVectorView<Scalar> e,
+    int s,
+    ParallelWorkerInfo const& data) const {
+  auto const nodeBegin = data.rBegin / kDofsPerNode;
+  auto const nodeEnd = data.rEnd / kDofsPerNode;
+
+  // Uniform division of rows in the coarser level among workers.
+  auto const N = _coarsenings[s].PtAP.Rows(); // Coarse size
+  MOCHI_ASSERT_VERBOSE(N % kDofsPerNode == 0, "Inconsistent coarse size.");
+  auto const numCoarseNodes = N / kDofsPerNode;
+  auto const coarseNodeBegin = (data.workerId * numCoarseNodes) / data.numWorkers;
+  auto const coarseNodeEnd = ((data.workerId + 1) * numCoarseNodes) / data.numWorkers;
+  auto const coarseRowBegin = coarseNodeBegin * kDofsPerNode;
+  auto const coarseRowEnd = coarseNodeEnd * kDofsPerNode;
+  auto const numCoarseRows = coarseRowEnd - coarseRowBegin;
+
+  ColumnVectorView<Scalar> g(_workspace.data.get() + _workspace.gOffset[s], N);
+  ColumnVectorView<Scalar> h(_workspace.data.get() + _workspace.hOffset[s], N);
+
+  data.BarrierWait(); // Wait for 'x' to be up-to-date.
+  _coarsenings[s].T.RestrictToNodeRange(b, g, coarseNodeBegin, coarseNodeEnd);
+  _coarsenings[s].PtA.ApplyToRange(x, h, coarseRowBegin, coarseRowEnd);
+  g.MiddleRows(coarseRowBegin, numCoarseRows) -= h.MiddleRows(coarseRowBegin, numCoarseRows);
+  //
+  h.MiddleRows(coarseRowBegin, numCoarseRows).SetZero();
+  data.BarrierWait(); // Wait for 'g' and 'h' to be up-to-date.
+  if (data.workerId == 0) {
+    // TODO(T185403857): Use VCycle with a subset of the workers.
+    VCycle<false>(g, h, s + 1, ParallelWorkerInfo{0, 1, 0, N, ParallelBarrier(1)});
+  }
+  //
+  data.BarrierWait(); // Wait for 'h' to be up-to-date.
+  _coarsenings[s].T.InterpolateToNodeRange(h, e, nodeBegin, nodeEnd);
+}
+
+template <typename Scalar, int kDofsPerNode>
 int AMGPrec<Scalar, kDofsPerNode>::NumConcurrentSolveBarriers() const {
+  if (UsesFusedFineCycle()) {
+    // CoarseCorrection's three barriers, plus FusedFineCycle's wait for 'u'.
+    return 4;
+  }
   int const numPre = _options.numPreSmoothingSteps;
   int const numPost = _options.numPostSmoothingSteps;
   int numBarriers = 0;
@@ -712,7 +808,7 @@ int AMGPrec<Scalar, kDofsPerNode>::NumConcurrentSolveBarriers() const {
     // The first pre-smoothing step waits once. Later steps also publish the previous x.
     numBarriers += 2 * numPre - 1;
   }
-  // Publish x before restriction, g/h before the coarse solve, and h before interpolation.
+  // CoarseCorrection's three barriers.
   numBarriers += 3;
   switch (_options.smoother) {
     case Smoother::ApproximateJacobi:

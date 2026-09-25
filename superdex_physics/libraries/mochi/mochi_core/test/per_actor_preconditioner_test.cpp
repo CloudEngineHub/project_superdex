@@ -728,7 +728,7 @@ TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSeri
   ASSERT_EQ(kBlockSize, amgPrec.GetConcurrentSolveRequirements().rowBlockSize);
   ExpectCost(blockJacobiPrec.GetConcurrentSolveCost(), {0.0, 36.0, 2, 0});
   ExpectCost(symInversePrec.GetConcurrentSolveCost(), {0.0, 66.0, 6, 0});
-  ExpectCost(amgPrec.GetConcurrentSolveCost(), {14.4, 201.6, 2, 6});
+  ExpectCost(amgPrec.GetConcurrentSolveCost(), {14.4, 201.6, 2, 4});
   ExpectCost(ilu0Prec.GetConcurrentSolveCost(), {78.0, 0.0, 1, 0});
   ExpectCost(coloredSSORPrec.GetConcurrentSolveCost(), {84.0, 0.0, 1, 6});
   EXPECT_EQ(2, coloredSSORPrec.prec->NumColors());

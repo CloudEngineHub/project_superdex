@@ -278,7 +278,10 @@ TEST(AMG, ConcurrentSolveBarriersReflectOptions) {
   };
 
   krylov::AMGOptions<real> options;
-  EXPECT_EQ(6, numBarriers(options));
+  EXPECT_EQ(4, numBarriers(options));
+
+  options.numPostSmoothingSteps = 2;
+  EXPECT_EQ(8, numBarriers(options));
 
   options.numPreSmoothingSteps = 2;
   EXPECT_EQ(8, numBarriers(options));
@@ -296,6 +299,35 @@ TEST(AMG, ConcurrentSolveBarriersReflectOptions) {
   options.smoother = krylov::Smoother::SSOR;
   krylov::ColoredSSORPrec<decltype(A)> finestSmoother(A);
   EXPECT_EQ(6 + 2 * finestSmoother.NumConcurrentSolveBarriers(), numBarriers(options));
+}
+
+template <typename MatrixType>
+static void ExpectFusedFineCycleMatchesGenericVCycle(MatrixType const& A) {
+  krylov::AMGPrec<real, MatrixType::kBlockSize> prec(A);
+  ColumnVector<real> b(A.Rows()), fused(A.Rows()), generic(A.Rows());
+  b.SetRandom(1);
+  prec(b, fused);
+  generic.SetZero();
+  prec.template VCycle<false>(b, generic, 0);
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(generic, fused));
+}
+
+TEST(AMG, FusedFineCycleMatchesGenericVCycle) {
+  ExpectFusedFineCycleMatchesGenericVCycle(MakeWeightedTridiagonalBlockSparseMatrix(15, 0.5_r));
+  ExpectFusedFineCycleMatchesGenericVCycle(mochi::test::MakeBlockSparseMatrix<real, 3>(4, 4, 4));
+}
+
+TEST(AMG, ConcurrentSolveForEachCycle) {
+  auto const A = mochi::test::MakeBlockSparseMatrix<real, 3>(4, 4, 4);
+  auto suppressWarnings = mochi::test::SuppressLogWarning();
+  // The defaults run FusedFineCycle; the others run the generic VCycle.
+  krylov::AMGOptions<real> defaults, twoPostSteps, ssor, approximateJacobi;
+  twoPostSteps.numPostSmoothingSteps = 2;
+  ssor.smoother = krylov::Smoother::SSOR;
+  approximateJacobi.smoother = krylov::Smoother::ApproximateJacobi;
+  for (auto const& options : {defaults, twoPostSteps, ssor, approximateJacobi}) {
+    TestConcurrentSolve(krylov::AMGPrec<real, 3>(A, options), A.Rows(), 3);
+  }
 }
 
 /// @brief Class to test the AMG preconditioner with 1D Laplace equation
