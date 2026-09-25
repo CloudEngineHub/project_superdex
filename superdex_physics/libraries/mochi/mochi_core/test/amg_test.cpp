@@ -284,6 +284,7 @@ TEST(AMG, ConcurrentSolveBarriersReflectOptions) {
   EXPECT_EQ(8, numBarriers(options));
 
   options.numPreSmoothingSteps = 2;
+  options.numPostSmoothingSteps = 1;
   EXPECT_EQ(8, numBarriers(options));
 
   options.numPreSmoothingSteps = 0;
