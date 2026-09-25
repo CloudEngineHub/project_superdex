@@ -68,7 +68,8 @@ class SphereTree {
   /**
    * @brief Finds candidate point indices using a custom sphere-overlap test.
    *
-   * @param[in] hasOverlap Callable accepting a @ref BatchSphere and returning a per-lane mask.
+   * @param[in] hasOverlap Callable accepting every supported @ref BatchSphere width used by the
+   * target architecture and returning a per-lane mask.
    * @param[out] outIndices Replaced with indices from matching leaves.
    */
   template <typename HasOverlapFn>
@@ -169,35 +170,93 @@ void SphereTree<kNodeSize>::FindIntersectingSamplesFn(
   using VIR = Simd<IR, kNodeSize>;
   static_assert(sizeof(IR) == sizeof(real));
 
+  constexpr int kWideNodeSize = 2 * kNodeSize;
+  using WideVR = Simd<real, kWideNodeSize>;
+  using WideVR3 = NdArray<WideVR, 3>;
+  using WideVIR = Simd<IR, kWideNodeSize>;
+  using WideVI = Simd<int, kWideNodeSize>;
+  constexpr bool kUseWideTraversal = WideVR::kIsSupported && !WideVR::kIsComposite &&
+      !WideVR::kIsEmulated && WideVI::kIsSupported && !WideVI::kIsComposite && !WideVI::kIsEmulated;
+  constexpr int kTraversalPadding = kUseWideTraversal ? WideVI::kSize : VI::kSize;
+
   // Reuse the output array as the BFS queue. It is resized for the final output after traversal.
   auto& queue = outIndices;
-  queue.resize_noinit(_spheres.size() + VI::kSize); // Padding for SIMD writes
-  queue[0] = 0;
+  queue.resize_noinit(_spheres.size() + kTraversalPadding); // Padding for SIMD writes
   size_t queueBegin = 0;
-  size_t queueEnd = 1;
+  size_t queueEnd = 0;
 
   // Use a temporary buffer to store leaf node indices during traversal.
   MOCHI_FILO_STACK_ALLOCATOR(filoAlloc, sizeof(int) * 32 * 1024);
   DynamicArray<int> leavesHit(&filoAlloc);
-  leavesHit.resize_noinit(_leaves.size() + VI::kSize); // Padding for SIMD writes
+  leavesHit.resize_noinit(_leaves.size() + kTraversalPadding); // Padding for SIMD writes
   size_t numLeavesHit = 0;
 
-  while (queueEnd > queueBegin) {
-    size_t const prevEnd = queueEnd;
-    for (size_t i = queueBegin; i < prevEnd; ++i) {
-      int const iNode = queue[i];
+  if constexpr (kUseWideTraversal) {
+    auto const processNode = [&](int iNode) MOCHI_FORCE_INLINE_LAMBDA {
       NodeSpheres const& sphere = _spheres[iNode];
       auto const centers = StaticCast<VR3>(sphere.centers);
       auto const radii = StaticCast<VR>(sphere.radii);
       VI const& children = _children[iNode];
       auto const result = hasOverlap(BatchSphere<kNodeSize>{centers, radii});
       VI const hitMask = StaticCast<VI>(ReinterpretCast<VIR>(result));
-      VI const nodeHits = hitMask & (children > 0);
-      VI const leafHits = hitMask & (children < 0);
-      queueEnd += StoreSelected(queue.data() + queueEnd, nodeHits, children);
-      numLeavesHit += StoreSelected(leavesHit.data() + numLeavesHit, leafHits, -children);
+      queueEnd += StoreSelected(queue.data() + queueEnd, hitMask & (children > 0), children);
+      numLeavesHit +=
+          StoreSelected(leavesHit.data() + numLeavesHit, hitMask & (children < 0), -children);
+    };
+
+    processNode(0);
+
+    auto const processNodePair = [&](int iNode0, int iNode1) MOCHI_FORCE_INLINE_LAMBDA {
+      NodeSpheres const& sphere0 = _spheres[iNode0];
+      NodeSpheres const& sphere1 = _spheres[iNode1];
+      auto const centers0 = StaticCast<VR3>(sphere0.centers);
+      auto const centers1 = StaticCast<VR3>(sphere1.centers);
+      WideVR3 const centers{
+          WideVR{centers0[0], centers1[0]},
+          WideVR{centers0[1], centers1[1]},
+          WideVR{centers0[2], centers1[2]}};
+      WideVR const radii{StaticCast<VR>(sphere0.radii), StaticCast<VR>(sphere1.radii)};
+      WideVI const children{_children[iNode0], _children[iNode1]};
+      auto const result = hasOverlap(BatchSphere<kWideNodeSize>{centers, radii});
+      WideVI const hitMask = StaticCast<WideVI>(ReinterpretCast<WideVIR>(result));
+      queueEnd += StoreSelected(queue.data() + queueEnd, hitMask & (children > 0), children);
+      numLeavesHit +=
+          StoreSelected(leavesHit.data() + numLeavesHit, hitMask & (children < 0), -children);
+    };
+
+    while (queueBegin < queueEnd) {
+      size_t const prevEnd = queueEnd;
+      size_t i = queueBegin;
+      for (; i + 1 < prevEnd; i += 2) {
+        int const iNode0 = queue[i];
+        int const iNode1 = queue[i + 1];
+        processNodePair(iNode0, iNode1);
+      }
+      if (i < prevEnd) {
+        processNode(queue[i]);
+      }
+      queueBegin = prevEnd;
     }
-    queueBegin = prevEnd;
+  } else {
+    queue[0] = 0;
+    queueEnd = 1;
+    while (queueEnd > queueBegin) {
+      size_t const prevEnd = queueEnd;
+      for (size_t i = queueBegin; i < prevEnd; ++i) {
+        int const iNode = queue[i];
+        NodeSpheres const& sphere = _spheres[iNode];
+        auto const centers = StaticCast<VR3>(sphere.centers);
+        auto const radii = StaticCast<VR>(sphere.radii);
+        VI const& children = _children[iNode];
+        auto const result = hasOverlap(BatchSphere<kNodeSize>{centers, radii});
+        VI const hitMask = StaticCast<VI>(ReinterpretCast<VIR>(result));
+        VI const nodeHits = hitMask & (children > 0);
+        VI const leafHits = hitMask & (children < 0);
+        queueEnd += StoreSelected(queue.data() + queueEnd, nodeHits, children);
+        numLeavesHit += StoreSelected(leavesHit.data() + numLeavesHit, leafHits, -children);
+      }
+      queueBegin = prevEnd;
+    }
   }
 
   // Resize once to avoid a memmove and growth check for every leaf. Clearing first avoids copying
@@ -214,25 +273,32 @@ void SphereTree<kNodeSize>::FindIntersectingSamplesFn(
       _indices.capacity() >= _indices.size() + Simd<int>::kSize,
       "SphereTree index storage must retain its SIMD guard region.");
   size_t outIndex = 0;
-  if (_maxPerLeaf <= Simd<int>::kSize) {
-    for (size_t i = 0; i < numLeavesHit; ++i) {
-      Int2 const& leafRange = _leaves[leavesHit[i]];
-      int const begin = leafRange[0];
-      int const end = leafRange[1];
-      auto inds = Load<Simd<int>>(&_indices[begin]);
-      Store(&outIndices[outIndex], inds);
-      outIndex += (end - begin);
-    }
-  } else {
-    for (size_t i = 0; i < numLeavesHit; ++i) {
-      Int2 const& leafRange = _leaves[leavesHit[i]];
-      int const begin = leafRange[0];
-      int const end = leafRange[1];
-      int j = begin;
-      for (; j < end; j += Simd<int>::kSize) {
-        Store(&outIndices[outIndex], Load<Simd<int>>(&_indices[j]));
-        outIndex += Min(Simd<int>::kSize, end - j);
+  size_t i = 0;
+  while (i < numLeavesHit) {
+    // Merge adjacent ranges so each run has at most one padded tail store.
+    Int2 const& leafRange = _leaves[leavesHit[i]];
+    int const begin = leafRange[0];
+    int end = leafRange[1];
+    ++i;
+    while (i < numLeavesHit) {
+      Int2 const& nextRange = _leaves[leavesHit[i]];
+      if (nextRange[0] != end) {
+        break;
       }
+      end = nextRange[1];
+      ++i;
+    }
+
+    int j = begin;
+    for (; end - j >= Simd<int>::kSize; j += Simd<int>::kSize) {
+      Store(&outIndices[outIndex], Load<Simd<int>>(&_indices[j]));
+      outIndex += Simd<int>::kSize;
+    }
+    if (j < end) {
+      auto const inds = Load<Simd<int>>(&_indices[j]);
+      int const count = end - j;
+      Store(&outIndices[outIndex], inds);
+      outIndex += count;
     }
   }
 

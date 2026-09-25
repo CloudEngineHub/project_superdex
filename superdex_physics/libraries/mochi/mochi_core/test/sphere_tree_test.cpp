@@ -104,8 +104,8 @@ TEST_P(SphereOctTreeTest, FindIntersectingSamplesAll) {
 
     DynamicArray<int> result;
     tree.FindIntersectingSamplesFn(
-        [](BatchSphere<8> const&) {
-          return VEqual(Vec8r{}, Vec8r{}); // all true
+        [](auto const& spheres) {
+          return VEqual(spheres.radius, spheres.radius); // all true
         },
         result);
 
@@ -131,8 +131,8 @@ TEST_P(SphereOctTreeTest, FindIntersectingSamplesNone) {
     DynamicArray<int> result;
     result.push_back(123);
     tree.FindIntersectingSamplesFn(
-        [](BatchSphere<8> const&) {
-          return Vec8r{0}; // all false
+        [](auto const& spheres) {
+          return spheres.radius < spheres.radius; // all false
         },
         result);
 
@@ -201,7 +201,7 @@ TEST(SphereOctTreeTest, MovePreservesSimdIndexPadding) {
 
   DynamicArray<int> result;
   moveAssigned.FindIntersectingSamplesFn(
-      [](BatchSphere<8> const&) { return VEqual(Vec8r{}, Vec8r{}); }, result);
+      [](auto const& spheres) { return VEqual(spheres.radius, spheres.radius); }, result);
 
   DynamicArray<int> const expected{0};
   EXPECT_EQ(result, expected);
@@ -225,8 +225,9 @@ TEST_P(SphereOctTreeTest, FindIntersectingSamplesPartial) {
       // A sphere overlaps the half-space (x <= threshold) if center.x - radius <= threshold.
       DynamicArray<int> result;
       tree.FindIntersectingSamplesFn(
-          [threshold](BatchSphere<8> const& spheres) {
-            return (spheres.center[0] - spheres.radius) <= Vec8r{threshold};
+          [threshold](auto const& spheres) {
+            using V = std::decay_t<decltype(spheres.radius)>;
+            return (spheres.center[0] - spheres.radius) <= V{threshold};
           },
           result);
 
