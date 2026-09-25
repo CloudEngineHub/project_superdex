@@ -692,6 +692,90 @@ TEST(PerActorPreconditioner, SynchronizedBarrierCostLimitsTeamWidth) {
   EXPECT_EQ(1, selectedWidth(100));
 }
 
+// Returns the team width of a synchronized actor sharing 2 workers with a single-worker actor.
+[[nodiscard]] static int SynchronizedWidthBesideShortActor(
+    ActorPreconditionerCost const& synchronizedCost,
+    double shortCost) {
+  RecordingActorPreconditioner synchronizedActor(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 2_r, synchronizedCost);
+  RecordingActorPreconditioner shortActor(
+      ActorPreconditionerParallelMode::SingleWorker,
+      1,
+      2_r,
+      ActorPreconditionerCost{.fixedCost = shortCost, .maxUsefulWorkers = 1});
+  PerActorPrec<real> prec({
+      {0, 4, synchronizedActor},
+      {4, 2, shortActor},
+  });
+  ColumnVector<real> x(6), Px(6);
+  x.SetRandom(28);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 3, 6});
+
+  ColumnVector<real> const expected = 2_r * x;
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+  return isize(synchronizedActor.Calls());
+}
+
+TEST(PerActorPreconditioner, ShortActorLeavesSpareWorkerToSynchronizedActorWhenFaster) {
+  ActorPreconditionerCost const synchronizedCost{
+      .fixedCost = 100000.0, .parallelCost = 20000.0, .maxUsefulWorkers = 4};
+  // The busiest worker's load is 112000 with a 2-wide team and 120000 on one worker.
+  EXPECT_EQ(2, SynchronizedWidthBesideShortActor(synchronizedCost, 2000.0));
+  // The short actor would run after the 2-wide team, so the busiest worker's load is 120000 either
+  // way and the tie keeps one worker.
+  EXPECT_EQ(1, SynchronizedWidthBesideShortActor(synchronizedCost, 10000.0));
+}
+
+TEST(PerActorPreconditioner, ShortActorsHoldingMoreThanHalfAWorkerKeepIt) {
+  // At 40000, the short actor holds exactly half of each worker's 80000 share of the total cost. A
+  // 2-wide team is predicted faster in both cases.
+  ActorPreconditionerCost const synchronizedCost{.parallelCost = 120000.0, .maxUsefulWorkers = 4};
+  EXPECT_EQ(2, SynchronizedWidthBesideShortActor(synchronizedCost, 40000.0));
+  EXPECT_EQ(1, SynchronizedWidthBesideShortActor(synchronizedCost, 40001.0));
+}
+
+// Returns the calls of a 2-worker independent-row actor placed after a single-worker actor, on 2
+// workers with the given matvec ranges.
+[[nodiscard]] static DynamicArray<ConcurrentCall> WideCallsBesideShortActor(
+    DynamicArray<int> const& workerRowRanges) {
+  RecordingActorPreconditioner shortActor(
+      ActorPreconditionerParallelMode::IndependentRows,
+      1,
+      2_r,
+      ActorPreconditionerCost{.parallelCost = 10000.0, .maxUsefulWorkers = 1});
+  RecordingActorPreconditioner wide(
+      ActorPreconditionerParallelMode::IndependentRows,
+      1,
+      2_r,
+      ActorPreconditionerCost{.parallelCost = 100000.0, .maxUsefulWorkers = 2});
+  PerActorPrec<real> prec({{0, 2, shortActor}, {2, 4, wide}});
+  ColumnVector<real> x(6), Px(6);
+  x.SetRandom(30);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, workerRowRanges);
+
+  ColumnVector<real> const expected = 2_r * x;
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, real{0}));
+  return SortedCalls(wide);
+}
+
+TEST(PerActorPreconditioner, SpareWorkerDoesNotOverrideReuseMatVecRanges) {
+  // The 1:3 ownership split beats Broad without the spare worker, but not with it.
+  EXPECT_EQ(
+      (DynamicArray<ConcurrentCall>{{0, 2, 0, 1, 0}, {1, 2, 1, 4, 1}}),
+      WideCallsBesideShortActor({0, 3, 6}));
+}
+
+TEST(PerActorPreconditioner, SpareWorkerAppliesWhenReuseMatVecRangesIsInvalidOrSlower) {
+  // The short actor, limited to one worker, straddles both matvec ranges.
+  EXPECT_EQ(2, isize(WideCallsBesideShortActor({0, 1, 6})));
+  // One worker owns every row, so reusing the matvec ranges is slower than Broad.
+  EXPECT_EQ(2, isize(WideCallsBesideShortActor({0, 0, 6})));
+}
+
 TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSerialExecution) {
   int constexpr kBlockSize = 3;
   int constexpr kActorSize = 2 * kBlockSize;

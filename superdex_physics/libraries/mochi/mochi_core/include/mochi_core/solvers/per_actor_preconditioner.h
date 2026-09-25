@@ -764,13 +764,17 @@ struct PerActorPrec final : Preconditioner<T> {
   }
 
   // Initial width caps for SimulateBroad: about the number of workers each actor needs to finish
-  // within a lower bound on the predicted plan duration.
+  // within a lower bound on the predicted plan duration. The short actors' combined share is
+  // rounded up to whole workers. If that leaves at least half a worker idle, spareInfoIndex
+  // receives the actor that would get one more worker, and otherwise -1.
   [[nodiscard]] static DynamicArray<int> MakeBaseCaps(
       Span<ActorInfo const> infos,
       Span<int const> actorOrder,
       int numWorkers,
+      int& spareInfoIndex,
       Allocator* allocator) {
     DynamicArray<int> caps(infos.size(), 1, allocator);
+    spareInfoIndex = -1;
     if (actorOrder.empty()) {
       return caps;
     }
@@ -830,6 +834,10 @@ struct PerActorPrec final : Preconditioner<T> {
       ++caps[best.infoIndex];
       ++usedLargeWorkers;
       addRefillCandidate(best.infoIndex);
+    }
+
+    if (usedLargeWorkers < static_cast<int>(Round(numWorkers - smallUse)) && !refillHeap.empty()) {
+      spareInfoIndex = refillHeap.front().infoIndex;
     }
     return caps;
   }
@@ -971,9 +979,10 @@ struct PerActorPrec final : Preconditioner<T> {
   // a single-worker actor, aligned row ranges for an independent-row actor, and, for a synchronized
   // actor, the team width with the lowest predicted overall finish. When every actor supports
   // independent rows, reusing the matrix-vector row ranges is also estimated and is kept if it
-  // respects every actor's worker limit and is at least as fast. Predictions include waiting for
-  // teammates, team barriers, and, if any worker writes rows that another worker owns for the
-  // matrix-vector product, the final all-worker barrier.
+  // respects every actor's worker limit and is at least as fast as Broad. Otherwise, Broad gives
+  // MakeBaseCaps's spare worker, if any, to its actor only if that is predicted faster. Predictions
+  // include waiting for teammates, team barriers, and, if any worker writes rows that another
+  // worker owns for the matrix-vector product, the final all-worker barrier.
   //
   // TODO: Known planner gaps:
   // - MakeActorOrder orders by serial cost, ignoring how widely each actor can spread. An actor
@@ -984,18 +993,22 @@ struct PerActorPrec final : Preconditioner<T> {
   //   analysis on synthetic islands found the measured gain too rare and small to justify
   //   doubling the planning cost. See D121469076.
   // - TeamReuse, which runs synchronized actors on nested teams drawn from a shared worker prefix,
-  //   measured slower than Broad overall in preliminary analysis on synthetic islands. At 2
-  //   workers, however, running each synchronized actor on both workers in turn often beat Broad,
-  //   for reasons not yet understood. See D120605491.
+  //   measured slower than Broad overall in preliminary analysis on synthetic islands. See
+  //   D120605491.
   // - ScheduleSingleWorker: When no final barrier is required yet, consider comparing the
   //   least-loaded worker with the local owner. The first nonlocal assignment adds one full-worker
   //   barrier every time the preconditioner is applied and can cost more than the load imbalance
   //   it removes.
-  // - When every actor supports independent row ranges, evaluate reuse of the matvec ranges first.
-  //   If no valid plan can be faster, skip the generic candidate evaluation.
+  // - Skip simulating Broad when reusing the matvec ranges reaches a lower bound on any plan's
+  //   duration.
   // - For an independent-row actor, adding a worker never increases predicted cost: fixedCost is
   //   zero and parallelCost is split among the workers. A small actor may therefore be split across
   //   more workers than pays off. If profiling shows this, add a per-worker overhead to the model.
+  // - Short actors holding more than half a worker still reserve a whole one, so at 2 workers a
+  //   dominant actor stays on one worker while the other worker finishes the short actors early
+  //   and waits.
+  // - Recalibrate AMGActorPrec::GetConcurrentSolveCost against measured durations, including team
+  //   overhead for small AMGs.
   // - PrepareConcurrentSolve replans on every call, adding a few microseconds per solve, which is
   //   significant for small systems. Caching would amortize this and could justify a costlier
   //   planner, but ParallelPCG's worker count is nondeterministic, so it needs one plan per worker
@@ -1024,8 +1037,9 @@ struct PerActorPrec final : Preconditioner<T> {
     // Validate actor metadata and establish the relative order shared by every candidate.
     auto const infos = MakeActorInfos(numWorkers, &planningAllocator);
     auto const order = MakeActorOrder(MakeConstSpan(infos), &planningAllocator);
-    auto const baseCaps =
-        MakeBaseCaps(MakeConstSpan(infos), MakeConstSpan(order), numWorkers, &planningAllocator);
+    int spareInfoIndex = -1;
+    auto baseCaps = MakeBaseCaps(
+        MakeConstSpan(infos), MakeConstSpan(order), numWorkers, spareInfoIndex, &planningAllocator);
     bool allIndependent = true;
     for (auto const& info : infos) {
       allIndependent =
@@ -1037,49 +1051,42 @@ struct PerActorPrec final : Preconditioner<T> {
     ConcurrentSolvePlan plan{
         .workerTasks = DynamicArray<DynamicArray<ConcurrentSolveTask>>(numWorkers),
         .requiresFinalBarrier = false};
+    auto const simulateBroad = [&](ConcurrentSolvePlan* target) {
+      return SimulateBroad(
+          workerRowRanges,
+          MakeConstSpan(infos),
+          MakeConstSpan(order),
+          MakeConstSpan(baseCaps),
+          finalBarrierCost,
+          scratch,
+          target);
+    };
 
     // Broad is the only valid plan unless every actor supports independent row ranges.
-    if (!allIndependent) {
-      SimulateBroad(
-          workerRowRanges,
-          MakeConstSpan(infos),
-          MakeConstSpan(order),
-          MakeConstSpan(baseCaps),
-          finalBarrierCost,
-          scratch,
-          &plan);
-      return plan;
+    auto const reuseDuration = allIndependent
+        ? TrySimulateReuseMatVecRanges(workerRowRanges, MakeConstSpan(infos), scratch, nullptr)
+        : std::nullopt;
+    if (reuseDuration.has_value() || spareInfoIndex >= 0) {
+      // Compare with Broad before trying the spare worker. In benchmarks, reusing the matvec ranges
+      // was faster in the cases where only the spare made Broad predicted faster.
+      double const broadDuration = simulateBroad(nullptr);
+      if (reuseDuration.has_value() && *reuseDuration <= broadDuration) {
+        [[maybe_unused]] auto const duration =
+            TrySimulateReuseMatVecRanges(workerRowRanges, MakeConstSpan(infos), scratch, &plan);
+        MOCHI_ASSERT(duration.has_value(), "Selected matvec row ranges must remain valid.");
+        return plan;
+      }
+
+      // The spare worker can still lose, e.g., by pushing short actors onto loaded workers or by
+      // adding the final barrier.
+      if (spareInfoIndex >= 0) {
+        ++baseCaps[spareInfoIndex];
+        if (simulateBroad(nullptr) >= broadDuration) {
+          --baseCaps[spareInfoIndex];
+        }
+      }
     }
-
-    // Estimate candidate durations without creating tasks or barriers.
-    double const broadDuration = SimulateBroad(
-        workerRowRanges,
-        MakeConstSpan(infos),
-        MakeConstSpan(order),
-        MakeConstSpan(baseCaps),
-        finalBarrierCost,
-        scratch,
-        nullptr);
-
-    auto const reuseDuration =
-        TrySimulateReuseMatVecRanges(workerRowRanges, MakeConstSpan(infos), scratch, nullptr);
-    bool const reuseMatVecRanges = reuseDuration.has_value() && *reuseDuration <= broadDuration;
-
-    // Run the winner again to build its task lists and team barriers.
-    if (reuseMatVecRanges) {
-      [[maybe_unused]] auto const duration =
-          TrySimulateReuseMatVecRanges(workerRowRanges, MakeConstSpan(infos), scratch, &plan);
-      MOCHI_ASSERT(duration.has_value(), "Selected matvec row ranges must remain valid.");
-    } else {
-      SimulateBroad(
-          workerRowRanges,
-          MakeConstSpan(infos),
-          MakeConstSpan(order),
-          MakeConstSpan(baseCaps),
-          finalBarrierCost,
-          scratch,
-          &plan);
-    }
+    simulateBroad(&plan);
     return plan;
   }
 
