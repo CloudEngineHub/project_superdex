@@ -2002,6 +2002,10 @@ void articulated::compound::SetupCollidingJacobians(
           auto const& dofsVariant =
               contactPartitions[jac->query->collidingPartitionId].GetDofDescriptors()[0];
           auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(dofsVariant));
+          if (dofs.empty()) {
+            jac->SetZeroDofJacobian();
+            return;
+          }
           DMapSkinNoInput dskinning(0, skinningData.jacobianDJoints, dofs, dofOffset.dofsOffset);
           DQuad dquad(discretizationImpl.femElements, jac->query->jacColliderFromWorld);
           DMap<DQuad, DMapSkinNoInput> dmap(&dquad, &dskinning);

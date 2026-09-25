@@ -394,6 +394,15 @@ void blended::SetupCollidingJacobians(
 
   // Compute Jacobians
   ParallelForEach("SetupCollidingJacobianSoftSkinned", jacobiansActive, 1, [&](JacData* jacData) {
+    auto const& descriptors =
+        contactPartitions[jacData->query->collidingPartitionId].GetDofDescriptors();
+    auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(descriptors[0]));
+    int const softId = std::get<int>(descriptors[1]);
+    if (dofs.empty() && softId < 0) {
+      jacData->SetZeroDofJacobian();
+      return;
+    }
+
     discretization.Visit([&](auto const& discretizationImpl) {
       using DiscretizationImplT = std::decay_t<decltype(discretizationImpl)>;
       using DQuad = DMapQuad<typename DiscretizationImplT::ElementT>;
@@ -406,9 +415,6 @@ void blended::SetupCollidingJacobians(
 
       // Get the soft actor from the contact partition [possibly none].
       std::optional<entt::entity> soft;
-      auto const& variantId =
-          contactPartitions[jacData->query->collidingPartitionId].GetDofDescriptors()[1];
-      int softId = std::get<int>(variantId);
       if (softId >= 0) {
         soft = composition.soft[softId];
       }
@@ -431,9 +437,6 @@ void blended::SetupCollidingJacobians(
       // Prepare the skinning dmap
       std::optional<DMapSkinInput> dskinIn;
       std::optional<DMapSkinNoInput> dskinNoIn;
-      auto const& dofsVariant =
-          contactPartitions[jacData->query->collidingPartitionId].GetDofDescriptors()[0];
-      auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(dofsVariant));
       if (soft) {
         dskinIn.emplace(1, skinningJacobian, dofs, dofOffset.dofsOffset, skinningData, rotations);
       } else {

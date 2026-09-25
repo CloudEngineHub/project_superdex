@@ -692,6 +692,26 @@ struct JacData {
       }
     }
   }
+
+  [[nodiscard]] bool HasSolverDoFs() const {
+    return std::any_of(jacs->begin(), jacs->end(), [](ContactJac const& jac) {
+      return jac.nContacts > 0 && jac.nDoFsState > 0;
+    });
+  }
+
+  // Clear recycled slices, then preserve the contact count in the first slice with zero columns.
+  // Sync sparsity construction needs a colliding Jacobian to pair with the collider Jacobian; the
+  // slice identity is irrelevant because it contains no DoFs.
+  void SetZeroDofJacobian() {
+    MOCHI_ASSERT_VERBOSE(query != nullptr, "Missing contact query");
+    for (auto& jac : *jacs) {
+      jac.Resize(false, false, 0, 0, 0);
+      jac.SetJacAuxView({});
+    }
+    auto& jac = jacs->front();
+    jac.Resize(true, false, 0, 0, isize(query->sampleIndices));
+    jac.CompressIndices();
+  }
 };
 
 enum class CollRole { Colliding = 0, Collider = 1 };

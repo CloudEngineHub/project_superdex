@@ -3769,57 +3769,64 @@ void mochi::AssembleAsyncSkinnedContact(
 
   // Skip if there are no contacts at all
   bool hasContact = false;
+  bool hasContactWithDofs = false;
   for (auto const& coll : activeCollisions) {
     if (!coll.collisionResult.Empty()) {
       hasContact = true;
-      break;
+      hasContactWithDofs |= collJacs[coll.collidingJacId].HasSolverDoFs();
     }
   }
-  if (!hasContact) {
-    outContactSnle.useInSolver = false;
+  outContactSnle.useInSolver = hasContactWithDofs;
+  bool const needForces = params.assemRes && queryActiveContacts;
+  if (!hasContact || (!hasContactWithDofs && !needForces)) {
     return;
   }
 
-  // Set up the output SNLE
-  outContactSnle.residuals.resize(1);
-  outContactSnle.dresiduals.resize(1);
-  auto& outContactResidual = outContactSnle.residuals[0].second;
-  auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
+  // Set up the output SNLE if needed
+  if (hasContactWithDofs) {
+    outContactSnle.residuals.resize(1);
+    outContactSnle.dresiduals.resize(1);
+    auto& outContactResidual = outContactSnle.residuals[0].second;
+    auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
 
-  if (params.assemRes) {
-    // TODO: Skinned contact should assemble directly into this entity's reduced CActorSnle, or to
-    // another residual/dresidual of the same size. For now, it produces an interactionResidual
-    // and interactionMatrix for the island's SNLE problem, so they need to be the size of the
-    // island.
-    auto const& islandDofInfo = reg.get<CIslandDofInfo>(islandMember.island);
+    if (params.assemRes) {
+      // TODO: Skinned contact should assemble directly into this entity's reduced CActorSnle, or
+      // to another residual/dresidual of the same size. For now, it produces an
+      // interactionResidual and interactionMatrix for the island's SNLE problem, so they need to
+      // be the size of the island.
+      auto const& islandDofInfo = reg.get<CIslandDofInfo>(islandMember.island);
 
-    // Resize the contact residual if necessary
-    if (outContactResidual.size() != islandDofInfo.dofsSize) {
-      outContactResidual.Reset(islandDofInfo.dofsSize);
+      // Resize the contact residual if necessary
+      if (outContactResidual.size() != islandDofInfo.dofsSize) {
+        outContactResidual.Reset(islandDofInfo.dofsSize);
+      }
     }
-  }
 
-  if (params.assemDRes) {
-    // Compute sparsity based on the DOFs that are actually affected by explicit contact.
-    if (useBlockSparse3x3) {
-      outContactDResidual = BlockSparseMatrix<real, 3>{
-          MakeContactGraph<3, ContactType::Async>(reg, MakeSingletonConstSpan(e))};
-    } else {
-      outContactDResidual = SparseMatrix<real>{
-          MakeContactGraph<1, ContactType::Async>(reg, MakeSingletonConstSpan(e))};
+    if (params.assemDRes) {
+      // Compute sparsity based on the DOFs that are actually affected by explicit contact.
+      if (useBlockSparse3x3) {
+        outContactDResidual = BlockSparseMatrix<real, 3>{
+            MakeContactGraph<3, ContactType::Async>(reg, MakeSingletonConstSpan(e))};
+      } else {
+        outContactDResidual = SparseMatrix<real>{
+            MakeContactGraph<1, ContactType::Async>(reg, MakeSingletonConstSpan(e))};
+      }
+      MOCHI_ASSERT(
+          GetNumValues(outContactDResidual) > 0,
+          "If there was no async contact with this actor, then we shouldn't have gotten this far.");
     }
-    MOCHI_ASSERT(
-        GetNumValues(outContactDResidual) > 0,
-        "If there was no async contact with this actor, then we shouldn't have gotten this far.");
-  }
 
-  outContactSnle.SetZero(params);
-  outContactSnle.useInSolver = true;
+    outContactSnle.SetZero(params);
+  }
 
   // Configure common containers for all colliders
   MOCHI_FILO_STACK_ALLOCATOR(filoAllocator, 64 * 1024);
   CollisionResponseResult response(&filoAllocator);
-  response.Reserve(activeCollisions, params.assemObj, params.assemRes, params.assemDRes);
+  response.Reserve(
+      activeCollisions,
+      params.assemObj && hasContactWithDofs,
+      params.assemRes,
+      params.assemDRes && hasContactWithDofs);
   DynamicArray<ContactJac const*> jacs(&filoAllocator);
   jacs.reserve(JacData::kMaxJacs);
   ContactEvalConfig config{
@@ -3835,39 +3842,58 @@ void mochi::AssembleAsyncSkinnedContact(
 
   // Traverse colliding entities and assemble to outContactSnle
   for (auto& coll : activeCollisions) {
+    if (coll.collisionResult.Empty()) {
+      continue;
+    }
+
+    auto const& jacData = collJacs[coll.collidingJacId];
+    bool const collisionHasStateDofs = jacData.HasSolverDoFs();
+    bool const evaluateRes = params.assemRes && (collisionHasStateDofs || queryActiveContacts);
+    if (!collisionHasStateDofs && !evaluateRes) {
+      continue;
+    }
+
     // Compute collision response
     auto const& query = coll.collisionResult;
     int const numPoints = isize(query.sampleIndices);
-    response.ResizeNoInit(numPoints, params.assemObj, params.assemRes, params.assemDRes);
+    response.ResizeNoInit(
+        numPoints,
+        params.assemObj && collisionHasStateDofs,
+        evaluateRes,
+        params.assemDRes && collisionHasStateDofs);
     auto contactParams = GetContactPairParams(reg, e, coll.colliderEntity);
     ComputeCollisionResponse<GradTarget::Current>(
         query,
         contactParams,
         config,
         intState.dtStage,
-        params.assemObj,
-        params.assemRes,
-        params.assemDRes,
+        params.assemObj && collisionHasStateDofs,
+        evaluateRes,
+        params.assemDRes && collisionHasStateDofs,
         response);
 
-    // Get contact Jacobians
-    jacs.clear();
-    collJacs[coll.collidingJacId].GetJacs(jacs);
+    if (collisionHasStateDofs) {
+      // Get contact Jacobians
+      jacs.clear();
+      jacData.GetJacs(jacs);
 
-    // Perform assembly.
-    AssembleCollisionResponse(
-        reg,
-        e,
-        coll.colliderEntity,
-        query,
-        response,
-        samples.weights,
-        jacs,
-        &filoAllocator,
-        params.assemObj ? &outContactSnle.objective : nullptr,
-        params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
-        params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{},
-        /*isSyncRigid*/ false);
+      // Perform assembly.
+      auto& outContactResidual = outContactSnle.residuals[0].second;
+      auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
+      AssembleCollisionResponse(
+          reg,
+          e,
+          coll.colliderEntity,
+          query,
+          response,
+          samples.weights,
+          jacs,
+          &filoAllocator,
+          params.assemObj ? &outContactSnle.objective : nullptr,
+          params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
+          params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{},
+          /*isSyncRigid*/ false);
+    }
 
     // Store the forces in case they are needed for a later contact point query
     if (params.assemRes && queryActiveContacts) {
