@@ -118,41 +118,27 @@ struct PerActorPrec final : Preconditioner<T> {
 
   static constexpr int kInactiveHeapPosition = -1;
 
-  // Min-heap of worker indices keyed by predicted load. A worker's row range is the rows it owns in
-  // the matrix-vector product.
+  // Min-heap of worker indices keyed by predicted load. Construction zeroes every load and inserts
+  // every worker. A worker's row range is the rows it owns in the matrix-vector product.
   class WorkerLoadHeap {
    public:
     WorkerLoadHeap(
         DynamicArray<double>& loads,
         DynamicArray<int>& heapWorkerIds,
         DynamicArray<int>& heapPositions,
-        Span<int const> workerRowRanges,
-        int workerBegin,
-        int workerEnd)
+        Span<int const> workerRowRanges)
         : _loads(loads),
           _heapWorkerIds(heapWorkerIds),
           _heapPositions(heapPositions),
-          _workerRowRanges(workerRowRanges),
-          _workerBegin(workerBegin),
-          _workerEnd(workerEnd) {
+          _workerRowRanges(workerRowRanges) {
+      MOCHI_ASSERT_VERBOSE(!loads.empty(), "Worker heap must not be empty.");
       MOCHI_ASSERT_VERBOSE(
-          workerBegin >= 0 && workerBegin < workerEnd, "Worker heap must not be empty.");
-      MOCHI_ASSERT_VERBOSE(workerEnd <= isize(loads) && isize(heapPositions) == isize(loads));
-      _heapWorkerIds.clear();
-      std::fill(_heapPositions.begin(), _heapPositions.end(), kInactiveHeapPosition);
-      _maximumLoad = _loads[workerBegin];
-      for (int workerId = workerBegin; workerId < workerEnd; ++workerId) {
-        _heapPositions[workerId] = isize(_heapWorkerIds);
-        _heapWorkerIds.push_back(workerId);
-        _maximumLoad = Max(_maximumLoad, _loads[workerId]);
-      }
-      for (int index = Size() / 2; index > 0; --index) {
-        SiftDown(index - 1);
-      }
-    }
-
-    [[nodiscard]] int Size() const {
-      return isize(_heapWorkerIds);
+          isize(heapPositions) == isize(loads) && isize(workerRowRanges) == isize(loads) + 1);
+      std::fill(_loads.begin(), _loads.end(), 0.0);
+      // Equal loads order workers by index, so index order is a valid heap.
+      _heapWorkerIds.resize_noinit(_loads.size());
+      std::iota(_heapWorkerIds.begin(), _heapWorkerIds.end(), 0);
+      std::iota(_heapPositions.begin(), _heapPositions.end(), 0);
     }
 
     [[nodiscard]] double Load(int workerId) const {
@@ -205,6 +191,10 @@ struct PerActorPrec final : Preconditioner<T> {
     }
 
    private:
+    [[nodiscard]] int Size() const {
+      return isize(_heapWorkerIds);
+    }
+
     // Twice the midpoint of the worker's row range, which keeps midpoint comparisons in integers.
     [[nodiscard]] int64_t RowMidpointTwice(int workerId) const {
       return static_cast<int64_t>(_workerRowRanges[workerId]) + _workerRowRanges[workerId + 1];
@@ -274,17 +264,16 @@ struct PerActorPrec final : Preconditioner<T> {
     // Starts a new NearestActiveWorker scan at the worker whose row range contains the preferred
     // midpoint.
     void ResetLocality(int64_t preferredMidpointTwice) {
-      auto const firstBoundary = _workerRowRanges.begin() + _workerBegin;
-      auto const lastBoundary = _workerRowRanges.begin() + _workerEnd + 1;
       auto const upper = std::upper_bound(
-          firstBoundary,
-          lastBoundary,
+          _workerRowRanges.begin(),
+          _workerRowRanges.end(),
           preferredMidpointTwice,
           [](int64_t midpointTwice, int boundary) {
             return midpointTwice < 2 * static_cast<int64_t>(boundary);
           });
-      int const owner = Clamp(
-          static_cast<int>(upper - _workerRowRanges.begin()) - 1, _workerBegin, _workerEnd - 1);
+      int const owner = static_cast<int>(upper - _workerRowRanges.begin()) - 1;
+      MOCHI_ASSERT_VERBOSE(
+          owner >= 0 && owner < isize(_loads), "Preferred rows must lie within the worker rows.");
       _localityLeft = owner;
       _localityRight = owner;
       _localityMidpointTwice = preferredMidpointTwice;
@@ -300,18 +289,18 @@ struct PerActorPrec final : Preconditioner<T> {
       if (!_localityValid || _localityMidpointTwice != preferredMidpointTwice) {
         ResetLocality(preferredMidpointTwice);
       }
-      while (_localityLeft >= _workerBegin &&
-             _heapPositions[_localityLeft] == kInactiveHeapPosition) {
+      int const numWorkers = isize(_loads);
+      while (_localityLeft >= 0 && _heapPositions[_localityLeft] == kInactiveHeapPosition) {
         --_localityLeft;
       }
-      while (_localityRight < _workerEnd &&
+      while (_localityRight < numWorkers &&
              _heapPositions[_localityRight] == kInactiveHeapPosition) {
         ++_localityRight;
       }
-      if (_localityLeft < _workerBegin) {
-        return _localityRight < _workerEnd ? _localityRight : -1;
+      if (_localityLeft < 0) {
+        return _localityRight < numWorkers ? _localityRight : -1;
       }
-      if (_localityRight >= _workerEnd) {
+      if (_localityRight >= numWorkers) {
         return _localityLeft;
       }
       int64_t const leftDistance =
@@ -325,8 +314,6 @@ struct PerActorPrec final : Preconditioner<T> {
     DynamicArray<int>& _heapWorkerIds;
     DynamicArray<int>& _heapPositions;
     Span<int const> _workerRowRanges;
-    int _workerBegin;
-    int _workerEnd;
     double _maximumLoad{0.0};
     int64_t _localityMidpointTwice{0};
     int _localityLeft{0};
@@ -348,8 +335,8 @@ struct PerActorPrec final : Preconditioner<T> {
   // Scratch arrays reused by the SimulateBroad and TrySimulateReuseMatVecRanges calls of one plan.
   struct SimulationScratch {
     SimulationScratch(int numWorkers, Allocator* allocator)
-        : loads(numWorkers, 0.0, allocator),
-          heapPositions(numWorkers, kInactiveHeapPosition, allocator),
+        : loads(numWorkers, allocator),
+          heapPositions(numWorkers, allocator),
           selectedWorkers(allocator),
           blockCounts(allocator),
           roundingHeap(allocator),
@@ -358,10 +345,6 @@ struct PerActorPrec final : Preconditioner<T> {
       blockCounts.reserve(numWorkers);
       roundingHeap.reserve(numWorkers);
       heapWorkerIds.reserve(numWorkers);
-    }
-
-    void Reset() {
-      std::fill(loads.begin(), loads.end(), 0.0);
     }
 
     // Member destruction reverses this allocation order, as required by FiloAllocator.
@@ -481,17 +464,24 @@ struct PerActorPrec final : Preconditioner<T> {
         actor.cost.numTeamBarriers * EstimatedBarrierCost(numWorkers);
   }
 
-  [[nodiscard]] static int BestSynchronizedWidth(ActorInfo const& actor, int widthLimit) {
+  // Returns the team width in [1, widthLimit] with the earliest predicted overall finish,
+  // max(minimumFinish, teamStart(width) + duration), preferring the narrowest on ties.
+  template <typename TeamStart>
+  [[nodiscard]] static int BestSynchronizedWidth(
+      ActorInfo const& actor,
+      int widthLimit,
+      double minimumFinish,
+      TeamStart const& teamStart) {
     MOCHI_ASSERT_VERBOSE(
         actor.mode == ActorPreconditionerParallelMode::SynchronizedTeam && widthLimit > 0 &&
         widthLimit <= actor.maxConcurrentWorkers);
     int bestWidth = 1;
-    double bestDuration = EstimatedDuration(actor, 1);
+    double bestFinish = Max(minimumFinish, teamStart(1) + EstimatedDuration(actor, 1));
     for (int width = 2; width <= widthLimit; ++width) {
-      double const duration = EstimatedDuration(actor, width);
-      if (duration < bestDuration) {
+      double const finish = Max(minimumFinish, teamStart(width) + EstimatedDuration(actor, width));
+      if (finish < bestFinish) {
         bestWidth = width;
-        bestDuration = duration;
+        bestFinish = finish;
       }
     }
     return bestWidth;
@@ -551,14 +541,14 @@ struct PerActorPrec final : Preconditioner<T> {
 
   void ScheduleIndependentRows(
       ActorInfo const& info,
-      int widthLimit,
+      int numWorkers,
       WorkerLoadHeap& workers,
       SimulationScratch& scratch,
       Span<int const> workerRowRanges,
       bool& requiresFinalBarrier,
       ConcurrentSolvePlan* plan) const {
+    MOCHI_ASSERT_VERBOSE(numWorkers > 0 && numWorkers <= info.maxConcurrentWorkers);
     auto const& actor = _actorPrecs[info.actorIndex];
-    int const numWorkers = Min(widthLimit, workers.Size(), info.numBlockRows);
     double const blockCost = info.cost.parallelCost / info.numBlockRows;
     MOCHI_ASSERT_VERBOSE(
         blockCost > 0.0 && IsFinite(blockCost),
@@ -716,12 +706,13 @@ struct PerActorPrec final : Preconditioner<T> {
               cost.fixedCost + cost.parallelCost > 0.0 && cost.maxUsefulWorkers > 0 &&
               cost.numTeamBarriers >= 0,
           "Invalid actor preconditioner cost.");
+      MOCHI_ASSERT(actor.size > 0, "Actor size must be positive.");
       int const rowBlockSize = parallelism.mode == ActorPreconditionerParallelMode::SingleWorker
           ? actor.size
           : parallelism.rowBlockSize;
       MOCHI_ASSERT_VERBOSE(
-          actor.size > 0 && rowBlockSize > 0 && actor.size % rowBlockSize == 0,
-          "Actor size must be positive and divisible by its row block size.");
+          rowBlockSize > 0 && actor.size % rowBlockSize == 0,
+          "Actor size must be divisible by a positive row block size.");
       int const numBlockRows = actor.size / rowBlockSize;
       if (parallelism.mode == ActorPreconditionerParallelMode::SingleWorker) {
         MOCHI_ASSERT(
@@ -745,7 +736,8 @@ struct PerActorPrec final : Preconditioner<T> {
           .serialCost = cost.fixedCost + cost.parallelCost};
       if (parallelism.mode == ActorPreconditionerParallelMode::SynchronizedTeam) {
         // Exclude synchronized-team widths slower than the actor's best standalone width.
-        info.maxConcurrentWorkers = BestSynchronizedWidth(info, info.maxConcurrentWorkers);
+        info.maxConcurrentWorkers =
+            BestSynchronizedWidth(info, info.maxConcurrentWorkers, 0.0, [](int) { return 0.0; });
       }
       infos.push_back(info);
     }
@@ -852,14 +844,8 @@ struct PerActorPrec final : Preconditioner<T> {
       SimulationScratch& scratch,
       ConcurrentSolvePlan* plan) const {
     int const numWorkers = isize(workerRowRanges) - 1;
-    scratch.Reset();
     WorkerLoadHeap workers(
-        scratch.loads,
-        scratch.heapWorkerIds,
-        scratch.heapPositions,
-        workerRowRanges,
-        0,
-        numWorkers);
+        scratch.loads, scratch.heapWorkerIds, scratch.heapPositions, workerRowRanges);
     bool requiresFinalBarrier = false;
     int remainingActors = isize(order);
 
@@ -884,20 +870,11 @@ struct PerActorPrec final : Preconditioner<T> {
             scratch.selectedWorkers[i] = workers.PopLeast(actor.offset, actor.offset + actor.size);
           }
 
-          // A wider team may start later; choose the width with the lowest resulting completion
-          // time.
-          int bestWidth = 1;
-          double bestGlobalFinish = Max(
-              currentMax, workers.Load(scratch.selectedWorkers[0]) + EstimatedDuration(info, 1));
-          for (int width = 2; width <= widthLimit; ++width) {
-            double const actorFinish =
-                workers.Load(scratch.selectedWorkers[width - 1]) + EstimatedDuration(info, width);
-            double const globalFinish = Max(currentMax, actorFinish);
-            if (globalFinish < bestGlobalFinish) {
-              bestWidth = width;
-              bestGlobalFinish = globalFinish;
-            }
-          }
+          // Workers pop in nondecreasing load order, so each team starts when its last member is
+          // free.
+          int const bestWidth = BestSynchronizedWidth(info, widthLimit, currentMax, [&](int width) {
+            return workers.Load(scratch.selectedWorkers[width - 1]);
+          });
 
           for (int workerId : scratch.selectedWorkers) {
             workers.Push(workerId, workers.Load(workerId));
@@ -933,7 +910,7 @@ struct PerActorPrec final : Preconditioner<T> {
       SimulationScratch& scratch,
       ConcurrentSolvePlan* plan) const {
     int const numWorkers = isize(workerRowRanges) - 1;
-    scratch.Reset();
+    std::fill(scratch.loads.begin(), scratch.loads.end(), 0.0);
     int infoIndex = 0;
     int workerId = 0;
     int actorWorkerCount = 0;
