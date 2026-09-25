@@ -99,9 +99,11 @@ struct AMGOptions {
   /// SPD. Use an explicit non-negative @ref relaxationFactor, or a larger @ref
   /// spectralRadiusSafetyFactor, when a conservative damping policy is required.
   /// @note Negative values use 2/3 for non-BlockJacobi smoothers.
-  /// @note If auto-estimation fails at a level, the preconditioner logs a warning and keeps that
-  /// level's current factor. During construction this is the default factor. During @ref Update it
-  /// is the previous factor for that level.
+  /// @note If auto-estimation fails at a level, the preconditioner logs a warning and uses 2/3 for
+  /// that level, also in @ref AMGPrec::Update instead of keeping the previous factor, because the
+  /// preconditioner must be free of hysteresis: updating it with a matrix must yield the same
+  /// preconditioner as constructing it from that matrix. Callers rely on this, e.g., to reconstruct
+  /// a preconditioner instead of persisting it.
   T relaxationFactor = T(-1);
 
   /// @brief Number of pre-smoothing iterations.
@@ -871,22 +873,11 @@ void AMGPrec<Scalar, kDofsPerNode>::ValidateOptions() const {
 template <typename Scalar, int kDofsPerNode>
 void AMGPrec<Scalar, kDofsPerNode>::RefreshRelaxationFactors() {
   int const numSmoothingLevels = isize(_coarsenings);
-  if (isize(_relaxationFactors) != numSmoothingLevels) {
-    _relaxationFactors.clear();
-    _relaxationFactors.resize(numSmoothingLevels, kDefaultRelaxationFactor);
-  }
-
-  if (_options.relaxationFactor >= Scalar(0)) {
-    for (auto& relaxationFactor : _relaxationFactors) {
-      relaxationFactor = _options.relaxationFactor;
-    }
-    return;
-  }
-
-  if (_options.smoother != Smoother::BlockJacobi) {
-    for (auto& relaxationFactor : _relaxationFactors) {
-      relaxationFactor = kDefaultRelaxationFactor;
-    }
+  bool const autoRelaxation = _options.relaxationFactor < Scalar(0);
+  _relaxationFactors.clear();
+  _relaxationFactors.resize(
+      numSmoothingLevels, autoRelaxation ? kDefaultRelaxationFactor : _options.relaxationFactor);
+  if (!autoRelaxation || _options.smoother != Smoother::BlockJacobi) {
     return;
   }
 
@@ -901,7 +892,7 @@ void AMGPrec<Scalar, kDofsPerNode>::RefreshRelaxationFactors() {
               _options.spectralRadiusMaxIters);
     if (estimate == Scalar(0)) {
       MOCHI_LOG_WARNING(
-          "AMG auto relaxation factor skipped at level %d: Spectral-radius estimate was not positive and finite. Using the current relaxation factor for that level.",
+          "AMG auto relaxation factor skipped at level %d: Spectral-radius estimate was not positive and finite. Using the default relaxation factor.",
           level);
       continue;
     }
@@ -916,7 +907,7 @@ void AMGPrec<Scalar, kDofsPerNode>::RefreshRelaxationFactors() {
         Scalar(4.0 / 3.0) / (_options.spectralRadiusSafetyFactor * estimate);
     if (!IsFinite(relaxationFactor) || relaxationFactor <= Scalar(0)) {
       MOCHI_LOG_WARNING(
-          "AMG auto relaxation factor skipped at level %d: Computed relaxation factor was not positive and finite. Using the current relaxation factor for that level.",
+          "AMG auto relaxation factor skipped at level %d: Computed relaxation factor was not positive and finite. Using the default relaxation factor.",
           level);
       continue;
     }

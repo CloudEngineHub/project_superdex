@@ -1038,7 +1038,7 @@ TEST(AMG, UpdateRecomputesAutoRelaxationFactor) {
       1.0e-5_r);
 }
 
-TEST(AMG, AutoRelaxationFallbackKeepsCurrentFactor) {
+TEST(AMG, AutoRelaxationFallbackUsesDefaultFactor) {
   constexpr int n = 15;
   krylov::AMGOptions<real> const options = {};
   auto Af = MakeWeightedTridiagonalBlockSparseMatrix(n, 0.5_r);
@@ -1056,16 +1056,16 @@ TEST(AMG, AutoRelaxationFallbackKeepsCurrentFactor) {
   }
 
   AMG1Access prec(Af, options);
-  real const level0RelaxationFactorBeforeUpdate = prec.GetRelaxationFactor(0);
-  real const level1RelaxationFactorBeforeUpdate = prec.GetRelaxationFactor(1);
+  ASSERT_NE(AMG1Access::kDefaultRelaxationFactor, prec.GetRelaxationFactor(0));
+  ASSERT_NE(AMG1Access::kDefaultRelaxationFactor, prec.GetRelaxationFactor(1));
 
   {
     auto suppressWarnings = mochi::test::SuppressLogWarning();
     prec.Update(AfEstimateFails);
   }
 
-  EXPECT_EQ(level0RelaxationFactorBeforeUpdate, prec.GetRelaxationFactor(0));
-  EXPECT_EQ(level1RelaxationFactorBeforeUpdate, prec.GetRelaxationFactor(1));
+  EXPECT_EQ(AMG1Access::kDefaultRelaxationFactor, prec.GetRelaxationFactor(0));
+  EXPECT_EQ(AMG1Access::kDefaultRelaxationFactor, prec.GetRelaxationFactor(1));
 }
 
 TEST(AMG, UpdatePreservesExplicitRelaxationFactor) {
