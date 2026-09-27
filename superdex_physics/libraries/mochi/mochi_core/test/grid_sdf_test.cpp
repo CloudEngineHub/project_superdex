@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/geometry/grid_sdf.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/matrix_utils.h>
@@ -246,6 +247,7 @@ TEST(GridSdf, BoundaryPadding) {
 // Off-center geometry makes actor-from-grid rotation and reflection observable.
 static constexpr Real3 kSphereCenter{0.25_r, -0.25_r, 0_r};
 static constexpr real kSphereRadius = 0.25_r;
+static constexpr real kGridHalfExtent = 1_r;
 static constexpr real kInteriorTolerance = 0.125_r;
 static constexpr real kExteriorTolerance = 0.75_r;
 static constexpr int kNativeWidth = Simd<real>::kSize;
@@ -283,7 +285,7 @@ static constexpr auto kExtrapolatedMixedPattern = std::array{
 
 [[nodiscard]] static std::shared_ptr<DenseGrid3D<real> const> CreateSphereGrid() {
   constexpr Int3 kDimensions{9, 9, 9};
-  Aabb const gridBounds{Real3{-1_r, -1_r, -1_r}, Real3{1_r, 1_r, 1_r}};
+  Aabb const gridBounds{Real3{} - kGridHalfExtent, Real3{} + kGridHalfExtent};
   Aabb const negativeValueBounds{kSphereCenter - kSphereRadius, kSphereCenter + kSphereRadius};
   auto grid = std::make_shared<DenseGrid3D<real>>(kDimensions, gridBounds, negativeValueBounds);
   for (int x = 0; x < kDimensions[0]; ++x) {
@@ -386,9 +388,40 @@ template <GridExtrapolation kMode>
     offset[axis] = -offset[axis];
   }
   if (kind == SampleKind::SpatialMiss) {
-    offset[axis] = Sign(offset[axis]) * (extent + kSphereRadius);
+    // Outside the grid, so a miss that escapes grid-space culling trips interior sampling asserts.
+    offset[axis] = Sign(offset[axis]) * (extent + 2_r * kGridHalfExtent);
   }
   return kSphereCenter + offset;
+}
+
+// Returns grid-space points outside the grid that map inside the point-space AABB of the query box,
+// so only the per-lane grid-space test can reject them.
+[[nodiscard]] static DynamicArray<Real3> MakePointSpaceAabbGapPoints(
+    DenseGrid3D<real> const& grid,
+    VMatrix4x4r const& actorFromGrid,
+    TransformRT const& pointsFromActor,
+    real tolerance) {
+  VMatrix4x4r const pointsFromGrid = Dot4x4(ToVMatrix4x4(pointsFromActor), actorFromGrid);
+  VMatrix4x4r const gridFromPoints = InvertTransformation(pointsFromGrid);
+  real const extent = kSphereRadius + tolerance;
+  Aabb const pointSpaceBox =
+      TransformShape(pointsFromGrid, Aabb{kSphereCenter - extent, kSphereCenter + extent});
+  Real3 const center = pointSpaceBox.GetCenter();
+  DynamicArray<Real3> gapPoints;
+  for (int corner = 0; corner < 8; ++corner) {
+    Real3 pointSpaceCorner = pointSpaceBox.GetMin();
+    for (int axis = 0; axis < 3; ++axis) {
+      if (((corner >> axis) & 1) != 0) {
+        pointSpaceCorner[axis] = pointSpaceBox.GetMax()[axis];
+      }
+    }
+    // Pulling the corner inward keeps it inside the point-space AABB despite rounding.
+    Real3 const point = TransformPoint(gridFromPoints, Lerp(center, pointSpaceCorner, 0.95_r));
+    if (!ContainsPoint(grid.GetBounds(), point)) {
+      gapPoints.push_back(point);
+    }
+  }
+  return gapPoints;
 }
 
 template <GridExtrapolation kMode, typename GetSampleKind>
@@ -672,6 +705,31 @@ TEST(GridSdf, FindPointContactsMatchesReference) {
       VDiagonalMatrix<4>(Vec4r{-1.5_r, 1.5_r, 1.5_r, 1_r}));
   ExpectPattern<GridExtrapolation::Unsupported>(
       grid, kTransformCount, kInteriorTolerance, GetMixedSampleKind, reflected, pointsFromActor);
+
+  // Points outside the grid but inside the loose point-space AABB pass the point-space test, so
+  // only the per-lane grid-space test keeps them from the interior sampler's bounds assert.
+  for (auto const& actorFromGrid : {transformed, reflected}) {
+    DynamicArray<Real3> const gapPoints =
+        MakePointSpaceAabbGapPoints(*grid, actorFromGrid, pointsFromActor, kInteriorTolerance);
+    ASSERT_FALSE(gapPoints.empty());
+    points.clear();
+    expectedIndices.clear();
+    for (Real3 const& gapPoint : gapPoints) {
+      // The hit keeps the gap point's SIMD batch from being rejected as a whole.
+      expectedIndices.push_back(isize(points));
+      points.push_back(MakePatternPoint(SampleKind::Hit, isize(points), 0, kInteriorTolerance));
+      points.push_back(gapPoint);
+    }
+    EXPECT_TRUE(
+        QueryMatches<GridExtrapolation::Unsupported>(
+            grid,
+            actorFromGrid,
+            pointsFromActor,
+            MakeConstSpan(points),
+            MakeConstSpan(expectedIndices),
+            kInteriorTolerance));
+  }
+
   ExpectPattern<GridExtrapolation::UpperBound>(
       grid,
       kTransformCount,
@@ -686,6 +744,16 @@ TEST(GridSdf, FindPointContactsMatchesReference) {
       GetExtrapolatedMixedSampleKind,
       reflected,
       pointsFromActor);
+  // Batches of only peripheral hits pass only if the point-space AABB covers them.
+  for (auto const& actorFromGrid : {transformed, reflected}) {
+    ExpectPattern<GridExtrapolation::UpperBound>(
+        grid,
+        kTransformCount,
+        kExteriorTolerance,
+        [](int) { return SampleKind::ExtrapolatedHit; },
+        actorFromGrid,
+        pointsFromActor);
+  }
 
   TestLargeQueries<GridExtrapolation::Unsupported>(grid, kInteriorTolerance);
   TestLargeQueries<GridExtrapolation::UpperBound>(grid, kExteriorTolerance);

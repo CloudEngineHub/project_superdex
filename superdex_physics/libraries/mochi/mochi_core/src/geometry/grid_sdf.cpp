@@ -344,7 +344,8 @@ void GridSdf::FindPointContactsImpl(
   //   grid-space.
   //
   // The algorithm uses these coordinate spaces in a three-stage pipeline:
-  // 1. Cull against the point- and grid-space AABBs, compacting candidates into a distance queue.
+  // 1. Cull against the grid-space AABB, compacting candidates into a distance queue. The
+  // point-space AABB first rejects whole batches.
   // 2. Evaluate GridSDF distances and gradients together, compacting accepted contacts into an
   // output queue.
   // 3. Transform contacts to actor-space and append them to the outputs.
@@ -356,6 +357,7 @@ void GridSdf::FindPointContactsImpl(
   // - AABB culling processes one batch at a time, limiting opportunities to hide instruction
   //   latency by interleaving independent batches.
   // - Calls already culled by a BSH may benefit from skipping the point-space AABB culling.
+  //   D120705330 tried it: culled calls got faster, but unculled calls got about as much slower.
 
   MOCHI_ASSERT_VERBOSE(outIndices.empty(), "Expected empty contact detection result.");
   MOCHI_ASSERT_VERBOSE(outContacts.empty(), "Expected empty contact detection result.");
@@ -370,8 +372,9 @@ void GridSdf::FindPointContactsImpl(
   auto const gridFromPointsMatT = Dot4x4(actorFromPointsMatT, _gridFromActorMatT);
   auto const& actorFromGridRotT = _gridFromActorRotation;
 
-  // Transform the SDF's AABB into point-space. This gives us a quick way to reject points that are
-  // outside the volume (often the majority) before we transform them into SDF-space.
+  // Transform the grid-space AABB into point-space. This gives us a quick way to reject whole
+  // batches of points outside it before we transform them into grid-space. Unless a BSH already
+  // culled the points, such batches are often the majority.
   Aabb boundsInPointSpace{-kInf3, kInf3};
   if (IsFinite(toleranceInGridSpace)) {
     auto const pointsFromGridT = InvertTransformationTransposed(gridFromPointsMatT);
@@ -396,7 +399,7 @@ void GridSdf::FindPointContactsImpl(
   static_assert(
       DistanceV::kIsSupported && DistanceIndexV::kIsSupported && DistanceMaskV::kIsSupported);
 
-  // Points that passed both AABB tests and await GridSDF sampling, stored in SoA layout.
+  // Points that passed the grid-space AABB test and await GridSDF sampling, stored in SoA layout.
   struct DistanceQueue {
     int size;
     alignas(DistanceV) real pointsInGridSpace[3][kQueueCapacity];
@@ -598,16 +601,19 @@ void GridSdf::FindPointContactsImpl(
   auto processPointBatch = [&](DistanceV3 const& pointsInPointSpace,
                                DistanceIndexV pointIndices,
                                auto validLaneMask) MOCHI_FORCE_INLINE_LAMBDA {
-    // AABB culling in point space.
-    DistanceV pointSpaceMask = (pointsInPointSpace[0] >= boundsInPointSpaceMin[0]) &
+    // Reject the batch if none of its points is inside the point-space AABB. This ignores
+    // validLaneMask: padded lanes copy the last valid point, so they never change the outcome. The
+    // point-space AABB contains the grid-space AABB mapped to point-space, so a batch with a hit is
+    // never rejected, and the grid-space test below decides the hits and excludes padded lanes.
+    // Rounding is the one exception: a point on the grid-space AABB's boundary can land just
+    // outside the point-space AABB, and is then a hit only if another point in its batch passes
+    // this test.
+    DistanceV const pointSpaceMask = (pointsInPointSpace[0] >= boundsInPointSpaceMin[0]) &
         (pointsInPointSpace[0] <= boundsInPointSpaceMax[0]) &
         (pointsInPointSpace[1] >= boundsInPointSpaceMin[1]) &
         (pointsInPointSpace[1] <= boundsInPointSpaceMax[1]) &
         (pointsInPointSpace[2] >= boundsInPointSpaceMin[2]) &
         (pointsInPointSpace[2] <= boundsInPointSpaceMax[2]);
-    if constexpr (IsSimd<decltype(validLaneMask)>) {
-      pointSpaceMask &= ReinterpretCast<DistanceV>(validLaneMask);
-    }
     if (!AnyTrue(pointSpaceMask)) {
       return;
     }
@@ -615,13 +621,15 @@ void GridSdf::FindPointContactsImpl(
     // AABB culling in grid space.
     DistanceV3 const pointsInGridSpace =
         DotVecMat(pointsInPointSpace, gridFromPointsLinearBatchT) + gridFromPointsTranslationBatch;
-    DistanceV const gridSpaceMask = (pointsInGridSpace[0] >= boundsInGridSpaceMin[0]) &
+    DistanceV hitMask = (pointsInGridSpace[0] >= boundsInGridSpaceMin[0]) &
         (pointsInGridSpace[0] <= boundsInGridSpaceMax[0]) &
         (pointsInGridSpace[1] >= boundsInGridSpaceMin[1]) &
         (pointsInGridSpace[1] <= boundsInGridSpaceMax[1]) &
         (pointsInGridSpace[2] >= boundsInGridSpaceMin[2]) &
         (pointsInGridSpace[2] <= boundsInGridSpaceMax[2]);
-    DistanceV const hitMask = pointSpaceMask & gridSpaceMask;
+    if constexpr (IsSimd<decltype(validLaneMask)>) {
+      hitMask &= ReinterpretCast<DistanceV>(validLaneMask);
+    }
     if (!AnyTrue(hitMask)) {
       return;
     }
