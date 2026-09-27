@@ -842,26 +842,35 @@ struct PerActorPrec final : Preconditioner<T> {
     return caps;
   }
 
-  // Broad schedules every actor from one shared worker heap.
+  // Broad schedules every actor from one shared worker heap. Sets teamExceededBaseCap to whether
+  // some synchronized team gets more workers than its baseCaps entry.
   double SimulateBroad(
       Span<int const> workerRowRanges,
       Span<ActorInfo const> infos,
       Span<int const> order,
       Span<int const> baseCaps,
+      bool holdTeamsToBaseCaps,
       double finalBarrierCost,
       SimulationScratch& scratch,
-      ConcurrentSolvePlan* plan) const {
+      ConcurrentSolvePlan* plan,
+      bool& teamExceededBaseCap) const {
     int const numWorkers = isize(workerRowRanges) - 1;
     WorkerLoadHeap workers(
         scratch.loads, scratch.heapWorkerIds, scratch.heapPositions, workerRowRanges);
     bool requiresFinalBarrier = false;
+    teamExceededBaseCap = false;
     int remainingActors = isize(order);
 
     for (int infoIndex : order) {
       auto const& info = infos[infoIndex];
-      // Relax proportional caps near the tail so remaining actors can consume idle workers.
-      int const tailCap = Max(1, numWorkers / remainingActors);
-      int const widthLimit = Min(info.maxConcurrentWorkers, Max(baseCaps[infoIndex], tailCap));
+      // Near the end of the order, raise the width cap to the remaining actors' even share of the
+      // workers so the last actors can use idle workers. If holdTeamsToBaseCaps is true,
+      // synchronized teams keep their baseCaps entry.
+      int const evenShareCap =
+          !holdTeamsToBaseCaps || info.mode != ActorPreconditionerParallelMode::SynchronizedTeam
+          ? Max(1, numWorkers / remainingActors)
+          : 1;
+      int const widthLimit = Min(info.maxConcurrentWorkers, Max(baseCaps[infoIndex], evenShareCap));
       switch (info.mode) {
         case ActorPreconditionerParallelMode::SingleWorker:
           ScheduleSingleWorker(info, workers, workerRowRanges, requiresFinalBarrier, plan);
@@ -883,6 +892,8 @@ struct PerActorPrec final : Preconditioner<T> {
           int const bestWidth = BestSynchronizedWidth(info, widthLimit, currentMax, [&](int width) {
             return workers.Load(scratch.selectedWorkers[width - 1]);
           });
+
+          teamExceededBaseCap = teamExceededBaseCap || bestWidth > baseCaps[infoIndex];
 
           for (int workerId : scratch.selectedWorkers) {
             workers.Push(workerId, workers.Load(workerId));
@@ -980,9 +991,12 @@ struct PerActorPrec final : Preconditioner<T> {
   // actor, the team width with the lowest predicted overall finish. When every actor supports
   // independent rows, reusing the matrix-vector row ranges is also estimated and is kept if it
   // respects every actor's worker limit and is at least as fast as Broad. Otherwise, Broad gives
-  // MakeBaseCaps's spare worker, if any, to its actor only if that is predicted faster. Predictions
-  // include waiting for teammates, team barriers, and, if any worker writes rows that another
-  // worker owns for the matrix-vector product, the final all-worker barrier.
+  // MakeBaseCaps's spare worker, if any, to its actor only if that is predicted faster. Near the
+  // end of the order, Broad lets each actor use up to an even share of the workers among the actors
+  // left, so the last actors can use idle workers; if holding every synchronized team to its cap
+  // from MakeBaseCaps instead is predicted strictly faster, Broad does that. Predictions include
+  // waiting for teammates, team barriers, and, if any worker writes rows that another worker owns
+  // for the matrix-vector product, the final all-worker barrier.
   //
   // TODO(T290274539): Known planner gaps:
   // - MakeActorOrder orders by serial cost, ignoring how widely each actor can spread. An actor
@@ -1056,15 +1070,19 @@ struct PerActorPrec final : Preconditioner<T> {
           .requiresFinalBarrier = false};
     };
     ConcurrentSolvePlan plan = makeEmptyPlan();
+    bool holdTeamsToBaseCaps = false;
+    bool simulatedTeamExceededBaseCap = false;
     auto const simulateBroad = [&](ConcurrentSolvePlan* target) {
       return SimulateBroad(
           workerRowRanges,
           MakeConstSpan(infos),
           MakeConstSpan(order),
           MakeConstSpan(baseCaps),
+          holdTeamsToBaseCaps,
           finalBarrierCost,
           scratch,
-          target);
+          target,
+          simulatedTeamExceededBaseCap);
     };
 
     // The candidates are:
@@ -1072,6 +1090,9 @@ struct PerActorPrec final : Preconditioner<T> {
     //   raised near the end of the order to the remaining actors' even share of the workers.
     // - Broad with the spare worker: when rounding in MakeBaseCaps leaves at least half a worker
     //   idle, the cap of the actor at spareInfoIndex is raised by one.
+    // - Broad without the near-end raise for synchronized teams, which keep their baseCaps entry.
+    //   It is tried only if some team in the best Broad candidate so far has more workers than its
+    //   baseCaps entry; otherwise it would build the same plan.
     // - Reusing the matrix-vector row ranges. Reuse is possible when every actor supports
     //   independent rows and the ranges respect every actor's worker limit.
     // Simulating a candidate predicts its duration and, if given a plan, also builds it; building
@@ -1083,6 +1104,7 @@ struct PerActorPrec final : Preconditioner<T> {
         : std::nullopt;
     bool const buildEachBroadCandidate = !reuseDuration.has_value();
     double bestBroadDuration = simulateBroad(buildEachBroadCandidate ? &plan : nullptr);
+    bool bestTeamExceededBaseCap = simulatedTeamExceededBaseCap;
 
     // Reuse is compared with Broad before the spare worker is tried: in benchmarks, when only Broad
     // with the spare worker was predicted faster than reuse, reuse was measured faster.
@@ -1093,8 +1115,8 @@ struct PerActorPrec final : Preconditioner<T> {
       return plan;
     }
 
-    // Simulates Broad with the current width caps and keeps the result only if it is predicted
-    // strictly faster than the best Broad candidate so far.
+    // Simulates Broad with the current baseCaps and holdTeamsToBaseCaps and keeps the result only
+    // if it is predicted strictly faster than the best Broad candidate so far.
     auto const keepBroadIfFaster = [&] {
       ConcurrentSolvePlan candidate =
           buildEachBroadCandidate ? makeEmptyPlan() : ConcurrentSolvePlan{};
@@ -1103,6 +1125,7 @@ struct PerActorPrec final : Preconditioner<T> {
         return false;
       }
       bestBroadDuration = duration;
+      bestTeamExceededBaseCap = simulatedTeamExceededBaseCap;
       if (buildEachBroadCandidate) {
         plan = std::move(candidate);
       }
@@ -1115,6 +1138,15 @@ struct PerActorPrec final : Preconditioner<T> {
       ++baseCaps[spareInfoIndex];
       if (!keepBroadIfFaster()) {
         --baseCaps[spareInfoIndex];
+      }
+    }
+
+    // A synchronized team picks its width without regard to the actors after it, so a raised cap
+    // can let it take workers that later actors would have started on sooner.
+    if (bestTeamExceededBaseCap) {
+      holdTeamsToBaseCaps = true;
+      if (!keepBroadIfFaster()) {
+        holdTeamsToBaseCaps = false;
       }
     }
     if (!buildEachBroadCandidate) {

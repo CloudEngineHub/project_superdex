@@ -501,8 +501,10 @@ TEST(PerActorPreconditioner, SynchronizedTeamUsesDenseIdsAndReusableBarrier) {
 }
 
 TEST(PerActorPreconditioner, OverlappingSynchronizedTeamsCompleteWithoutDeadlock) {
+  // Overlapping 2-wide teams are predicted faster than running actor0 and actor1 on one worker
+  // each: 151420 vs 165140.
   ActorPreconditionerCost const actor0Cost{
-      .fixedCost = 40000.0, .parallelCost = 80000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
+      .fixedCost = 1000.0, .parallelCost = 158000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
   ActorPreconditionerCost const actor1Cost{
       .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 2, .numTeamBarriers = 2};
   ActorPreconditionerCost const actor2Cost{
@@ -664,6 +666,75 @@ TEST(PerActorPreconditioner, IdleWorkersJoinRemainingSynchronizedActor) {
   for (auto const& call : finalCalls) {
     EXPECT_EQ(4, call.numWorkers);
   }
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, x, real{0}));
+}
+
+TEST(PerActorPreconditioner, TeamLeavesWorkersForLaterActorsWhenFaster) {
+  ActorPreconditionerCost const largeCost{
+      .fixedCost = 0.0, .parallelCost = 200000.0, .maxUsefulWorkers = 4};
+  ActorPreconditionerCost const smallCost{
+      .fixedCost = 40000.0, .parallelCost = 100000.0, .maxUsefulWorkers = 4};
+  RecordingActorPreconditioner large(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, largeCost);
+  RecordingActorPreconditioner small0(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, smallCost);
+  RecordingActorPreconditioner small1(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, smallCost);
+  PerActorPrec<real> prec({
+      {0, 12, large},
+      {12, 12, small0},
+      {24, 12, small1},
+  });
+  ColumnVector<real> x(36), Px(36);
+  x.SetRandom(20);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 9, 18, 27, 36});
+
+  // When Broad raises caps near the end of the order, small0 finishes soonest on 2 workers, and
+  // small1 then waits until all 4 workers are free: predicted duration 171140. Keeping small0 on
+  // one worker lets small1 start right away: 146140.
+  EXPECT_EQ(2, isize(large.Calls()));
+  EXPECT_EQ(1, isize(small0.Calls()));
+  EXPECT_EQ(1, isize(small1.Calls()));
+  EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, x, real{0}));
+}
+
+TEST(PerActorPreconditioner, IndependentRowsKeepRaisedCapWhenTeamsAreHeld) {
+  ActorPreconditionerCost const largeCost{
+      .fixedCost = 0.0, .parallelCost = 400000.0, .maxUsefulWorkers = 6};
+  ActorPreconditionerCost const rowsCost{
+      .fixedCost = 0.0, .parallelCost = 100000.0, .maxUsefulWorkers = 6};
+  ActorPreconditionerCost const smallCost{
+      .fixedCost = 20000.0, .parallelCost = 50000.0, .maxUsefulWorkers = 6};
+  RecordingActorPreconditioner large(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, largeCost);
+  RecordingActorPreconditioner rows(
+      ActorPreconditionerParallelMode::IndependentRows, 1, 1_r, rowsCost);
+  RecordingActorPreconditioner small0(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, smallCost);
+  RecordingActorPreconditioner small1(
+      ActorPreconditionerParallelMode::SynchronizedTeam, 1, 1_r, smallCost);
+  PerActorPrec<real> prec({
+      {0, 12, large},
+      {12, 12, rows},
+      {24, 12, small0},
+      {36, 12, small1},
+  });
+  ColumnVector<real> x(48), Px(48);
+  x.SetRandom(20);
+  Px.SetZero();
+
+  RunConcurrentSolve(prec, x, Px, {0, 8, 16, 24, 32, 40, 48});
+
+  // With raised caps near the end of the order, the fastest plan runs small1 on all 6 workers:
+  // predicted duration 136793. Holding the teams small0 and small1 to one worker each is faster,
+  // 128460, because rows still gets 2 workers. Holding rows to one worker as well would take 148460
+  // and lose.
+  EXPECT_EQ(4, isize(large.Calls()));
+  EXPECT_EQ(2, isize(rows.Calls()));
+  EXPECT_EQ(1, isize(small0.Calls()));
+  EXPECT_EQ(1, isize(small1.Calls()));
   EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, x, real{0}));
 }
 
