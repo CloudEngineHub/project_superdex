@@ -435,21 +435,25 @@ TEST(Vec2d, GreaterEqual) {
 
 TEST(Vec2d, HMax) {
   auto a = Vec2d{1_r, 2_r};
+  EXPECT_EQ(1_r, HMax<1>(a));
   EXPECT_EQ(2_r, HMax(a));
 }
 
 TEST(Vec2d, HMin) {
   auto a = Vec2d{2_r, 1_r};
+  EXPECT_EQ(2_r, HMin<1>(a));
   EXPECT_EQ(1_r, HMin(a));
 }
 
 TEST(Vec2d, HProd) {
   auto a = Vec2d{2.0, 3.0};
+  EXPECT_NEAR_EQ(2.0, HProd<1>(a));
   EXPECT_NEAR_EQ(6.0, HProd(a));
 }
 
 TEST(Vec2d, HSum) {
   auto a = Vec2d{1.0, 2.0};
+  EXPECT_NEAR_EQ(1.0, HSum<1>(a));
   EXPECT_NEAR_EQ(3.0, HSum(a));
 }
 

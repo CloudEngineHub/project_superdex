@@ -376,25 +376,41 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N> Max(Simd<T, N> a, Simd<T, N> b) {
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T HSum(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT;
-  return Simd<T, N>::template HSum<COUNT_>(a);
+  if constexpr (COUNT_ == 1) {
+    return Get0(a);
+  } else {
+    return Simd<T, N>::template HSum<COUNT_>(a);
+  }
 }
 
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T HProd(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT;
-  return Simd<T, N>::template HProd<COUNT_>(a);
+  if constexpr (COUNT_ == 1) {
+    return Get0(a);
+  } else {
+    return Simd<T, N>::template HProd<COUNT_>(a);
+  }
 }
 
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T HMin(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT;
-  return Simd<T, N>::template HMin<COUNT_>(a);
+  if constexpr (COUNT_ == 1) {
+    return Get0(a);
+  } else {
+    return Simd<T, N>::template HMin<COUNT_>(a);
+  }
 }
 
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T HMax(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT;
-  return Simd<T, N>::template HMax<COUNT_>(a);
+  if constexpr (COUNT_ == 1) {
+    return Get0(a);
+  } else {
+    return Simd<T, N>::template HMax<COUNT_>(a);
+  }
 }
 
 #define MOCHI_SIMD_MEMBERWISE_FALLBACK(T, N, FN, inVec) \

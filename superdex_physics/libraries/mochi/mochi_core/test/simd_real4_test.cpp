@@ -659,6 +659,7 @@ TEST(Vec4r, GreaterEqual) {
 
 TEST(Vec4r, HMax) {
   auto a = Vec4r{1_r, 2_r, 3_r, 4_r};
+  EXPECT_NEAR_EQ(1_r, HMax<1>(a));
   EXPECT_NEAR_EQ(2_r, HMax<2>(a));
   EXPECT_NEAR_EQ(3_r, HMax<3>(a));
   EXPECT_NEAR_EQ(4_r, HMax(a));
@@ -666,6 +667,7 @@ TEST(Vec4r, HMax) {
 
 TEST(Vec4r, HMin) {
   auto a = Vec4r{4_r, 3_r, 2_r, 1_r};
+  EXPECT_NEAR_EQ(4_r, HMin<1>(a));
   EXPECT_NEAR_EQ(3_r, HMin<2>(a));
   EXPECT_NEAR_EQ(2_r, HMin<3>(a));
   EXPECT_NEAR_EQ(1_r, HMin(a));
@@ -673,6 +675,7 @@ TEST(Vec4r, HMin) {
 
 TEST(Vec4r, HProd) {
   auto a = Vec4r{2_r, 3_r, 4_r, 5_r};
+  EXPECT_NEAR_EQ(2_r, HProd<1>(a));
   EXPECT_NEAR_EQ(6_r, HProd<2>(a));
   EXPECT_NEAR_EQ(24_r, HProd<3>(a));
   EXPECT_NEAR_EQ(120_r, HProd(a));
@@ -692,6 +695,7 @@ TEST(Vec4r, Lerp) {
 
 TEST(Vec4r, HSum) {
   auto a = Vec4r{1_r, 2_r, 3_r, 4_r};
+  EXPECT_NEAR_EQ(1_r, HSum<1>(a));
   EXPECT_NEAR_EQ(3_r, HSum<2>(a));
   EXPECT_NEAR_EQ(6_r, HSum<3>(a));
   EXPECT_NEAR_EQ(10_r, HSum(a));

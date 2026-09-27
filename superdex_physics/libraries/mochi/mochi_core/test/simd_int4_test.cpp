@@ -317,6 +317,7 @@ TEST(Vec4i, GreaterEqual) {
 
 TEST(Vec4i, HMax) {
   auto a = Vec4i{1, 2, 3, 4};
+  EXPECT_EQ(1, HMax<1>(a));
   EXPECT_EQ(2, HMax<2>(a));
   EXPECT_EQ(3, HMax<3>(a));
   EXPECT_EQ(4, HMax(a));
@@ -324,6 +325,7 @@ TEST(Vec4i, HMax) {
 
 TEST(Vec4i, HMin) {
   auto a = Vec4i{4, 3, 2, 1};
+  EXPECT_EQ(4, HMin<1>(a));
   EXPECT_EQ(3, HMin<2>(a));
   EXPECT_EQ(2, HMin<3>(a));
   EXPECT_EQ(1, HMin(a));
@@ -331,6 +333,7 @@ TEST(Vec4i, HMin) {
 
 TEST(Vec4i, HSum) {
   auto a = Vec4i{1, 2, 3, 4};
+  EXPECT_EQ(1, HSum<1>(a));
   EXPECT_EQ(3, HSum<2>(a));
   EXPECT_EQ(6, HSum<3>(a));
   EXPECT_EQ(10, HSum(a));

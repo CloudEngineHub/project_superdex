@@ -161,7 +161,7 @@ void ExpectEveryPrefixMaskBoundary() {
   }
 }
 
-template <int N = 2>
+template <int N = 1>
 void ExpectReductions(Vec8l values) {
   int64_t expectedMin = values[0];
   int64_t expectedMax = values[0];

@@ -136,7 +136,7 @@ void ExpectEveryPrefixMaskBoundary() {
   }
 }
 
-template <int N = 2>
+template <int N = 1>
 void ExpectReductions(Vec16i values) {
   int expectedMin = values[0];
   int expectedMax = values[0];

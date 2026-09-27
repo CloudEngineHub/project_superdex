@@ -836,6 +836,7 @@ TEST(Vec8r, GreaterEqual) {
 
 TEST(Vec8r, HMax) {
   auto a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
+  EXPECT_NEAR_EQ(1_r, HMax<1>(a));
   EXPECT_NEAR_EQ(2_r, HMax<2>(a));
   EXPECT_NEAR_EQ(3_r, HMax<3>(a));
   EXPECT_NEAR_EQ(4_r, HMax<4>(a));
@@ -847,6 +848,7 @@ TEST(Vec8r, HMax) {
 
 TEST(Vec8r, HMin) {
   auto a = Vec8r{8_r, 7_r, 6_r, 5_r, 4_r, 3_r, 2_r, 1_r};
+  EXPECT_NEAR_EQ(8_r, HMin<1>(a));
   EXPECT_NEAR_EQ(7_r, HMin<2>(a));
   EXPECT_NEAR_EQ(6_r, HMin<3>(a));
   EXPECT_NEAR_EQ(5_r, HMin<4>(a));
@@ -858,6 +860,7 @@ TEST(Vec8r, HMin) {
 
 TEST(Vec8r, HSum) {
   auto a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
+  EXPECT_NEAR_EQ(1_r, HSum<1>(a));
   EXPECT_NEAR_EQ(3_r, HSum<2>(a));
   EXPECT_NEAR_EQ(6_r, HSum<3>(a));
   EXPECT_NEAR_EQ(10_r, HSum<4>(a));
@@ -877,6 +880,7 @@ TEST(Vec8r, Dot) {
 #if MOCHI_USE_DOUBLE_PRECISION
 TEST(Vec8r, HProd) {
   auto a = Vec8r{2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r, 9_r};
+  EXPECT_NEAR_EQ(2_r, HProd<1>(a));
   EXPECT_NEAR_EQ(6_r, HProd<2>(a));
   EXPECT_NEAR_EQ(24_r, HProd<3>(a));
   EXPECT_NEAR_EQ(120_r, HProd<4>(a));

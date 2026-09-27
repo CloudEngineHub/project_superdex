@@ -238,16 +238,19 @@ TEST(Vec2l, GreaterEqual) {
 
 TEST(Vec2l, HMax) {
   auto a = Vec2l{1, 2};
+  EXPECT_EQ(1, HMax<1>(a));
   EXPECT_EQ(2, HMax(a));
 }
 
 TEST(Vec2l, HMin) {
   auto a = Vec2l{2, 1};
+  EXPECT_EQ(2, HMin<1>(a));
   EXPECT_EQ(1, HMin(a));
 }
 
 TEST(Vec2l, HSum) {
   auto a = Vec2l{1, 2};
+  EXPECT_EQ(1, HSum<1>(a));
   EXPECT_EQ(3, HSum(a));
 }
 
