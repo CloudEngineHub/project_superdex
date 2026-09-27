@@ -998,38 +998,35 @@ struct PerActorPrec final : Preconditioner<T> {
   // waiting for teammates, team barriers, and, if any worker writes rows that another worker owns
   // for the matrix-vector product, the final all-worker barrier.
   //
-  // TODO(T290274539): Known planner gaps:
-  // - MakeActorOrder orders by serial cost, ignoring how widely each actor can spread. An actor
-  //   with a long shortest duration, such as a single-worker actor, that is slightly cheaper than
-  //   spreadable actors is scheduled after them on top of the loads they balanced, approaching
-  //   twice the optimal duration. Also estimating Broad in decreasing
-  //   EstimatedDuration(info, info.maxConcurrentWorkers) order fixes such cases, but preliminary
-  //   analysis on synthetic islands found the measured gain too rare and small to justify
-  //   doubling the planning cost. See D121469076.
-  // - TeamReuse, which runs synchronized actors on nested teams drawn from a shared worker prefix,
-  //   measured slower than Broad overall in preliminary analysis on synthetic islands. See
-  //   D120605491.
-  // - ScheduleSingleWorker: When no final barrier is required yet, consider comparing the
-  //   least-loaded worker with the local owner. The first nonlocal assignment adds one full-worker
-  //   barrier every time the preconditioner is applied and can cost more than the load imbalance
-  //   it removes.
+  // TODO(T290274539): Known planner gaps. The first two understate the cost of spreading work
+  // across more workers; fix them before making plans wider.
   // - Tasks writing rows another worker owns for the matrix-vector product are charged only the
-  //   final all-worker barrier, not the cache-line transfers: reading the owner's input rows,
-  //   taking ownership of the output rows, and the owner reading them back in the next dot product.
-  //   Add this cost to predictions. See D121889725.
+  //   final all-worker barrier, not the cache lines moving between the two workers. Add this cost.
+  //   See D121889725.
+  // - Adding a worker never increases an independent-row actor's predicted cost, so a small actor
+  //   may be split across more workers than pays off. Add a per-worker overhead.
+  // - Short actors holding more than half a worker still reserve a whole one, so at 2 workers a
+  //   dominant actor stays on one worker while the other finishes the short actors and waits.
+  // - Near the end, Broad's even share divides the workers by the number of actors left rather than
+  //   by their remaining work, so trailing short actors keep the last large actors narrow while
+  //   other workers idle.
+  // - MakeActorOrder orders by serial cost, ignoring how widely each actor can spread. An actor
+  //   that cannot spread, such as a single-worker actor, then runs after slightly costlier
+  //   spreadable actors on top of the loads they balanced, so the plan can approach twice the
+  //   optimal duration. One option is to also estimate Broad in decreasing
+  //   EstimatedDuration(info, info.maxConcurrentWorkers) order, roughly doubling the planning cost.
+  //   See D121469076.
+  // - Reevaluate running synchronized teams one after another on shared workers, as TeamReuse does,
+  //   once the first two gaps are fixed. See D120605491.
+  // - ScheduleSingleWorker: While no final barrier is required, consider comparing the least-loaded
+  //   worker with the local owner. The first nonlocal assignment adds a full-worker barrier to
+  //   every application, which can cost more than the load imbalance it removes.
   // - Skip simulating Broad when reusing the matvec ranges reaches a lower bound on any plan's
   //   duration.
-  // - For an independent-row actor, adding a worker never increases predicted cost: fixedCost is
-  //   zero and parallelCost is split among the workers. A small actor may therefore be split across
-  //   more workers than pays off. If profiling shows this, add a per-worker overhead to the model.
-  // - Short actors holding more than half a worker still reserve a whole one, so at 2 workers a
-  //   dominant actor stays on one worker while the other worker finishes the short actors early
-  //   and waits.
-  // - PrepareConcurrentSolve replans on every call, adding a few microseconds per solve, which is
-  //   significant for small systems. Caching would amortize this and could justify a costlier
-  //   planner, but ParallelPCG's worker count is nondeterministic, so it needs one plan per worker
-  //   count, each invalidated when the actor partition or costs change. If caching is impractical,
-  //   consider scoring independent candidates concurrently across workers.
+  // - PrepareConcurrentSolve replans on every call, a cost that matters for small systems. Consider
+  //   caching a plan per worker count, which varies between ParallelPCG calls, invalidated when the
+  //   actor partition or costs change; this would also leave room for a costlier planner.
+  //   Otherwise, consider scoring independent candidates concurrently across workers.
   [[nodiscard]] ConcurrentSolvePlan MakeConcurrentSolvePlan(Span<int const> workerRowRanges) const {
     int const numWorkers = isize(workerRowRanges) - 1;
     MOCHI_ASSERT(numWorkers > 0, "At least one worker is required.");
