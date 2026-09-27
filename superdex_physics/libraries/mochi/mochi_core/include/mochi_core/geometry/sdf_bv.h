@@ -32,7 +32,15 @@
 
 namespace mochi {
 
-/** @brief Represents a bounding volume defined by the level set of a signed distance field (SDF).
+/**
+ * @brief Represents a bounding volume defined by the level set of a signed distance field (SDF).
+ *
+ * @note Overlap tests assume that the interpolated SDF is 1-Lipschitz: a sphere overlaps iff the
+ * SDF at its center is at most its radius plus @ref distanceThreshold. Trilinear interpolation can
+ * be up to sqrt(3)-Lipschitz where the distance field bends within a cell (e.g. near sharp or thin
+ * features). Culling may therefore rarely discard a point within the threshold, but only one whose
+ * SDF exceeds the threshold minus (sqrt(3) - 1) times the sphere radius. Scaling radii by sqrt(3)
+ * would make culling conservative, at the cost of more false positives.
  */
 struct SdfBv {
   // Pointer to the SDF.
