@@ -134,9 +134,9 @@ LinearSolverStatus MinRes(
     Apply(A, x, Az);
     v = rhs - Az;
     Solve(prec, v, z);
+    gammaSqr = dot(v, z);
   }
 
-  gammaSqr = dot(v, z);
   if (!IsFinite(gammaSqr) || gammaSqr <= 0)
     MOCHI_UNLIKELY {
       if (dot.Norm(v) == 0) {

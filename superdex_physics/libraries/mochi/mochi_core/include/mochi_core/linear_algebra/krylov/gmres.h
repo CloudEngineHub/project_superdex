@@ -216,7 +216,7 @@ LinearSolverStatus GMRes(
     residual -= Ap;
   }
 
-  auto resNorm = dot.Norm(residual);
+  auto const resNorm = initialGuessHint == InitialGuessHint::Zero ? bNorm : dot.Norm(residual);
   //--- when iter = 0, z and Ap are ignored
   auto myStatus = statusCheck.CheckStatus(0, resNorm, z, Ap);
   if (myStatus != IterationStatus::Active) {
