@@ -567,6 +567,7 @@ MOCHI_SIMD_TEST_BINARY_OP_NEAR(Vec4r, Div, /, kEps);
 TEST(Vec4r, VDot) {
   auto a = Vec4r{1_r, 2_r, 3_r, 4_r};
   auto b = Vec4r{5_r, 6_r, 7_r, 8_r};
+  EXPECT_VEC4R(5_r, 5_r, 5_r, 5_r, (VDot<1>(a, b))); // 1 component
   EXPECT_VEC4R(17_r, 17_r, 17_r, 17_r, (VDot<2>(a, b))); // 2 component
   EXPECT_VEC4R(38_r, 38_r, 38_r, 38_r, (VDot<3>(a, b))); // 3 component
   EXPECT_VEC4R(70_r, 70_r, 70_r, 70_r, (VDot<4>(a, b))); // 4 component

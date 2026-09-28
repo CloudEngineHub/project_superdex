@@ -866,7 +866,11 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N> NegMulSub(Simd<T, N> a, Simd<T, N> b, Si
 template <int COUNT, class V>
 MOCHI_ANY MOCHI_FORCE_INLINE V VDot(V a, V b) {
   constexpr int COUNT_ = (COUNT == -1) ? V::kSize : COUNT;
-  return V::template Dot<COUNT_>(a, b);
+  if constexpr (COUNT_ == 1) {
+    return Broadcast<0>(a * b);
+  } else {
+    return V::template Dot<COUNT_>(a, b);
+  }
 }
 
 template <class T, int N>

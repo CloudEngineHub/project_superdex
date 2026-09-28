@@ -342,6 +342,7 @@ MOCHI_SIMD_TEST_BINARY_OP_NEAR(Vec2d, Div, /, kEps);
 TEST(Vec2d, VDot) {
   auto a = Vec2d{1.0, 2.0};
   auto b = Vec2d{3.0, 4.0};
+  EXPECT_VEC2D(3.0, 3.0, (VDot<1>(a, b)));
   EXPECT_VEC2D(11.0, 11.0, (VDot(a, b)));
 }
 

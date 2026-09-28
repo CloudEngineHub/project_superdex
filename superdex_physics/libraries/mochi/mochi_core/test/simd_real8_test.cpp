@@ -679,10 +679,11 @@ TEST(Vec8r, Cos) {
 MOCHI_SIMD_TEST_BINARY_OP_NEAR(Vec8r, Div, /, kEps);
 
 TEST(Vec8r, VDot) {
-  // Currently only supports 8-component dot product
+  // Vec8f only supports 1- and 8-component dot products.
 
   auto a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
   auto b = Vec8r{1_r, 1_r, 1_r, 1_r, 1_r, 1_r, 1_r, 1_r};
+  EXPECT_VEC8R(1_r, 1_r, 1_r, 1_r, 1_r, 1_r, 1_r, 1_r, (VDot<1>(a, b)));
   EXPECT_VEC8R(36_r, 36_r, 36_r, 36_r, 36_r, 36_r, 36_r, 36_r, (VDot(a, b)));
 
   a = Vec8r{1_r, -2_r, 3_r, -4_r, 4_r, -3_r, 2_r, -1_r};
@@ -873,6 +874,7 @@ TEST(Vec8r, HSum) {
 TEST(Vec8r, Dot) {
   auto a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
   auto b = Vec8r{0.5_r, -2_r, 3_r, -0.25_r, 1.5_r, -1_r, 2_r, 0.125_r};
+  EXPECT_NEAR_EQ(0.5_r, Dot<1>(a, b));
   EXPECT_NEAR_EQ(21_r, Dot(a, b));
 }
 
