@@ -1077,7 +1077,8 @@ TEST_F(MochiShellContactSkinTest, SurfaceQueriesFollowEmbeddingInCompactNodeOrde
 }
 
 TEST_F(MochiShellContactSkinTest, LinearSkinJacobianCombinesDuplicateInfluences) {
-  Actor* const actor = CreateActor(CreateShape(), /*useContactSkin=*/true);
+  Actor* const actor =
+      CreateActor(CreateShape(), /*useContactSkin=*/true, ActorBoundaryElementType::P1Q3);
   auto& reg = GetRegistry();
   entt::entity const entity = GetEntity(actor);
   auto const& jacobian = reg.get<CContactSkinningData const>(entity).jacobian;
@@ -1116,19 +1117,39 @@ TEST_F(MochiShellContactSkinTest, LinearSkinJacobianCombinesDuplicateInfluences)
       EXPECT_NEAR_EQ(expectedValues[i], jacobian.Values(row)[i]);
     }
   }
+
+  auto const& mapping = reg.get<CContactSkinningData const>(entity).columnCoalescingMap;
+  ContactJacColumnCoalescingMap expectedMapping;
+  expectedMapping.sourceBlockCount = 3;
+  expectedMapping.samplesPerElement = 3;
+  expectedMapping.elementDofOffsets = {0, 12};
+  expectedMapping.elementDofIndices = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+  expectedMapping.elementSourceContributionOffsets = {0, 6, 12, 18};
+  expectedMapping.elementSourceContributionDstColumns = {
+      0, 1, 2, 3, 4, 5, 3, 4, 5, 6, 7, 8, 6, 7, 8, 9, 10, 11};
+  EXPECT_TRUE(mapping.IsInitialized());
+  test::ExpectEqualCoalescingMaps(expectedMapping, mapping);
+
+  CContactSkinningData rebuiltSkinningData;
+  rebuiltSkinningData.jacobian = jacobian;
+  InitializeContactSkinningColumnCoalescingMap(
+      reg.get<CFemSurfaceDiscretization const>(entity), rebuiltSkinningData);
+  test::ExpectEqualCoalescingMaps(expectedMapping, rebuiltSkinningData.columnCoalescingMap);
 }
 
 TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
   Actor* const actor = CreateActor(
       CreateShape(),
       /*useContactSkin=*/true,
-      ActorBoundaryElementType::P1Q1);
+      ActorBoundaryElementType::P1Q3);
   auto& reg = GetRegistry();
   entt::entity const entity = GetEntity(actor);
 
   ContactDetectionResult result;
-  result.sampleIndices.push_back(0);
-  result.jacColliderFromWorld.push_back(VEye<3>());
+  for (int sampleIndex = 0; sampleIndex < 3; ++sampleIndex) {
+    result.sampleIndices.push_back(sampleIndex);
+    result.jacColliderFromWorld.push_back(VEye<3>());
+  }
   CCollJacs<CollRole::Colliding> collidingJacobians;
   collidingJacobians.emplace_back(
       ContactType::Async, &result, false, entt::null, /*collidingPartitionId=*/0);
@@ -1140,6 +1161,20 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
       reg.get<CContactSkinningData const>(entity),
       collidingJacobians);
   ContactJac const& contactJacobian = (*collidingJacobians[0].jacs)[0];
+  EXPECT_EQ(12, contactJacobian.nDoFsInternal);
+  EXPECT_EQ(12, contactJacobian.nDoFsState);
+  EXPECT_EQ(3, contactJacobian.nContacts);
+
+  test::ContactJacSnapshot const firstSetup = test::SnapshotContactJac(contactJacobian);
+  SetupContactSkinCollidingJacobians(
+      {},
+      reg.get<CFemSurfaceDiscretization const>(entity),
+      reg.get<CRootTransform const>(entity),
+      reg.get<CDofOffset const>(entity),
+      reg.get<CContactSkinningData const>(entity),
+      collidingJacobians);
+  test::ExpectEqualContactJacSnapshots(
+      firstSetup, test::SnapshotContactJac((*collidingJacobians[0].jacs)[0]));
 
   auto& displacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(entity).value;
   ColumnVector<real> const baseDisplacement = displacement;
@@ -1151,26 +1186,31 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
     displacement = baseDisplacement;
     displacement(dof) += kEpsilon;
     ecs::InvokeOnEntity(shell::UpdateContactSkinPositions<TimeStep::Current>, reg, entity);
-    Real3 const positionPlus = samples.positions[0];
+    auto const positionsPlus = samples.positions;
 
     displacement = baseDisplacement;
     displacement(dof) -= kEpsilon;
     ecs::InvokeOnEntity(shell::UpdateContactSkinPositions<TimeStep::Current>, reg, entity);
-    Real3 const positionMinus = samples.positions[0];
-    Real3 const finiteDifference = (positionPlus - positionMinus) / (2_r * kEpsilon);
+    auto const& positionsMinus = samples.positions;
 
-    Real3 analytic{};
-    auto const indices = contactJacobian.Inds(0);
-    for (int column = 0; column < isize(indices); ++column) {
-      if (indices[column] == dof) {
-        for (int component = 0; component < kSpaceDim3; ++component) {
-          analytic[component] += contactJacobian.Jac(0)(component, column);
+    for (int contact = 0; contact < contactJacobian.nContacts; ++contact) {
+      int const sampleIndex = result.sampleIndices[contact];
+      Real3 const finiteDifference =
+          (positionsPlus[sampleIndex] - positionsMinus[sampleIndex]) / (2_r * kEpsilon);
+
+      Real3 analytic{};
+      auto const indices = contactJacobian.Inds(contact);
+      for (int column = 0; column < isize(indices); ++column) {
+        if (indices[column] == dof) {
+          for (int component = 0; component < kSpaceDim3; ++component) {
+            analytic[component] += contactJacobian.Jac(contact)(component, column);
+          }
         }
       }
-    }
-    for (int component = 0; component < kSpaceDim3; ++component) {
-      EXPECT_NEAR(analytic[component], finiteDifference[component], kTolerance)
-          << "DoF " << dof << ", component " << component;
+      for (int component = 0; component < kSpaceDim3; ++component) {
+        EXPECT_NEAR(analytic[component], finiteDifference[component], kTolerance)
+            << "Contact " << contact << ", DoF " << dof << ", component " << component;
+      }
     }
   }
   displacement = baseDisplacement;

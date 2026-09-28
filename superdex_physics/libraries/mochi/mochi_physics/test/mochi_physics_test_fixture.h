@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <mochi_core/contact/contact_utils.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/nd_array_utils.h>
@@ -178,5 +179,51 @@ struct ExpectLoggingInScope {
   MOCHI_WARNING_IGNORE_GCC_CLANG(GCC diagnostic ignored "-Wdeprecated-declarations"); \
   INSTANTIATE_TEST_CASE_P(namePrefix, fixtureClass, values);                          \
   MOCHI_WARNING_POP();
+
+// Expect two contact-skin column coalescing maps to be identical.
+inline void ExpectEqualCoalescingMaps(
+    ContactJacColumnCoalescingMap const& expected,
+    ContactJacColumnCoalescingMap const& actual) {
+  EXPECT_EQ(expected.sourceBlockCount, actual.sourceBlockCount);
+  EXPECT_EQ(expected.samplesPerElement, actual.samplesPerElement);
+  EXPECT_SPAN_EQ(
+      MakeConstSpan(expected.elementDofOffsets), MakeConstSpan(actual.elementDofOffsets));
+  EXPECT_SPAN_EQ(
+      MakeConstSpan(expected.elementDofIndices), MakeConstSpan(actual.elementDofIndices));
+  EXPECT_SPAN_EQ(
+      MakeConstSpan(expected.elementSourceContributionOffsets),
+      MakeConstSpan(actual.elementSourceContributionOffsets));
+  EXPECT_SPAN_EQ(
+      MakeConstSpan(expected.elementSourceContributionDstColumns),
+      MakeConstSpan(actual.elementSourceContributionDstColumns));
+}
+
+// Flattened copy of a ContactJac's indices and values, for comparing results across setups that
+// reuse the same ContactJac storage.
+struct ContactJacSnapshot {
+  DynamicArray<int> indices;
+  DynamicArray<real> values;
+};
+
+inline ContactJacSnapshot SnapshotContactJac(ContactJac const& jac) {
+  ContactJacSnapshot snapshot;
+  for (int contact = 0; contact < jac.nContacts; ++contact) {
+    snapshot.indices.append(jac.Inds(contact));
+    auto const block = jac.Jac(contact);
+    for (int column = 0; column < jac.nDoFsInternal; ++column) {
+      for (int component = 0; component < ContactJac::kDofsPerNode; ++component) {
+        snapshot.values.push_back(block(component, column));
+      }
+    }
+  }
+  return snapshot;
+}
+
+inline void ExpectEqualContactJacSnapshots(
+    ContactJacSnapshot const& expected,
+    ContactJacSnapshot const& actual) {
+  EXPECT_SPAN_EQ(MakeConstSpan(expected.indices), MakeConstSpan(actual.indices));
+  EXPECT_SPAN_EQ(MakeConstSpan(expected.values), MakeConstSpan(actual.values));
+}
 
 } // namespace mochi::test

@@ -45,6 +45,7 @@
 #include <mochi_core/utils/profile.h>
 #include <mochi_core/utils/sparsity_utils.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -60,6 +61,72 @@ using namespace mochi;
 using namespace mochi::experimental;
 
 /*************************************************************************************************/
+
+void mochi::InitializeContactSkinningColumnCoalescingMap(
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CContactSkinningData& outSkinning) {
+  MOCHI_PROFILE_SCOPE_N("InitializeContactSkinningColumnCoalescingMap");
+
+  auto& mapping = outSkinning.columnCoalescingMap;
+  mapping = {};
+  surfaceDisc.Visit([&](auto const& discImpl) {
+    using DiscT = std::decay_t<decltype(discImpl)>;
+    using ElementT = typename DiscT::ElementT;
+    static_assert(ElementT::kNumNodes == 3, "Contact skinning supports triangular surfaces.");
+
+    int const numElements = isize(discImpl.femElements);
+    mapping.sourceBlockCount = ElementT::kNumNodes;
+    mapping.samplesPerElement = ElementT::kNumQuadPoints;
+    MOCHI_ASSERT_VERBOSE(
+        discImpl.GetNumQuadPoints() == numElements * mapping.samplesPerElement,
+        "Unexpected contact-surface sample layout.");
+
+    mapping.elementDofOffsets.reserve(numElements + 1);
+    mapping.elementDofOffsets.push_back(0);
+    mapping.elementSourceContributionOffsets.reserve(numElements * mapping.sourceBlockCount + 1);
+    mapping.elementSourceContributionOffsets.push_back(0);
+
+    DynamicArray<int> elementDofs;
+    for (int elementIndex = 0; elementIndex < numElements; ++elementIndex) {
+      auto const nodes = discImpl.femElements[elementIndex].Nodes();
+      elementDofs.clear();
+      for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
+        int const skinNode = nodes[sourceBlock];
+        MOCHI_ASSERT_VERBOSE(
+            skinNode >= 0 && skinNode < outSkinning.jacobian.Rows(),
+            "Contact-surface node is outside the skinning Jacobian.");
+        auto const rowDofs = outSkinning.jacobian.Indices(skinNode);
+        for (int i = 0; i < isize(rowDofs); ++i) {
+          MOCHI_ASSERT_VERBOSE(
+              rowDofs[i] >= 0 && rowDofs[i] < outSkinning.jacobian.Cols(),
+              "Skinning Jacobian DoF is out of range.");
+          MOCHI_ASSERT_VERBOSE(
+              i == 0 || rowDofs[i - 1] < rowDofs[i],
+              "Skinning Jacobian rows must be sorted and duplicate-free.");
+        }
+        elementDofs.append(rowDofs);
+      }
+
+      std::sort(elementDofs.begin(), elementDofs.end());
+      elementDofs.erase(std::unique(elementDofs.begin(), elementDofs.end()), elementDofs.end());
+      MOCHI_ASSERT_VERBOSE(!elementDofs.empty(), "Contact-surface elements must affect a DoF.");
+      mapping.elementDofIndices.append(elementDofs);
+      mapping.elementDofOffsets.push_back(isize(mapping.elementDofIndices));
+
+      for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
+        auto const rowDofs = outSkinning.jacobian.Indices(nodes[sourceBlock]);
+        for (int dof : rowDofs) {
+          auto* const it = std::lower_bound(elementDofs.begin(), elementDofs.end(), dof);
+          MOCHI_ASSERT_VERBOSE(it != elementDofs.end() && *it == dof);
+          mapping.elementSourceContributionDstColumns.push_back(
+              static_cast<int>(it - elementDofs.begin()));
+        }
+        mapping.elementSourceContributionOffsets.push_back(
+            isize(mapping.elementSourceContributionDstColumns));
+      }
+    }
+  });
+}
 
 void mochi::InitializeLinearContactSkinningJacobian(
     LinearMeshEmbedding const& embedding,
@@ -140,7 +207,17 @@ void mochi::SetupContactSkinCollidingJacobians(
 
   surfaceDisc.Visit([&](auto const& discImpl) {
     using DiscT = std::decay_t<decltype(discImpl)>;
-    using DQuad = dmap::DMapQuad<typename DiscT::ElementT>;
+    using ElementT = typename DiscT::ElementT;
+    using DQuad = dmap::DMapQuad<ElementT>;
+
+    auto const& mapping = skinningData.columnCoalescingMap;
+    MOCHI_ASSERT_VERBOSE(
+        mapping.IsInitialized(), "Contact-skin coalescing map is not initialized.");
+    MOCHI_ASSERT_VERBOSE(
+        mapping.sourceBlockCount == ElementT::kNumNodes &&
+            mapping.samplesPerElement == ElementT::kNumQuadPoints &&
+            mapping.NumElements() == isize(discImpl.femElements),
+        "Contact-skin coalescing map does not match the surface discretization.");
 
     ParallelForEach("SetupContactSkinCollidingJacobians Range", allJacs, 1, [&](JacData* jac) {
       DQuad dquad(discImpl.femElements, jac->query->jacColliderFromWorld);
@@ -148,8 +225,19 @@ void mochi::SetupContactSkinCollidingJacobians(
           &dquad, &dtransform, &sparseSkinning);
 
       auto& jacs = *jac->jacs;
-      dmap.GetJac(jac->query->sampleIndices, jacs);
-      jacs[0].CompressIndices();
+      {
+        MOCHI_PROFILE_SCOPE_N("GetJac");
+        dmap.GetJac(jac->query->sampleIndices, jacs);
+      }
+      {
+        MOCHI_PROFILE_SCOPE_N("CoalesceColumnsByCachedMapping");
+        jacs[0].CoalesceColumnsByCachedMapping(
+            mapping, jac->query->sampleIndices, dofOffset.dofsOffset);
+      }
+      {
+        MOCHI_PROFILE_SCOPE_N("CompressIndices");
+        jacs[0].CompressIndices();
+      }
     });
   });
 }

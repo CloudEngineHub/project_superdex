@@ -26,7 +26,6 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <numeric>
 #include <optional>
 
 using namespace mochi;
@@ -838,6 +837,149 @@ void mochi::FindPointContactsMapped(
   if (outNDofs) {
     *outNDofs = collider->mapping->GetNumDofs();
   }
+}
+
+void mochi::ContactJac::CoalesceColumnsByCachedMapping(
+    ContactJacColumnCoalescingMap const& mapping,
+    Span<int const> sampleIndices,
+    int dofOffset) {
+  MOCHI_ASSERT_VERBOSE(!hasSharedDoFs, "Coalescing requires per-contact DoF indices.");
+  MOCHI_ASSERT_VERBOSE(!hasSharedJacs, "Coalescing requires per-contact Jacobians.");
+  MOCHI_ASSERT_VERBOSE(_jacAux.empty(), "Coalescing does not support an auxiliary Jacobian.");
+  MOCHI_ASSERT_VERBOSE(
+      nDoFsInternal == nDoFsState, "Internal and state Jacobian widths must match.");
+  MOCHI_ASSERT_VERBOSE(!groupsInitialized, "Index groups must not be initialized.");
+  MOCHI_ASSERT_VERBOSE(isize(sampleIndices) == nContacts, "Expected one sample index per contact.");
+  MOCHI_ASSERT_VERBOSE(mapping.sourceBlockCount > 0, "Source block count must be positive.");
+  MOCHI_ASSERT_VERBOSE(mapping.samplesPerElement > 0, "Samples per element must be positive.");
+  MOCHI_ASSERT_VERBOSE(!mapping.elementDofOffsets.empty(), "Element DoF offsets are missing.");
+  MOCHI_ASSERT_VERBOSE(
+      mapping.elementDofOffsets.front() == 0 &&
+          mapping.elementDofOffsets.back() == isize(mapping.elementDofIndices),
+      "Element DoF offsets are inconsistent.");
+  int const numElements = mapping.NumElements();
+  MOCHI_ASSERT_VERBOSE(
+      isize(mapping.elementSourceContributionOffsets) == numElements * mapping.sourceBlockCount + 1,
+      "Source contribution offsets are inconsistent.");
+  MOCHI_ASSERT_VERBOSE(
+      mapping.elementSourceContributionOffsets.front() == 0 &&
+          mapping.elementSourceContributionOffsets.back() ==
+              isize(mapping.elementSourceContributionDstColumns),
+      "Source contribution offsets are inconsistent.");
+  for (int i = 0; i < numElements; ++i) {
+    MOCHI_ASSERT_VERBOSE(mapping.elementDofOffsets[i] <= mapping.elementDofOffsets[i + 1]);
+  }
+  for (int i = 0; i + 1 < isize(mapping.elementSourceContributionOffsets); ++i) {
+    MOCHI_ASSERT_VERBOSE(
+        mapping.elementSourceContributionOffsets[i] <=
+        mapping.elementSourceContributionOffsets[i + 1]);
+  }
+
+  int const oldWidth = nDoFsInternal;
+  MOCHI_ASSERT_VERBOSE(
+      oldWidth % mapping.sourceBlockCount == 0,
+      "Wide Jacobian width must be divisible by the source block count.");
+  int const querySourceStride = oldWidth / mapping.sourceBlockCount;
+
+  if (nContacts == 0) {
+    _data.inds.resize_noinit(0);
+    _data.jac.resize_noinit(0);
+    nDoFsInternal = 0;
+    nDoFsState = 0;
+    _inds.Reset(_data.inds.data(), 0, 0);
+    _jac.Reset(_data.jac.data(), kDofsPerNode, 0);
+    return;
+  }
+
+  int newWidth = 0;
+  for (int contact = 0; contact < nContacts; ++contact) {
+    int const sampleIndex = sampleIndices[contact];
+    MOCHI_ASSERT_VERBOSE(sampleIndex >= 0, "Sample indices must be nonnegative.");
+    int const elementIndex = sampleIndex / mapping.samplesPerElement;
+    MOCHI_ASSERT_VERBOSE(elementIndex >= 0 && elementIndex < numElements);
+
+    auto const elementDofs = mapping.ElementDofIndices(elementIndex);
+    MOCHI_ASSERT_VERBOSE(!elementDofs.empty(), "Selected elements must affect at least one DoF.");
+    for (int i = 0; i < isize(elementDofs); ++i) {
+      MOCHI_ASSERT_VERBOSE(elementDofs[i] >= 0, "Cached DoF indices must be nonnegative.");
+      MOCHI_ASSERT_VERBOSE(
+          i == 0 || elementDofs[i - 1] < elementDofs[i],
+          "Cached element DoF indices must be strictly increasing.");
+    }
+    newWidth = Max(newWidth, isize(elementDofs));
+    for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
+      auto const destinations = mapping.SourceContributionDstColumns(elementIndex, sourceBlock);
+      MOCHI_ASSERT_VERBOSE(
+          isize(destinations) <= querySourceStride,
+          "A source block has more mapped contributions than the query stride.");
+      for ([[maybe_unused]] int destination : destinations) {
+        MOCHI_ASSERT_VERBOSE(destination >= 0 && destination < isize(elementDofs));
+      }
+    }
+  }
+  MOCHI_ASSERT_VERBOSE(newWidth <= oldWidth, "Cached coalescing cannot increase the width.");
+
+  // Holds one contact's wide columns; wider Jacobians fall back to the heap.
+  int constexpr kMaxStackColumns = 64;
+  MOCHI_FILO_STACK_ALLOCATOR(tempAlloc, kMaxStackColumns * sizeof(Real3));
+  DynamicArray<Real3> originalColumns(&tempAlloc);
+  originalColumns.resize_noinit(oldWidth);
+  for (int contact = 0; contact < nContacts; ++contact) {
+    auto indices = Inds(contact);
+    auto jac = Jac(contact);
+    for (int column = 0; column < oldWidth; ++column) {
+      originalColumns[column] = {jac(0, column), jac(1, column), jac(2, column)};
+    }
+    for (int column = 0; column < newWidth; ++column) {
+      jac.Col(column).SetZero();
+    }
+
+    int const elementIndex = sampleIndices[contact] / mapping.samplesPerElement;
+    auto const elementDofs = mapping.ElementDofIndices(elementIndex);
+    for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
+      auto const destinations = mapping.SourceContributionDstColumns(elementIndex, sourceBlock);
+      for (int localEntry = 0; localEntry < isize(destinations); ++localEntry) {
+        int const sourceColumn = sourceBlock * querySourceStride + localEntry;
+        int const destinationColumn = destinations[localEntry];
+        for (int component = 0; component < kDofsPerNode; ++component) {
+          jac(component, destinationColumn) += originalColumns[sourceColumn][component];
+        }
+      }
+    }
+
+    for (int column = 0; column < isize(elementDofs); ++column) {
+      long long const globalDof =
+          static_cast<long long>(elementDofs[column]) + static_cast<long long>(dofOffset);
+      MOCHI_ASSERT_VERBOSE(
+          globalDof >= std::numeric_limits<int>::min() &&
+              globalDof <= std::numeric_limits<int>::max(),
+          "Global DoF index is not representable as int.");
+      indices[column] = static_cast<int>(globalDof);
+    }
+    for (int column = isize(elementDofs); column < newWidth; ++column) {
+      indices[column] = indices[0];
+    }
+  }
+
+  if (newWidth < oldWidth) {
+    for (int contact = 1; contact < nContacts; ++contact) {
+      std::copy_n(
+          _data.inds.begin() + contact * oldWidth,
+          newWidth,
+          _data.inds.begin() + contact * newWidth);
+      std::copy_n(
+          _data.jac.begin() + kDofsPerNode * contact * oldWidth,
+          kDofsPerNode * newWidth,
+          _data.jac.begin() + kDofsPerNode * contact * newWidth);
+    }
+  }
+
+  _data.inds.resize_noinit(nContacts * newWidth);
+  _data.jac.resize_noinit(kDofsPerNode * nContacts * newWidth);
+  nDoFsInternal = newWidth;
+  nDoFsState = newWidth;
+  _inds.Reset(_data.inds.data(), nContacts, newWidth);
+  _jac.Reset(_data.jac.data(), kDofsPerNode, nContacts * newWidth);
 }
 
 void mochi::ContactJac::CompressIndices() {

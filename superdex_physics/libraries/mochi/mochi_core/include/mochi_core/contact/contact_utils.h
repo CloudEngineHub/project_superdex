@@ -56,6 +56,55 @@ namespace mochi {
 // Forward declarations
 class BaseMap;
 
+/// @brief Cached recipe for summing duplicate DoF columns of a wide contact-skin Jacobian.
+///
+/// Elements are contact-surface elements. The source (uncoalesced) row of a contact has one
+/// equal-width source block of columns per element node, holding that node's skinning Jacobian
+/// entries in CSR order. The block width varies per query, so source columns are computed at use;
+/// the map stores only each entry's destination (coalesced) column.
+struct ContactJacColumnCoalescingMap {
+  // Source blocks per row, i.e., nodes per element.
+  int sourceBlockCount = 0;
+  int samplesPerElement = 0;
+  // CSR over elements: sorted unique actor-local DoFs, one per destination column.
+  DynamicArray<int> elementDofOffsets;
+  DynamicArray<int> elementDofIndices;
+  // CSR over (element, source block) pairs: destination column of each skinning Jacobian entry.
+  DynamicArray<int> elementSourceContributionOffsets;
+  DynamicArray<int> elementSourceContributionDstColumns;
+
+  [[nodiscard]] bool IsInitialized() const {
+    return sourceBlockCount > 0 && samplesPerElement > 0 && !elementDofOffsets.empty() &&
+        !elementSourceContributionOffsets.empty();
+  }
+
+  [[nodiscard]] int NumElements() const {
+    MOCHI_ASSERT_VERBOSE(!elementDofOffsets.empty(), "Element DoF offsets are not initialized.");
+    return isize(elementDofOffsets) - 1;
+  }
+
+  [[nodiscard]] Span<int const> ElementDofIndices(int elementIndex) const {
+    MOCHI_ASSERT_VERBOSE(elementIndex >= 0 && elementIndex < NumElements());
+    int const begin = elementDofOffsets[elementIndex];
+    int const end = elementDofOffsets[elementIndex + 1];
+    MOCHI_ASSERT_VERBOSE(begin >= 0 && begin <= end && end <= isize(elementDofIndices));
+    return {elementDofIndices.data() + begin, static_cast<size_t>(end - begin)};
+  }
+
+  [[nodiscard]] Span<int const> SourceContributionDstColumns(int elementIndex, int sourceBlock)
+      const {
+    MOCHI_ASSERT_VERBOSE(elementIndex >= 0 && elementIndex < NumElements());
+    MOCHI_ASSERT_VERBOSE(sourceBlock >= 0 && sourceBlock < sourceBlockCount);
+    int const flattenedBlock = elementIndex * sourceBlockCount + sourceBlock;
+    MOCHI_ASSERT_VERBOSE(flattenedBlock + 1 < isize(elementSourceContributionOffsets));
+    int const begin = elementSourceContributionOffsets[flattenedBlock];
+    int const end = elementSourceContributionOffsets[flattenedBlock + 1];
+    MOCHI_ASSERT_VERBOSE(
+        begin >= 0 && begin <= end && end <= isize(elementSourceContributionDstColumns));
+    return {elementSourceContributionDstColumns.data() + begin, static_cast<size_t>(end - begin)};
+  }
+};
+
 /*
 Jacobian of contact points wrt state DoFs. Notation:
 - pi: position of each contact point.
@@ -225,6 +274,22 @@ struct ContactJac {
   void SetZero() {
     _jac.SetZero();
   }
+
+  /// @brief Sum duplicate DoF columns of a wide contact-skin Jacobian using a cached map.
+  ///
+  /// @param[in] mapping Coalescing map; see @ref ContactJacColumnCoalescingMap for the row layout.
+  /// @param[in] sampleIndices Contact-surface sample index of each contact.
+  /// @param[in] dofOffset Actor's DoF offset within the island.
+  ///
+  /// @pre Per-contact DoFs and Jacobians, no auxiliary Jacobian, nDoFsInternal == nDoFsState, index
+  /// groups not initialized, and rows in the source layout of @ref ContactJacColumnCoalescingMap.
+  ///
+  /// @post The width is the largest DoF count among the contacts' elements. Each row lists its
+  /// element's DoFs in increasing order, padded with zero columns that repeat the first index.
+  void CoalesceColumnsByCachedMapping(
+      ContactJacColumnCoalescingMap const& mapping,
+      Span<int const> sampleIndices,
+      int dofOffset);
 
   /// @brief Initialize the index groups from the indices.
   void CompressIndices();

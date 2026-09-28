@@ -372,6 +372,7 @@ void mochi::InitShellActor(
         actorTriMesh.GetNumNodes(),
         shapeContactSkinMesh->GetActiveNodes(),
         skinningData);
+    InitializeContactSkinningColumnCoalescingMap(contactDisc, skinningData);
     auto& deformedNodes = reg.emplace<CDeformedContactSkinNodes>(e);
     deformedNodes.referencePositions.resize_noinit(
         kSpaceDim3 * shapeContactSkinMesh->GetNumNodes());

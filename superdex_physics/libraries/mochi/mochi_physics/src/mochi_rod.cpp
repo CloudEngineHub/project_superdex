@@ -857,6 +857,7 @@ void mochi::rod::ResolveContactSkinningJacobian(
   }
 
   auto& jac = outSkinning.jacobian;
+  // Only values change here; columnCoalescingMap relies on the sparsity staying fixed.
   jac.SetZero();
 
   for (int i = 0; i < numContactSkinNodes; ++i) {
@@ -1469,6 +1470,7 @@ void mochi::InitRodActor(
         reg.emplace<CRodContactSkin>(e, shapeContactSkinMesh, shapeContactSkinEmbedding);
     auto& skinningData = reg.emplace<CContactSkinningData>(e);
     rod::InitializeContactSkinningJacobian(contactSkin, mesh, skinningData);
+    InitializeContactSkinningColumnCoalescingMap(surfaceDisc, skinningData);
     reg.emplace<TagUseDeformableContactSkin>(e);
     reg.emplace<CSkinnedContactSnle>(e);
     reg.emplace<TagSkinnedContact>(e);

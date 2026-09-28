@@ -28,6 +28,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <random>
 #include <string>
@@ -36,6 +37,44 @@
 #include <vector>
 
 using namespace mochi;
+
+namespace {
+
+struct ExpectedCoalescedContactJac {
+  std::vector<std::vector<int>> indices;
+  std::vector<std::vector<Real3>> columns;
+};
+
+ExpectedCoalescedContactJac SortAndCoalesceContactJacForTest(ContactJac const& jac) {
+  ExpectedCoalescedContactJac expected;
+  expected.indices.resize(jac.nContacts);
+  expected.columns.resize(jac.nContacts);
+  int maxWidth = 0;
+  for (int contact = 0; contact < jac.nContacts; ++contact) {
+    auto const indices = jac.Inds(contact);
+    auto const columns = jac.Jac(contact);
+    std::map<int, Real3> summedColumns;
+    for (int column = 0; column < jac.nDoFsInternal; ++column) {
+      summedColumns[indices[column]] +=
+          Real3{columns(0, column), columns(1, column), columns(2, column)};
+    }
+    for (auto const& [dofIndex, sum] : summedColumns) {
+      expected.indices[contact].push_back(dofIndex);
+      expected.columns[contact].push_back(sum);
+    }
+    maxWidth = Max(maxWidth, isize(summedColumns));
+  }
+
+  for (int contact = 0; contact < jac.nContacts; ++contact) {
+    while (isize(expected.indices[contact]) < maxWidth) {
+      expected.indices[contact].push_back(expected.indices[contact].front());
+      expected.columns[contact].emplace_back();
+    }
+  }
+  return expected;
+}
+
+} // namespace
 
 // Helper to compare two ContactDetectionResult that should be equal
 static void ExpectEqualResults(
@@ -1244,6 +1283,174 @@ TEST(MeshCollider, MeshCollider_Remesh) {
   // Move the replicated vertex; stitching won't help
   coords.back()[0] += 1_r;
   testMeshCollider(coords, tris, true, false, true);
+}
+
+TEST(ContactJac, CoalesceColumnsByCachedMapping) {
+  int constexpr kNumContacts = 3;
+  int constexpr kSourceStride = 3;
+  int constexpr kOldWidth = 3 * kSourceStride;
+  int constexpr kNewWidth = 4;
+  int constexpr kDofOffset = 11;
+  std::array<int, kNumContacts> const sampleIndices = {1, 2, 0};
+
+  ContactJacColumnCoalescingMap mapping;
+  mapping.sourceBlockCount = 3;
+  mapping.samplesPerElement = 2;
+  mapping.elementDofOffsets = {0, 4, 7};
+  mapping.elementDofIndices = {2, 3, 5, 7, 4, 8, 9};
+  mapping.elementSourceContributionOffsets = {0, 2, 4, 6, 7, 10, 11};
+  mapping.elementSourceContributionDstColumns = {0, 2, 1, 2, 0, 3, 0, 0, 1, 2, 1};
+
+  auto initializeWideJacobian = [&](ContactJac& jac) {
+    jac.Resize(false, false, kOldWidth, kOldWidth, kNumContacts);
+    for (int contact = 0; contact < kNumContacts; ++contact) {
+      int const elementIndex = sampleIndices[contact] / mapping.samplesPerElement;
+      auto const elementDofs = mapping.ElementDofIndices(elementIndex);
+      auto indices = jac.Inds(contact);
+      auto values = jac.Jac(contact);
+      for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
+        auto const destinations = mapping.SourceContributionDstColumns(elementIndex, sourceBlock);
+        ASSERT_FALSE(destinations.empty());
+        for (int localEntry = 0; localEntry < kSourceStride; ++localEntry) {
+          int const sourceColumn = sourceBlock * kSourceStride + localEntry;
+          int const destination = destinations[Min(localEntry, isize(destinations) - 1)];
+          indices[sourceColumn] = elementDofs[destination] + kDofOffset;
+          if (localEntry < isize(destinations)) {
+            real const value = 100_r * contact + 10_r * sourceBlock + localEntry + 1_r;
+            for (int component = 0; component < ContactJac::kDofsPerNode; ++component) {
+              values(component, sourceColumn) = value + component;
+            }
+          } else {
+            values.Col(sourceColumn).SetZero();
+          }
+        }
+      }
+    }
+  };
+
+  ContactJac cached;
+  ContactJac repeated;
+  initializeWideJacobian(cached);
+  initializeWideJacobian(repeated);
+  auto const expected = SortAndCoalesceContactJacForTest(cached);
+  auto const* const indicesData = cached.Inds(0).data();
+  auto const* const jacData = cached.Jac(0).data();
+
+  cached.CoalesceColumnsByCachedMapping(mapping, sampleIndices, kDofOffset);
+  repeated.CoalesceColumnsByCachedMapping(mapping, sampleIndices, kDofOffset);
+
+  EXPECT_EQ(kNewWidth, cached.nDoFsInternal);
+  EXPECT_EQ(kNewWidth, cached.nDoFsState);
+  EXPECT_EQ(indicesData, cached.Inds(0).data());
+  EXPECT_EQ(jacData, cached.Jac(0).data());
+  EXPECT_FALSE(cached.groupsInitialized);
+  for (int contact = 0; contact < kNumContacts; ++contact) {
+    EXPECT_SPAN_EQ(MakeConstSpan(expected.indices[contact]), cached.Inds(contact));
+    EXPECT_SPAN_EQ(cached.Inds(contact), repeated.Inds(contact));
+    for (int column = 0; column < kNewWidth; ++column) {
+      Real3 const cachedColumn = {
+          cached.Jac(contact)(0, column),
+          cached.Jac(contact)(1, column),
+          cached.Jac(contact)(2, column),
+      };
+      EXPECT_NEAR_EQ(expected.columns[contact][column], cachedColumn);
+      for (int component = 0; component < ContactJac::kDofsPerNode; ++component) {
+        EXPECT_EQ(cached.Jac(contact)(component, column), repeated.Jac(contact)(component, column));
+      }
+    }
+  }
+
+  std::array<int, kNewWidth> const paddedElementIndices = {15, 19, 20, 15};
+  EXPECT_SPAN_EQ(MakeConstSpan(paddedElementIndices), cached.Inds(1));
+  Real3 const paddedColumn = {
+      cached.Jac(1)(0, kNewWidth - 1),
+      cached.Jac(1)(1, kNewWidth - 1),
+      cached.Jac(1)(2, kNewWidth - 1),
+  };
+  EXPECT_EQ(Real3{}, paddedColumn);
+
+  // The same map must also work when the query omits the wider second element, reducing the source
+  // stride from three to two.
+  int constexpr kLowStride = 2;
+  std::array<int, 2> const lowStrideSampleIndices = {0, 1};
+  ContactJac lowStrideCached;
+  auto initializeLowStrideJacobian = [&](ContactJac& jac) {
+    jac.Resize(
+        false,
+        false,
+        mapping.sourceBlockCount * kLowStride,
+        mapping.sourceBlockCount * kLowStride,
+        isize(lowStrideSampleIndices));
+    for (int contact = 0; contact < isize(lowStrideSampleIndices); ++contact) {
+      auto indices = jac.Inds(contact);
+      auto values = jac.Jac(contact);
+      auto const elementDofs = mapping.ElementDofIndices(0);
+      for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
+        auto const destinations = mapping.SourceContributionDstColumns(0, sourceBlock);
+        ASSERT_EQ(kLowStride, isize(destinations));
+        for (int localEntry = 0; localEntry < kLowStride; ++localEntry) {
+          int const sourceColumn = sourceBlock * kLowStride + localEntry;
+          indices[sourceColumn] = elementDofs[destinations[localEntry]] + kDofOffset;
+          for (int component = 0; component < ContactJac::kDofsPerNode; ++component) {
+            values(component, sourceColumn) =
+                100_r * contact + 10_r * sourceBlock + localEntry + component;
+          }
+        }
+      }
+    }
+  };
+  initializeLowStrideJacobian(lowStrideCached);
+  auto const lowStrideExpected = SortAndCoalesceContactJacForTest(lowStrideCached);
+  lowStrideCached.CoalesceColumnsByCachedMapping(mapping, lowStrideSampleIndices, kDofOffset);
+  for (int contact = 0; contact < isize(lowStrideSampleIndices); ++contact) {
+    EXPECT_SPAN_EQ(
+        MakeConstSpan(lowStrideExpected.indices[contact]), lowStrideCached.Inds(contact));
+    for (int column = 0; column < lowStrideCached.nDoFsInternal; ++column) {
+      Real3 const actualColumn = {
+          lowStrideCached.Jac(contact)(0, column),
+          lowStrideCached.Jac(contact)(1, column),
+          lowStrideCached.Jac(contact)(2, column),
+      };
+      EXPECT_NEAR_EQ(lowStrideExpected.columns[contact][column], actualColumn);
+    }
+  }
+
+  cached.CompressIndices();
+  EXPECT_TRUE(cached.groupsInitialized);
+  for (int contact = 0; contact < kNumContacts; ++contact) {
+    int groupedColumns = 0;
+    for (IndexGroup const& group : cached.IndGroups(contact)) {
+      groupedColumns += group.count;
+    }
+    EXPECT_EQ(kNewWidth, groupedColumns);
+  }
+}
+
+TEST(ContactJac, CoalesceColumnsByCachedMappingWithNoContacts) {
+  ContactJacColumnCoalescingMap mapping;
+  mapping.sourceBlockCount = 3;
+  mapping.samplesPerElement = 1;
+  mapping.elementDofOffsets = {0, 1};
+  mapping.elementDofIndices = {2};
+  mapping.elementSourceContributionOffsets = {0, 1, 2, 3};
+  mapping.elementSourceContributionDstColumns = {0, 0, 0};
+
+  ContactJac jac;
+  jac.Resize(false, false, 3, 3, 1);
+  auto const* const indicesData = jac.Inds(0).data();
+  auto const* const jacData = jac.Jac(0).data();
+  jac.Resize(false, false, 3, 3, 0);
+
+  std::array<int, 0> const sampleIndices{};
+  jac.CoalesceColumnsByCachedMapping(mapping, sampleIndices, 0);
+
+  EXPECT_EQ(0, jac.nDoFsInternal);
+  EXPECT_EQ(0, jac.nDoFsState);
+  EXPECT_EQ(0, jac.nContacts);
+  EXPECT_FALSE(jac.groupsInitialized);
+  jac.Resize(false, false, 3, 3, 1);
+  EXPECT_EQ(indicesData, jac.Inds(0).data());
+  EXPECT_EQ(jacData, jac.Jac(0).data());
 }
 
 TEST(ContactJac, Move) {

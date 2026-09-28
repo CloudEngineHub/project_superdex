@@ -546,10 +546,12 @@ struct ContactSamples : public NoCopy {
   std::optional<SphereOctTree> bsh;
 };
 
-// Sparse Jacobian from embedded contact-skin nodes to actor DoFs. Each row corresponds to one skin
-// node, and each Real3 entry is that node's derivative with respect to one actor DoF.
+// Sparse Jacobian from embedded contact-skin nodes to actor DoFs (one row per skin node, one Real3
+// entry per DoF), plus its column coalescing map. Rebuild the map whenever the surface connectivity
+// or the Jacobian's sparsity changes; value-only updates keep it valid.
 struct CContactSkinningData : public NoCopy {
   SparseMatrix<Real3> jacobian;
+  ContactJacColumnCoalescingMap columnCoalescingMap;
 };
 
 // Cached contact-skin node positions, pre-allocated during actor creation.
@@ -1125,6 +1127,12 @@ void AssembleIslandSyncContact(
     CIslandDofInfo const& islandDofInfo,
     CIslandDescendants const& descendants,
     CIslandContactSnle& outContactSnle);
+
+// Builds the column coalescing map from contact-surface connectivity and skinning Jacobian
+// sparsity.
+void InitializeContactSkinningColumnCoalescingMap(
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CContactSkinningData& outSkinning);
 
 // Builds the constant sparse Jacobian for a node-based linear contact-skin embedding.
 void InitializeLinearContactSkinningJacobian(
