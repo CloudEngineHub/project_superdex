@@ -3821,6 +3821,9 @@ void mochi::AssembleIslandSyncContact(
   MOCHI_ASSERT_VERBOSE(
       params.gradTarget == GradTarget::Current || params.gradTarget == GradTarget::Previous,
       "Unsupported gradient target");
+  MOCHI_ASSERT(
+      params.gradTarget == GradTarget::Current || !params.assemDRes,
+      "The contact DResidual only supports GradTarget::Current.");
   auto assembleAllSyncContactPairsFn = params.gradTarget == GradTarget::Previous
       ? AssembleAllSyncContactPairs<GradTarget::Previous>
       : AssembleAllSyncContactPairs<GradTarget::Current>;

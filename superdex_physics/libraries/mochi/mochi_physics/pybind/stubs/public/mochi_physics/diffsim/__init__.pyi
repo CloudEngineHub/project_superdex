@@ -258,6 +258,10 @@ def get_step_jacobian(
 
     Raises:
         :class:`~superdex.physics.Error`: If an error occurs.
+
+    Note:
+        Only supported for rigid actors without contact, integrated with backward
+        Euler.
     """
 
 def convert_rigid_gradient_lie_to_rotation_vector(

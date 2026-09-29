@@ -289,6 +289,12 @@ struct CActiveCollisions : public std::vector<ActiveCollision> {
     }
     MOCHI_ASSERT_VERBOSE(std::is_sorted(begin(), end()), "Expected sorted active collisions.");
   }
+
+  // Whether any collider has contact points, rather than only potential contact.
+  [[nodiscard]] bool HasContact() const {
+    return std::any_of(
+        begin(), end(), [](auto const& col) { return !col.collisionResult.Empty(); });
+  }
 };
 
 /**

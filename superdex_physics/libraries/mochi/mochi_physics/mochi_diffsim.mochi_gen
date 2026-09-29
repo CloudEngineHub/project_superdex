@@ -156,6 +156,8 @@ fn diffsim::BackPropagate(Scene* scene) -> void [release_gil, mochi_error];
 // @param[in] stateOld State handle at step t-2.
 // @param[out] outJacCurr Jacobian dq_t/dq_t-1, column-major, sized |q| x |q|.
 // @param[out] outJacOld Jacobian dq_t/dq_t-2, column-major, sized |q| x |q|.
+//
+// @note Only supported for rigid actors without contact, integrated with backward Euler.
 fn diffsim::GetStepJacobian(Scene* scene, StateHandle stateNew, StateHandle stateCurr, StateHandle stateOld, Span<real> outJacCurr, Span<real> outJacOld) -> void [mochi_error];
 
 // @brief Convert in-place gradient wrt rigid-actor state from local (Lie-parameterized)

@@ -671,10 +671,14 @@ void mochi::rigid::EntityAssemble(
   RigidHessian* hessian = params.assemDRes ? &tempHessian : nullptr;
 
   // Compute async contact term first. It assumes that energy starts at zero.
-  bool bContactEnabled = hasContactTag && activeCollisions && !activeCollisions->empty() &&
-      IsAssemblyNeeded(StateDependency::FirstOrder, false /*inputDependency*/, gradTarget);
+  bool bContactEnabled = hasContactTag && activeCollisions &&
+      IsAssemblyNeeded(StateDependency::FirstOrder, false /*inputDependency*/, gradTarget) &&
+      activeCollisions->HasContact();
   if (bContactEnabled) {
     MOCHI_ASSERT_VERBOSE(contactSample, "Contact sample must exist for contact.");
+    MOCHI_ASSERT(
+        gradTarget == GradTarget::Current || !params.assemDRes,
+        "The contact DResidual only supports GradTarget::Current.");
     ContactEvalConfig config{
         .psdDRes = params.psdDRes,
         .addPadding = ShouldAddPenaltyPadding(colliderInfo.type),
