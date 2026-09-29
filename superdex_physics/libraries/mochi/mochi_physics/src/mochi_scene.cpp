@@ -1377,7 +1377,6 @@ void SceneImpl::GetStepJacobian(
   bool allActorsValid = true;
   ForEachActor([&](Actor* actor) { allActorsValid &= actor->GetType() == ActorType::Rigid; });
   MOCHI_ERROR_IF(!allActorsValid, error, "All actors must be rigid");
-  MOCHI_ERROR_RETURN(error);
 
   // Check time integrator is backward Euler.
   MOCHI_ERROR_IF(
@@ -1385,6 +1384,7 @@ void SceneImpl::GetStepJacobian(
           IntegrationMethod::BackwardEuler,
       error,
       "GetStepJacobian is only supported with backward Euler.");
+  MOCHI_ERROR_RETURN(error);
 
   // Validate necessary solver settings for accurate differentiability
   WarnIfNotImprovedConvergenceSettings();
