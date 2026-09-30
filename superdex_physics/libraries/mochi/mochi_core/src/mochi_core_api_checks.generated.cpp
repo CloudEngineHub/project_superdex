@@ -18,7 +18,6 @@
 
 // clang-format off
 
-#include <limits>
 #include <mochi_core/articulated_body/articulated_body_params.h>
 #include <mochi_core/contact/contact_params.h>
 #include <mochi_core/geometry/model_data.h>
@@ -30,9 +29,10 @@
 #include <mochi_core/utils/coordinate_space.h>
 #include <mochi_core/utils/eval_params.h>
 #include <mochi_core/utils/log.h>
-#include <mochi_core/utils/verbosity_params.h>
-#include <limits>
 #include <mochi_core/utils/mochi_core_api_checks.generated.h>
+#include <mochi_core/utils/verbosity_params.h>
+
+#include <limits>
 
 #if MOCHI_COMPILER_MSVC
 #define MOCHI_ASSERT_EQ(a, b, message) MOCHI_ASSERT(mochi::NearEqual((a), (b), std::numeric_limits<decltype(b)>::epsilon()), message)

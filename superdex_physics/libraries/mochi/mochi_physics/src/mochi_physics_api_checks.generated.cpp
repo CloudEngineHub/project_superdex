@@ -18,13 +18,14 @@
 
 // clang-format off
 
-#include <limits>
-#include <mochi_physics/mochi_physics.h>
 #include <mochi_core/geometry/model_utils.h>
 #include <mochi_physics/diffsim/mochi_diffsim.h>
+#include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/mochi_physics_experimental.h>
-#include <mochi_physics/utils/mochi_prefab.h>
 #include <mochi_physics/utils/mochi_physics_api_checks.generated.h>
+#include <mochi_physics/utils/mochi_prefab.h>
+
+#include <limits>
 
 #if MOCHI_COMPILER_MSVC
 #define MOCHI_ASSERT_EQ(a, b, message) MOCHI_ASSERT(mochi::NearEqual((a), (b), std::numeric_limits<decltype(b)>::epsilon()), message)

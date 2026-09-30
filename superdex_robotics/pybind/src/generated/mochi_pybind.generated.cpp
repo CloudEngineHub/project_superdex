@@ -20,9 +20,11 @@
 
 #if !MOCHI_INTERNAL
 
-#include <limits>
-#include <nanobind/nanobind.h>
 #include "../pybind_include.h"
+
+#include <nanobind/nanobind.h>
+
+#include <limits>
 
 using namespace mochi;
 namespace nb = nanobind;
