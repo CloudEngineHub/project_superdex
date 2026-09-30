@@ -1023,6 +1023,19 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
 }
 
 /**
+ * @brief Collision response (energy, force, and force derivative) of a batch of contact points.
+ *
+ * @note Quantities not requested from @ref ComputeBatchCollisionResponse are left uninitialized.
+ * Lanes beyond @p kBatchSize hold unspecified values.
+ */
+template <int kBatchSize, GradTarget kGradTarget>
+struct BatchCollisionResponse {
+  BatchDouble<kBatchSize> energy;
+  BatchReal3<kBatchSize> force;
+  BatchDForce<kBatchSize, kGradTarget> dForce;
+};
+
+/**
  * @brief Compute collision response (energy, force, and force derivative) for a batch of contact
  * points.
  *
@@ -1035,10 +1048,8 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
  * @tparam kGradTarget Indicates whether the energy gradient is for the current state (i.e. the
  * force) or the previous state
  *
- * @param[out] outEnergy Output collision energies (size kBatchSize, written if assemEnergy)
- * @param[out] outForce Output collision forces (size kBatchSize, written if assemForce)
- * @param[out] outDForce Output collision force derivatives (size kBatchSize, written if
- * assemDForce)
+ * @param[out] outResponse Output collision response. Energies, forces and force derivatives are
+ * written if assemEnergy, assemForce and assemDForce, respectively.
  * @param[in] distance Signed distances at contact points (negative = penetration)
  * @param[in] distanceGrad Gradient of signed distance at current state
  * @param[in] distanceStageStart Signed distances at stage start (used only with explicit normals)
@@ -1065,10 +1076,8 @@ MOCHI_NO_INLINE
 #else
 MOCHI_FORCE_INLINE
 #endif
-    void ComputeBatchCollisionForceDForce(
-        Span<double> outEnergy,
-        Span<Real3> outForce,
-        Span<VMatrix3x3r> outDForce,
+    void ComputeBatchCollisionResponse(
+        BatchCollisionResponse<kBatchSize, kGradTarget>& outResponse,
         Span<real const> distance,
         Span<Real3 const> distanceGrad,
         Span<real const> distanceStageStart,
@@ -1091,9 +1100,6 @@ MOCHI_FORCE_INLINE
       kGradTarget == GradTarget::Current || kGradTarget == GradTarget::Previous,
       "Contact assembly should be called only for GradTarget::Current or GradTarget::Previous");
 
-  MOCHI_ASSERT_VERBOSE(!assemEnergy || (outEnergy.size() == kBatchSize));
-  MOCHI_ASSERT_VERBOSE(!assemForce || (outForce.size() == kBatchSize));
-  MOCHI_ASSERT_VERBOSE(!assemDForce || (outDForce.size() == kBatchSize));
   MOCHI_ASSERT_VERBOSE(
       distance.size() == kBatchSize && distanceGrad.size() == kBatchSize &&
       posColliding.size() == kBatchSize && posCollidingStageStart.size() == kBatchSize);
@@ -1118,13 +1124,11 @@ MOCHI_FORCE_INLINE
       "GradTarget::Previous requires implicitNormalForceForDissipation = false and explicitNormals = true.");
 
   using V = BatchReal<kBatchSize>;
-  using Vd = BatchDouble<kBatchSize>;
   using V3 = BatchReal3<kBatchSize>;
 
-  // Create SIMD locals for outputs
-  Vd energy MOCHI_NO_INIT;
-  V3 force MOCHI_NO_INIT;
-  BatchDForce<kBatchSize, kGradTarget> dForce MOCHI_NO_INIT;
+  auto& energy = outResponse.energy;
+  auto& force = outResponse.force;
+  auto& dForce = outResponse.dForce;
   V fPenalty MOCHI_NO_INIT;
   V dFPenalty MOCHI_NO_INIT;
 
@@ -1255,16 +1259,71 @@ MOCHI_FORCE_INLINE
         isSdfGradUnitary);
   }
 
+  // NOTE: dForce is expected to be PSD. If it is not, a projection onto the PSD cone must be added
+  // here.
+}
+
+/**
+ * @brief Compute collision response (energy, force, and force derivative) for a batch of contact
+ * points and store it in per-point arrays. See @ref ComputeBatchCollisionResponse.
+ *
+ * @param[out] outEnergy Output collision energies (size kBatchSize, written if assemEnergy)
+ * @param[out] outForce Output collision forces (size kBatchSize, written if assemForce)
+ * @param[out] outDForce Output collision force derivatives (size kBatchSize, written if
+ * assemDForce)
+ */
+template <int kBatchSize, GradTarget kGradTarget>
+MOCHI_FORCE_INLINE void ComputeBatchCollisionForceDForce(
+    Span<double> outEnergy,
+    Span<Real3> outForce,
+    Span<VMatrix3x3r> outDForce,
+    Span<real const> distance,
+    Span<Real3 const> distanceGrad,
+    Span<real const> distanceStageStart,
+    Span<Real3 const> distanceGradStageStart,
+    Span<Real3 const> normalColliding,
+    Span<Real3 const> posColliding,
+    Span<Real3 const> posCollidingStageStart,
+    ContactParams const& params,
+    ContactEvalConfig const& config,
+    real dtFactor,
+    bool assemEnergy,
+    bool assemForce,
+    bool assemDForce,
+    bool isSdfGradUnitary) {
+  MOCHI_ASSERT_VERBOSE(!assemEnergy || (outEnergy.size() == kBatchSize));
+  MOCHI_ASSERT_VERBOSE(!assemForce || (outForce.size() == kBatchSize));
+  MOCHI_ASSERT_VERBOSE(!assemDForce || (outDForce.size() == kBatchSize));
+
+  BatchCollisionResponse<kBatchSize, kGradTarget> response MOCHI_NO_INIT;
+  ComputeBatchCollisionResponse<kBatchSize, kGradTarget>(
+      response,
+      distance,
+      distanceGrad,
+      distanceStageStart,
+      distanceGradStageStart,
+      normalColliding,
+      posColliding,
+      posCollidingStageStart,
+      params,
+      config,
+      dtFactor,
+      assemEnergy,
+      assemForce,
+      assemDForce,
+      isSdfGradUnitary);
+
   // Store outputs to Spans
   if (assemEnergy) {
-    Store<kBatchSize>(outEnergy.data(), energy);
+    Store<kBatchSize>(outEnergy.data(), response.energy);
   }
 
   if (assemForce) {
-    StoreTransposed<kBatchSize>(&outForce[0][0], force);
+    StoreTransposed<kBatchSize>(&outForce[0][0], response.force);
   }
 
   if (assemDForce) {
+    auto const& dForce = response.dForce;
     // TODO: outDForce should be either:
     //   1. Nine dense arrays of real, in which case this loop would be 9 vector Stores.
     //   2. A dense array of Matrix3x3, in which case this loop would still be needed.
@@ -1283,12 +1342,8 @@ MOCHI_FORCE_INLINE
             Vec4r{dForce[7][i], dForce[8][i], dForce[2][i]}}; // zx, zy, zz
       }
     }
-    // NOTE: outDForce is expected to be PSD. If it is not, a projection onto the PSD cone must be
-    // added here.
   }
 }
-
-#undef MOCHI_SIMD_FROM_STRUCT_MEMBER_INDEXED
 
 template <GradTarget kGradTarget>
 void ComputeCollisionResponseRange(
@@ -1324,6 +1379,76 @@ void ComputeCollisionResponse(
       assemDForce,
       outResponse);
 }
+
+/**
+ * @brief Sums of the collision response of contact points and of its moments about a reference
+ * point, from which the contact contribution of rigid bodies (e.g. rigid actors or articulated
+ * links) to the energy, gradient and Hessian is assembled.
+ *
+ * @details With w the weight of a contact point, e, f and D its collision energy, force and force
+ * derivative, s its lever arm from the reference point (e.g. a center of mass), and S(s) the
+ * skew-symmetric matrix of s, all expressed in the collider's local space:
+ * - @ref energy = sum(w e)
+ * - @ref force = sum(w f)
+ * - @ref torque = sum(S(s) w f)
+ * - @ref dForce = sum(w D)
+ * - @ref skewDForce = sum(S(s) w D)
+ * - @ref skewDForceSkew = sum(S(s) w D S(s))
+ */
+struct RigidContactSums {
+  double energy = 0.0;
+  Vec4r force = {};
+  Vec4r torque = {};
+  VMatrix3x3r dForce = {};
+  VMatrix3x3r skewDForce = {};
+  VMatrix3x3r skewDForceSkew = {};
+};
+
+/**
+ * @brief Compute the @ref RigidContactSums of a range of contact points, without storing their
+ * per-point collision response.
+ *
+ * @details Equivalent to summing the per-point response of @ref ComputeCollisionResponseRange, but
+ * faster. Collider integration weights are not supported. The lever arms s point from
+ * @p origin to the contact points at the time step of @p kGradTarget: @ref
+ * ContactDetectionResult::posColliding for @ref GradTarget::Current, @ref
+ * ContactDetectionResult::posCollidingStageStart for @ref GradTarget::Previous.
+ *
+ * @tparam kGradTarget Indicates whether the energy gradient is for the current state (i.e. the
+ * force) or the previous state
+ *
+ * @param[in] pointRange Range of contact points in @p contactQuery.
+ * @param[in] contactQuery Contact detection result.
+ * @param[in] params Contact parameters.
+ * @param[in] config Contact evaluation configuration.
+ * @param[in] dtStage Time step factor of the stage.
+ * @param[in] weights Weights of the contact samples, indexed by @ref
+ * ContactDetectionResult::sampleIndices.
+ * @param[in] origin Reference point of the lever arms, in the collider's local space.
+ * @param[in] assemEnergy Whether to compute @ref RigidContactSums::energy.
+ * @param[in] assemForce Whether to compute @ref RigidContactSums::force and @ref
+ * RigidContactSums::torque.
+ * @param[in] assemDForce Whether to compute @ref RigidContactSums::dForce, @ref
+ * RigidContactSums::skewDForce and @ref RigidContactSums::skewDForceSkew. Requires
+ * @ref GradTarget::Current.
+ * @param[out] outForce Optional collision forces of the contact points, as computed by @ref
+ * ComputeCollisionResponseRange. Indexed like the contact points; only @p pointRange is written.
+ * Requires @p assemForce.
+ * @return The sums. Quantities not requested are zero.
+ */
+template <GradTarget kGradTarget>
+RigidContactSums ComputeRigidContactSums(
+    Interval<int> pointRange,
+    ContactDetectionResult const& contactQuery,
+    ContactParams const& params,
+    ContactEvalConfig const& config,
+    real dtStage,
+    Span<real const> weights,
+    Vec4r origin,
+    bool assemEnergy,
+    bool assemForce,
+    bool assemDForce,
+    Span<Real3> outForce = {});
 
 /*************************************************************************************************/
 

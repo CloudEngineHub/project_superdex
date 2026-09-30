@@ -208,7 +208,8 @@ static void AccumulateAllSyncRigidContactForceAdjoints(
       }
 
       // Accumulation of gradient terms for all contact points.
-      // The implementation matches AssembleCollisionResponseRange_SyncRigid.
+      // The implementation matches the force and torque sums of ComputeRigidContactSums and their
+      // assembly in AssembleSyncRigidContactSums.
       TimeStep constexpr kTimeStep = GetTimeStep<kGradTarget>();
       Vec4r comA = reg.template get<CRigidState<kTimeStep> const>(e).value.VGetTranslation();
       auto const& stateB = reg.template get<CRigidState<kTimeStep> const>(e2).value;

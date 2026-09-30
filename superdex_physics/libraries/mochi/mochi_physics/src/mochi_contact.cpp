@@ -2080,22 +2080,20 @@ class ContactDResOffAssembler {
 
 } // namespace
 
-// Sync contact assembly between a pair of rigid actors (including articulated rigid). Faster than
-// the generic assembly since (1) it operates with compile-time size matrices, and (2) it skips the
+// Sync contact assembly between a pair of rigid actors (including articulated rigid), given the
+// RigidContactSums of their contact points about the collider's center of mass. Faster than the
+// generic assembly since (1) it operates with compile-time size matrices, and (2) it skips the
 // products that involve the identity sub-blocks in the contact Jacobians.
 // NOTES:
 // - Only supported for sync contact. Async contact is assembled through rigid::EntityAssemble.
 // - The 1st contact Jacobian must be the colliding Jacobian, and the 2nd must be the collider
 //   Jacobian.
 template <GradTarget kGradTarget>
-static void AssembleCollisionResponseRange_SyncRigid(
+static void AssembleSyncRigidContactSums(
     ContactAssemblyReg reg,
     entt::entity colliding,
     entt::entity collider,
-    Interval<int> pointRange,
-    ContactDetectionResult const& contactQuery,
-    CollisionResponseResult const& collisionResponse,
-    Span<real const> intWeights,
+    RigidContactSums const& sums,
     Span<ContactJac const*> jacs,
     Allocator* filoAllocator,
     double* outObj,
@@ -2106,10 +2104,7 @@ static void AssembleCollisionResponseRange_SyncRigid(
   bool const assemDRes = (GetNumValues(outDRes) > 0);
 
   if (assemObj) {
-    for (auto s : pointRange) {
-      real weight = intWeights[contactQuery.sampleIndices[s]];
-      *outObj += weight * collisionResponse.energy[s];
-    }
+    *outObj += sums.energy;
   }
 
   if (!assemRes && !assemDRes) {
@@ -2122,8 +2117,6 @@ static void AssembleCollisionResponseRange_SyncRigid(
        krylov::Direction::ColMajor),
       "Expected column-major storage"); // Assumed when taking views.
 #if MOCHI_ASSERT_VERBOSE_ENABLED
-  MOCHI_ASSERT_VERBOSE(
-      pointRange.Size() > 0, "Expected the caller to early exit."); // Easy to enforce (static)
   MOCHI_ASSERT_VERBOSE(jacs.size() == 2 && jacs[0] && jacs[1], "Requires 2 contact Jacobians.");
   MOCHI_ASSERT_VERBOSE(jacs[0]->groupsInitialized && jacs[1]->groupsInitialized);
   MOCHI_ASSERT_VERBOSE(jacs[0]->hasSharedDoFs && jacs[1]->hasSharedDoFs);
@@ -2148,8 +2141,8 @@ static void AssembleCollisionResponseRange_SyncRigid(
   // Trans jac B (collider): -rotBT
   // Rot jac A: rotBT * sk(comA - p) = rotBT * sk(comA - comB) - sk(pB' - comB') * rotBT
   // Rot jac B: rotBT * sk(p - comB) = sk(pB' - comB') * rotBT
-  // The only point-dependent term is sk(pB' - comB'). All other terms can be applied after res
-  // and/or dres are accumulated. For convenience, the transpose Jacobians are:
+  // The only point-dependent term is sk(pB' - comB'), which the sums (with lever arms pB' - comB')
+  // account for. All other terms are applied here. For convenience, the transpose Jacobians are:
   // Trans jacT A: rotB
   // Trans jacT B: -rotB
   // Rot jacT A: rotB * sk(pB' - comB') - sk(comA - comB) * rotB
@@ -2161,24 +2154,14 @@ static void AssembleCollisionResponseRange_SyncRigid(
   auto const& stateB = reg.template get<CRigidState<kTimeStep> const>(collider).value;
   auto [rotB, rotBT] = ToVMatrix3x3_WithTranspose(stateB.GetRotation());
   Vec4r comB = stateB.VGetTranslation();
-  Vec4r comBLocal = reg.template get<CRigidBodyInertia const>(collider).GetCenterOfMassLocal();
 
   // NOTE: Memory used from filoAllocator for N DoFs is:
   //       (N + 5 * N * N) * sizeof(real)
 
   if (assemRes) {
     MOCHI_PROFILE_SCOPE_N("Residual Assembly");
-    Vec4r res = {};
-    Vec4r skPRes = {};
-    for (auto s : pointRange) {
-      real weight = intWeights[contactQuery.sampleIndices[s]];
-      Vec4r collRes = -weight * ToSimd(collisionResponse.force[s]);
-      res += collRes;
-      auto posColliding = ToSimd(GetCollidingPosition<kTimeStep>(contactQuery, s));
-      skPRes += Cross3(posColliding - comBLocal, collRes);
-    }
-    res = DotVecMat3x3(res, rotBT);
-    skPRes = DotVecMat3x3(skPRes, rotBT);
+    Vec4r const res = DotVecMat3x3(-sums.force, rotBT);
+    Vec4r const skPRes = DotVecMat3x3(-sums.torque, rotBT);
     ColumnVector<real, 6> resA;
     ColumnVector<real, 6> resB;
     Store(resA.data(), res);
@@ -2215,23 +2198,10 @@ static void AssembleCollisionResponseRange_SyncRigid(
     // The DResidual is composed of 4 6x6 blocks: AA, BB, AB, BA. Each 6x6 block is composed of 4
     // 3x3 sub-blocks. Some of the 3x3 sub-blocks are shared across 6x6 blocks. The assembly is
     // performed on the 3x3 sub-blocks, which are stored into the 6x6 blocks at the end.
-    VMatrix3x3r dres = {};
-    VMatrix3x3r skPDres = {};
-    VMatrix3x3r skPDresSkP = {};
-    for (auto s : pointRange) {
-      real weight = intWeights[contactQuery.sampleIndices[s]];
-      VMatrix3x3r collDres = -weight * collisionResponse.dforce[s];
-      dres += collDres;
-      auto posColliding = ToSimd(GetCollidingPosition<kTimeStep>(contactQuery, s));
-      VMatrix3x3r collSkP = Skew3(posColliding - comBLocal);
-      VMatrix3x3r collSkPDres = Dot3x3(collSkP, collDres);
-      skPDres += collSkPDres;
-      skPDresSkP += Dot3x3(collSkPDres, collSkP);
-    }
-    dres = Dot3x3(rotB, Dot3x3(dres, rotBT));
-    skPDres = Dot3x3(rotB, Dot3x3(skPDres, rotBT));
+    VMatrix3x3r const dres = Dot3x3(rotB, Dot3x3(-sums.dForce, rotBT));
+    VMatrix3x3r const skPDres = Dot3x3(rotB, Dot3x3(-sums.skewDForce, rotBT));
     VMatrix3x3r dresSkPNeg = Transpose3x3(skPDres);
-    skPDresSkP = Dot3x3(rotB, Dot3x3(skPDresSkP, rotBT));
+    VMatrix3x3r const skPDresSkP = Dot3x3(rotB, Dot3x3(-sums.skewDForceSkew, rotBT));
     VMatrix3x3r skCom = Skew3(comA - comB);
     VMatrix3x3r dresSkCom = Dot3x3(dres, skCom);
     VMatrix3x3r skComDresSkCom = Dot3x3(skCom, dresSkCom);
@@ -2316,11 +2286,7 @@ static void AssembleCollisionResponseRange_SyncRigid(
   }
 }
 
-template <GradTarget kGradTarget>
 static void AssembleCollisionResponseRange(
-    ContactAssemblyReg reg,
-    entt::entity colliding,
-    entt::entity collider,
     Interval<int> pointRange,
     ContactDetectionResult const& contactQuery,
     CollisionResponseResult const& collisionResponse,
@@ -2329,8 +2295,7 @@ static void AssembleCollisionResponseRange(
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
-    AnyMatrixView<real> outDRes,
-    bool isSyncRigid) {
+    AnyMatrixView<real> outDRes) {
   MOCHI_PROFILE_SCOPE();
   MOCHI_ASSERT_VERBOSE(pointRange.Valid());
   MOCHI_ASSERT_VERBOSE(
@@ -2338,21 +2303,6 @@ static void AssembleCollisionResponseRange(
 
   if (pointRange.Size() == 0) {
     return;
-  }
-  if (isSyncRigid) {
-    return AssembleCollisionResponseRange_SyncRigid<kGradTarget>(
-        reg,
-        colliding,
-        collider,
-        pointRange,
-        contactQuery,
-        collisionResponse,
-        intWeights,
-        jacs,
-        filoAllocator,
-        outObj,
-        outRes,
-        outDRes);
   }
 
   bool assemObj = (outObj != nullptr);
@@ -2491,9 +2441,6 @@ static void AssembleCollisionResponseRange(
 }
 
 void mochi::AssembleCollisionResponse(
-    ContactAssemblyReg reg,
-    entt::entity colliding,
-    entt::entity collider,
     ContactDetectionResult const& contactQuery,
     CollisionResponseResult const& collisionResponse,
     Span<real const> intWeights,
@@ -2501,13 +2448,9 @@ void mochi::AssembleCollisionResponse(
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
-    AnyMatrixView<real> outDRes,
-    bool isSyncRigid) {
+    AnyMatrixView<real> outDRes) {
   int numContactPoints = isize(contactQuery.sampleIndices);
-  AssembleCollisionResponseRange<GradTarget::Current>(
-      reg,
-      colliding,
-      collider,
+  AssembleCollisionResponseRange(
       Interval<int>{0, numContactPoints}, // full range
       contactQuery,
       collisionResponse,
@@ -2516,8 +2459,7 @@ void mochi::AssembleCollisionResponse(
       filoAllocator,
       outObj,
       outRes,
-      outDRes,
-      isSyncRigid);
+      outDRes);
 }
 
 template <
@@ -3647,46 +3589,63 @@ static void AssembleAllSyncContactPairs(
       configPair.addPadding = ShouldAddPenaltyPadding(reg.get<CColliderInfo const>(entity0).type);
       configPair.validCollidingNormals = ValidCollidingNormals(reg, entity0);
 
-      // Compute collision response
+      // Compute collision response and assemble it
       auto const& query = pair.collision->collisionResult;
       auto contactParams = GetContactPairParams(reg, entity0, entity1);
       response.ResizeNoInit(numContacts, assemObj, assemRes, assemDRes);
-      ComputeCollisionResponseRange<kGradTarget>(
-          pairWork.pointRange,
-          query,
-          contactParams,
-          configPair,
-          dtStage,
-          assemObj,
-          assemRes,
-          assemDRes,
-          response);
-
-      // Perform assembly
       auto jacs = (pair.jacRange.size() > 0)
           ? Span{&allJacs[pair.jacRange.Min()], pair.jacRange.size()}
           : Span<ContactJac const*>{};
-      bool const isSyncRigid =
-          reg.all_of<TagRigidActor>(entity0) && reg.all_of<TagRigidActor>(entity1);
-      AssembleCollisionResponseRange<kGradTarget>(
-          reg,
-          entity0,
-          entity1,
-          pairWork.pointRange,
-          query,
-          response,
-          samples.weights,
-          jacs,
-          &taskLocalAlloc,
-          taskObj,
-          taskRes,
-          taskDRes,
-          isSyncRigid);
+      bool const storeForces = assemRes &&
+          (reg.all_of<TagQueryActiveContacts>(entity0) ||
+           reg.all_of<TagQueryActiveContacts>(entity1));
+      if (reg.all_of<TagRigidActor>(entity0) && reg.all_of<TagRigidActor>(entity1)) {
+        // Between rigid actors, only sums of the per-point response are needed.
+        Vec4r const comBLocal = (assemRes || assemDRes)
+            ? reg.get<CRigidBodyInertia const>(entity1).GetCenterOfMassLocal()
+            : Vec4r{};
+        RigidContactSums const sums = ComputeRigidContactSums<kGradTarget>(
+            pairWork.pointRange,
+            query,
+            contactParams,
+            configPair,
+            dtStage,
+            samples.weights,
+            comBLocal,
+            assemObj,
+            assemRes,
+            assemDRes,
+            storeForces ? MakeSpan(response.force) : Span<Real3>{});
+        AssembleSyncRigidContactSums<kGradTarget>(
+            reg, entity0, entity1, sums, jacs, &taskLocalAlloc, taskObj, taskRes, taskDRes);
+      } else {
+        MOCHI_ASSERT_VERBOSE(
+            kGradTarget == GradTarget::Current,
+            "Only contact between rigid actors supports differentiability.");
+        ComputeCollisionResponseRange<kGradTarget>(
+            pairWork.pointRange,
+            query,
+            contactParams,
+            configPair,
+            dtStage,
+            assemObj,
+            assemRes,
+            assemDRes,
+            response);
+        AssembleCollisionResponseRange(
+            pairWork.pointRange,
+            query,
+            response,
+            samples.weights,
+            jacs,
+            &taskLocalAlloc,
+            taskObj,
+            taskRes,
+            taskDRes);
+      }
 
       // Store forces if we need to return them.
-      if (assemRes &&
-          (reg.all_of<TagQueryActiveContacts>(entity0) ||
-           reg.all_of<TagQueryActiveContacts>(entity1))) {
+      if (storeForces) {
         pairWork.outForce.reserve(response.force.size());
         pairWork.outForce.clear();
         pairWork.outForce.resize(pairWork.pointRange.Min(), Real3{});
@@ -3972,9 +3931,6 @@ void mochi::AssembleAsyncSkinnedContact(
       auto& outContactResidual = outContactSnle.residuals[0].second;
       auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
       AssembleCollisionResponse(
-          reg,
-          e,
-          coll.colliderEntity,
           query,
           response,
           samples.weights,
@@ -3982,8 +3938,7 @@ void mochi::AssembleAsyncSkinnedContact(
           &filoAllocator,
           params.assemObj ? &outContactSnle.objective : nullptr,
           params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
-          params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{},
-          /*isSyncRigid*/ false);
+          params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{});
     }
 
     // Store the forces in case they are needed for a later contact point query

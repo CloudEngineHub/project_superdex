@@ -48,6 +48,7 @@
 #include <numeric>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -57,7 +58,7 @@ using namespace mochi::experimental;
 using namespace mochi::test;
 
 // Test collision response on multiple contacts by comparing analytical force and dforce to
-// finite-difference approximations.
+// finite-difference approximations, and rigid contact sums to sums of the per-point response.
 TEST(MochiContact, ComputeCollisionResponse) {
   auto runTest = [](bool explicitNormals, real coulombCoefficient, real viscousCoefficient) {
     // Contact eval config for derivative consistency tests
@@ -101,7 +102,8 @@ TEST(MochiContact, ComputeCollisionResponse) {
       for (auto const& normal : normals) {
         for (auto const& position : positions) {
           for (auto const& velocity : velocities) {
-            contactQuery.sampleIndices[nContact] = (int)nContact;
+            // Not the identity, so that sample weights indexed by contact point would be caught.
+            contactQuery.sampleIndices[nContact] = static_cast<int>(nContacts - 1 - nContact);
             contactQuery.sdfInfo.val[nContact] = distance;
             contactQuery.sdfInfo.grad[nContact] = normal;
             contactQuery.posColliding[nContact] = position;
@@ -120,6 +122,84 @@ TEST(MochiContact, ComputeCollisionResponse) {
     res.ResizeNoInit(isize(contactQuery.sampleIndices), true, true, true);
     mochi::ComputeCollisionResponse<GradTarget::Current>(
         contactQuery, params, config, dtStage, true, true, true, res);
+
+    // The rigid contact sums match the sums of the per-point response for ranges of every length.
+    // The requested quantities cycle with period 7, coprime with the batch size, so every
+    // combination meets every size of the last batch.
+    auto const testRigidContactSums = [&](auto gradTarget) {
+      constexpr GradTarget kGradTarget = decltype(gradTarget)::value;
+      Vec4r const origin{0.3_r, -0.2_r, 0.1_r, 0_r};
+      DynamicArray<real> weights(nContacts);
+      for (size_t i = 0; i < nContacts; ++i) {
+        weights[i] = 0.5_r + 0.01_r * static_cast<real>(i);
+      }
+      constexpr real kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-12_r : 1e-5_r;
+      CollisionResponseResult ref;
+      ref.ResizeNoInit(isize(contactQuery.sampleIndices), true, true, true);
+      for (int numPoints = 1; numPoints < isize(contactQuery.sampleIndices); ++numPoints) {
+        Interval<int> const range{1, 1 + numPoints};
+        int const flags = 1 + numPoints % 7;
+        bool const assemEnergy = (flags & 1) != 0;
+        bool const assemForce = (flags & 2) != 0;
+        bool const assemDForce = kGradTarget == GradTarget::Current && (flags & 4) != 0;
+        mochi::ComputeCollisionResponseRange<kGradTarget>(
+            range, contactQuery, params, config, dtStage, true, true, true, ref);
+        RigidContactSums expected;
+        // Upper bounds of the sums of the term magnitudes, to scale the tolerances
+        real energyScale = 0_r;
+        real forceScale = 0_r;
+        real dForceScale = 0_r;
+        for (int s : range) {
+          real const w = weights[contactQuery.sampleIndices[s]];
+          Vec4r const leverArm =
+              ToSimd(GetCollidingPosition<GetTimeStep<kGradTarget>()>(contactQuery, s)) - origin;
+          VMatrix3x3r const skew = Skew3(leverArm);
+          // Quantities not requested are zero.
+          double const we = (assemEnergy ? w : 0_r) * ref.energy[s];
+          Vec4r const wf = (assemForce ? w : 0_r) * ToSimd(ref.force[s]);
+          VMatrix3x3r const wd = (assemDForce ? w : 0_r) * ref.dforce[s];
+          expected.energy += we;
+          expected.force += wf;
+          expected.torque += Cross3(leverArm, wf);
+          expected.dForce += wd;
+          expected.skewDForce += Dot3x3(skew, wd);
+          expected.skewDForceSkew += Dot3x3(Dot3x3(skew, wd), skew);
+          real const lever = 1_r + Norm(ToReal3(leverArm));
+          energyScale += Abs(static_cast<real>(we));
+          forceScale += lever * Norm(ToReal3(wf));
+          dForceScale += Sqr(lever) * Norm3x3(wd);
+        }
+
+        DynamicArray<Real3> outForce(nContacts, Real3{});
+        RigidContactSums const actual = ComputeRigidContactSums<kGradTarget>(
+            range,
+            contactQuery,
+            params,
+            config,
+            dtStage,
+            MakeConstSpan(weights),
+            origin,
+            assemEnergy,
+            assemForce,
+            assemDForce,
+            assemForce ? MakeSpan(outForce) : Span<Real3>{});
+
+        EXPECT_NEAR(actual.energy, expected.energy, kTol * energyScale);
+        EXPECT_LE(Norm(ToReal3(actual.force - expected.force)), kTol * forceScale);
+        EXPECT_LE(Norm(ToReal3(actual.torque - expected.torque)), kTol * forceScale);
+        EXPECT_LE(Norm3x3(actual.dForce - expected.dForce), kTol * dForceScale);
+        EXPECT_LE(Norm3x3(actual.skewDForce - expected.skewDForce), kTol * dForceScale);
+        EXPECT_LE(Norm3x3(actual.skewDForceSkew - expected.skewDForceSkew), kTol * dForceScale);
+        for (int s = 0; s < isize(outForce); ++s) {
+          Real3 const expectedForce = (assemForce && range.Within(s)) ? ref.force[s] : Real3{};
+          EXPECT_LE(Norm(outForce[s] - expectedForce), kTol * Max(1_r, Norm(expectedForce)));
+        }
+      }
+    };
+    testRigidContactSums(std::integral_constant<GradTarget, GradTarget::Current>{});
+    if (explicitNormals) {
+      testRigidContactSums(std::integral_constant<GradTarget, GradTarget::Previous>{});
+    }
 
     // Compute through finite differences
     CollisionResponseResult resTest;

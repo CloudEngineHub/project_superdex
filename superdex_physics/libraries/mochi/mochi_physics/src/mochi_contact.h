@@ -1109,9 +1109,6 @@ void UpdateQueryActorContactForces(
 
 // Assemble collision response into DoFs
 void AssembleCollisionResponse(
-    ContactAssemblyReg reg,
-    entt::entity colliding,
-    entt::entity collider,
     ContactDetectionResult const& contactQuery,
     CollisionResponseResult const& collisionResponse,
     Span<real const> intWeights,
@@ -1119,9 +1116,7 @@ void AssembleCollisionResponse(
     Allocator* filoAllocator, // Will be used in first-in-last-out order
     double* outObj,
     ColumnVectorView<real> outRes,
-    AnyMatrixView<real> outDRes,
-    bool isSyncRigid = false); // Optionally set to 'true' to improve performance when assembling
-                               // sync contact between rigid (including articulated rigid) actors.
+    AnyMatrixView<real> outDRes);
 
 // Assemble sync contact for all pairs of colliding actors within the island.
 // Results are written to CIslandContactSnle and possibly to
