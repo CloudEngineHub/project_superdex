@@ -29,7 +29,6 @@ namespace nb = nanobind;
 
 namespace mochi {
   void DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
-  void DefineMochiCore_MochiCoreExt([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DefineMochiPhysics_MochiPhysicsEnums([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
@@ -44,7 +43,6 @@ namespace mochi {
   void DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DefineMochiPhysics_MochiDiffsim([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
-  void DeclareMochiCore_MochiCoreExt([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiPhysics_MochiPhysicsEnums([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
@@ -164,7 +162,6 @@ namespace mochi {
     PybindRegistry registry;
     DefineNamespaces(m);
     DeclareMochiCore_MochiCore(m, registry);
-    DeclareMochiCore_MochiCoreExt(m, registry);
     DeclareMochiPhysics_MochiPhysicsHandle(m, registry);
     DeclareMochiPhysics_MochiPhysicsEnums(m, registry);
     DeclareMochiPhysics_MochiPhysicsStructs(m, registry);
@@ -180,7 +177,6 @@ namespace mochi {
     DeclareMochiPhysics_MochiDiffsim(m, registry);
     DefineSpecializations(m);
     DefineMochiCore_MochiCore(m, registry);
-    DefineMochiCore_MochiCoreExt(m, registry);
     DefineMochiPhysics_MochiPhysicsHandle(m, registry);
     DefineMochiPhysics_MochiPhysicsEnums(m, registry);
     DefineMochiPhysics_MochiPhysicsStructs(m, registry);

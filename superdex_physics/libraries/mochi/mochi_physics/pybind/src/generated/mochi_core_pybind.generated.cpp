@@ -1520,5 +1520,29 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
     )
   ;
 
+    m.attr("REAL3_ZEROS") = nb::cast(mochi::kReal3Zeros);
+
+    m.attr("REAL3_ONES") = nb::cast(mochi::kReal3Ones);
+
+    m.attr("REAL3_X_AXIS") = nb::cast(mochi::kReal3XAxis);
+
+    m.attr("REAL3_Y_AXIS") = nb::cast(mochi::kReal3YAxis);
+
+    m.attr("REAL3_Z_AXIS") = nb::cast(mochi::kReal3ZAxis);
+
+    m.attr("MINUS2_PI_PLUS2_PI") = nb::cast(mochi::kMinus2PiPlus2Pi);
+
+    m.attr("UNIT_INTERVAL") = nb::cast(mochi::kUnitInterval);
+
+    m.attr("MESH_DATA_SPACE_DIM") = nb::cast(mochi::kMeshDataSpaceDim);
+
+    m.attr("GRID_SDF_DEFAULT_BOUNDARY_PADDING") = nb::cast(mochi::kGridSdfDefaultBoundaryPadding);
+
+    m.attr("DEFAULT_DENSITY") = nb::cast(mochi::kDefaultDensity);
+
+    m.attr("DEFAULT_REL_STEP_TOL") = nb::cast(mochi::kDefaultRelStepTol);
+
+    m.attr("AUTO_LINEAR_SOLVER_MAX_ITER") = nb::cast(mochi::kAutoLinearSolverMaxIter);
+
 }
 // clang-format on

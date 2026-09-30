@@ -12,6 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+########################################################################################
+
+// @brief The zero vector (0, 0, 0).
+constant Real3 kReal3Zeros = {0.0, 0.0, 0.0};
+
+// @brief The ones vector (1, 1, 1).
+constant Real3 kReal3Ones = {1.0, 1.0, 1.0};
+
+// @brief Unit vector along the X axis (1, 0, 0).
+constant Real3 kReal3XAxis = {1.0, 0.0, 0.0};
+
+// @brief Unit vector along the Y axis (0, 1, 0).
+constant Real3 kReal3YAxis = {0.0, 1.0, 0.0};
+
+// @brief Unit vector along the Z axis (0, 0, 1).
+constant Real3 kReal3ZAxis = {0.0, 0.0, 1.0};
+
+// @brief The range [-2π, 2π].
+constant Real2 kMinus2PiPlus2Pi; # Fwd. declared because the C++ value is computed (-2*kPI).
+
+// @brief The unit interval [0, 1].
+constant Real2 kUnitInterval = {0.0, 1.0};
+
+// @brief Spatial dimensionality of mesh data.
+constant int kMeshDataSpaceDim = 3;
+
+// @brief Default boundary padding distance [m] for grid-based SDF construction.
+constant real kGridSdfDefaultBoundaryPadding; # Fwd. declared because the C++ value is computed.
+
+// @brief Default material density [kg/m³].
+constant real kDefaultDensity = 1000.0;
+
+// @brief Default tolerance for the L2 norm of the non-linear solver's raw linear-solve
+// increment. Avoids attempting to solve beyond the floating-point noise floor.
+//
+// @see NonLinearSolverParams::relStepTol
+constant real kDefaultRelStepTol; # Fwd. declared because value depends on real type.
+
+// @brief Sentinel value to automatically select the maximum number of linear solver
+// iterations.
+constant int kAutoLinearSolverMaxIter = -1;
+
 // @brief Types of joints in an articulated body.
 enum ArticulatedJointType [from_mochi_core] {
   // @brief 6-DoF joint with unconstrained relative motion between links.
