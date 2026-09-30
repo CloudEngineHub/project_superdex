@@ -32,6 +32,7 @@
 #include <mochi_core/utils/differentiability.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/eval_params.h>
+#include <mochi_core/utils/matrix_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/no_copy.h>
 #include <mochi_core/utils/profile.h>
@@ -559,11 +560,19 @@ struct ContactEvalConfig {
 // Maximum batch size for collision force and dforce computation.
 inline constexpr int kCollResponseMaxBatchSize = 8;
 
+// Batch of force derivatives: symmetric for GradTarget::Current, non-symmetric for
+// GradTarget::Previous.
+template <int kBatchSize, GradTarget kGradTarget>
+using BatchDForce = std::conditional_t<
+    kGradTarget == GradTarget::Current,
+    BatchSymMatrix3x3<kBatchSize>,
+    BatchReal3x3<kBatchSize>>;
+
 template <int kBatchSize>
 MOCHI_FORCE_INLINE void ComputeBatchContactPenaltyForceDForce(
     BatchDouble<kBatchSize>& outEnergy,
     BatchReal3<kBatchSize>& outForce,
-    BatchReal6<kBatchSize>& outDForce,
+    BatchSymMatrix3x3<kBatchSize>& outDForce,
     BatchReal<kBatchSize>& outForceNorm,
     BatchReal<kBatchSize> const& d,
     BatchReal3<kBatchSize> const& sdfGrad,
@@ -585,7 +594,6 @@ MOCHI_FORCE_INLINE void ComputeBatchContactPenaltyForceDForce(
 
   using V = BatchReal<kBatchSize>;
   using Vd = BatchDouble<kBatchSize>;
-  using V3 = BatchReal3<kBatchSize>;
 
   auto const penaltyCoeff = V{params.penaltyCoefficient};
   auto const penaltyThr = V{params.GetPenaltyThresholdDist(config.addPadding)};
@@ -624,13 +632,7 @@ MOCHI_FORCE_INLINE void ComputeBatchContactPenaltyForceDForce(
     V dForceNorm = -penaltyCoeff * (dPenalty * dPenalty + penalty * ddPenalty);
     MOCHI_ASSERT_VERBOSE(AllTrue(dForceNorm <= 0_r), "dForceNorm must not be positive.");
 
-    V3 auxDForce = dForceNorm * sdfGrad;
-    outDForce[0] = auxDForce[0] * sdfGrad[0]; // xx
-    outDForce[1] = auxDForce[1] * sdfGrad[1]; // yy
-    outDForce[2] = auxDForce[2] * sdfGrad[2]; // zz
-    outDForce[3] = auxDForce[0] * sdfGrad[1]; // xy
-    outDForce[4] = auxDForce[0] * sdfGrad[2]; // xz
-    outDForce[5] = auxDForce[1] * sdfGrad[2]; // yz
+    outDForce = OuterSym(dForceNorm * sdfGrad, sdfGrad);
   }
 }
 
@@ -679,14 +681,6 @@ MOCHI_FORCE_INLINE void ComputeBatchContactPenaltyForceNormDForceNorm(
     outDForceNorm = -alignmentFactor * dForceNorm;
   }
 }
-
-// Batch storage of dForce: 6 entries for GradTarget::Current (symmetric) or 9 entries for
-// GradTarget::Previous (non-symmetric).
-template <int kBatchSize, GradTarget kGradTarget>
-using BatchDForce = std::conditional_t<
-    kGradTarget == GradTarget::Current,
-    BatchReal6<kBatchSize>,
-    BatchReal9<kBatchSize>>;
 
 template <int kBatchSize, GradTarget kGradTarget>
 MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
@@ -959,17 +953,12 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
       eigN = -eigN;
     }
     V eigDeltaN = eigN - eigP;
-    V3 auxN = eigDeltaN * normal;
-    outDForce[0] += eigP + auxN[0] * normal[0]; // xx
-    outDForce[1] += eigP + auxN[1] * normal[1]; // yy
-    outDForce[2] += eigP + auxN[2] * normal[2]; // zz
-    outDForce[3] += auxN[0] * normal[1]; // xy
-    outDForce[4] += auxN[0] * normal[2]; // xz
-    outDForce[5] += auxN[1] * normal[2]; // yz
-    if constexpr (kGradTarget == GradTarget::Previous) {
-      outDForce[6] += auxN[0] * normal[1]; // yx
-      outDForce[7] += auxN[0] * normal[2]; // zx
-      outDForce[8] += auxN[1] * normal[2]; // zy
+    BatchSymMatrix3x3<kBatchSize> dForceN = OuterSym(eigDeltaN * normal, normal);
+    AddToDiagonalSym3x3(dForceN, eigP);
+    if constexpr (kGradTarget == GradTarget::Current) {
+      outDForce += dForceN;
+    } else {
+      outDForce += SymToFull3x3(dForceN);
     }
 
     // Extra pass for tangent contribution (Coulomb unfitted only)
@@ -978,17 +967,11 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
         // Flip the sign of the eigenvalues
         eigDeltaT = -eigDeltaT;
       }
-      V3 auxT = eigDeltaT * tangent;
-      outDForce[0] += auxT[0] * tangent[0];
-      outDForce[1] += auxT[1] * tangent[1];
-      outDForce[2] += auxT[2] * tangent[2];
-      outDForce[3] += auxT[0] * tangent[1];
-      outDForce[4] += auxT[0] * tangent[2];
-      outDForce[5] += auxT[1] * tangent[2];
-      if constexpr (kGradTarget == GradTarget::Previous) {
-        outDForce[6] += auxT[0] * tangent[1];
-        outDForce[7] += auxT[0] * tangent[2];
-        outDForce[8] += auxT[1] * tangent[2];
+      BatchSymMatrix3x3<kBatchSize> const dForceT = OuterSym(eigDeltaT * tangent, tangent);
+      if constexpr (kGradTarget == GradTarget::Current) {
+        outDForce += dForceT;
+      } else {
+        outDForce += SymToFull3x3(dForceT);
       }
     }
   }
@@ -1006,18 +989,7 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
       outForce += dFPenaltyTimesEnergyFactor * sdfGrad;
     }
     if (assemDForce) {
-      V3 const row0 = dFPenalty * dEnergyFactor[0] * sdfGrad;
-      V3 const row1 = dFPenalty * dEnergyFactor[1] * sdfGrad;
-      V3 const row2 = dFPenalty * dEnergyFactor[2] * sdfGrad;
-      outDForce[0] += row0[0]; // xx
-      outDForce[1] += row1[1]; // yy
-      outDForce[2] += row2[2]; // zz
-      outDForce[3] += row0[1]; // xy
-      outDForce[4] += row0[2]; // xz
-      outDForce[5] += row1[2]; // yz
-      outDForce[6] += row1[0]; // yx
-      outDForce[7] += row2[0]; // zx
-      outDForce[8] += row2[1]; // zy
+      outDForce += Outer(dFPenalty * dEnergyFactor, sdfGrad);
     }
   }
 }
@@ -1329,17 +1301,15 @@ MOCHI_FORCE_INLINE void ComputeBatchCollisionForceDForce(
     //   2. A dense array of Matrix3x3, in which case this loop would still be needed.
     for (int i = 0; i < kBatchSize; ++i) {
       if constexpr (kGradTarget == GradTarget::Current) {
-        // outDForce is symmetric and stored in a 6-value array.
         outDForce[i] = VMatrix3x3r{
-            Vec4r{dForce[0][i], dForce[3][i], dForce[4][i]}, // xx, xy, xz
-            Vec4r{dForce[3][i], dForce[1][i], dForce[5][i]}, // xy, yy, yz
-            Vec4r{dForce[4][i], dForce[5][i], dForce[2][i]}}; // xz, yz, zz
+            Vec4r{dForce[0][i], dForce[3][i], dForce[4][i]},
+            Vec4r{dForce[3][i], dForce[1][i], dForce[5][i]},
+            Vec4r{dForce[4][i], dForce[5][i], dForce[2][i]}};
       } else {
-        // outDForce is asymmetric and stored in a 9-value array.
         outDForce[i] = VMatrix3x3r{
-            Vec4r{dForce[0][i], dForce[3][i], dForce[4][i]}, // xx, xy, xz
-            Vec4r{dForce[6][i], dForce[1][i], dForce[5][i]}, // yx, yy, yz
-            Vec4r{dForce[7][i], dForce[8][i], dForce[2][i]}}; // zx, zy, zz
+            Vec4r{dForce[0][0][i], dForce[0][1][i], dForce[0][2][i]},
+            Vec4r{dForce[1][0][i], dForce[1][1][i], dForce[1][2][i]},
+            Vec4r{dForce[2][0][i], dForce[2][1][i], dForce[2][2][i]}};
       }
     }
   }

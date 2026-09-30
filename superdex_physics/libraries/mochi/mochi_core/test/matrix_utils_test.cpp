@@ -626,6 +626,9 @@ TEST(MatrixUtils, Outer) {
     constexpr Matrix3x3r expected = {
         Real3{10_r, 12_r, 14_r}, Real3{15_r, 18_r, 21_r}, Real3{20_r, 24_r, 28_r}};
     static_assert(NearEqual(expected, Outer(a, b)));
+
+    // Symmetric 3x3 storage order: [a00, a11, a22, a01, a02, a12].
+    static_assert(OuterSym(a, b) == Real6{10_r, 18_r, 28_r, 12_r, 14_r, 21_r});
   }
 }
 
@@ -702,6 +705,15 @@ TEST(MatrixUtils, SymMatrix2x2) {
   // Symmetry property: M[0][1] == M[1][0]
   constexpr Matrix2x2r m = SymMatrix2x2(7_r, -3_r, 4_r);
   static_assert(NearEqual(m[0][1], m[1][0]));
+}
+
+TEST(MatrixUtils, Sym3x3) {
+  // Storage order: [a00, a11, a22, a01, a02, a12].
+  Real6 sym = {1_r, 2_r, 3_r, 4_r, 5_r, 6_r};
+  AddToDiagonalSym3x3(sym, 10_r);
+  constexpr Matrix3x3r expected = {
+      Real3{11_r, 4_r, 5_r}, Real3{4_r, 12_r, 6_r}, Real3{5_r, 6_r, 13_r}};
+  EXPECT_TRUE(NearEqual(expected, SymToFull3x3(sym)));
 }
 
 TEST(MatrixUtils, Skew) {

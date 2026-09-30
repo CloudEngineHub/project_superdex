@@ -168,6 +168,14 @@ template <typename T>
     NdArray<T, 3> const& a,
     NdArray<T, 3> const& b);
 
+// Outer product of two 3x1 vectors, returning a symmetric 3x3 matrix stored as
+// [a00, a11, a22, a01, a02, a12]. Only the upper triangle is computed, so the result is exactly
+// symmetric.
+template <typename T>
+[[nodiscard]] MOCHI_FORCE_INLINE constexpr NdArray<T, 6> OuterSym(
+    NdArray<T, 3> const& a,
+    NdArray<T, 3> const& b);
+
 // Outer product of two 3x1 vectors returning a 3x3 matrix
 template <typename T>
 [[nodiscard]] MOCHI_FORCE_INLINE NdArray<Simd<T, 4>, 3> Outer3(Simd<T, 4> a, Simd<T, 4> b);
@@ -344,6 +352,14 @@ template <typename T>
 //   [a01 a11]
 template <typename T>
 [[nodiscard]] MOCHI_FORCE_INLINE constexpr NdArray<T, 2, 2> SymMatrix2x2(T a00, T a01, T a11);
+
+// Return the full matrix of a symmetric 3x3 matrix stored as [a00, a11, a22, a01, a02, a12].
+template <typename T>
+[[nodiscard]] MOCHI_FORCE_INLINE constexpr NdArray<T, 3, 3> SymToFull3x3(NdArray<T, 6> const& m);
+
+// Add s to the diagonal of a symmetric 3x3 matrix stored as [a00, a11, a22, a01, a02, a12].
+template <typename T>
+MOCHI_FORCE_INLINE constexpr void AddToDiagonalSym3x3(NdArray<T, 6>& m, T const& s);
 
 // Return an NxN array with 1s down the diagonal (an identity matrix).
 template <size_t N, typename T = real>

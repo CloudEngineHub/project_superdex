@@ -174,6 +174,10 @@ namespace {
 
 // Partial RigidContactSums of batches of kBatchSize contact points, one per SIMD lane: lane i sums
 // the ith point of every batch.
+//
+// TODO: Explore selecting the force derivatives at compile time (a kDForce template parameter), so
+// that the residual path carries no derivative sums, and storing the symmetric dForce and
+// skewDForceSkew as BatchSymMatrix3x3. See D122431619.
 template <int kBatchSize>
 struct RigidContactLaneSums {
   BatchDouble<kBatchSize> energy = {};
@@ -219,7 +223,7 @@ struct RigidContactLaneSums {
       if (assemDForce) {
         // The products with S(s) are cross products with s: the columns of S(s) w D are
         // s x (the columns of w D), and the rows of S(s) w D S(s) are (the rows of S(s) w D) x s.
-        BatchReal3x3<kBatchSize> const wd = w * ToMatrix3x3(response.dForce);
+        BatchReal3x3<kBatchSize> const wd = w * SymToFull3x3(response.dForce);
         BatchReal3x3<kBatchSize> const sd{
             s[1] * wd[2] - s[2] * wd[1], s[2] * wd[0] - s[0] * wd[2], s[0] * wd[1] - s[1] * wd[0]};
         dForce += wd;
@@ -247,13 +251,6 @@ struct RigidContactLaneSums {
   }
 
  private:
-  // Symmetric force derivatives, stored as xx, yy, zz, xy, xz, yz, as 3x3 matrices.
-  static BatchReal3x3<kBatchSize> ToMatrix3x3(
-      BatchDForce<kBatchSize, GradTarget::Current> const& d) {
-    using V3 = BatchReal3<kBatchSize>;
-    return {V3{d[0], d[3], d[4]}, V3{d[3], d[1], d[5]}, V3{d[4], d[5], d[2]}};
-  }
-
   // TODO: Explore reducing the 3 lane vectors together (e.g., fold to native width, transpose,
   // then vertical adds) instead of 3 separate HSum calls.
   static Vec4r SumLanes3(BatchReal3<kBatchSize> const& v) {

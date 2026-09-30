@@ -245,6 +245,13 @@ MOCHI_FORCE_INLINE constexpr NdArray<T, 3, 3> Outer(
       NdArray<T, 3>{a[2] * b[0], a[2] * b[1], a[2] * b[2]}};
 }
 
+template <typename T>
+MOCHI_FORCE_INLINE constexpr NdArray<T, 6> OuterSym(
+    NdArray<T, 3> const& a,
+    NdArray<T, 3> const& b) {
+  return {a[0] * b[0], a[1] * b[1], a[2] * b[2], a[0] * b[1], a[0] * b[2], a[1] * b[2]};
+}
+
 // Outer product of 3 component vectors (assumed 4th component unused)
 template <typename T>
 MOCHI_FORCE_INLINE NdArray<Simd<T, 4>, 3> Outer3(Simd<T, 4> a, Simd<T, 4> b) {
@@ -594,6 +601,21 @@ MOCHI_FORCE_INLINE constexpr NdArray<T, 3> Sym2x2Components(NdArray<T, 2, 2> con
 template <typename T>
 MOCHI_FORCE_INLINE constexpr NdArray<T, 2, 2> SymMatrix2x2(T a00, T a01, T a11) {
   return {NdArray<T, 2>{a00, a01}, NdArray<T, 2>{a01, a11}};
+}
+
+template <typename T>
+MOCHI_FORCE_INLINE constexpr NdArray<T, 3, 3> SymToFull3x3(NdArray<T, 6> const& m) {
+  return {
+      NdArray<T, 3>{m[0], m[3], m[4]},
+      NdArray<T, 3>{m[3], m[1], m[5]},
+      NdArray<T, 3>{m[4], m[5], m[2]}};
+}
+
+template <typename T>
+MOCHI_FORCE_INLINE constexpr void AddToDiagonalSym3x3(NdArray<T, 6>& m, T const& s) {
+  m[0] += s;
+  m[1] += s;
+  m[2] += s;
 }
 
 template <size_t N, typename T>
