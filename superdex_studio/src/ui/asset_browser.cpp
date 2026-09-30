@@ -26,7 +26,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <utility>
 
@@ -163,7 +165,8 @@ void AssetBrowser::TryRefreshDirectoryTree() {
   if (_rootPaths.empty()) {
     auto const& saved = _studio->GetAppSettings().assetBrowser.rootPaths;
     for (auto const& s : saved) {
-      if (!s.empty() && std::filesystem::exists(s)) {
+      std::error_code error;
+      if (!s.empty() && std::filesystem::exists(s, error)) {
         _rootPaths.emplace_back(s);
       }
     }

@@ -604,8 +604,16 @@ static DynamicString ExtractArchiveToCacheImpl(
     std::string_view metadataFile,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
-  auto const canonical = std::filesystem::weakly_canonical(archiveFile);
-  if (!std::filesystem::exists(canonical)) {
+  // The archive path is user-supplied and may be unreadable (e.g. a macOS privacy-protected
+  // folder); the throwing overloads would abort the caller instead of reporting an error.
+  std::error_code accessError;
+  auto const canonical = std::filesystem::weakly_canonical(archiveFile, accessError);
+  bool const archiveExists = !accessError && std::filesystem::exists(canonical, accessError);
+  if (accessError) {
+    MOCHI_ERROR_SET(error, "Archive file cannot be accessed.");
+    return {};
+  }
+  if (!archiveExists) {
     MOCHI_ERROR_SET(error, "Archive file does not exist.");
     return {};
   }

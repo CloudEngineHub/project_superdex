@@ -1350,13 +1350,14 @@ void SuperDexStudio::LoadSettings() {
   if (!error.IsOK()) {
     return; // Don't set _settingsLoadedOK — prevents SaveSettings from overwriting the file.
   }
-  // Prune recent entries that no longer exist on disk
-  std::erase_if(_appSettings.recentEntries.files, [](std::string const& p) {
-    return !std::filesystem::exists(p);
-  });
-  std::erase_if(_appSettings.recentEntries.folders, [](std::string const& p) {
-    return !std::filesystem::exists(p);
-  });
+  // Prune recent entries that no longer exist on disk. Entries that cannot be checked (e.g. macOS
+  // privacy-protected folders) are kept, and the throwing overload would abort startup on them.
+  auto const isGone = [](std::string const& p) {
+    std::error_code error;
+    return !std::filesystem::exists(p, error) && !error;
+  };
+  std::erase_if(_appSettings.recentEntries.files, isGone);
+  std::erase_if(_appSettings.recentEntries.folders, isGone);
 }
 
 void SuperDexStudio::SaveSettings() {
