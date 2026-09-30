@@ -418,5 +418,7 @@ void mochi::DefineMochiPhysics_MochiDiffsim([[maybe_unused]] nb::module_& m, [[m
       , "Backward pass for :meth:`~superdex.physics.Actor.set_center_of_mass_transform`.\n\n:meth:`~superdex.physics.Actor.set_center_of_mass_transform` directly sets the\nrigid-body state (pose), so this function reads the gradient dL/d(state). The\noutput is in quaternion representation (7 elements: translation(3) +\nquaternion(4)), matching the forward API. Only standalone rigid actors are\nsupported. Must be called after\n:func:`~superdex.physics.diffsim.back_propagate`.\n\nArgs:\n    actor (Actor): The rigid actor.\n    out_grad_transform (ArrayLikeReal): Gradient wrt the CoM transform. Must be\n        of size 7 (translation(3) + quaternion_XYZW(4)). The caller is\n        responsible for accumulation.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs."
     );
 
+    m.attr("DEFAULT_BACK_PROPAGATION_EPS_FINITE_DIFF") = nb::cast(mochi::kDefaultBackPropagationEpsFiniteDiff);
+
 }
 // clang-format on

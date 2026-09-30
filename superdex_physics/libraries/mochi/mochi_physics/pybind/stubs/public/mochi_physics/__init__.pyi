@@ -14488,15 +14488,6 @@ class DebugServer:
 DEFAULT_BACK_PROPAGATION_EPS_FINITE_DIFF: float
 """Default finite-difference epsilon used by back-propagation solvers."""
 
-TRANSFORM_RT_IDENTITY: TransformRT
-"""Identity transform (no rotation, no translation)."""
-
-QUATERNION_IDENTITY: Quaternion
-"""Identity quaternion (no rotation)."""
-
-GRID_SDF_PARAMS_DEFAULT: GridSdfParams
-"""Default grid SDF construction parameters."""
-
 # Core types (defined in mochi_physics_pybind.cpp)
 class Error(RuntimeError):
     '''Exception raised when a SuperDex Physics operation fails.'''

@@ -3999,6 +3999,11 @@
 /// @brief Sphere primitives.
 ///
 
+/// @typedef mochi::LogFn
+///
+/// @brief Signature of a logging callback function.
+///
+
 /// @class mochi::Context
 ///
 /// @brief Main entry point for SuperDex Physics simulation.

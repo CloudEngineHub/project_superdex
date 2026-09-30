@@ -52,10 +52,6 @@ namespace nb = nanobind;
 #define MOCHI_PHYSICS_MODULE_NAME_STR "mochi_physics"
 #endif
 
-inline auto const kQuaternionIdentity = Quaternion::Identity();
-inline auto const kTransformRTIdentity = TransformRT::Identity();
-inline auto const kGridSdfParamsDefault = GridSdfParams{};
-
 // Use reflection to format the Python __str__ for any supported type.
 template <typename T>
 inline std::string ToPyString(T const& obj) {

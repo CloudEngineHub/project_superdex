@@ -14,6 +14,9 @@
 
 namespace diffsim;
 
+// @brief Default finite-difference epsilon used by back-propagation solvers.
+constant real kDefaultBackPropagationEpsFiniteDiff; # Fwd. declared because value depends on real precision.
+
 // @brief Parameters of the solve in differentiability back-propagation.
 struct diffsim::BackPropagationSolverParams [no_reflection] {
 

@@ -177,7 +177,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsModel([[maybe_unused]] nb::module_& m
     }
       , nb::arg("data")
       , nb::arg("scale").sig("...") = mochi::kReal3Ones
-      , nb::arg("rotation").sig("...") = mochi::kQuaternionIdentity
+      , nb::arg("rotation").sig("...") = mochi::Quaternion{}
       , nb::arg("translation").sig("...") = mochi::kReal3Zeros
       , "Modify the :class:`~superdex.physics.ModelData` by applying a scale, rotation,\nand translation (in that order).\n\nArgs:\n    data (ModelData): :class:`~superdex.physics.ModelData` to modify.\n    scale (Real3Like): Scale to apply (possibly non-uniform, i.e., 3 unequal\n        absolute values).\n    rotation (QuaternionLike): Rotation to apply (quaternion in [x, y, z, w]\n        order).\n    translation (Real3Like): Translation to apply.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Negative scale can be used to mirror the model. In that case,\n    :func:`~superdex.physics.model.flip_winding_order` will be called\n    automatically to avoid turning the model inside out.\n\nNote:\n    If :attr:`~superdex.physics.ModelData.element_frame_axes` is present, axes\n    are transformed as normal directions using the inverse-transpose of the\n    scale-rotation transform, then normalized. This preserves orthogonality with\n    transformed polyline element tangents under non-uniform scale.\n\nWarning:\n    Some model data cannot bake arbitrary non-uniform scale, resulting in an\n    error.\n\nWarning:\n    Precomputed grid SDF data is preserved only when ``scale`` is uniform by\n    absolute value. Non-uniform scale by absolute value discards the precomputed\n    SDF. If an SDF collider later requires SDF data, Mochi regenerates the SDF\n    from the transformed mesh at runtime, which may be expensive."
       , nb::call_guard<mochi::ScopedPythonTaskSchedulerBinding>()
@@ -191,7 +191,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsModel([[maybe_unused]] nb::module_& m
     }
       , nb::arg("data")
       , nb::arg("scale").sig("...") = mochi::kReal3Ones
-      , nb::arg("transform").sig("...") = mochi::kTransformRTIdentity
+      , nb::arg("transform").sig("...") = mochi::TransformRT{}
       , "Modify the :class:`~superdex.physics.ModelData` by applying a scale, rotation,\nand translation (in that order).\n\nTakes a combined :class:`~superdex.physics.TransformRT` instead of separate\nrotation and translation.\n\nArgs:\n    data (ModelData): :class:`~superdex.physics.ModelData` to modify.\n    scale (Real3Like): Scale to apply (possibly non-uniform, i.e., 3 unequal\n        absolute values).\n    transform (TransformRT): Combined rotation and translation to apply.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Negative scale can be used to mirror the model. In that case,\n    :func:`~superdex.physics.model.flip_winding_order` will be called\n    automatically to avoid turning the model inside out.\n\nNote:\n    If :attr:`~superdex.physics.ModelData.element_frame_axes` is present, axes\n    are transformed as normal directions using the inverse-transpose of the\n    scale-rotation transform, then normalized. This preserves orthogonality with\n    transformed polyline element tangents under non-uniform scale.\n\nWarning:\n    Some model data cannot bake arbitrary non-uniform scale, resulting in an\n    error.\n\nWarning:\n    Precomputed grid SDF data is preserved only when ``scale`` is uniform by\n    absolute value. Non-uniform scale by absolute value discards the precomputed\n    SDF. If an SDF collider later requires SDF data, Mochi regenerates the SDF\n    from the transformed mesh at runtime, which may be expensive."
       , nb::call_guard<mochi::ScopedPythonTaskSchedulerBinding>()
     );
@@ -231,7 +231,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsModel([[maybe_unused]] nb::module_& m
       }
     }
       , nb::arg("data")
-      , nb::arg("params").sig("...") = mochi::kGridSdfParamsDefault
+      , nb::arg("params").sig("...") = mochi::GridSdfParams{}
       , "Compute and bake an SDF grid into the model data.\n\nComputes a signed-distance field (SDF) grid from the model's mesh (triangular or\ntetrahedral) and stores it in the model's\n:attr:`~superdex.physics.ModelData.sdf` field, replacing any existing SDF.\n\nArgs:\n    data (ModelData): :class:`~superdex.physics.ModelData` to modify. Must\n        contain a triangle or tetrahedral mesh.\n    params (GridSdfParams): Parameters to control grid resolution and padding.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nWarning:\n    SDF computation may be slow."
       , nb::call_guard<mochi::ScopedPythonTaskSchedulerBinding>()
     );

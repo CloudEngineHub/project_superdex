@@ -43,7 +43,6 @@ namespace mochi {
   void DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DefineMochiPhysics_MochiDiffsim([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
-  void DefineMochiPhysics_MochiPhysicsExt([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiCore_MochiCoreExt([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
@@ -59,7 +58,6 @@ namespace mochi {
   void DeclareMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
   void DeclareMochiPhysics_MochiDiffsim([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
-  void DeclareMochiPhysics_MochiPhysicsExt([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry);
 
   inline void DefineNamespaces([[maybe_unused]] nb::module_& m) {
     auto m_diffsim = m.def_submodule("diffsim");
@@ -180,7 +178,6 @@ namespace mochi {
     DeclareMochiPhysics_MochiPhysicsPrefab(m, registry);
     DeclareMochiPhysics_MochiPhysicsExperimental(m, registry);
     DeclareMochiPhysics_MochiDiffsim(m, registry);
-    DeclareMochiPhysics_MochiPhysicsExt(m, registry);
     DefineSpecializations(m);
     DefineMochiCore_MochiCore(m, registry);
     DefineMochiCore_MochiCoreExt(m, registry);
@@ -197,7 +194,6 @@ namespace mochi {
     DefineMochiPhysics_MochiPhysicsPrefab(m, registry);
     DefineMochiPhysics_MochiPhysicsExperimental(m, registry);
     DefineMochiPhysics_MochiDiffsim(m, registry);
-    DefineMochiPhysics_MochiPhysicsExt(m, registry);
     DefineFinalize(m);
   }
 } // namespace mochi

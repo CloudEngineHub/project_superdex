@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+// @brief Signature of a logging callback function.
+using LogFn = Function<void, LogChannel, char const*, char const*, int>;
+
 // @brief Main entry point for SuperDex Physics simulation.
 //
 // @details A @ref Context owns all global state for SuperDex Physics: scenes, shapes, threading,
