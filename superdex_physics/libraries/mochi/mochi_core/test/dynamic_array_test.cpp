@@ -19,6 +19,7 @@
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/nd_array.h>
 
 #include <picojson/picojson.h>
 
@@ -104,6 +105,19 @@ static_assert(alignof(Snoop) == 64);
 static_assert(sizeof(Snoop) == 64);
 
 } // namespace
+
+TEST(DynamicArray, FillNdArray) {
+  DynamicArray<Real3> values(4, Real3{0_r, 1_r, 0_r});
+  for (Real3 const& value : values) {
+    EXPECT_EQ((Real3{0_r, 1_r, 0_r}), value);
+  }
+
+  DynamicArray<Real3> resized;
+  resized.resize(4, Real3{0_r, 1_r, 0_r});
+  for (Real3 const& value : resized) {
+    EXPECT_EQ((Real3{0_r, 1_r, 0_r}), value);
+  }
+}
 
 TEST(DynamicArray, Default) {
   DynamicArray<int> a;

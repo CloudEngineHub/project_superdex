@@ -1729,12 +1729,7 @@ TEST_F(MochiRodSurfaceMeshes, VisualOnlyRodHasNoSurfaceMesh) {
 TEST_F(MochiRodSurfaceMeshes, QueryWithoutVisualMeshFails) {
   // Rod without visual mesh should fail visual query registration
   CreateRodShapeWithVisualMesh(); // populate _rodNodes
-  // NOTE: DynamicArray fill constructor for Real3 is miscompiled by MSVC in double precision,
-  // corrupting the last element. Filling with an explicit for loop to work around it.
-  DynamicArray<Real3> frameAxes(kNumNodes - 1);
-  for (int i = 0; i < kNumNodes - 1; ++i) {
-    frameAxes[i] = Real3{0_r, 1_r, 0_r};
-  }
+  DynamicArray<Real3> frameAxes(kNumNodes - 1, Real3{0_r, 1_r, 0_r});
   ShapeHandle shape = CreatePolylineShape(
       _scene->GetContext(), _rodNodes, frameAxes, /*isClosedLoop=*/false, ErrorAssert{});
   RodActorParams params;

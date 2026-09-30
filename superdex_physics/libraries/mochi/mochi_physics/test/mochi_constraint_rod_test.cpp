@@ -319,13 +319,7 @@ class ConstraintRodElementRotationToRigidClosedLoop
         Real3{kSideLength, 0_r, kSideLength},
         Real3{0_r, 0_r, kSideLength},
     };
-    // NOTE: DynamicArray fill constructor for Real3 is miscompiled by MSVC in double precision,
-    // leading to a zero vector for the last element. Filling with an explicit for loop to work
-    // around it.
-    DynamicArray<Real3> frameAxes(kNumNodes);
-    for (int i = 0; i < kNumNodes; ++i) {
-      frameAxes[i] = Real3{0_r, 1_r, 0_r};
-    }
+    DynamicArray<Real3> frameAxes(kNumNodes, Real3{0_r, 1_r, 0_r});
 
     RodActorParams rodParams;
     rodParams.shape = CreatePolylineShape(

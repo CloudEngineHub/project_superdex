@@ -219,12 +219,7 @@ static PhysicsValidationTestCase CreateRodActorTestCase() {
             };
 
             int const numElements = isize(nodes) - 1;
-            // TODO(T255431885): Re-enable
-            // DynamicArray<Real3> elementFrameAxes(numElements, Real3{0_r, 1_r, 0_r});
-            DynamicArray<Real3> elementFrameAxes;
-            for (int i = 0; i < numElements; ++i) {
-              elementFrameAxes.push_back(Real3{0_r, 1_r, 0_r});
-            }
+            DynamicArray<Real3> elementFrameAxes(numElements, Real3{0_r, 1_r, 0_r});
 
             auto shape = CreatePolylineShape(
                 context, nodes, elementFrameAxes, /*isClosedLoop=*/false, test::ExpectOK{});
@@ -549,12 +544,7 @@ TEST_F(ActorMassTest, RodActor_Api) {
       Real3{1_r, 0_r, 0_r}};
 
   int const numElements = isize(nodes) - 1;
-  // TODO(T255431885): Re-enable
-  // DynamicArray<Real3> elementFrameAxes(numElements, Real3{0_r, 1_r, 0_r});
-  DynamicArray<Real3> elementFrameAxes;
-  for (int i = 0; i < numElements; ++i) {
-    elementFrameAxes.push_back(Real3{0_r, 1_r, 0_r});
-  }
+  DynamicArray<Real3> elementFrameAxes(numElements, Real3{0_r, 1_r, 0_r});
 
   auto shape = CreatePolylineShape(
       _mochiContext, nodes, elementFrameAxes, /*isClosedLoop=*/false, test::ExpectOK{});

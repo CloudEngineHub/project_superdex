@@ -1041,8 +1041,13 @@ class DynamicArray {
     }
   }
 
+#if MOCHI_COMPILER_MSVC
+#if _MSC_VER < 1944
+  // [T255431885] MSVC versions before 19.44 can drop the final copy of an inlined loop.
+  MOCHI_NO_INLINE
+#endif
+#endif
   static void CopyConstructRangeFromValue(T* rangeBegin, T const* rangeEnd, T const& value) {
-    // TODO: Use mochi::Fill for cases where copy construction is equivalent to copy assignment.
     for (auto* it = rangeBegin; it < rangeEnd; ++it) {
       new (it) T(value); // Copy construct
     }
