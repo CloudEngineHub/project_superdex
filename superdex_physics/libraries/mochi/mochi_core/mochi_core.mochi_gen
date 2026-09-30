@@ -347,7 +347,7 @@ struct ModelData [from_mochi_core, no_capi, equality] {
   Optional<PerElementSoftMaterialData> material;
 
   // @brief True if a loaded model contained unsupported experimental data.
-  bool experimentalDataDetected [no_capi, no_python] = false;
+  bool experimentalDataDetected [no_capi, no_python, no_serialize] = false;
 }
 
 // @brief Non-owning view of the contents of a SuperDex model file.
@@ -445,7 +445,7 @@ enum SoftMaterialType [from_mochi_core] {
   // Reference: [Stable Neo-Hookean Flesh Simulation (Smith et al.,
   // 2018)](https://www.tkim.graphics/NEO/StableNeoHookean2018.pdf)
   // @see NeoHookeanMaterialParams
-  NeoHookean,
+  NeoHookean [previously_known_as("StableNeoHookean")],
   // @brief Saint Venant-Kirchhoff (StVK) hyperelastic material.
   //
   // @details Classical non-linear hyperelastic material. Simpler than neo-Hookean but may exhibit
@@ -475,7 +475,7 @@ enum SoftMaterialType [from_mochi_core] {
   // Reference: [Anisotropic Elasticity for Inversion-Safety and Element Rehabilitation (Kim et al.,
   // 2019)](http://tkim.graphics/ANISOTROPY/AnisotropyAndRehab.pdf)
   // @see ActiveNeoHookeanMaterialParams
-  ActiveNeoHookean,
+  ActiveNeoHookean [previously_known_as("ActiveStableNeoHookean")],
   // @brief Active As-Rigid-As-Possible (ARAP) material with Shape Targeting.
   //
   // @details Active material model based on the concept of "shape targeting". Unlike passive models
@@ -807,7 +807,7 @@ struct SoftMaterialParams [from_mochi_core] {
   SoftMaterialType type = NeoHookean;
 
   // @brief Parameters for the Neo-Hookean material model.
-  NeoHookeanMaterialParams neoHookean;
+  NeoHookeanMaterialParams neoHookean [previously_known_as("stableNeoHookean")];
 
   // @brief Parameters for the St. Venant-Kirchhoff material model.
   StVenantKirchhoffMaterialParams stVenantKirchhoff;
@@ -816,7 +816,7 @@ struct SoftMaterialParams [from_mochi_core] {
   LinearElasticMaterialParams linearElastic;
 
   // @brief Parameters for the Active Neo-Hookean material model.
-  ActiveNeoHookeanMaterialParams activeNeoHookean;
+  ActiveNeoHookeanMaterialParams activeNeoHookean [previously_known_as("activeStableNeoHookean")];
 
   // @brief Parameters for the Active Shape Targeting ARAP material model.
   ActiveShapeTargetingArapMaterialParams activeShapeTargetingArap;
@@ -1957,101 +1957,101 @@ enum IntegrationMethod [from_mochi_core] {
 // Z-up.
 enum CoordinateSpaceAxes [from_mochi_core] {
   // @brief X-right, Y-up, Z-forward (Unity).
-  RUF = 272,
+  RUF [display_name("X-right, Y-up, Z-forward (Unity)")] = 272,
   // @brief X-right, Y-up, Z-backward (OpenGL, Filament).
-  RUB = 336,
+  RUB [display_name("X-right, Y-up, Z-backward (OpenGL, Filament)")] = 336,
   // @brief X-right, Y-down, Z-forward.
-  RDF = 280,
+  RDF [display_name("X-right, Y-down, Z-forward")] = 280,
   // @brief X-right, Y-down, Z-backward.
-  RDB = 344,
+  RDB [display_name("X-right, Y-down, Z-backward")] = 344,
   // @brief X-left, Y-up, Z-forward.
-  LUF = 273,
+  LUF [display_name("X-left, Y-up, Z-forward")] = 273,
   // @brief X-left, Y-up, Z-backward.
-  LUB = 337,
+  LUB [display_name("X-left, Y-up, Z-backward")] = 337,
   // @brief X-left, Y-down, Z-forward.
-  LDF = 281,
+  LDF [display_name("X-left, Y-down, Z-forward")] = 281,
   // @brief X-left, Y-down, Z-backward.
-  LDB = 345,
+  LDB [display_name("X-left, Y-down, Z-backward")] = 345,
   // @brief X-right, Y-forward, Z-up.
-  RFU = 160,
+  RFU [display_name("X-right, Y-forward, Z-up")] = 160,
   // @brief X-right, Y-forward, Z-down.
-  RFD = 224,
+  RFD [display_name("X-right, Y-forward, Z-down")] = 224,
   // @brief X-right, Y-backward, Z-up.
-  RBU = 168,
+  RBU [display_name("X-right, Y-backward, Z-up")] = 168,
   // @brief X-right, Y-backward, Z-down.
-  RBD = 232,
+  RBD [display_name("X-right, Y-backward, Z-down")] = 232,
   // @brief X-left, Y-forward, Z-up.
-  LFU = 161,
+  LFU [display_name("X-left, Y-forward, Z-up")] = 161,
   // @brief X-left, Y-forward, Z-down.
-  LFD = 225,
+  LFD [display_name("X-left, Y-forward, Z-down")] = 225,
   // @brief X-left, Y-backward, Z-up.
-  LBU = 169,
+  LBU [display_name("X-left, Y-backward, Z-up")] = 169,
   // @brief X-left, Y-backward, Z-down.
-  LBD = 233,
+  LBD [display_name("X-left, Y-backward, Z-down")] = 233,
   // @brief X-up, Y-right, Z-forward.
-  URF = 258,
+  URF [display_name("X-up, Y-right, Z-forward")] = 258,
   // @brief X-up, Y-right, Z-backward.
-  URB = 322,
+  URB [display_name("X-up, Y-right, Z-backward")] = 322,
   // @brief X-up, Y-left, Z-forward.
-  ULF = 266,
+  ULF [display_name("X-up, Y-left, Z-forward")] = 266,
   // @brief X-up, Y-left, Z-backward.
-  ULB = 330,
+  ULB [display_name("X-up, Y-left, Z-backward")] = 330,
   // @brief X-down, Y-right, Z-forward.
-  DRF = 259,
+  DRF [display_name("X-down, Y-right, Z-forward")] = 259,
   // @brief X-down, Y-right, Z-backward.
-  DRB = 323,
+  DRB [display_name("X-down, Y-right, Z-backward")] = 323,
   // @brief X-down, Y-left, Z-forward.
-  DLF = 267,
+  DLF [display_name("X-down, Y-left, Z-forward")] = 267,
   // @brief X-down, Y-left, Z-backward.
-  DLB = 331,
+  DLB [display_name("X-down, Y-left, Z-backward")] = 331,
   // @brief X-up, Y-forward, Z-right.
-  UFR = 34,
+  UFR [display_name("X-up, Y-forward, Z-right")] = 34,
   // @brief X-up, Y-forward, Z-left.
-  UFL = 98,
+  UFL [display_name("X-up, Y-forward, Z-left")] = 98,
   // @brief X-up, Y-backward, Z-right.
-  UBR = 42,
+  UBR [display_name("X-up, Y-backward, Z-right")] = 42,
   // @brief X-up, Y-backward, Z-left.
-  UBL = 106,
+  UBL [display_name("X-up, Y-backward, Z-left")] = 106,
   // @brief X-down, Y-forward, Z-right.
-  DFR = 35,
+  DFR [display_name("X-down, Y-forward, Z-right")] = 35,
   // @brief X-down, Y-forward, Z-left.
-  DFL = 99,
+  DFL [display_name("X-down, Y-forward, Z-left")] = 99,
   // @brief X-down, Y-backward, Z-right.
-  DBR = 43,
+  DBR [display_name("X-down, Y-backward, Z-right")] = 43,
   // @brief X-down, Y-backward, Z-left.
-  DBL = 107,
+  DBL [display_name("X-down, Y-backward, Z-left")] = 107,
   // @brief X-forward, Y-right, Z-up (Unreal).
-  FRU = 132,
+  FRU [display_name("X-forward, Y-right, Z-up (Unreal)")] = 132,
   // @brief X-forward, Y-right, Z-down.
-  FRD = 196,
+  FRD [display_name("X-forward, Y-right, Z-down")] = 196,
   // @brief X-forward, Y-left, Z-up (Default).
-  FLU = 140,
+  FLU [display_name("X-forward, Y-left, Z-up (Default)")] = 140,
   // @brief X-forward, Y-left, Z-down.
-  FLD = 204,
+  FLD [display_name("X-forward, Y-left, Z-down")] = 204,
   // @brief X-backward, Y-right, Z-up.
-  BRU = 133,
+  BRU [display_name("X-backward, Y-right, Z-up")] = 133,
   // @brief X-backward, Y-right, Z-down.
-  BRD = 197,
+  BRD [display_name("X-backward, Y-right, Z-down")] = 197,
   // @brief X-backward, Y-left, Z-up.
-  BLU = 141,
+  BLU [display_name("X-backward, Y-left, Z-up")] = 141,
   // @brief X-backward, Y-left, Z-down.
-  BLD = 205,
+  BLD [display_name("X-backward, Y-left, Z-down")] = 205,
   // @brief X-forward, Y-up, Z-right.
-  FUR = 20,
+  FUR [display_name("X-forward, Y-up, Z-right")] = 20,
   // @brief X-forward, Y-up, Z-left.
-  FUL = 84,
+  FUL [display_name("X-forward, Y-up, Z-left")] = 84,
   // @brief X-forward, Y-down, Z-right.
-  FDR = 28,
+  FDR [display_name("X-forward, Y-down, Z-right")] = 28,
   // @brief X-forward, Y-down, Z-left.
-  FDL = 92,
+  FDL [display_name("X-forward, Y-down, Z-left")] = 92,
   // @brief X-backward, Y-up, Z-right.
-  BUR = 21,
+  BUR [display_name("X-backward, Y-up, Z-right")] = 21,
   // @brief X-backward, Y-up, Z-left.
-  BUL = 85,
+  BUL [display_name("X-backward, Y-up, Z-left")] = 85,
   // @brief X-backward, Y-down, Z-right.
-  BDR = 29,
+  BDR [display_name("X-backward, Y-down, Z-right")] = 29,
   // @brief X-backward, Y-down, Z-left.
-  BDL = 93,
+  BDL [display_name("X-backward, Y-down, Z-left")] = 93,
   // @brief Default convention for SuperDex Physics.
   Default = FLU,
 }

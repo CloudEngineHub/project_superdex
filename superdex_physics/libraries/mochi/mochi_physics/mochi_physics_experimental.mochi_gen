@@ -115,10 +115,10 @@ struct experimental::SpatialTendonParams [no_reflection] {
 }
 
 struct experimental::DisplacementControlActuatorParams [no_reflection] {
-  real targetDisplacement = 0;
-  real stiffness = 1e9;
-  real damping = 0;
-  bool allowCompressiveForce = false;
+  real targetDisplacement [no_serialize_defaults] = 0;
+  real stiffness [no_serialize_defaults] = 1e9;
+  real damping [no_serialize_defaults] = 0;
+  bool allowCompressiveForce [no_serialize_defaults] = false;
 }
 
 struct experimental::ForceControlActuatorParams [no_reflection] {

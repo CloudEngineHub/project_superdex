@@ -1786,12 +1786,12 @@ class ControllerBasicJscPdParams:
     """Joint-space PD controller parameters."""
     @property
     def kp(self) -> mochi_physics.DynamicArrayReal:
-        """The position gain [Nm/rad]"""
+        """The position gain [N/m or Nm/rad]"""
     @kp.setter
     def kp(self, value: mochi_physics.ArrayLikeReal) -> None: ...
     @property
     def kd(self) -> mochi_physics.DynamicArrayReal:
-        """The position damping gain [Nms/rad]"""
+        """The position damping gain [Ns/m or Nms/rad]"""
     @kd.setter
     def kd(self, value: mochi_physics.ArrayLikeReal) -> None: ...
     @property

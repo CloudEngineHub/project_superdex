@@ -28,8 +28,8 @@ namespace superdex::robotics {
 /* @brief Joint-space PD controller parameters. */
 struct ControllerBasicJscPdParams {
   // joint space gains
-  DynamicArray<real> Kp = {}; // The position gain [Nm/rad]
-  DynamicArray<real> Kd = {}; // The position damping gain [Nms/rad]
+  DynamicArray<real> Kp = {}; // The position gain [N/m or Nm/rad]
+  DynamicArray<real> Kd = {}; // The position damping gain [Ns/m or Nms/rad]
 
   // The saturation magnitude of the controller output for each joint.
   // Values < 0 are interpreted as infinitiy

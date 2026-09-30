@@ -828,7 +828,7 @@ struct prefab::ActorContactEntry [equality, no_reflection] {
   // resolved actor sets. If @ref includeNestedActors is true and both actor names resolve to the
   // same parent actor, the entry also covers pairs between that parent's nested actors, including
   // adjacent links.
-  bool includeNestedActors = true;
+  bool includeNestedActors [no_serialize_defaults] = true;
 }
 
 // @brief Overrides selected contact parameters for an unordered actor pair.
@@ -948,19 +948,19 @@ struct prefab::ScenePrefab [no_reflection] {
   Optional<String> comment;
 
   // @brief Lists of actors by type.
-  prefab::ActorLists actors;
+  prefab::ActorLists actors [no_serialize_defaults];
 
   // @brief Lists of constraints by type.
-  prefab::ConstraintLists constraints;
+  prefab::ConstraintLists constraints [no_serialize_defaults];
 
   // @brief List of pose controllers.
-  DynamicArray<prefab::PoseControllerPrefab> controllers;
+  DynamicArray<prefab::PoseControllerPrefab> controllers [no_serialize_defaults];
 
   // @brief List of nested prefab references.
-  DynamicArray<prefab::PrefabReference> prefabs;
+  DynamicArray<prefab::PrefabReference> prefabs [no_serialize_defaults];
 
   // @brief Global scene parameters (top-level prefab only).
-  Optional<prefab::SceneParams> scene;
+  Optional<prefab::SceneParams> scene [no_serialize_defaults];
 
   // @brief Path this prefab was loaded from, exactly as passed to the loading function.
   // Used to resolve prefab-relative ("./"-prefixed) nested prefab and shape paths.
@@ -981,7 +981,7 @@ struct prefab::ScenePrefab [no_reflection] {
   // @details Entries are applied in array order after all actors in their prefab have been created.
   // A later entry for the same unordered actor pair replaces the earlier override rather than
   // merging with it. Nested child prefab entries are applied before parent entries.
-  Optional<DynamicArray<prefab::ContactPairParamsOverrideEntry>> contactPairParamsOverrides;
+  Optional<DynamicArray<prefab::ContactPairParamsOverrideEntry>> contactPairParamsOverrides [no_serialize_defaults];
 }
 
 ## Prefab Serialization

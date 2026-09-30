@@ -52,7 +52,7 @@ struct bots::BotJointPrefab(prefab::ArticulatedJointPrefab) [equality, no_reflec
   // joint still moves freely within its range under external forces); a positive value is a finite
   // limit. This is advisory metadata — it is not copied into the physics articulation, so the sim
   // enforces nothing on its own; controllers may read it (e.g. to clamp their output).
-  real effortLimit = bots::kEffortUnbounded;
+  real effortLimit [no_serialize_defaults] = bots::kEffortUnbounded;
 }
 
 // @brief Parameters describing a single sensor in a bot.
@@ -63,16 +63,16 @@ struct bots::BotSensorPrefab [equality, no_reflection] {
   String name;
   // @brief Sensor pose relative to the associated link's actor (aFromB convention: maps
   // sensor-frame coordinates into the link frame). Chain to world via SensorBase::GetWorldTransform.
-  TransformRT parentFromSensor;
+  TransformRT parentFromSensor [no_serialize_defaults];
   // @brief Sensor parameters: a path to a .superdex_sensor JSON file or inline JSON. Empty uses
   // defaults.
-  String params;
+  String params [json_string, no_serialize_defaults];
   // @brief Legacy key captured on load: older assets named this field `typeName`. Folded into
   // `type` by ApplyLegacyBotSensorFields and cleared (so re-saves omit it).
-  String _legacyTypeName [no_python];
+  String _legacyTypeName [no_python, no_serialize_defaults, reflection_name("typeName")];
   // @brief Legacy key captured on load: older assets named this field `paramsFile`. Folded into
   // `params` by ApplyLegacyBotSensorFields and cleared (so re-saves omit it).
-  String _legacyParamsFile [no_python];
+  String _legacyParamsFile [no_python, no_serialize_defaults, reflection_name("paramsFile")];
 }
 
 // @brief Parameters describing a single actuator in a bot.
@@ -82,27 +82,27 @@ struct bots::BotActuatorPrefab [equality, no_reflection] {
   // @brief Human-readable, findable identifier for this actuator instance.
   String name;
   // @brief Actuator parameters: a path to a params JSON file or inline JSON. Empty uses defaults.
-  String params;
+  String params [json_string, no_serialize_defaults];
 }
 
 // @brief Parameters describing a single link (body) in a bot.
 struct bots::BotLinkPrefab(prefab::ArticulatedLinkPrefab) [equality, no_reflection] {
   // @brief Sensors attached to this link. Optional; may be empty.
-  DynamicArray<bots::BotSensorPrefab> sensors;
+  DynamicArray<bots::BotSensorPrefab> sensors [no_serialize_defaults];
   // @brief Actuators attached to this link. Optional; may be empty.
-  DynamicArray<bots::BotActuatorPrefab> actuators;
+  DynamicArray<bots::BotActuatorPrefab> actuators [no_serialize_defaults];
   // @brief [Internal] Link index wrt owning bot; computed at runtime by RebuildBotData; DO NOT
   // TOUCH!
-  int _index [no_python] = 0;
+  int _index [no_python, no_reflection] = 0;
   // @brief [Internal] Child link indices wrt owning bot; computed at runtime by RebuildBotData;
   // DO NOT TOUCH!
-  DynamicArray<int> _childrenIndices [no_python];
+  DynamicArray<int> _childrenIndices [no_python, no_reflection];
   // @brief [Internal] Transform to parent link; computed at runtime by RebuildBotData; DO NOT
   // TOUCH!
-  TransformRT _parentFromLink [no_python];
+  TransformRT _parentFromLink [no_python, no_reflection];
   // @brief [Internal] Transform to bot root; computed at runtime by RebuildBotData; DO NOT
   // TOUCH!
-  TransformRT _rootFromLink [no_python];
+  TransformRT _rootFromLink [no_python, no_reflection];
 }
 
 // @brief Used to explicitly enable or disable contact between links in a bot. By default, all bots
@@ -177,34 +177,34 @@ struct bots::BotPrefab [no_reflection] {
   // @brief Bot name.
   String name;
   // @brief Joint parameters for each joint in the articulation.
-  DynamicArray<bots::BotJointPrefab> joints;
+  DynamicArray<bots::BotJointPrefab> joints [no_serialize_defaults];
   // @brief Link parameters for each link in the articulation.
-  DynamicArray<bots::BotLinkPrefab> links;
+  DynamicArray<bots::BotLinkPrefab> links [no_serialize_defaults];
   // @brief Transform from the root link to the world frame.
-  TransformRT worldFromRoot;
+  TransformRT worldFromRoot [no_serialize_defaults];
   // @brief Default pose (array of joint DOF angles/translations) used when spawning the bot.
-  DynamicArray<real> defaultPose;
+  DynamicArray<real> defaultPose [no_serialize_defaults];
   // @brief Linear transmissions that couple multiple joint DOFs via per-joint coefficients. Each
   // entry produces one mochi::experimental::LinearTransmissionParams at instantiation time.
-  DynamicArray<bots::BotLinearTransmissionPrefab> linearTransmissions;
+  DynamicArray<bots::BotLinearTransmissionPrefab> linearTransmissions [no_serialize_defaults];
   // @brief Spatial tendons routed through waypoint and linear-joint elements. Each entry
   // produces one mochi::experimental::SpatialTendonParams at instantiation time.
-  DynamicArray<bots::BotSpatialTendonPrefab> spatialTendons;
+  DynamicArray<bots::BotSpatialTendonPrefab> spatialTendons [no_serialize_defaults];
   // @brief Array of link-link contact override pairs.
-  DynamicArray<bots::BotContactOverride> contactOverrides;
+  DynamicArray<bots::BotContactOverride> contactOverrides [no_serialize_defaults(false)];
   // @brief Cycle-closing joints for closed-loop mechanisms (e.g. four-bar linkages, parallel
   // grippers). Each entry becomes one mochi::ArticulatedActorParams::cycles entry at
   // instantiation time. Link references (mochi::ArticulatedCycleJointParams::parentLink /
   // mochi::ArticulatedCycleJointParams::childLink) are int indices into @ref links.
-  DynamicArray<ArticulatedCycleJointParams> cycles;
+  DynamicArray<ArticulatedCycleJointParams> cycles [no_serialize_defaults];
   // @brief Optional deformable skin skinned over the articulation's links, acting as a contact
   // collidee. When present, produces the mochi::ArticulatedActorParams::skin at instantiation time.
-  Optional<prefab::ArticulatedSkinPrefab> skin;
+  Optional<prefab::ArticulatedSkinPrefab> skin [no_serialize_defaults];
   // @brief [Internal] The number of DOFs; computed at runtime by RebuildBotData; DO NOT TOUCH!
-  int _numDofs [no_python] = 0;
+  int _numDofs [no_python, no_reflection] = 0;
   // @brief [Internal] Joint indices that are DOFS; computed at runtime by RebuildBotData; DO NOT
   // TOUCH!
-  DynamicArray<int> _dofIndices [no_python];
+  DynamicArray<int> _dofIndices [no_python, no_reflection];
   // @brief [Internal] For a bot with a skin, the composed link name each skin bone index binds to
   // (_skinBoneLinks[b] = link name for skin bone b). Empty means identity (bone b -> link b). Set
   // by ApplyMod when a skin (or skinned sub-bot) is attached so the skin's baked bone indices can
@@ -212,7 +212,7 @@ struct bots::BotPrefab [no_reflection] {
   // _numDofs/_dofIndices this is NOT recomputed by RebuildBotData -- it captures composition
   // history that cannot be reconstructed from a flattened bot, so it is serialized. Populated by
   // ApplyMod only; DO NOT set by hand.
-  DynamicArray<String> _skinBoneLinks [no_python];
+  DynamicArray<String> _skinBoneLinks [no_python, no_serialize_defaults, reflection_name("skinBoneLinks")];
 }
 
 // @brief Load bot parameters from a .superdex_bot file using the default file-based loader.
@@ -543,23 +543,23 @@ class bots::ControllerBase(bots::ComponentBase) [no_init, no_destruct] {
 // See ControllerBasicOscPd for details.
 struct bots::ControllerBasicOscPdParams [no_reflection] {
   // @brief Position gain [N/m]
-  real Kp_p;
+  real Kp_p [units("N/m")];
   // @brief Position damping gain [Ns/m]
-  real Kd_p;
+  real Kd_p [units("Ns/m")];
   // @brief Rotation gain [Nm/rad]
-  real Kp_r;
+  real Kp_r [units("Nm/rad")];
   // @brief Rotation damping gain [Nms/rad]
-  real Kd_r;
+  real Kd_r [units("Nms/rad")];
   // @brief If true, renormalize the task-space error so translation and rotation errors stay below
   // their configured maximums, keeping the force direction consistent. Requires positive
   // maxTranslationError and maxRotationError.
   bool bApplyMaxErrorMagnitudeNormalization;
   // @brief Max translation error for normalization in control space [m]. Must be positive when
   // enabled.
-  real maxTranslationError;
+  real maxTranslationError [units("m")];
   // @brief Max rotation error for normalization in control space [rad]. Must be positive when
   // enabled.
-  real maxRotationError;
+  real maxRotationError [units("rad")];
   // @brief The transform of the actual end-effector in the end-effector link space
   TransformRT EELinkFromEE;
   // @brief If true, scale the output efforts down uniformly so that no controlled DOF exceeds the
@@ -929,17 +929,17 @@ fn bots::BuildArticulatedPoseFromBotPose(bots::BotPrefab const& botPrefab, Span<
 
 // @brief Joint-space PD controller parameters.
 struct bots::ControllerBasicJscPdParams [no_reflection] {
-  // @brief The position gain [Nm/rad]
-  DynamicArray<real> Kp;
-  // @brief The position damping gain [Nms/rad]
-  DynamicArray<real> Kd;
+  // @brief The position gain [N/m or Nm/rad]
+  DynamicArray<real> Kp [units("N/m or Nm/rad")];
+  // @brief The position damping gain [Ns/m or Nms/rad]
+  DynamicArray<real> Kd [units("Ns/m or Nms/rad")];
   // @brief The saturation magnitude of the controller output for each joint.
   // Values < 0 are interpreted as infinitiy [N or Nm]
-  DynamicArray<real> saturation;
+  DynamicArray<real> saturation [units("N or Nm")];
   // @brief The deadband is removed from error towards 0 (limited to 0) before multiplying by Kp.
   // Damping is always applied regardless of the deadband.
   // The deadband results in a force profile about the target like this \___/ rather than \/
-  DynamicArray<real> deadband;
+  DynamicArray<real> deadband [units("m or rad")];
 
   // @brief Load controller parameters from a JSON file.
   // @param[in] path Path to a .superdex_controller JSON file.
@@ -976,25 +976,25 @@ struct bots::CameraSensorParams [no_reflection] {
   // @brief Camera name carried in the params, distinct from the sensor's instance name.
   String name;
   // @brief Rendered image width [px].
-  int imageWidth;
+  int imageWidth [units("px")];
   // @brief Rendered image height [px].
-  int imageHeight;
+  int imageHeight [units("px")];
   // @brief Vertical field of view [deg].
-  real fovVerticalDeg;
+  real fovVerticalDeg [units("deg")];
   // @brief Distance to the near clip plane [m].
-  real nearClip;
+  real nearClip [units("m")];
   // @brief Distance to the far clip plane [m].
-  real farClip;
+  real farClip [units("m")];
   // @brief Look-at target in world space (fixed cameras only).
-  Real3 lookAt;
+  Real3 lookAt [units("m")];
   // @brief Offset from EE frame origin in local coordinates (wrist cameras only).
-  Real3 offsetLocal;
+  Real3 offsetLocal [units("m")];
   // @brief Forward direction in EE-local frame (wrist cameras only).
   Real3 forwardAxis;
   // @brief Up direction in EE-local frame (wrist cameras only).
   Real3 upAxisLocal;
   // @brief Distance ahead of offset point to place look-at target (wrist cameras only).
-  real lookDistance;
+  real lookDistance [units("m")];
 
   // @brief Load sensor parameters from a JSON file.
   // @param[in] path Path to a .superdex_sensor JSON file.

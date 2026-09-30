@@ -707,12 +707,12 @@
 
 /// @var superdex::robotics::ControllerBasicJscPdParams::Kp
 ///
-/// @brief The position gain [Nm/rad]
+/// @brief The position gain [N/m or Nm/rad]
 ///
 
 /// @var superdex::robotics::ControllerBasicJscPdParams::Kd
 ///
-/// @brief The position damping gain [Nms/rad]
+/// @brief The position damping gain [Ns/m or Nms/rad]
 ///
 
 /// @var superdex::robotics::ControllerBasicJscPdParams::saturation
