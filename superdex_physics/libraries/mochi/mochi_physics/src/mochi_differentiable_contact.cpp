@@ -72,8 +72,8 @@ static void AccumulateAsyncContactForceAdjoints(
   Vec4r outGradientCom = {};
   Vec4r outGradientRot = {};
 
-  // Match the forward async contact assembly path: use local FILO memory for the temporary
-  // response.
+  // Reserve for the largest collision up-front so the per-collision ResizeNoInit below never
+  // reallocates, which the FILO allocator requires.
   MOCHI_FILO_STACK_ALLOCATOR(allocator, 32 * 1024);
   CollisionResponseResult collisionResponse(&allocator);
   collisionResponse.Reserve(activeCollisions, false, true, true);
@@ -107,7 +107,8 @@ static void AccumulateAsyncContactForceAdjoints(
     }
 
     // Accumulation of gradient terms for all contact points.
-    // The implementation matches AssembleRigidBodyAsyncContactResponse.
+    // The implementation matches the force and torque sums of ComputeRigidContactSums and their
+    // assembly in AssembleRigidBodyAsyncContactResponse.
     auto const& colliderTransform =
         reg.get<CRootTransform const>(collision.colliderEntity).worldFromLocalPrev;
     auto const trans = colliderTransform.VGetTranslation();

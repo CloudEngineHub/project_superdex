@@ -104,10 +104,14 @@ static void AssembleRigidBodyAsyncContactResponse(
       (!outEnergy || *outEnergy == 0.0) && (!outGradient || *outGradient == RigidGradient{}) &&
           (!outHessian || *outHessian == RigidHessian{}),
       "Expected this to be the first assembly term, with zero energy");
+  MOCHI_ASSERT_VERBOSE(
+      kGradTarget == GradTarget::Current || !outHessian,
+      "The contact DResidual only supports GradTarget::Current.");
 
   bool const assemEnergy = (outEnergy != nullptr);
   bool const assemGradient = (outGradient != nullptr);
   bool const assemHessian = (outHessian != nullptr);
+  bool const storeForces = assemGradient && queryActiveContacts;
 
   // Gradient and Hessian accumulation terms across all colliders
   Vec4r outGradientCom = {};
@@ -115,12 +119,6 @@ static void AssembleRigidBodyAsyncContactResponse(
   VMatrix3x3r outHessianCom = {};
   VMatrix3x3r outHessianRot = {};
   VMatrix3x3r outHessianMix = {};
-
-  // Preallocate memory for collision response. Use stack memory if possible. 32 KiB is enough in
-  // most cases.
-  MOCHI_FILO_STACK_ALLOCATOR(allocator, 32 * 1024);
-  CollisionResponseResult collisionResponse(&allocator);
-  collisionResponse.Reserve(collisions, assemEnergy, assemGradient, assemHessian);
 
   // Get the com translation
   auto const com = pose.VGetTranslation();
@@ -131,18 +129,6 @@ static void AssembleRigidBodyAsyncContactResponse(
 
     ContactDetectionResult& contactQuery = collision.collisionResult;
     int const numPoints = isize(contactQuery.sampleIndices);
-    collisionResponse.ResizeNoInit(numPoints, assemEnergy, assemGradient, assemHessian);
-
-    // Compute collision response
-    ComputeCollisionResponse<kGradTarget>(
-        contactQuery,
-        contactParams,
-        config,
-        dtStage,
-        assemEnergy,
-        assemGradient,
-        assemHessian,
-        collisionResponse);
 
     // WARNING: If this implementation is modified, consider modifying also
     // AccumulateAsyncContactForceAdjoints, which is its dual for differentiability.
@@ -167,7 +153,7 @@ static void AssembleRigidBodyAsyncContactResponse(
     //   H_trans-rot   = df_world * sk(r)
     //   H_rot-rot     = sk(r) * df_world * sk(r)
     // In local frame, sk(r) = rot * sk(jVec) * rotT, so each block reduces to
-    // R * (local sandwich) * R^T, which we accumulate per sample and apply once after the loop.
+    // R * (local sandwich) * R^T, which we sum over the contact points and rotate once.
 
     // Fetch the collider's world-from-local rotation and precompute the actor COM in the collider's
     // local frame.
@@ -177,63 +163,38 @@ static void AssembleRigidBodyAsyncContactResponse(
     auto const [rot, rotT] = ToVMatrix3x3_WithTranspose(colliderTransform.GetRotation());
     auto const comColliderSpace = DotVecMat3x3(com - trans, rot);
 
-    // Gradient and Hessian accumulation terms for this collider
-    Vec4r res = {};
-    Vec4r skJRes = {};
-    VMatrix3x3r dres = {};
-    VMatrix3x3r dresSkJ = {};
-    VMatrix3x3r skJDresSkJ = {};
-
-    for (int i = 0; i < numPoints; ++i) {
-      // Get weight of the contact sample
-      int const sampleIndex = contactQuery.sampleIndices[i];
-      real const weight = sample.weights[sampleIndex];
-
-      // Get contact position in collider's local frame
-      auto posColliding = ToSimd(GetCollidingPosition<GetTimeStep<kGradTarget>()>(contactQuery, i));
-
-      // Accumulate energy
-      if (assemEnergy) {
-        *outEnergy += collisionResponse.energy[i] * weight;
-      }
-
-      // Compute local lever arm from COM
-      auto const jVec = posColliding - comColliderSpace;
-
-      // Accumulate gradient terms
-      if (assemGradient) {
-        Vec4r collRes = weight * ToSimd(collisionResponse.force[i]);
-        res += collRes;
-        skJRes += Cross3(jVec, collRes);
-      }
-
-      // Accumulate hessian terms
-      if (assemHessian) {
-        VMatrix3x3r collDres = weight * collisionResponse.dforce[i];
-        dres += collDres;
-        VMatrix3x3r collSkJ = Skew3(jVec);
-        VMatrix3x3r collDresSkJ = Dot3x3(collDres, collSkJ);
-        dresSkJ += collDresSkJ;
-        skJDresSkJ += Dot3x3(collSkJ, collDresSkJ);
-      }
+    if (storeForces) {
+      contactQuery.forcePerUnitArea.resize_noinit(numPoints);
+    }
+    RigidContactSums const sums = ComputeRigidContactSums<kGradTarget>(
+        Interval<int>{0, numPoints},
+        contactQuery,
+        contactParams,
+        config,
+        dtStage,
+        sample.weights,
+        comColliderSpace,
+        assemEnergy,
+        assemGradient,
+        assemHessian,
+        storeForces ? MakeSpan(contactQuery.forcePerUnitArea) : Span<Real3>{});
+    if (assemEnergy) {
+      *outEnergy += sums.energy;
     }
 
-    // Rotate the per-collider local-frame accumulators into world frame (R * _ * R^T for
-    // matrices, R * _ for vectors) and accumulate into the actor's gradient/Hessian.
+    // Rotate the per-collider local-frame sums into world frame (R * _ * R^T for matrices, R * _
+    // for vectors) and accumulate into the actor's gradient/Hessian.
     if (assemGradient) {
-      outGradientCom -= DotVecMat3x3(res, rotT);
-      outGradientRot -= DotVecMat3x3(skJRes, rotT);
+      outGradientCom -= DotVecMat3x3(sums.force, rotT);
+      outGradientRot -= DotVecMat3x3(sums.torque, rotT);
     }
 
     if (assemHessian) {
-      outHessianCom -= Dot3x3(rot, Dot3x3(dres, rotT));
-      outHessianRot += Dot3x3(rot, Dot3x3(skJDresSkJ, rotT));
-      outHessianMix += Dot3x3(rot, Dot3x3(dresSkJ, rotT));
-    }
-
-    // Optionally store data for queries
-    if (assemGradient && queryActiveContacts) {
-      contactQuery.forcePerUnitArea = collisionResponse.force;
+      // The Hessian requires GradTarget::Current, whose force derivatives are symmetric, so the
+      // Hessian is symmetric and outHessianMix accumulates its rot-trans block, -sum(sk(jVec) w D).
+      outHessianCom -= Dot3x3(rot, Dot3x3(sums.dForce, rotT));
+      outHessianRot += Dot3x3(rot, Dot3x3(sums.skewDForceSkew, rotT));
+      outHessianMix -= Dot3x3(Dot3x3(rot, sums.skewDForce), rotT);
     }
   }
 
@@ -248,9 +209,9 @@ static void AssembleRigidBodyAsyncContactResponse(
     StoreSubmatrix<RigidSize::kDRot, RigidSize::kDRot, RigidSize::kDAll, RigidSize::kDAll>(
         *outHessian, Int2{RigidSize::kDTrans, RigidSize::kDTrans}, outHessianRot);
     StoreSubmatrix<RigidSize::kDTrans, RigidSize::kDRot, RigidSize::kDAll, RigidSize::kDAll>(
-        *outHessian, Int2{0, RigidSize::kDTrans}, outHessianMix);
+        *outHessian, Int2{0, RigidSize::kDTrans}, Transpose3x3(outHessianMix));
     StoreSubmatrix<RigidSize::kDRot, RigidSize::kDTrans, RigidSize::kDAll, RigidSize::kDAll>(
-        *outHessian, Int2{RigidSize::kDTrans, 0}, Transpose3x3(outHessianMix));
+        *outHessian, Int2{RigidSize::kDTrans, 0}, outHessianMix);
   }
 }
 
