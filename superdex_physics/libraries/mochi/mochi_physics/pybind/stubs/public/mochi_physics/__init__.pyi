@@ -1121,10 +1121,13 @@ class ColliderType:
     """[Experimental] Represent the actor by its surface mesh.
 
     Note:
-        Performance is slow.
-
-    Note:
         Only supported for rigid actors and articulated links.
+
+    Warning:
+        Mesh collision performs triangle-mesh distance queries during simulation and
+        can be prohibitively slow. For mesh-backed actors, prefer :class:`AUTO
+        <superdex.physics.ColliderType>` or :class:`SDF
+        <superdex.physics.ColliderType>` unless measurements justify using Mesh.
 
     Warning:
         This is an experimental feature. It may be changed or removed in the future.

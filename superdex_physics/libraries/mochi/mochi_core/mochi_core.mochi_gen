@@ -1046,10 +1046,12 @@ enum ColliderType [from_mochi_core] {
   Box,
   // @brief [Experimental] Represent the actor by its surface mesh.
   //
+  // @warning Mesh collision performs triangle-mesh distance queries during simulation and can be
+  // prohibitively slow. For mesh-backed actors, prefer @ref ColliderType::Auto or
+  // @ref ColliderType::Sdf unless measurements justify using Mesh.
   // @warning This is an experimental feature. It may be changed or removed in the future. Use at
   // your own risk.
   //
-  // @note Performance is slow.
   // @note Only supported for rigid actors and articulated links.
   Mesh,
   // @brief Represent the actor as an infinite plane.
