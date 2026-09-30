@@ -28,6 +28,7 @@ from superdex.physics.viewer.unrealcv.unrealcv_actor_utils import (
     apply_hdri_lighting_dr,
     apply_mpc_dr,
     apply_scale_dr,
+    get_material_params,
 )
 
 
@@ -648,3 +649,87 @@ class AbsentActorDrFailuresTest(unittest.TestCase):
             )
             _log_visibility_results(["vset /object/RealActor_C_0/hide"], [None], ["a"])
         self.assertEqual(mock_logger.error.call_count, 6)
+
+
+class GetMaterialParamsTest(unittest.TestCase):
+    _ACTOR = "BP_NIST_Board_Render_UCV_C_0"
+    _PAYLOAD = '{"actor":"A","scope":"actor","materials":[]}'
+
+    def _client(self, response):
+        client = MagicMock()
+        client._request.return_value = response
+        return client
+
+    def test_whole_actor_command_and_parsed_payload(self):
+        client = self._client(self._PAYLOAD)
+        result = get_material_params(client, self._ACTOR)
+        client._request.assert_called_once_with(
+            f"vget /object/{self._ACTOR}/material_params"
+        )
+        self.assertEqual(result["scope"], "actor")
+
+    def test_component_is_appended(self):
+        client = self._client(self._PAYLOAD)
+        get_material_params(client, self._ACTOR, component="DSUB_Housing")
+        client._request.assert_called_once_with(
+            f"vget /object/{self._ACTOR}/material_params DSUB_Housing"
+        )
+
+    def test_star_requests_per_component_breakdown(self):
+        client = self._client(self._PAYLOAD)
+        get_material_params(client, self._ACTOR, component="*")
+        client._request.assert_called_once_with(
+            f"vget /object/{self._ACTOR}/material_params *"
+        )
+
+    def test_config_resolves_mochi_key_to_instance_name(self):
+        # A bot-task config never names the UE actor, so callers pass the
+        # mapping key; it must be resolved before the vget is issued.
+        cfg = SimpleNamespace(
+            actor_mapping={"scene/Box___Actor": "prefab://box_prefab"},
+            articulated_actor_mapping={},
+        )
+        client = self._client(self._PAYLOAD)
+        get_material_params(client, "scene/Box___Actor", unrealcvactor_cfg=cfg)
+        client._request.assert_called_once_with(
+            "vget /object/scene/Box___Actor/material_params"
+        )
+
+    def test_blueprint_desired_name_wins_over_key(self):
+        cfg = SimpleNamespace(
+            actor_mapping={"scene/Box___Actor": "blueprint:///Game/BP_Box@BP_Box_C_1"},
+            articulated_actor_mapping={},
+        )
+        client = self._client(self._PAYLOAD)
+        get_material_params(client, "scene/Box___Actor", unrealcvactor_cfg=cfg)
+        client._request.assert_called_once_with(
+            "vget /object/BP_Box_C_1/material_params"
+        )
+
+    def test_articulated_prefab_entry_resolves_to_key(self):
+        # Bot-task derivation gives articulated entries a prefab:// ue_actor with
+        # no "@DesiredName", so the UE name falls back to the spawn key. This is
+        # the other mapping branch: a dict read through "ue_actor".
+        cfg = SimpleNamespace(
+            actor_mapping={},
+            articulated_actor_mapping={
+                "scene/Robot": {"ue_actor": "prefab://fr3_dg5f"}
+            },
+        )
+        client = self._client(self._PAYLOAD)
+        get_material_params(client, "scene/Robot", unrealcvactor_cfg=cfg)
+        client._request.assert_called_once_with(
+            "vget /object/scene/Robot/material_params"
+        )
+
+    def test_error_response_returns_empty(self):
+        client = self._client("error Can not find object")
+        self.assertEqual(get_material_params(client, self._ACTOR), {})
+
+    def test_malformed_json_returns_empty(self):
+        client = self._client("not json at all")
+        self.assertEqual(get_material_params(client, self._ACTOR), {})
+
+    def test_dropped_response_returns_empty(self):
+        client = self._client(None)
+        self.assertEqual(get_material_params(client, self._ACTOR), {})

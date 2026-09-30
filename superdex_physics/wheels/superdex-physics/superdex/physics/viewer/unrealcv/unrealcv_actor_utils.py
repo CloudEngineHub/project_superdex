@@ -2076,6 +2076,55 @@ def capture_dr_state(
     return state
 
 
+def get_material_params(
+    client: UnrealCVClient,
+    actor: str,
+    component: str | None = None,
+    unrealcvactor_cfg: UnrealCVActorConfig | None = None,
+) -> dict[str, Any]:
+    """Query which material parameters exist on an actor: name, type and value.
+
+    Answers "what can I randomize here, and through which vset route" instead of
+    guessing from parameter names. The type decides the route (scalar ->
+    scalar_param, vector -> vector_param/rgba, texture -> texture_index), and a
+    Param2D "Color" reports as ``texture`` rather than ``vector`` -- the case
+    that makes a visibly-colored material look like it has no Color parameter.
+
+    Args:
+        client: Connected UnrealCVClient.
+        actor: UE actor instance name, or -- when ``unrealcvactor_cfg`` is given
+            -- a mochi/spawn key from the config, resolved to its instance name.
+            A bot-task (``prefab://``) mapping never names the UE actor in the
+            config, so the key is usually all a caller has.
+        component: ``None`` for the whole actor, a child component name for that
+            component alone, or ``"*"`` to break every mesh component out.
+        unrealcvactor_cfg: Optional config used to resolve ``actor``.
+
+    Returns:
+        The parsed JSON payload, or ``{}`` if the query failed (error logged).
+    """
+    if unrealcvactor_cfg is not None:
+        instance_name, _kind, _spawn_arg = _get_mapped_instance_name(
+            unrealcvactor_cfg, actor
+        )
+        if instance_name:
+            actor = instance_name
+
+    command = f"vget /object/{actor}/material_params"
+    if component:
+        command = f"{command} {component}"
+
+    resp = client._request(command)
+    if not resp or resp.lower().startswith("error"):
+        logger.warning("material_params failed for '%s': %s", actor, resp)
+        return {}
+    try:
+        return json.loads(resp)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Failed to parse material_params JSON for %s", actor)
+        return {}
+
+
 ##########################################################################################
 # Visibility Domain Randomization (deterministic user-controlled toggles)
 ##########################################################################################
