@@ -2116,7 +2116,16 @@ def get_material_params(
 
     resp = client._request(command)
     if not resp or resp.lower().startswith("error"):
-        logger.warning("material_params failed for '%s': %s", actor, resp)
+        # Sweeping one component name across many actors makes "has no
+        # component" the common, expected answer rather than a fault, so it does
+        # not belong on the warning path. Every other failure still warns.
+        expected_miss = resp is not None and "has no component" in resp
+        logger.log(
+            logging.DEBUG if expected_miss else logging.WARNING,
+            "material_params failed for '%s': %s",
+            actor,
+            resp,
+        )
         return {}
     try:
         return json.loads(resp)
