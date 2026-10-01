@@ -266,6 +266,8 @@ static void RodElementAssemblerBenchmark(
 // the full assembly; the AssemblerOverhead cases isolate the assembler's gather/scatter cost.
 // clang-format off
 #define MOCHI_BENCHMARK_ROD_ELEMENT_ASSEMBLER(name, numElements)                                                                                                                                                          \
+  MOCHI_BENCHMARK_ROD_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_Obj, #name "/AssemblerOverhead/Objective", numElements, 0, kResultObj);                                                                      \
+  MOCHI_BENCHMARK_ROD_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_Res, #name "/AssemblerOverhead/Residual", numElements, 0, kResultRes);                                                                       \
   MOCHI_BENCHMARK_ROD_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_DRes, #name "/AssemblerOverhead/DResidual", numElements, 0, kResultDRes);                                                                    \
   MOCHI_BENCHMARK_ROD_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_All, #name "/AssemblerOverhead/All", numElements, 0, kResultObjResDRes);                                                                     \
   MOCHI_BENCHMARK_ROD_ELEMENT_ASSEMBLER_FOR_THREADS(name##_Full_Obj, #name "/Full/Objective", numElements, kRodElOpGravity, kResultObj);                                                \

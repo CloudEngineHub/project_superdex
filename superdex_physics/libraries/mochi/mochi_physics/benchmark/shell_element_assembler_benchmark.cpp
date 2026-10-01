@@ -295,6 +295,8 @@ static void ShellElementAssemblerBenchmark(
 // the full assembly; the AssemblerOverhead cases isolate the assembler's gather/scatter cost.
 // clang-format off
 #define MOCHI_BENCHMARK_SHELL_ELEMENT_ASSEMBLER(name, file, meshSize)                                                                                                                                                    \
+  MOCHI_BENCHMARK_SHELL_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_Obj, #name "/AssemblerOverhead/Objective", file, meshSize, 0, kResultObj);                                                                \
+  MOCHI_BENCHMARK_SHELL_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_Res, #name "/AssemblerOverhead/Residual", file, meshSize, 0, kResultRes);                                                                 \
   MOCHI_BENCHMARK_SHELL_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_DRes, #name "/AssemblerOverhead/DResidual", file, meshSize, 0, kResultDRes);                                                              \
   MOCHI_BENCHMARK_SHELL_ELEMENT_ASSEMBLER_FOR_THREADS(name##_AssemblerOverhead_All, #name "/AssemblerOverhead/All", file, meshSize, 0, kResultObjResDRes);                                                               \
   MOCHI_BENCHMARK_SHELL_ELEMENT_ASSEMBLER_FOR_THREADS(name##_Full_Obj, #name "/Full/Objective", file, meshSize, kShellElOpGravity, kResultObj);                                          \
