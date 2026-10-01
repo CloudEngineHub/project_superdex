@@ -141,7 +141,9 @@ LinearSolverStatus AsyncPCG(
   statusCheck.SetScaling(r, prec, z);
 
   if (initialGuessHint != InitialGuessHint::Zero) {
-    Apply(opA, x, Ap); // A * x_0
+    // opA's pool must start after the preconditioner solves below: its workers don't yield, so
+    // tasks the solves spawn would run serially or hang.
+    Apply(A, x, Ap); // A * x_0
     r -= Ap; // r_0 = b - A * x_0
   }
 
