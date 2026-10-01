@@ -270,16 +270,19 @@ static void ComputeAggregateSolverSceneStats(
   auto const numStages = GetNumStages(intMethod);
   MOCHI_ASSERT(numStages <= kMaxIntegrationStages, "Unexpected number of integration stages");
 
-  // Aggregate solver statistics across all islands in the scene. We compute:
+  // Aggregate solver statistics across all awake islands in the scene. We compute:
   // 1. The total squared residual norm across all islands and integration stages.
   // 2. The maximum number of non-linear solver iterations across all islands and stages.
+  // 3. The worst convergence status across all islands and stages.
   // NOTE: We accumulate squared residual norms (without taking the square root) because we'll
   // compute the root-mean-square (RMS) across all stages at the end.
   outStats.residualNorm = 0.0;
   outStats.maxNonLinearIters = 0;
   outStats.maxLineSearchIters = 0;
+  outStats.convergenceStatus = ConvergenceStatus::None;
   outDebugStats.maxResidualNormRelativeError = 0_r;
-  reg.view<CIslandSolverStats const>().each(
+  // Sleeping islands were not solved during this step, so they are excluded.
+  reg.view<CIslandSolverStats const, TagIslandIsAwake const>().each(
       [numStages, &outStats, &outDebugStats](auto const& islandSolverStats) {
         int const islandNumStages = isize(islandSolverStats.stages);
         MOCHI_ASSERT(islandNumStages == numStages, "Unexpected number of integration stages");
@@ -288,6 +291,7 @@ static void ComputeAggregateSolverSceneStats(
           outStats.residualNorm += Sqr((double)stage.resNorm);
           outStats.maxNonLinearIters = Max(outStats.maxNonLinearIters, stage.numIterDone);
           outStats.maxLineSearchIters = Max(outStats.maxLineSearchIters, stage.numLSIterDone);
+          outStats.convergenceStatus = Max(outStats.convergenceStatus, stage.convergence);
           outDebugStats.maxResidualNormRelativeError =
               Max(outDebugStats.maxResidualNormRelativeError, stage.resNormError);
         }
@@ -295,12 +299,6 @@ static void ComputeAggregateSolverSceneStats(
 
   // Compute the final RMS residual norm.
   outStats.residualNorm = Sqrt(outStats.residualNorm / numStages);
-
-  // Aggregate convergence status across all actors.
-  outStats.convergenceStatus = ConvergenceStatus::None;
-  reg.view<CConvergenceStatus const>().each([&outStats](auto const& convergence) {
-    outStats.convergenceStatus = Max(outStats.convergenceStatus, convergence.stepStatus);
-  });
 }
 
 // Helper function to compute the aggregate backprop solver stats for a step.
@@ -576,7 +574,12 @@ void SceneImpl::SetSleepParams(experimental::SleepParams const& params, Error& e
   MOCHI_ERROR_RETURN(error);
 
   experimental::SleepParams& storedParams = _registry.ctx<CSleepParams>();
+  if (storedParams == params) {
+    return; // No change
+  }
+
   storedParams = params;
+  sleep::WakeAll(_registry);
 }
 
 void SceneImpl::Step(double timeStepSec) {
@@ -3422,9 +3425,11 @@ void MakeSceneDifferentiableInternal(Scene* scene, Error& error) {
   reg.set<TagDifferentiableScene>();
 
   // Island sleeping is not supported in differentiable scenes.
-  if (auto& sleepParams = reg.ctx<CSleepParams>(); sleepParams.canSleep) {
+  auto& sleepParams = reg.ctx<CSleepParams>();
+  if (sleepParams.canSleep) {
     MOCHI_LOG_WARNING("Differentiable scenes do not support island sleeping. Disabling it.");
     sleepParams.canSleep = false;
+    sleep::WakeAll(reg);
   }
 
   // Create default solver params

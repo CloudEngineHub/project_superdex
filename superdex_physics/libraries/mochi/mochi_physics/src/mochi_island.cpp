@@ -22,6 +22,7 @@
 #include "mochi_differentiable.h"
 #include "mochi_ecs.h"
 #include "mochi_simulation.h"
+#include "mochi_sleep.h"
 #include "mochi_snle.h"
 
 #include <mochi_core/utils/array_utils.h>
@@ -146,6 +147,7 @@ entt::entity island::CreateEmpty(entt::registry& reg) {
   reg.emplace<CIslandPreconditioner>(
       island, std::make_shared<PreconditionerRecyclingManager<real>>());
   reg.emplace<CIslandSolverStats>(island);
+  sleep::InitIsland(reg, island);
   if (reg.try_ctx<TagDifferentiableScene>()) {
     InitDifferentiableIsland(reg, island);
   }
@@ -651,8 +653,13 @@ void island::PreStep(entt::registry& reg) {
     UpdateIslandDifferentiabilityInfo(reg, members, dofs, input);
   }
 
-  // All islands are now up-to-date
+  for (entt::entity island : reg.view<TagIslandCompositionChanged>()) {
+    reg.emplace_or_replace<TagWakeUp>(island);
+  }
   reg.clear<TagIslandCompositionChanged>();
+
+  // Apply wake requests, then put islands at rest to sleep.
+  sleep::PreStep(reg);
 
   // Unit test support
   if (testConfig && testConfig->postIslandUpdateCallback) {

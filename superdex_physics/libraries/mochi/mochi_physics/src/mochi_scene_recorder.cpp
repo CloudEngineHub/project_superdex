@@ -23,6 +23,7 @@
 #include "mochi_ecs_utils.h"
 #include "mochi_island.h"
 #include "mochi_rod.h"
+#include "mochi_sleep.h"
 #include "mochi_soft_rom_systems.h"
 
 #include <mochi_core/linear_algebra/krylov_interop.h>
@@ -66,6 +67,9 @@ SceneRecorder::SceneRecorder(
   // Show that recording is enabled by adding a tag to the global ECS context
   _registry.set<TagSceneRecordingEnabled>();
   _registry.set<CRecordingParams>(_params);
+
+  // Sleeping islands are not recorded, so no island sleeps while recording.
+  sleep::WakeAll(_registry);
 }
 
 SceneRecorder::~SceneRecorder() {

@@ -7491,29 +7491,31 @@ class SolverStats:
         :meth:`~superdex.physics.Scene.get_solver_stats`
     """
     max_non_linear_iters: int
-    """Maximum number of non-linear solver iterations across all islands and
+    """Maximum number of non-linear solver iterations across all awake islands and
     integration stages in the last call to :meth:`~superdex.physics.Scene.step`.
     """
     residual_norm: float
-    """Aggregate residual norm across all islands and integration stages in the last
-    call to :meth:`~superdex.physics.Scene.step`. Computed as the root mean square
-    across integration stages of the L2 norm of per-island residual norms.
+    """Aggregate residual norm across all awake islands and integration stages in the
+    last call to :meth:`~superdex.physics.Scene.step`. Computed as the root mean
+    square across integration stages of the L2 norm of per-island residual norms.
     """
     max_line_search_iters: int
-    """Maximum number of line-search iterations per Newton solve across all islands and
-    integration stages in the last call to :meth:`~superdex.physics.Scene.step`.
+    """Maximum number of line-search iterations per Newton solve across all awake
+    islands and integration stages in the last call to
+    :meth:`~superdex.physics.Scene.step`.
     """
     convergence_status: ConvergenceStatus
     """Aggregate convergence status of the scene in the last call to
     :meth:`~superdex.physics.Scene.step`.
 
-    Returns the worst convergence status across all dynamic actors: :class:`DIVERGED
-    <superdex.physics.ConvergenceStatus>` if any actor diverged, :class:`STOPPED
-    <superdex.physics.ConvergenceStatus>` if any actor's solver was stopped,
-    :class:`CONVERGED <superdex.physics.ConvergenceStatus>` if all dynamic actors
-    converged, :class:`NONE <superdex.physics.ConvergenceStatus>` if no dynamic
-    actors exist, :meth:`~superdex.physics.Scene.step` has not been called yet or
-    the last call to :meth:`~superdex.physics.Scene.step` was with zero time step.
+    Returns the worst convergence status across all dynamic actors in awake islands:
+    :class:`DIVERGED <superdex.physics.ConvergenceStatus>` if any actor diverged,
+    :class:`STOPPED <superdex.physics.ConvergenceStatus>` if any actor's solver was
+    stopped, :class:`CONVERGED <superdex.physics.ConvergenceStatus>` if all dynamic
+    actors in awake islands converged, :class:`NONE
+    <superdex.physics.ConvergenceStatus>` if no dynamic actors exist, all islands
+    are asleep, :meth:`~superdex.physics.Scene.step` has not been called yet or the
+    last call to :meth:`~superdex.physics.Scene.step` was with zero time step.
 
     Note:
         Unlike :class:`DIVERGED <superdex.physics.ConvergenceStatus>`,
@@ -9286,6 +9288,11 @@ class Actor:
         Note:
             Static actors do not participate in the solver and may return :class:`NONE
             <superdex.physics.ConvergenceStatus>`.
+
+        Note:
+            Actors in sleeping islands are not solved and return :class:`NONE
+            <superdex.physics.ConvergenceStatus>`. See
+            :class:`~superdex.physics.experimental.SleepParams`.
 
         Note:
             Unlike :class:`DIVERGED <superdex.physics.ConvergenceStatus>`,
@@ -13803,6 +13810,10 @@ class Scene:
         Note:
             If the scene is already recording, the previous recording is stopped before
             starting the new one.
+
+        Note:
+            Islands do not sleep while the scene is recording, so recording can change
+            the simulation results.
 
         Warning:
             Requires a build with HDF5 support.

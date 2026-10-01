@@ -18,14 +18,47 @@
 
 #include "mochi_ecs.h"
 
+#include <mochi_core/solvers/newton_solver_status.h>
+#include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/error.h>
 #include <mochi_core/utils/no_copy.h>
 #include <mochi_physics/mochi_physics_experimental.h>
+
+/*
+  Island sleeping.
+
+  An island at rest can be put to sleep. Sleeping islands are skipped by the simulation step.
+  Sleeping actors keep their positions and report zero velocity. An island wakes when its
+  composition changes (e.g. an awake actor comes close to it). Islands can also be woken up
+  explicitly via functions like WakeAll.
+
+  After each solve, an island records a rest value (see StageRestValue). It goes to sleep once it
+  has recorded SleepParams::minStepsBeforeSleep consecutive values of at least
+  SleepParams::sleepThreshold.
+*/
 
 namespace mochi {
 
 // Scene-global island sleeping parameters. See experimental::SleepParams.
 struct CSleepParams final : public experimental::SleepParams, NoCopy {};
+
+// Present on islands that are awake. Islands without it are asleep and are not simulated.
+struct TagIslandIsAwake {};
+
+// Requests that an island wakes up during the next PreStep.
+struct TagWakeUp {};
+
+// Per-island rest tracking.
+struct CIslandSleepState : NoCopy {
+  // Number of consecutive solves whose rest value was at least SleepParams::sleepThreshold.
+  int numConsecutiveRestSteps = 0;
+};
+
+// Scene-global state which may cause islands to wake up.
+struct CWakeUpRequests : NoCopy {
+  // Request that all islands wake before the next step.
+  bool wakeAll = false;
+};
 
 } // namespace mochi
 
@@ -37,6 +70,27 @@ void ValidateParams(
     experimental::SleepParams const& params,
     Error& error);
 
+// Adds the sleep components to a newly created island. New islands are awake.
+void InitIsland(entt::registry& reg, entt::entity island);
+
+// Rest value of one integration stage: 0 if the stage did not converge, 1 if it took zero
+// iterations, and the ratio of final to initial residual norms otherwise.
+[[nodiscard]] real StageRestValue(NewtonSolverStatus<real> const& status);
+
+// Records the rest value of an island's latest solve (the minimum over its stages).
+void RecordStep(entt::registry& reg, entt::entity island, real restValue);
+
+// Requests waking all islands. They will wake on the next PreStep.
+void WakeAll(entt::registry& reg);
+
+// Applies pending wake requests, then puts islands to sleep if they have been at rest long enough.
+// Must be called after islands have been merged and split for this step.
+void PreStep(entt::registry& reg);
+
+// Returns true if the island has TagIslandIsAwake.
+[[nodiscard]] bool IsIslandAwake(entt::registry const& reg, entt::entity island);
+
+// Call once during scene initialization.
 void InitializeOnce(entt::registry& reg);
 
 } // namespace mochi::sleep

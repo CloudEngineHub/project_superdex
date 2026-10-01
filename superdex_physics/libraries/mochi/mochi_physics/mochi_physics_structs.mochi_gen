@@ -1540,27 +1540,28 @@ struct PerformanceStats [equality] {
 // @see Scene::GetSolverStats
 struct SolverStats [equality] {
 
-  // @brief Maximum number of non-linear solver iterations across all islands and integration stages
-  // in the last call to @ref Scene::Step.
+  // @brief Maximum number of non-linear solver iterations across all awake islands and integration
+  // stages in the last call to @ref Scene::Step.
   int maxNonLinearIters;
 
-  // @brief Aggregate residual norm across all islands and integration stages in the last call to
-  // @ref Scene::Step. Computed as the root mean square across integration stages of the L2 norm
+  // @brief Aggregate residual norm across all awake islands and integration stages in the last call
+  // to @ref Scene::Step. Computed as the root mean square across integration stages of the L2 norm
   // of per-island residual norms.
   double residualNorm;
 
-  // @brief Maximum number of line-search iterations per Newton solve across all islands and
+  // @brief Maximum number of line-search iterations per Newton solve across all awake islands and
   // integration stages in the last call to @ref Scene::Step.
   int maxLineSearchIters;
 
   // @brief Aggregate convergence status of the scene in the last call to @ref Scene::Step.
   //
-  // @details Returns the worst convergence status across all dynamic actors:
+  // @details Returns the worst convergence status across all dynamic actors in awake islands:
   // @ref ConvergenceStatus::Diverged if any actor diverged,
   // @ref ConvergenceStatus::Stopped if any actor's solver was stopped,
-  // @ref ConvergenceStatus::Converged if all dynamic actors converged,
-  // @ref ConvergenceStatus::None if no dynamic actors exist, @ref Scene::Step has not been called yet or
-  // the last call to @ref Scene::Step was with zero time step.
+  // @ref ConvergenceStatus::Converged if all dynamic actors in awake islands converged,
+  // @ref ConvergenceStatus::None if no dynamic actors exist, all islands are asleep,
+  // @ref Scene::Step has not been called yet or the last call to @ref Scene::Step was with zero time
+  // step.
   //
   // @note Unlike @ref ConvergenceStatus::Diverged, @ref ConvergenceStatus::Stopped does not
   // indicate that the step failed. It means that the nonlinear solve reached a stopping criterion,

@@ -95,6 +95,7 @@ struct StageSolverStats {
   int numIterDone = 0; // Number of iterations done
   real resNormError = 0_r; // Maximum error in the residual norm across Newton iterations
   int numLSIterDone = 0; // Number of line-search iterations
+  ConvergenceStatus convergence = ConvergenceStatus::None; // Worst status among the island actors
 
   inline static StageSolverStats FromNewtonSolverStatus(NewtonSolverStatus<real> const& status) {
     return StageSolverStats{

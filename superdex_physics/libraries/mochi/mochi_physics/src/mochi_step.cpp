@@ -31,6 +31,7 @@
 #include "mochi_rigid.h"
 #include "mochi_rod.h"
 #include "mochi_shell.h"
+#include "mochi_sleep.h"
 #include "mochi_snle.h"
 #include "mochi_soft.h"
 #include "mochi_soft_rom_systems.h"
@@ -444,22 +445,23 @@ void mochi::StepEcs(entt::registry& reg) {
   MOCHI_PROFILE_SCOPE();
   TaskSemaphore eachTask;
 
-  reg.view<CIslandDescendants const>().each([&](entt::entity island,
-                                                CIslandDescendants const& descendants) {
-    Schedule(eachTask, "StepIsland", [island, &reg, &descendants]() {
-      // Keep nested island parallelism under TSAN so CI exercises synchronization paths.
-      bool const useLocalSingleThreadedMode =
-          !MOCHI_COMPILER_TSAN && island::ShouldRunSingleThreaded(reg, island, descendants);
-      if (useLocalSingleThreadedMode) {
-        TaskScheduler::PushLocalSingleThreadedMode();
-      }
-      MOCHI_DEFER(if (useLocalSingleThreadedMode) { TaskScheduler::PopLocalSingleThreadedMode(); });
+  reg.view<CIslandDescendants const, TagIslandIsAwake const>().each(
+      [&](entt::entity island, CIslandDescendants const& descendants) {
+        Schedule(eachTask, "StepIsland", [island, &reg, &descendants]() {
+          // Keep nested island parallelism under TSAN so CI exercises synchronization paths.
+          bool const useLocalSingleThreadedMode =
+              !MOCHI_COMPILER_TSAN && island::ShouldRunSingleThreaded(reg, island, descendants);
+          if (useLocalSingleThreadedMode) {
+            TaskScheduler::PushLocalSingleThreadedMode();
+          }
+          MOCHI_DEFER(
+              if (useLocalSingleThreadedMode) { TaskScheduler::PopLocalSingleThreadedMode(); });
 
-      PreStepIslandAsync(reg, descendants);
-      solver::StepIslandNewtonAsync(reg, island, descendants);
-      PostStepIslandAsync(reg, descendants);
-    });
-  });
+          PreStepIslandAsync(reg, descendants);
+          solver::StepIslandNewtonAsync(reg, island, descendants);
+          PostStepIslandAsync(reg, descendants);
+        });
+      });
 
   eachTask.Wait();
 }

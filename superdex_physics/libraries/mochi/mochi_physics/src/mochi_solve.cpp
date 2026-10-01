@@ -32,6 +32,7 @@
 #include "mochi_rom_jacobian.h"
 #include "mochi_scene_recorder.h"
 #include "mochi_shell.h"
+#include "mochi_sleep.h"
 #include "mochi_snle.h"
 #include "mochi_soft.h"
 #include "mochi_soft_rom_systems.h"
@@ -111,8 +112,10 @@ void mochi::SetSolutions(
  * actors get their individual convergence status. All other actors (or all actors when using @ref
  * NonLinearSolverConvergenceMode::Global, or when the solver diverged) get the global island
  * convergence status.
+ *
+ * @return The worst status distributed, or @ref ConvergenceStatus::None if no actor received one.
  */
-static void DistributeConvergenceStatus(
+[[nodiscard]] static ConvergenceStatus DistributeConvergenceStatus(
     entt::registry& reg,
     Span<entt::entity const> actors,
     SnleProblem<real> const& problem,
@@ -125,6 +128,7 @@ static void DistributeConvergenceStatus(
   bool const usePerActor =
       !result.actorConvergence.empty() && (result.convergence != ConvergenceStatus::Diverged);
 
+  ConvergenceStatus worstStatus = ConvergenceStatus::None;
   for (auto e : actors) {
     auto* convergence = reg.try_get<CConvergenceStatus>(e);
     if (!convergence) {
@@ -160,7 +164,9 @@ static void DistributeConvergenceStatus(
 
     convergence->stageStatus = stageStatus;
     convergence->stepStatus = Max(convergence->stepStatus, stageStatus);
+    worstStatus = Max(worstStatus, stageStatus);
   }
+  return worstStatus;
 }
 
 void mochi::solver::PostNewSolutionLocalPipeline(
@@ -1126,6 +1132,7 @@ bool mochi::solver::StepIslandNewtonAsync(
 
   // Perform time integration.
   bool success = true;
+  real restValue = 1_r;
   auto const integrationParams =
       CreateIslandTimeIntegrationParams(reg, descendants, simParams.integrationMethod);
 
@@ -1144,6 +1151,7 @@ bool mochi::solver::StepIslandNewtonAsync(
     // problem being solved here, they only serve as a brigde between solver and actors.
     NewtonSolverStatus<real> result = snleSolver.Solve(problem);
     success &= (result.convergence == ConvergenceStatus::Converged);
+    restValue = Min(restValue, sleep::StageRestValue(result));
     islandSolverStats.stages.emplace_back(StageSolverStats::FromNewtonSolverStatus(result));
 
     // Distribute solution to actors. NOTE: This call might be redundant in some cases,
@@ -1152,12 +1160,15 @@ bool mochi::solver::StepIslandNewtonAsync(
     SetSolutions(reg, descendants.actors, problem.solution);
 
     // Distribute convergence status to actors. Must be called before PostStageLocalPipeline.
-    DistributeConvergenceStatus(reg, descendants.actors, problem, result);
+    islandSolverStats.stages.back().convergence =
+        DistributeConvergenceStatus(reg, descendants.actors, problem, result);
 
     PostStageLocalPipeline(reg, descendants);
   }
 
   PostLastStageLocalPipeline(reg, descendants);
+
+  sleep::RecordStep(reg, island, restValue);
 
   return success;
 }

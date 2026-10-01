@@ -678,6 +678,7 @@ class Scene [no_init, no_destruct] {
   // and degrade performance.
   // @note If the scene is already recording, the previous recording is stopped before starting
   // the new one.
+  // @note Islands do not sleep while the scene is recording, so recording can change the simulation results.
   //
   // @see StopRecording, IsRecording, RecordingParams
   fn StartRecording(StringView filePath, RecordingParams const& params) -> void [pure, virtual, mochi_error];

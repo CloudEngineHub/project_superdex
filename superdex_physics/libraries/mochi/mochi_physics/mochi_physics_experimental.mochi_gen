@@ -583,6 +583,9 @@ fn experimental::EffectiveCoefficientOfRestitution(real normalViscousDampingCoef
 // @warning Island sleeping is experimental and may change or be removed without warning.
 //
 // @note Changing the sleep parameters wakes all islands.
+// @note Sleeping islands are excluded from @ref SolverStats and @ref experimental::DebugStats, and
+// their actors report @ref ConvergenceStatus::None from @ref Actor::GetConvergenceStatus.
+// @note Islands do not sleep while the scene is recording, so recording can change the simulation results.
 // @note Sleeping is not supported in differentiable scenes.
 //
 // @see experimental::GetSleepParams, experimental::SetSleepParams
@@ -627,7 +630,7 @@ fn experimental::GetSleepParams(Scene const* scene) -> experimental::SleepParams
 fn experimental::SetSleepParams(Scene* scene, experimental::SleepParams const& params) -> void [mochi_error];
 
 struct experimental::DebugStats [no_reflection] {
-  // @brief Largest relative error of the residual norm across integration stages, simulation
+  // @brief Largest relative error of the residual norm across integration stages, awake simulation
   // islands and Newton iterations, in the last call to @ref Scene::Step. The error is computed by
   // finite-difference consistency check. It is disabled by default due to its computational cost,
   // but it can be activated with @ref ExperimentalEvalParams::consistencyResNorm.

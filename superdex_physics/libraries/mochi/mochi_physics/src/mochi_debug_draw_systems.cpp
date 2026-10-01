@@ -27,6 +27,7 @@
 #include "mochi_rigid.h"
 #include "mochi_rod.h"
 #include "mochi_rod_pose.h"
+#include "mochi_sleep.h"
 #include "mochi_snle.h"
 #include "mochi_soft.h"
 
@@ -219,13 +220,15 @@ static void RegisterDebugDrawSystem_CompoundAabbWorld(DebugDrawInternal& debugDr
 static void RegisterDebugDrawSystem_IslandAabbWorld(DebugDrawInternal& debugDraw) {
   DebugDrawSystem system;
   system.name = "Island AABB World (tight fit)";
-  system.description = "Draw a wireframe box around the actors within an island.";
+  system.description =
+      "Draw a wireframe box around the actors within an island. Sleeping islands are light grey.";
   system.sortingDepth -= 6_r; // Draw on top of default stuff, in case they overlap
   system.onDrawEntityWorldSpace =
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
         auto const& members = reg.get<CIslandMembers const>(e);
         if (auto worldAabb = GetGroupWorldBounds(reg, members)) {
-          out.AddWireframeAabb(*worldAabb, MakeColor(0x8080FFFF));
+          auto const color = sleep::IsIslandAwake(reg, e) ? MakeColor(0x8080FFFF) : colors::kSilver;
+          out.AddWireframeAabb(*worldAabb, color);
         }
       };
   debugDraw.RegisterSystem<CIslandMembers>(system);
@@ -235,7 +238,7 @@ static void RegisterDebugDrawSystem_IslandAabbWorldConservative(DebugDrawInterna
   DebugDrawSystem system;
   system.name = "Island AABB World (conservative)";
   system.description =
-      "Draw a wireframe box around the conservative step bounds of all actors within an island.";
+      "Draw a wireframe box around the conservative step bounds of all actors within an island. Sleeping islands are light grey.";
   system.sortingDepth -= 7_r; // Draw on top of default stuff, in case they overlap
   system.onDrawEntityWorldSpace =
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
@@ -255,7 +258,8 @@ static void RegisterDebugDrawSystem_IslandAabbWorldConservative(DebugDrawInterna
           }
         });
         if (hasBounds) {
-          out.AddWireframeAabb(Aabb{min, max}, MakeColor(0xFF33FFFF));
+          auto const color = sleep::IsIslandAwake(reg, e) ? MakeColor(0xFF33FFFF) : colors::kSilver;
+          out.AddWireframeAabb(Aabb{min, max}, color);
         }
       };
   debugDraw.RegisterSystem<CIslandMembers>(system);
