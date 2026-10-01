@@ -540,14 +540,28 @@ class ActorInterfaceImpl : public ActorInterface {
         rigidInertia, error, "SetInertiaProperties is only supported for rigid actors.");
     MOCHI_ERROR_RETURN(error);
 
+    Vec4r const comLocal = ToSimd(centerOfMass);
+    Vec4r const prevComLocal = rigidInertia->GetCenterOfMassLocal();
+    // Exact comparison: an unchanged CoM must not perturb the state with roundoff.
+    bool const comChanged = !Equal<3>(comLocal, prevComLocal);
+    // Translation BCs pin absolute world CoM positions. ClearBoundaryConditions empties the
+    // component without removing it.
+    auto const* bc = reg.try_get<CDofPositionsBC const>(e);
+    bool const hasTranslationBC =
+        bc && std::any_of(bc->poseIndices.begin(), bc->poseIndices.end(), [](int i) {
+          return i < RigidSize::kTrans;
+        });
+    MOCHI_ERROR_IF(
+        comChanged && (reg.all_of<CConstraintMemberInfo>(e) || hasTranslationBC),
+        error,
+        "Cannot change the center of mass of an actor with constraints or translation boundary conditions. Set the center of mass before adding them.");
+    MOCHI_ERROR_RETURN(error);
+
     if (!IsMomentOfInertiaValid(momentOfInertia)) {
       MOCHI_LOG_WARNING(
           "New moment-of-inertia tensor for actor \"%s\" is not physically valid: principal moments must be non-negative and satisfy the triangle inequality.",
           GetName());
     }
-
-    // Convert Real3 → Vec4r (xyz, w=0)
-    Vec4r const comLocal = ToSimd(centerOfMass);
 
     // Convert Real6 (upper triangle: xx, xy, xz, yy, yz, zz) → VMatrix3x3r (symmetric 3×3)
     VMatrix3x3r const moi = {
@@ -556,6 +570,25 @@ class ActorInterfaceImpl : public ActorInterface {
         Vec4r{momentOfInertia[2], momentOfInertia[4], momentOfInertia[5]}};
 
     rigidInertia->SetInertiaProperties(mass, comLocal, moi);
+
+    if (comChanged) {
+      // The rigid state stores the CoM pose. Re-derive it from the unchanged root transform so the
+      // actor does not move.
+      TransformRT const worldFromLocal = reg.get<CRootTransform const>(e).worldFromLocal;
+      ecs::InvokeOnEntity(&rigid::SetRootTransform, reg, e, std::cref(worldFromLocal));
+
+      // Preserve the rigid velocity field: vcom' = vcom + omega x dcom.
+      Vec4r const comShiftWorld = worldFromLocal.GetRotation() * (comLocal - prevComLocal);
+      auto& rigidVel = reg.get<CRigidVel<TimeStep::Current>>(e).value;
+      rigidVel.SetVCom(
+          rigidVel.GetVCom() + Cross3(rigidVel.GetOmegaAndVSym().first, comShiftWorld));
+      auto& prevRigidVelocity = reg.get<CPrevRigidVelocity>(e);
+      prevRigidVelocity.linearVelocityWorld = rigidVel.GetVCom();
+      prevRigidVelocity.centerOfMassLocal = comLocal;
+
+      // Step history is stored in terms of the old CoM.
+      InvalidateActorStepHistory(reg, e);
+    }
 
     // Invalidate actor convergence weights.
     InvalidateActorConvergenceWeights(reg, e);

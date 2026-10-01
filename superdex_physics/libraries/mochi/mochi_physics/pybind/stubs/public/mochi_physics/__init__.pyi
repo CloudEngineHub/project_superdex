@@ -9452,6 +9452,11 @@ class Actor:
             Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler
             in the first time step after this method is called.
 
+        Note:
+            Moves the actor without changing where the center of mass is within the
+            actor (:meth:`~superdex.physics.Actor.get_rigid_center_of_mass_local`). To
+            change that, use :meth:`~superdex.physics.Actor.set_inertia_properties`.
+
         See Also:
             :meth:`~superdex.physics.Actor.get_center_of_mass_transform`,
             :meth:`~superdex.physics.Actor.set_root_transform`
@@ -9641,6 +9646,22 @@ class Actor:
         Note:
             After this call, :meth:`~superdex.physics.Actor.get_density` returns bulk
             density mass / volume.
+
+        Note:
+            The root transform (:meth:`~superdex.physics.Actor.get_root_transform`) and
+            the velocity of every material point are preserved, so changing the center
+            of mass does not move the actor.
+            :meth:`~superdex.physics.Actor.get_linear_velocity`, the center-of-mass
+            velocity, changes accordingly when the actor is rotating. To place the new
+            center of mass at the previous center-of-mass pose instead, call
+            :meth:`~superdex.physics.Actor.get_center_of_mass_transform` before this
+            call and pass the result to
+            :meth:`~superdex.physics.Actor.set_center_of_mass_transform` afterwards.
+
+        Note:
+            The center of mass cannot be changed while the actor has constraints or
+            translation boundary conditions. Set the center of mass before adding them.
+            Changing only mass or moment of inertia remains supported.
 
         See Also:
             :meth:`~superdex.physics.Actor.get_mass`,

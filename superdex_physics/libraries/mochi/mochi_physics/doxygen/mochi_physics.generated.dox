@@ -5018,6 +5018,7 @@
 /// @note Only supported for standalone dynamic rigid actors.
 /// @note Does not change velocity.
 /// @note Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler in the first time step after this method is called.
+/// @note Moves the actor without changing where the center of mass is within the actor (@ref mochi::Actor::GetRigidCenterOfMassLocal "GetRigidCenterOfMassLocal"). To change that, use @ref mochi::Actor::SetInertiaProperties "SetInertiaProperties".
 ///
 /// @see @ref mochi::Actor::GetCenterOfMassTransform "GetCenterOfMassTransform", @ref mochi::Actor::SetRootTransform "SetRootTransform"
 ///
@@ -5128,6 +5129,8 @@
 /// @note A finite but physically invalid moment of inertia tensor (negative principal moments or one violating the triangle inequality) is accepted with a warning, not rejected.
 /// @note Re-anchors the density reference state. Subsequent @ref mochi::Actor::SetDensity "SetDensity" calls rescale mass and moment of inertia proportionally about the new values; center of mass is unchanged by @ref mochi::Actor::SetDensity "SetDensity".
 /// @note After this call, @ref mochi::Actor::GetDensity "GetDensity" returns bulk density mass / volume.
+/// @note The root transform (@ref mochi::Actor::GetRootTransform "GetRootTransform") and the velocity of every material point are preserved, so changing the center of mass does not move the actor. @ref mochi::Actor::GetLinearVelocity "GetLinearVelocity", the center-of-mass velocity, changes accordingly when the actor is rotating. To place the new center of mass at the previous center-of-mass pose instead, call @ref mochi::Actor::GetCenterOfMassTransform "GetCenterOfMassTransform" before this call and pass the result to @ref mochi::Actor::SetCenterOfMassTransform "SetCenterOfMassTransform" afterwards.
+/// @note The center of mass cannot be changed while the actor has constraints or translation boundary conditions. Set the center of mass before adding them. Changing only mass or moment of inertia remains supported.
 ///
 /// @see @ref mochi::Actor::GetMass "GetMass", @ref mochi::Actor::GetDensity "GetDensity", @ref mochi::Actor::SetDensity "SetDensity", @ref mochi::Actor::GetRigidCenterOfMassLocal "GetRigidCenterOfMassLocal", @ref mochi::Actor::GetRigidMomentOfInertiaLocal "GetRigidMomentOfInertiaLocal"
 ///

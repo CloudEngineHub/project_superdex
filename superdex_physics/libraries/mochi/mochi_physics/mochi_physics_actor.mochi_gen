@@ -164,6 +164,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // @note Does not change velocity.
   // @note Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler in the first
   // time step after this method is called.
+  // @note Moves the actor without changing where the center of mass is within the actor
+  // (@ref GetRigidCenterOfMassLocal). To change that, use @ref SetInertiaProperties.
   //
   // @see GetCenterOfMassTransform, SetRootTransform
   fn SetCenterOfMassTransform(TransformRT const& worldFromCom) -> void [pure, virtual, mochi_error, batchable];
@@ -265,6 +267,14 @@ class Actor [no_init, no_destruct, use_scene] {
   // moment of inertia proportionally about the new values; center of mass is unchanged by
   // @ref SetDensity.
   // @note After this call, @ref GetDensity returns bulk density mass / volume.
+  // @note The root transform (@ref GetRootTransform) and the velocity of every material point are
+  // preserved, so changing the center of mass does not move the actor. @ref GetLinearVelocity, the
+  // center-of-mass velocity, changes accordingly when the actor is rotating. To place the new
+  // center of mass at the previous center-of-mass pose instead, call @ref GetCenterOfMassTransform
+  // before this call and pass the result to @ref SetCenterOfMassTransform afterwards.
+  // @note The center of mass cannot be changed while the actor has constraints or translation
+  // boundary conditions. Set the center of mass before adding them. Changing only mass or moment of
+  // inertia remains supported.
   //
   // @see GetMass, GetDensity, SetDensity, GetRigidCenterOfMassLocal, GetRigidMomentOfInertiaLocal
   fn SetInertiaProperties(real mass [units("kg")], Real3 const& centerOfMass [units("m")], Real6 const& momentOfInertia [units("kg*m^2")]) -> void [pure, virtual, mochi_error, batchable];

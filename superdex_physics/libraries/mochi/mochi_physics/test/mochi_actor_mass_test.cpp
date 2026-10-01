@@ -20,8 +20,10 @@
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/mochi_physics_experimental.h>
 #include <mochi_physics/src/mochi_actor.h>
+#include <mochi_physics/src/mochi_rigid.h>
 
 #include <functional>
+#include <limits>
 #include <vector>
 
 using namespace mochi;
@@ -33,6 +35,7 @@ static_assert(
 
 real constexpr kApiRelTol = kDefaultNearEqualEpsilon<real>;
 real constexpr kPhysicsMassRelTol = 0.02_r;
+real constexpr kRoundoffTol = 64_r * std::numeric_limits<real>::epsilon();
 
 // =============================================================================
 // Fixtures
@@ -653,6 +656,131 @@ TEST_F(ActorMassTest, SetInertiaProperties_RigidActor_Roundtrip) {
   auto const moi = actor->GetRigidMomentOfInertiaLocal(test::ExpectOK{});
   EXPECT_EQ(kNewCom, actor->GetRigidCenterOfMassLocal(test::ExpectOK{}));
   EXPECT_SPAN_EQ(kNewMoi, moi);
+}
+
+TEST_F(ActorMassTest, SetInertiaProperties_ComChangeMatchesActorCreatedWithCom) {
+  _scene->SetGravity(Real3{});
+
+  auto [coords, conn] = test::CreateMinimalTetMeshUnitCube(Real3{0.1_r, 0.2_r, 0.3_r});
+  auto shape = _mochiContext->CreateTetMeshShape(
+      Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), test::ExpectOK{});
+
+  auto const worldFromLocal = TransformRT{
+      Quaternion::FromAxisAngle(Normalize(Real3{1_r, 2_r, 3_r}), 0.3_r * kPI),
+      Real3{1_r, 2_r, 3_r}};
+  auto constexpr kLinearVel = Real3{0.1_r, -0.2_r, 0.3_r};
+  auto constexpr kAngularVel = Real3{1_r, 2_r, -1.5_r};
+  auto constexpr kMass = 5_r;
+  auto constexpr kNewCom = Real3{0.4_r, -0.3_r, 0.2_r};
+  auto constexpr kMoi = Real6{2_r, 0.1_r, 0.2_r, 3_r, 0.3_r, 4_r};
+
+  // Actor whose CoM is changed while moving.
+  RigidActorParams params{
+      .shape = shape,
+      .worldFromLocal = worldFromLocal,
+      .colliderType = ColliderType::None,
+      .density = 500_r};
+  auto* actor = _scene->CreateRigidActor(params, test::ExpectOK{});
+  MOCHI_DEFER(_scene->DestroyActor(actor));
+  actor->SetVelocity(kLinearVel, kAngularVel, test::ExpectOK{});
+  Real3 const oldCom = actor->GetRigidCenterOfMassLocal(test::ExpectOK{});
+  auto const rootBefore = actor->GetRootTransform();
+
+  actor->SetInertiaProperties(kMass, kNewCom, kMoi, test::ExpectOK{});
+
+  // The root transform is unchanged; the CoM transform follows the new local CoM.
+  EXPECT_EQ(rootBefore, actor->GetRootTransform());
+  EXPECT_NEAR_EQ(
+      rootBefore.TransformPoint(kNewCom),
+      actor->GetCenterOfMassTransform(test::ExpectOK{}).GetTranslation());
+
+  // The rigid velocity field is preserved, so the CoM velocity follows the CoM shift.
+  Real3 const expectedComVel =
+      kLinearVel + Cross(kAngularVel, worldFromLocal.GetRotation() * (kNewCom - oldCom));
+  EXPECT_NEAR_EQ(expectedComVel, actor->GetLinearVelocity(test::ExpectOK{}));
+  EXPECT_NEAR_EQ(kAngularVel, actor->GetAngularVelocity(test::ExpectOK{}));
+
+  // Reference actor created with the new inertia properties, same pose, same velocity field.
+  RigidActorParams refParams{
+      .shape = shape,
+      .worldFromLocal = worldFromLocal,
+      .colliderType = ColliderType::None,
+      .mass = kMass,
+      .centerOfMass = kNewCom,
+      .momentOfInertia = kMoi,
+      .linearVelocity = expectedComVel,
+      .angularVelocity = kAngularVel};
+  auto* refActor = _scene->CreateRigidActor(refParams, test::ExpectOK{});
+  MOCHI_DEFER(_scene->DestroyActor(refActor));
+
+  auto const& reg = GetRegistry();
+  auto const e = GetEntity(actor);
+  for (int i = 0; i < 10; ++i) {
+    _scene->Step(0.01);
+
+    // Passing the same CoM leaves the solver-produced state bit-exact.
+    auto const stateBefore = reg.get<CRigidState<TimeStep::Current> const>(e).value;
+    auto const vComBefore = reg.get<CRigidVel<TimeStep::Current> const>(e).value.GetVCom();
+    auto const rootBeforeSameCom = actor->GetRootTransform();
+    actor->SetInertiaProperties(kMass, kNewCom, kMoi, test::ExpectOK{});
+    EXPECT_EQ(stateBefore, reg.get<CRigidState<TimeStep::Current> const>(e).value);
+    EXPECT_TRUE(
+        Equal<3>(vComBefore, reg.get<CRigidVel<TimeStep::Current> const>(e).value.GetVCom()));
+    EXPECT_EQ(rootBeforeSameCom, actor->GetRootTransform());
+  }
+
+  auto const root = actor->GetRootTransform();
+  auto const refRoot = refActor->GetRootTransform();
+  EXPECT_NEAR_TOL(refRoot, root, kRoundoffTol);
+
+  auto const stateBeforeMassChange = reg.get<CRigidState<TimeStep::Current> const>(e).value;
+  auto const vComBeforeMassChange = reg.get<CRigidVel<TimeStep::Current> const>(e).value.GetVCom();
+  actor->SetInertiaProperties(
+      2_r * kMass, kNewCom, Real6{3_r, 0.1_r, 0.2_r, 4_r, 0.3_r, 5_r}, test::ExpectOK{});
+  EXPECT_EQ(stateBeforeMassChange, reg.get<CRigidState<TimeStep::Current> const>(e).value);
+  EXPECT_TRUE(
+      Equal<3>(
+          vComBeforeMassChange, reg.get<CRigidVel<TimeStep::Current> const>(e).value.GetVCom()));
+  EXPECT_EQ(root, actor->GetRootTransform());
+}
+
+TEST_F(ActorMassTest, SetInertiaProperties_ComChangeRejectedWithConstraintOrTranslationBC) {
+  auto [coords, conn] = test::CreateMinimalTetMeshUnitCube(Real3{0.1_r, 0.2_r, 0.3_r});
+  auto shape = _mochiContext->CreateTetMeshShape(
+      Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), test::ExpectOK{});
+  RigidActorParams params{.shape = shape, .colliderType = ColliderType::None, .density = 500_r};
+  auto* actor = _scene->CreateRigidActor(params, test::ExpectOK{});
+  MOCHI_DEFER(_scene->DestroyActor(actor));
+
+  auto constexpr kMass = 5_r;
+  auto constexpr kMoi = Real6{2_r, 0.1_r, 0.2_r, 3_r, 0.3_r, 4_r};
+  auto constexpr kNewCom = Real3{0.4_r, -0.3_r, 0.2_r};
+  Real3 const oldCom = actor->GetRigidCenterOfMassLocal(test::ExpectOK{});
+
+  // A translation BC rejects a CoM change but accepts mass and moment-of-inertia changes.
+  int const translationDof = 0;
+  real const translationValue =
+      actor->GetCenterOfMassTransform(test::ExpectOK{}).GetTranslation()[0];
+  actor->AddBoundaryConditionDofsWorld(
+      MakeSingletonConstSpan(translationDof),
+      MakeSingletonConstSpan(translationValue),
+      test::ExpectOK{});
+  actor->SetInertiaProperties(kMass, kNewCom, kMoi, test::ExpectNotOK{});
+  actor->SetInertiaProperties(kMass, oldCom, kMoi, test::ExpectOK{});
+
+  // Cleared BCs and rotation-only BCs do not restrict the CoM.
+  actor->ClearBoundaryConditions();
+  int const rotationDofs[] = {3, 4, 5};
+  real const rotationValues[] = {0_r, 0_r, 0_r};
+  actor->AddBoundaryConditionDofsWorld(rotationDofs, rotationValues, test::ExpectOK{});
+  actor->SetInertiaProperties(kMass, kNewCom, kMoi, test::ExpectOK{});
+
+  // A constraint rejects a CoM change but accepts mass and moment-of-inertia changes.
+  RigidPivotPositionConstraintParams conParams;
+  conParams.actor = actor->GetHandle();
+  _scene->CreateRigidPivotPositionConstraint(conParams, test::ExpectOK{});
+  actor->SetInertiaProperties(kMass, oldCom, kMoi, test::ExpectNotOK{});
+  actor->SetInertiaProperties(2_r * kMass, kNewCom, kMoi, test::ExpectOK{});
 }
 
 TEST_F(ActorMassTest, SetInertiaProperties_DensityRescale) {
