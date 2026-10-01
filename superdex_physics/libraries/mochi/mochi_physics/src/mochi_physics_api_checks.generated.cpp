@@ -462,6 +462,11 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::ha
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::contactElementType), mochi::ActorBoundaryElementType mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::contactElementType is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::useContactSkin), bool mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::useContactSkin is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
+// struct mochi::experimental::SleepParams
+static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::canSleep), bool mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::canSleep is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::sleepThreshold), mochi::real mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::sleepThreshold is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::minStepsBeforeSleep), int mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::minStepsBeforeSleep is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+
 // struct mochi::experimental::DebugStats
 static_assert(std::is_same_v<decltype(&mochi::experimental::DebugStats::maxResidualNormRelativeError), mochi::real mochi::experimental::DebugStats::*>, "\n  ERROR: Field mochi::experimental::DebugStats::maxResidualNormRelativeError is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
@@ -560,6 +565,12 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::CalibrateNormalVisco
 
 // free function mochi::experimental::EffectiveCoefficientOfRestitution
 static_assert(std::is_same_v<decltype(&mochi::experimental::EffectiveCoefficientOfRestitution), mochi::real (*)(mochi::real, mochi::real, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::EffectiveCoefficientOfRestitution is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
+// free function mochi::experimental::GetSleepParams
+static_assert(std::is_same_v<decltype(&mochi::experimental::GetSleepParams), mochi::experimental::SleepParams (*)(mochi::Scene const*, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::GetSleepParams is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
+// free function mochi::experimental::SetSleepParams
+static_assert(std::is_same_v<decltype(&mochi::experimental::SetSleepParams), void (*)(mochi::Scene*, mochi::experimental::SleepParams const&, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::SetSleepParams is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
 // free function mochi::experimental::GetDebugStats
 static_assert(std::is_same_v<decltype(&mochi::experimental::GetDebugStats), mochi::experimental::DebugStats (*)(mochi::Scene const*, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::GetDebugStats is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
@@ -1551,6 +1562,12 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT((params.hasGravity == bool(true)), "DSL default value for ShellActorParams::hasGravity doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.contactElementType == mochi::ActorBoundaryElementType::Default), "DSL default value for ShellActorParams::contactElementType doesn't match C++ default. DSL says Default, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.useContactSkin == bool(false)), "DSL default value for ShellActorParams::useContactSkin doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::experimental::SleepParams params{};
+    MOCHI_ASSERT((params.canSleep == bool(false)), "DSL default value for SleepParams::canSleep doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.sleepThreshold, 0.5_r, "DSL default value for SleepParams::sleepThreshold doesn't match C++ default. DSL says 0.5, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.minStepsBeforeSleep == int(20)), "DSL default value for SleepParams::minStepsBeforeSleep doesn't match C++ default. DSL says 20, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
 #if MOCHI_INTERNAL
   {

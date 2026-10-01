@@ -224,6 +224,8 @@ class SceneImpl final : public Scene {
       Span<SReflect::TypeId const> excludedAttributes,
       Error& error);
   [[nodiscard]] experimental::DebugStats GetDebugStats() const;
+  [[nodiscard]] experimental::SleepParams GetSleepParams() const;
+  void SetSleepParams(experimental::SleepParams const& params, Error& error);
   void ApplyImprovedConvergenceSettings(bool logWarnings = false);
   void WarnIfNotImprovedConvergenceSettings() const;
   // Restore two captured states so that curr becomes the TimeStep::Current state and prev becomes

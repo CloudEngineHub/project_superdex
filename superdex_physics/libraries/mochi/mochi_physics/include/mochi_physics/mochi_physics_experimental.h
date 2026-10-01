@@ -1568,6 +1568,26 @@ MOCHI_API bool
 IsValidNewtonEulerTerms(NewtonEulerTerms const* newtonEulerTerms, Context* context, Error& error);
 
 // -------------------------------------------------------------------
+// Island sleeping
+// -------------------------------------------------------------------
+
+struct SleepParams {
+  bool canSleep = false;
+
+  real sleepThreshold = 0.5_r;
+
+  int minStepsBeforeSleep = 20;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(SleepParams const&) const = default;
+#endif
+};
+
+[[nodiscard]] MOCHI_API SleepParams GetSleepParams(Scene const* scene, Error& error);
+
+MOCHI_API void SetSleepParams(Scene* scene, SleepParams const& params, Error& error);
+
+// -------------------------------------------------------------------
 // Debugging tools
 // -------------------------------------------------------------------
 

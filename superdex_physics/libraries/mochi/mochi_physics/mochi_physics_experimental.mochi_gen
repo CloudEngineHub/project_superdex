@@ -569,6 +569,63 @@ fn experimental::CalibrateNormalViscousDampingCoefficient(real cor, real impactV
 // @see CalibrateNormalViscousDampingCoefficient, ContactParams::normalViscousDampingCoefficient
 fn experimental::EffectiveCoefficientOfRestitution(real normalViscousDampingCoefficient, real impactVelocity) -> real [mochi_error];
 
+// @brief [Experimental] Parameters controlling island sleeping.
+//
+// @details Actors that interact (through contact or constraints) are grouped into islands, which
+// are solved together. An island at rest can be put to sleep: it keeps its state unchanged and is
+// skipped by @ref Scene::Step until something wakes it (e.g. an actor, constraint or scene setting
+// changes through the API, or an awake actor comes into contact with it).
+//
+// @details An island goes to sleep after @ref minStepsBeforeSleep consecutive steps in which it was
+// at rest, as judged by @ref sleepThreshold. Steps in which the solver did not converge never count,
+// so an island that never converges never goes to sleep.
+//
+// @warning Island sleeping is experimental and may change or be removed without warning.
+//
+// @note Changing the sleep parameters wakes all islands.
+// @note Sleeping is not supported in differentiable scenes.
+//
+// @see experimental::GetSleepParams, experimental::SetSleepParams
+struct experimental::SleepParams [equality, no_reflection] {
+
+  // @brief Whether islands are allowed to sleep.
+  bool canSleep = false;
+
+  // @brief How strictly (dimensionless) a step is judged to be at rest.
+  //
+  // @details Higher values are stricter: an island must be closer to rest before a step counts
+  // toward sleep, so islands sleep later and less often. At 1, a step counts only if the solver had
+  // nothing to do. Lower values let islands sleep sooner and save more computation, but increase the
+  // risk of putting slowly moving actors to sleep before they have settled.
+  //
+  // @note Must be in (0, 1].
+  real sleepThreshold = 0.5;
+
+  // @brief Number of consecutive rest steps required before an island goes to sleep.
+  //
+  // @note Must be at least 2.
+  int minStepsBeforeSleep = 20;
+}
+
+// @brief [Experimental] Get the island sleeping parameters of a scene.
+//
+// @param[in] scene Scene to query.
+//
+// @return Current sleep parameters.
+//
+// @see experimental::SetSleepParams, experimental::SleepParams
+fn experimental::GetSleepParams(Scene const* scene) -> experimental::SleepParams [mochi_error];
+
+// @brief [Experimental] Set the island sleeping parameters of a scene.
+//
+// @param[in,out] scene Scene to modify.
+// @param[in] params Sleep parameters to set.
+//
+// @note Wakes all islands if the parameters change.
+//
+// @see experimental::GetSleepParams, experimental::SleepParams
+fn experimental::SetSleepParams(Scene* scene, experimental::SleepParams const& params) -> void [mochi_error];
+
 struct experimental::DebugStats [no_reflection] {
   // @brief Largest relative error of the residual norm across integration stages, simulation
   // islands and Newton iterations, in the last call to @ref Scene::Step. The error is computed by

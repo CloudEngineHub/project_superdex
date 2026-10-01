@@ -42,6 +42,7 @@
 #include "mochi_shape.h"
 #include "mochi_shell_init.h"
 #include "mochi_simulation.h"
+#include "mochi_sleep.h"
 #include "mochi_soft.h"
 #include "mochi_soft_init.h"
 #include "mochi_soft_rom_components.h"
@@ -564,6 +565,18 @@ void SceneImpl::SetSolverParams(SolverParams const& params, Error& error) {
         "Differentiable scenes require explicit normals for contact. Overriding input params.");
     storedParams.experimentalEval.explicitNormals = true;
   }
+}
+
+experimental::SleepParams SceneImpl::GetSleepParams() const {
+  return _registry.ctx<CSleepParams const>();
+}
+
+void SceneImpl::SetSleepParams(experimental::SleepParams const& params, Error& error) {
+  sleep::ValidateParams(_registry, params, error);
+  MOCHI_ERROR_RETURN(error);
+
+  experimental::SleepParams& storedParams = _registry.ctx<CSleepParams>();
+  storedParams = params;
 }
 
 void SceneImpl::Step(double timeStepSec) {
@@ -3408,6 +3421,12 @@ void MakeSceneDifferentiableInternal(Scene* scene, Error& error) {
   // Create a tag of differentiability
   reg.set<TagDifferentiableScene>();
 
+  // Island sleeping is not supported in differentiable scenes.
+  if (auto& sleepParams = reg.ctx<CSleepParams>(); sleepParams.canSleep) {
+    MOCHI_LOG_WARNING("Differentiable scenes do not support island sleeping. Disabling it.");
+    sleepParams.canSleep = false;
+  }
+
   // Create default solver params
   reg.set<CBackPropagationSolverParams>();
 
@@ -3512,6 +3531,18 @@ experimental::DebugStats experimental::GetDebugStats(Scene const* scene, Error& 
   MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
   MOCHI_ERROR_RETURN(error, {});
   return assert_cast<SceneImpl const*>(scene)->GetDebugStats();
+}
+
+experimental::SleepParams experimental::GetSleepParams(Scene const* scene, Error& error) {
+  MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
+  MOCHI_ERROR_RETURN(error, {});
+  return assert_cast<SceneImpl const*>(scene)->GetSleepParams();
+}
+
+void experimental::SetSleepParams(Scene* scene, SleepParams const& params, Error& error) {
+  MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
+  MOCHI_ERROR_RETURN(error);
+  assert_cast<SceneImpl*>(scene)->SetSleepParams(params, error);
 }
 
 Actor* CopyActorToSingletonScene(Actor const* actor, Context* context, Error& error) {

@@ -59,6 +59,7 @@ void mochi::DeclareMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mo
   registry.StoreClass(nb::class_<mochi::experimental::RodActorParams>(m_experimental, "RodActorParams", "Parameters for creating an experimental rod actor."));
   registry.StoreClass(nb::class_<mochi::experimental::ShellMaterialParams>(m_experimental, "ShellMaterialParams"));
   registry.StoreClass(nb::class_<mochi::experimental::ShellActorParams>(m_experimental, "ShellActorParams", "Parameters for creating an experimental shell actor."));
+  registry.StoreClass(nb::class_<mochi::experimental::SleepParams>(m_experimental, "SleepParams", "[Experimental] Parameters controlling island sleeping.\n\nActors that interact (through contact or constraints) are grouped into islands,\nwhich are solved together. An island at rest can be put to sleep: it keeps its\nstate unchanged and is skipped by :meth:`~superdex.physics.Scene.step` until\nsomething wakes it (e.g. an actor, constraint or scene setting changes through\nthe API, or an awake actor comes into contact with it).\n\nAn island goes to sleep after :attr:`min_steps_before_sleep` consecutive steps\nin which it was at rest, as judged by :attr:`sleep_threshold`. Steps in which\nthe solver did not converge never count, so an island that never converges never\ngoes to sleep.\n\nNote:\n    Changing the sleep parameters wakes all islands.\n\nNote:\n    Sleeping is not supported in differentiable scenes.\n\nWarning:\n    Island sleeping is experimental and may change or be removed without\n    warning.\n\nSee Also:\n    :func:`~superdex.physics.experimental.get_sleep_params`,\n    :func:`~superdex.physics.experimental.set_sleep_params`"));
   registry.StoreClass(nb::class_<mochi::experimental::DebugStats>(m_experimental, "DebugStats"));
 }
 
@@ -522,6 +523,29 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     .def_rw("use_contact_skin", &mochi::experimental::ShellActorParams::useContactSkin, "Use the shape's authored contact skin for colliding contact samples.\n\nActor creation fails unless the shape has a triangular contact skin with\nnode-based linear skinning data. This changes the shell's colliding contact\nsamples. The point-cloud collider, when enabled, remains discretized on the\nphysics mesh.")
   ;
 
+  registry.GetClass<mochi::experimental::SleepParams>()
+    .def("__init__", [](mochi::experimental::SleepParams* self, nb::object can_sleep, nb::object sleep_threshold, nb::object min_steps_before_sleep) {
+      mochi::experimental::SleepParams result{};
+      result.canSleep = nb::cast<bool>(can_sleep);
+      result.sleepThreshold = nb::cast<mochi::real>(sleep_threshold);
+      result.minStepsBeforeSleep = nb::cast<int>(min_steps_before_sleep);
+      new (self) mochi::experimental::SleepParams(std::move(result));
+    }
+      , nb::kw_only()
+      , nb::arg("can_sleep") = mochi::experimental::SleepParams{}.canSleep
+      , nb::arg("sleep_threshold") = mochi::experimental::SleepParams{}.sleepThreshold
+      , nb::arg("min_steps_before_sleep") = mochi::experimental::SleepParams{}.minStepsBeforeSleep
+    )
+    .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
+    .def("__copy__", [](mochi::experimental::SleepParams const& self) { return mochi::experimental::SleepParams(self); })
+    .def("__deepcopy__", [](mochi::experimental::SleepParams const& self, nb::dict) { return mochi::experimental::SleepParams(self); })
+    .def_rw("can_sleep", &mochi::experimental::SleepParams::canSleep, "Whether islands are allowed to sleep.")
+    .def_rw("sleep_threshold", &mochi::experimental::SleepParams::sleepThreshold, "How strictly (dimensionless) a step is judged to be at rest.\n\nHigher values are stricter: an island must be closer to rest before a step\ncounts toward sleep, so islands sleep later and less often. At 1, a step counts\nonly if the solver had nothing to do. Lower values let islands sleep sooner and\nsave more computation, but increase the risk of putting slowly moving actors to\nsleep before they have settled.\n\nNote:\n    Must be in (0, 1].")
+    .def_rw("min_steps_before_sleep", &mochi::experimental::SleepParams::minStepsBeforeSleep, "Number of consecutive rest steps required before an island goes to sleep.\n\nNote:\n    Must be at least 2.")
+  ;
+
   registry.GetClass<mochi::experimental::DebugStats>()
     .def("__init__", [](mochi::experimental::DebugStats* self, nb::object max_residual_norm_relative_error) {
       mochi::experimental::DebugStats result{};
@@ -920,6 +944,30 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("normal_viscous_damping_coefficient")
       , nb::arg("impact_velocity")
       , "Effective coefficient of restitution (CoR) produced by a normal viscous damping\ncoefficient at an impact velocity.\n\nExact inverse of\n:func:`~superdex.physics.experimental.calibrate_normal_viscous_damping_coefficient`:\nsolves the calibration relation for the positive root:\n\n::\n\n    e = (-B + sqrt(B^2 + 4A)) / (2A)\n    A = a + b*alpha\n    B = alpha + 1 - a\n    alpha = c * v\n\nwhere a = 9/2 and b = 8/3.\n\nArgs:\n    normal_viscous_damping_coefficient (float): Normal viscous damping\n        coefficient [s/m]. Must be finite and non-negative.\n    impact_velocity (float): Characteristic impact velocity [m/s]. Must be\n        finite and positive.\n\nReturns:\n    Effective coefficient of restitution; 0 on error.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :func:`~superdex.physics.experimental.calibrate_normal_viscous_damping_coefficient`,\n    :attr:`~superdex.physics.ContactParams.normal_viscous_damping_coefficient`"
+    );
+
+    m_experimental.def("get_sleep_params", [](mochi::Scene const* scene) {
+      mochi::Error error;
+      auto result = mochi::experimental::GetSleepParams(scene, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+      return result;
+    }
+      , nb::arg("scene").none()
+      , "[Experimental] Get the island sleeping parameters of a scene.\n\nArgs:\n    scene (Scene): Scene to query.\n\nReturns:\n    Current sleep parameters.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :func:`~superdex.physics.experimental.set_sleep_params`,\n    :class:`~superdex.physics.experimental.SleepParams`"
+    );
+
+    m_experimental.def("set_sleep_params", [](mochi::Scene* scene, mochi::experimental::SleepParams const& params) {
+      mochi::Error error;
+      mochi::experimental::SetSleepParams(scene, params, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+    }
+      , nb::arg("scene").none()
+      , nb::arg("params")
+      , "[Experimental] Set the island sleeping parameters of a scene.\n\nArgs:\n    scene (Scene): Scene to modify.\n    params (SleepParams): Sleep parameters to set.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Wakes all islands if the parameters change.\n\nSee Also:\n    :func:`~superdex.physics.experimental.get_sleep_params`,\n    :class:`~superdex.physics.experimental.SleepParams`"
     );
 
     m_experimental.def("get_debug_stats", [](mochi::Scene const* scene) {
