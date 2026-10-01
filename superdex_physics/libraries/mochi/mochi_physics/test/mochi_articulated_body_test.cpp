@@ -1279,6 +1279,27 @@ class ArticulatedActorApiTest : public test::MochiSceneTestBase {
       }
     }
     EXPECT_EQ(numControllableJoints, jointSetCount);
+
+    // Invalid params leave every gain unchanged. The last link's joint is Hard: its jointTracking
+    // entry is validated even though no constraint reads it.
+    ASSERT_EQ(ArticulatedJointType::Hard, jointTypes.back());
+    std::function<void(PoseControllerParams&)> const invalidations[] = {
+        [](auto& p) { p.linkPosTracking.back().stiffness = -1_r; },
+        [](auto& p) { p.linkRotTracking.back().damping = kInf; },
+        [](auto& p) { p.jointTracking.back().saturation = 0_r; },
+        [](auto& p) { p.jointTracking = {PoseTrackingParams{0_r, 0_r, kInf}}; },
+        [](auto& p) { p.linkRotTracking.pop_back(); },
+    };
+    for (auto const& invalidate : invalidations) {
+      PoseControllerParams invalidParams(numLinks);
+      invalidate(invalidParams);
+      _actor->SetArticulatedPoseControllerParams(invalidParams, test::ExpectNotOK{});
+      PoseControllerParams currentParams(numLinks);
+      _actor->GetArticulatedPoseControllerParams(currentParams, test::ExpectOK{});
+      EXPECT_EQ(updatedTrackingParams.linkPosTracking, currentParams.linkPosTracking);
+      EXPECT_EQ(updatedTrackingParams.linkRotTracking, currentParams.linkRotTracking);
+      EXPECT_EQ(updatedTrackingParams.jointTracking, currentParams.jointTracking);
+    }
   }
 };
 

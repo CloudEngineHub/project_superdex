@@ -1059,6 +1059,12 @@ void articulated::compound::SetPoseControllerParams(
   auto const& props = reg.get<CArticulatedProps const>(e);
   int const numLinks = static_cast<int>(props.numLinks);
 
+  // Validate every entry before the first write so an error leaves the controller unchanged.
+  ValidatePoseTrackingParams(params.jointTracking, numLinks, error);
+  ValidatePoseTrackingParams(params.linkPosTracking, numLinks, error);
+  ValidatePoseTrackingParams(params.linkRotTracking, numLinks, error);
+  MOCHI_ERROR_RETURN(error);
+
   // All three constraint types are always present (see AddPoseController). An empty array is
   // treated as a single default-constructed PoseTrackingParams (zero gains) broadcast to all
   // links, matching the behavior at controller creation.
@@ -1069,20 +1075,6 @@ void articulated::compound::SetPoseControllerParams(
                                                       : MakeConstSpan(params.linkRotTracking);
   auto const joint = params.jointTracking.empty() ? MakeSingletonConstSpan(paramsZero)
                                                   : MakeConstSpan(params.jointTracking);
-
-  MOCHI_ERROR_IF(
-      isize(linkPos) != 1 && isize(linkPos) != numLinks,
-      error,
-      "linkPosTracking size must be empty, 1, or numLinks");
-  MOCHI_ERROR_IF(
-      isize(linkRot) != 1 && isize(linkRot) != numLinks,
-      error,
-      "linkRotTracking size must be empty, 1, or numLinks");
-  MOCHI_ERROR_IF(
-      isize(joint) != 1 && isize(joint) != numLinks,
-      error,
-      "jointTracking size must be empty, 1, or numLinks");
-  MOCHI_ERROR_RETURN(error);
 
   auto const* joints = reg.get<CArticulatedBodyShape const>(e).shape->GetJointsData();
   WarnOnIgnoredJointTrackingParams(joints->jointTypes, params.jointTracking, numLinks);
@@ -1098,10 +1090,9 @@ void articulated::compound::SetPoseControllerParams(
     }
 
     int const idx = isize(source) == 1 ? 0 : constraints.info[i].link;
-    constraints.impl[i].constraint->SetStiffness(source[idx].stiffness, error);
-    constraints.impl[i].constraint->SetDamping(source[idx].damping, error);
-    constraints.impl[i].constraint->SetSaturation(source[idx].saturation, error);
-    MOCHI_ERROR_RETURN(error);
+    constraints.impl[i].constraint->SetStiffness(source[idx].stiffness, ErrorAssert{});
+    constraints.impl[i].constraint->SetDamping(source[idx].damping, ErrorAssert{});
+    constraints.impl[i].constraint->SetSaturation(source[idx].saturation, ErrorAssert{});
   }
 }
 
