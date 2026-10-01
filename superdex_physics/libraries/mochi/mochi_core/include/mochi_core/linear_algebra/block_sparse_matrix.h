@@ -904,6 +904,12 @@ struct RowMultiplier {
     // Performance note: Using LoadIndexed to load the blocks in 'x' (reference implementation:
     // P1015747415) is substantially slower on AMD and slightly slower on Intel than the current
     // implementation.
+    //
+    // Performance note: LLVM's SLP vectorizer (e.g. Clang 15-21, AVX2 and AVX-512) computes the
+    // 'kBlockSize * rowIndices[...]' offsets in vector registers, then moves each lane back to a
+    // scalar register to address its load. This slows the kernel down, e.g. by ~10% in float AVX2
+    // builds on AMD Genoa for rows with 8+ blocks. Computing the offsets in 64 bits avoids it, but
+    // hides from the compiler that they fit in 32 bits. See D121035118.
     using V4 = Simd<NonConstScalar, 4>;
     using V8 = Simd<NonConstScalar, 8>;
     static_assert(
@@ -994,6 +1000,9 @@ struct RowMultiplier {
       int c) {
     // Performance note: Using LoadIndexed to load the blocks in 'x' (reference implementation:
     // P1105598263) is slightly slower on ARM than the current implementation.
+    //
+    // Performance note: The SLP vectorizer issue described in ApplyToColVector3x3Simd8 can also
+    // affect this kernel. See D121035118.
     using V4 = Simd<NonConstScalar, 4>;
     static_assert((kBlockSize == 3) && V4::kIsSupported, "Configuration not supported");
     static_assert(AccessorIn::RowColCosts().first == 1, "The kernel requires column-major x");
