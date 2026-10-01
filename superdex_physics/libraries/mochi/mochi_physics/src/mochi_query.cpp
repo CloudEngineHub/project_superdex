@@ -24,6 +24,7 @@
 #include "mochi_island.h"
 #include "mochi_pose_controller.h"
 #include "mochi_rod.h"
+#include "mochi_sleep.h"
 #include "mochi_soft.h"
 #include "mochi_soft_skinned.h"
 
@@ -291,6 +292,13 @@ void mochi::RegisterQuery(
   // No partial success
   if (!error.IsOK()) {
     querySet.handles.erase(preallocatedHandle.value);
+    return;
+  }
+
+  // Sleeping islands don't compute queries. Waking is conservative: some queries could be satisfied
+  // without it.
+  if (!reg.all_of<TagStaticActor>(e)) {
+    sleep::WakeUp(reg, e);
   }
 }
 

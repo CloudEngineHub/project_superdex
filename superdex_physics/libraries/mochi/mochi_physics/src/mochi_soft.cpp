@@ -1103,15 +1103,14 @@ void mochi::SetNodeVelocitiesLocal(
   MOCHI_ERROR_IF(prevVel == nullptr, error, "Requires CVelocitySlice<real, TimeStep::Previous>.");
   MOCHI_ERROR_IF(
       prevVel && prevVel->value.size() != inVelocitiesLocal.size(), error, "Array size mismatch");
-  MOCHI_ERROR_IF_NOT(IsFinite(inVelocitiesLocal), error, "Node velocities must be finite.");
-  MOCHI_ERROR_RETURN(error);
-
-  prevVel->value = AsConstView(inVelocitiesLocal); // copy values
   auto* currVel = reg.try_get<CVelocitySlice<real, TimeStep::Current>>(e);
   MOCHI_ERROR_IF(currVel == nullptr, error, "Requires CVelocitySlice<real, TimeStep::Current>.");
   MOCHI_ERROR_IF(
       currVel && currVel->value.size() != inVelocitiesLocal.size(), error, "Array size mismatch");
+  MOCHI_ERROR_IF_NOT(IsFinite(inVelocitiesLocal), error, "Node velocities must be finite.");
   MOCHI_ERROR_RETURN(error);
+
+  prevVel->value = AsConstView(inVelocitiesLocal); // copy values
   currVel->value = AsConstView(inVelocitiesLocal); // copy values
 
   // External state changes invalidate step history.

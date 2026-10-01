@@ -20,6 +20,7 @@
 #include "mochi_ecs_utils.h"
 #include "mochi_query.h"
 #include "mochi_scene.h"
+#include "mochi_sleep.h"
 
 #include <memory>
 
@@ -57,6 +58,7 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         "Stiffness must be non-negative and finite.");
     MOCHI_ERROR_RETURN(error);
     reg.get<CConstraintInfo>(e).stiffness = stiffness;
+    sleep::WakeUp(reg, e);
   }
 
   real GetDamping() const override {
@@ -68,6 +70,7 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         damping < 0_r || !IsFinite(damping), error, "Damping must be non-negative and finite.");
     MOCHI_ERROR_RETURN(error);
     reg.get<CConstraintInfo>(e).damping = damping;
+    sleep::WakeUp(reg, e);
   }
 
   real GetSaturation() const override {
@@ -82,6 +85,7 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         "Saturation must not be zero. Use any negative value to disable saturation or a positive value to enable it.");
     MOCHI_ERROR_RETURN(error);
     reg.get<CConstraintInfo>(e).saturation = saturation;
+    sleep::WakeUp(reg, e);
   }
 
   DynamicArray<real> GetDeviation() const override {
@@ -135,6 +139,8 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         ecs::TryInvokeOnEntity(
             SetConstraintTargetPosition<TransformRT>, reg, e, std::cref(position));
     MOCHI_ERROR_IF(!invoked, error, "Constraint type has no position target");
+    MOCHI_ERROR_RETURN(error);
+    sleep::WakeUp(reg, e);
   }
 
   void SetTargetRotation(Quaternion const& rotation, Error& error) override {
@@ -146,6 +152,8 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         ecs::TryInvokeOnEntity(SetConstraintTargetRotation<Quaternion>, reg, e, std::cref(rot)) ||
         ecs::TryInvokeOnEntity(SetConstraintTargetRotation<TransformRT>, reg, e, std::cref(rot));
     MOCHI_ERROR_IF(!invoked, error, "Constraint type has no rotation target");
+    MOCHI_ERROR_RETURN(error);
+    sleep::WakeUp(reg, e);
   }
 
   void SetTargetDof(real val, Error& error) override {
@@ -154,6 +162,7 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
     auto* target = MOCHI_TRY_GET(Component, reg, e, error);
     MOCHI_ERROR_RETURN(error);
     target->value = val;
+    sleep::WakeUp(reg, e);
   }
 
   void UpdateOldTarget(Error& error) override {
@@ -163,6 +172,8 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         ecs::TryInvokeOnEntity(UpdateConstraintOldTarget<Quaternion>, reg, e) ||
         ecs::TryInvokeOnEntity(UpdateConstraintOldTarget<TransformRT>, reg, e);
     MOCHI_ERROR_IF(!invoked, error, "Constraint type has no old target");
+    MOCHI_ERROR_RETURN(error);
+    sleep::WakeUp(reg, e);
   }
 
   void SetRefRelativeRotation(Quaternion const& qA, Quaternion const& qB, Error& error) override {
@@ -179,6 +190,7 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
     MOCHI_ERROR_RETURN(error);
     auto& target = reg.get<CConstraintTarget<Quaternion, TimeStep::Current>>(e).value;
     target = Normalize(Normalize(qA).GetConjugate() * Normalize(qB));
+    sleep::WakeUp(reg, e);
   }
 
   Span<real const> GetLimitMinValues(Error& error) const override {

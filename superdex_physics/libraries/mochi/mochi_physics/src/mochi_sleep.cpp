@@ -17,11 +17,16 @@
 #include "mochi_sleep.h"
 
 #include "mochi_common_components.h"
+#include "mochi_constraint.h"
+#include "mochi_contact.h"
 #include "mochi_differentiable.h"
+#include "mochi_group.h"
 #include "mochi_island.h"
 #include "mochi_scene_recorder.h"
 
+#include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/utils/profile.h>
+#include <mochi_core/utils/span.h>
 
 using namespace mochi;
 
@@ -63,15 +68,92 @@ real sleep::StageRestValue(NewtonSolverStatus<real> const& status) {
 void sleep::RecordStep(entt::registry& reg, entt::entity island, real restValue) {
   auto const& params = reg.ctx<CSleepParams const>();
   auto& state = reg.get<CIslandSleepState>(island);
-  if (restValue < params.sleepThreshold) {
+  if (!params.canSleep || (restValue < params.sleepThreshold)) {
     state.numConsecutiveRestSteps = 0;
   } else if (state.numConsecutiveRestSteps < params.minStepsBeforeSleep) {
     ++state.numConsecutiveRestSteps;
   }
 }
 
+static void AddWakeUpRegionForStaticCollider(entt::registry& reg, entt::entity e) {
+  // If the actor has a collider, then wake up dynamic actors that overlap its Aabb.
+  // NOTE: This is a conservative heuristic. It may wake actors that would not actually interact
+  // through contact.
+  auto const* colliderInfo = reg.try_get<CColliderInfo const>(e);
+  auto const* root = reg.try_get<CRootTransform const>(e);
+  auto const* bounds = reg.try_get<CBoundingVolume const>(e);
+  auto const* contactParams = reg.try_get<CContactParams const>(e);
+  if (!colliderInfo || colliderInfo->type == ColliderType::None || !root || !bounds ||
+      !contactParams) {
+    return; // Cannot touch anything
+  }
+  // Same expanded bounds as the broadphase uses for static colliders.
+  reg.ctx<CWakeUpRequests>().regions.push_back(ExpandColliderBoundsForContact(
+      GetAabb(TransformShape(root->worldFromLocal, bounds->localShape)), *contactParams));
+}
+
+static void AddWakeUpRegionsForStaticDescendants(entt::registry& reg, entt::entity e) {
+  auto const* members = reg.try_get<CGroupMembers const>(e);
+  if (!members) {
+    return;
+  }
+  ForEachDescendant(reg, *members, [&](entt::entity child) {
+    if (reg.all_of<TagStaticActor>(child)) {
+      AddWakeUpRegionForStaticCollider(reg, child);
+    }
+  });
+}
+
+void sleep::WakeUp(entt::registry& reg, entt::entity e) {
+  if (!reg.ctx<CSleepParams const>().canSleep || reg.ctx<CWakeUpRequests const>().wakeAll) {
+    return;
+  }
+  if (reg.all_of<TagIsland>(e)) {
+    reg.emplace_or_replace<TagWakeUp>(e);
+    return;
+  }
+  if (reg.all_of<TagArticulatedActor>(e)) {
+    AddWakeUpRegionsForStaticDescendants(reg, e);
+  }
+  if (reg.all_of<TagStaticActor>(e)) {
+    AddWakeUpRegionForStaticCollider(reg, e);
+    // Static articulated links also belong to their articulation's island.
+    if (auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(e)) {
+      reg.emplace_or_replace<TagWakeUp>(memberInfo->island);
+    }
+    return;
+  }
+  if (auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(e)) {
+    reg.emplace_or_replace<TagWakeUp>(memberInfo->island);
+    return;
+  }
+  if (auto const* constraintInfo = reg.try_get<CConstraintInfo const>(e)) {
+    for (entt::entity actor : constraintInfo->actors) {
+      // Wake the actor's island. Do not add wake regions for nested static links.
+      if (auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(actor)) {
+        reg.emplace_or_replace<TagWakeUp>(memberInfo->island);
+      }
+    }
+  }
+}
+
 void sleep::WakeAll(entt::registry& reg) {
   reg.ctx<CWakeUpRequests>().wakeAll = true;
+}
+
+static void EmplaceTagWakeUpOnOverlappingIslands(entt::registry& reg, Span<Aabb const> regions) {
+  for (auto&& [e, stepBounds, memberInfo] :
+       reg.view<CConservativeStepBounds const, CIslandMemberInfo const>().each()) {
+    if (reg.all_of<TagWakeUp>(memberInfo.island)) {
+      continue;
+    }
+    for (Aabb const& region : regions) {
+      if (HasOverlap(stepBounds.worldAabb, region)) {
+        reg.emplace<TagWakeUp>(memberInfo.island);
+        break;
+      }
+    }
+  }
 }
 
 // Tag every island that must wake up.
@@ -81,6 +163,8 @@ static void GatherWakeRequests(entt::registry& reg) {
     for (entt::entity island : reg.view<TagIsland>()) {
       reg.emplace_or_replace<TagWakeUp>(island);
     }
+  } else if (!requests.regions.empty()) {
+    EmplaceTagWakeUpOnOverlappingIslands(reg, MakeConstSpan(requests.regions));
   }
 }
 
@@ -91,7 +175,9 @@ static void ApplyWakeRequests(entt::registry& reg) {
     reg.emplace_or_replace<TagIslandIsAwake>(island);
   }
   reg.clear<TagWakeUp>();
-  reg.ctx<CWakeUpRequests>().wakeAll = false;
+  auto& requests = reg.ctx<CWakeUpRequests>();
+  requests.wakeAll = false;
+  requests.regions.clear();
 }
 
 static void PutActorToSleep(entt::registry& reg, entt::entity e) {
@@ -143,6 +229,12 @@ void sleep::PreStep(entt::registry& reg) {
 bool sleep::IsIslandAwake(entt::registry const& reg, entt::entity island) {
   MOCHI_ASSERT_VERBOSE(reg.all_of<TagIsland>(island), "Not an island.");
   return reg.all_of<TagIslandIsAwake>(island);
+}
+
+void sleep::ForceSleep(entt::registry& reg, entt::entity island) {
+  MOCHI_ASSERT_VERBOSE(reg.all_of<TagIsland>(island), "Not an island.");
+  reg.remove<TagIslandIsAwake>(island);
+  reg.remove<TagWakeUp>(island);
 }
 
 void sleep::InitializeOnce(entt::registry& reg) {

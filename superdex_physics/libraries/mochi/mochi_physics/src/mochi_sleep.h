@@ -18,6 +18,7 @@
 
 #include "mochi_ecs.h"
 
+#include <mochi_core/geometry/aabb.h>
 #include <mochi_core/solvers/newton_solver_status.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/error.h>
@@ -28,9 +29,8 @@
   Island sleeping.
 
   An island at rest can be put to sleep. Sleeping islands are skipped by the simulation step.
-  Sleeping actors keep their positions and report zero velocity. An island wakes when its
-  composition changes (e.g. an awake actor comes close to it). Islands can also be woken up
-  explicitly via functions like WakeAll.
+  Sleeping actors keep their positions and report zero velocity. Anything that could change a
+  sleeping island must wake it via WakeUp or WakeAll.
 
   After each solve, an island records a rest value (see StageRestValue). It goes to sleep once it
   has recorded SleepParams::minStepsBeforeSleep consecutive values of at least
@@ -58,6 +58,10 @@ struct CIslandSleepState : NoCopy {
 struct CWakeUpRequests : NoCopy {
   // Request that all islands wake before the next step.
   bool wakeAll = false;
+
+  // World-space regions that changed (e.g. static actors that moved). Sleeping islands with actors
+  // overlapping any region will wake up before the next step.
+  DynamicArray<Aabb> regions;
 };
 
 } // namespace mochi
@@ -80,6 +84,11 @@ void InitIsland(entt::registry& reg, entt::entity island);
 // Records the rest value of an island's latest solve (the minimum over its stages).
 void RecordStep(entt::registry& reg, entt::entity island, real restValue);
 
+// Requests waking whatever could be affected by a change to the entity: the actor's island, the
+// region around a static actor (including an articulation's static links), or the islands of a
+// constraint's actors. For changes that move static colliders, call this before and after.
+void WakeUp(entt::registry& reg, entt::entity e);
+
 // Requests waking all islands. They will wake on the next PreStep.
 void WakeAll(entt::registry& reg);
 
@@ -89,6 +98,9 @@ void PreStep(entt::registry& reg);
 
 // Returns true if the island has TagIslandIsAwake.
 [[nodiscard]] bool IsIslandAwake(entt::registry const& reg, entt::entity island);
+
+// FOR UNIT TESTS ONLY: Put an island to sleep immediately.
+void ForceSleep(entt::registry& reg, entt::entity island);
 
 // Call once during scene initialization.
 void InitializeOnce(entt::registry& reg);

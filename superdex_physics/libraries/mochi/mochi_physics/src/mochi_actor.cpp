@@ -34,6 +34,7 @@
 #include "mochi_rod.h"
 #include "mochi_shell.h"
 #include "mochi_simulation.h"
+#include "mochi_sleep.h"
 #include "mochi_soft.h"
 #include "mochi_soft_rom_systems.h"
 #include "mochi_soft_skinned.h"
@@ -45,6 +46,7 @@
 #include <mochi_core/materials/batched_smith_neo_hookean.h>
 #include <mochi_core/materials/material_params_utils.h>
 #include <mochi_core/utils/array_utils.h>
+#include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/log.h>
 #include <mochi_core/utils/mesh_embedding.h>
 #include <mochi_core/utils/nd_array_utils.h>
@@ -220,6 +222,11 @@ class ActorInterfaceImpl : public ActorInterface {
   entt::entity e;
   Scene* scene;
 
+  // Wake whatever this actor could affect. See sleep::WakeUp.
+  void WakeUp() const {
+    sleep::WakeUp(reg, e);
+  }
+
   ActorHandle GetHandle() const override {
     return GetActorHandle(e, scene->GetHandle());
   }
@@ -280,6 +287,10 @@ class ActorInterfaceImpl : public ActorInterface {
         error,
         "The transform of a nested soft actor cannot be directly set.");
     MOCHI_ERROR_RETURN(error);
+
+    // Wake before and after the change, covering the old and new region of a static actor.
+    WakeUp();
+    MOCHI_DEFER(WakeUp());
 
     // Articulated actors: set the root and recompute derived state (including mesh skinning).
     if (reg.all_of<TagArticulatedActor>(e)) {
@@ -423,6 +434,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
     // External state changes invalidate step history.
     InvalidateActorStepHistory(reg, e);
+    WakeUp();
   }
 
   Real3 GetLinearVelocity(Error& error) const override {
@@ -497,10 +509,12 @@ class ActorInterfaceImpl : public ActorInterface {
       }
     } else {
       MOCHI_ERROR_SET(error, "SetDensity not supported for this actor type.");
+      return;
     }
 
     // Invalidate actor convergence weights.
     InvalidateActorConvergenceWeights(reg, e);
+    WakeUp();
   }
 
   void SetInertiaProperties(
@@ -545,6 +559,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
     // Invalidate actor convergence weights.
     InvalidateActorConvergenceWeights(reg, e);
+    WakeUp();
   }
 
   real GetElasticEnergy(Error& error) const override {
@@ -570,10 +585,13 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
     ValidateContactParams(newParams, error);
     MOCHI_ERROR_RETURN(error);
-
-    if (auto const* pointCloudParams = reg.try_get<CPointCloudColliderParams const>(e)) {
+    auto const* pointCloudParams = reg.try_get<CPointCloudColliderParams const>(e);
+    if (pointCloudParams) {
       ValidatePointCloudColliderParams(*pointCloudParams, newParams, error);
       MOCHI_ERROR_RETURN(error);
+    }
+
+    if (pointCloudParams) {
       real const oldContactThreshold = params->GetPenaltyThresholdDist(/*addPadding*/ true);
       real const newContactThreshold = newParams.GetPenaltyThresholdDist(/*addPadding*/ true);
       if (oldContactThreshold != newContactThreshold) {
@@ -589,7 +607,10 @@ class ActorInterfaceImpl : public ActorInterface {
       }
     }
 
+    // Wake before and after the change, covering the old and new contact padding of a static actor.
+    WakeUp();
     *params = newParams;
+    WakeUp();
   }
 
   ColliderType GetColliderType() const override {
@@ -606,6 +627,7 @@ class ActorInterfaceImpl : public ActorInterface {
     auto* comp = MOCHI_TRY_GET(CRecenteringParams, reg, e, error);
     MOCHI_ERROR_RETURN(error);
     *comp = params;
+    WakeUp();
   }
 
   Span<real const> GetDisplacements(Error& error) const override {
@@ -635,6 +657,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
     // External state changes invalidate step history.
     InvalidateActorStepHistory(reg, e);
+    WakeUp();
   }
 
   SoftMaterialParams GetSoftMaterialParams(Error& error) const override {
@@ -675,6 +698,7 @@ class ActorInterfaceImpl : public ActorInterface {
     if (auto* query = reg.try_get<CQueryElasticEnergy>(e)) {
       query->isEnergyAtRestInitialized = false;
     }
+    WakeUp();
   }
 
   void
@@ -696,6 +720,7 @@ class ActorInterfaceImpl : public ActorInterface {
     if (auto* query = reg.try_get<CQueryElasticEnergy>(e)) {
       query->isEnergyAtRestInitialized = false;
     }
+    WakeUp();
   }
 
   SoftMaterialParams GetSoftMaterialParamsField(int elementIndex, Error& error) const {
@@ -729,6 +754,7 @@ class ActorInterfaceImpl : public ActorInterface {
     auto& comp = reg.get<CContactLayer>(e);
     comp.id = GetOrAddContactLayerId(table, layer);
     comp.name = std::string(layer);
+    WakeUp();
   }
 
   int GetNumDofs() const override {
@@ -1106,6 +1132,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
 
     std::copy(friction.begin(), friction.end(), current.begin());
+    WakeUp();
   }
 
   Span<real const> GetArticulatedJointInertiaParams(Error& error) const override {
@@ -1141,6 +1168,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
 
     std::copy(inertia.begin(), inertia.end(), current.begin());
+    WakeUp();
   }
 
 #define MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED(...)                                            \
@@ -1258,6 +1286,7 @@ class ActorInterfaceImpl : public ActorInterface {
         isize(links) != isize(worldFromLinks), error, "Incorrect number of link transforms");
     MOCHI_ERROR_IF_NOT(IsFinite(worldFromLinks), error, "Link transforms must be finite.");
     MOCHI_ERROR_RETURN(error);
+    MOCHI_DEFER(WakeUp());
 
     // Set the root transform of each rigid body within the articulation.
     for (int i = 0; i < isize(worldFromLinks); ++i) {
@@ -1309,6 +1338,8 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
 
     articulated::compound::SetArticulatedBodyPose(reg, e, poseSpan, error);
+    MOCHI_ERROR_RETURN(error);
+    MOCHI_DEFER(WakeUp());
 
     // If there is a controller, reset the target pose.
     if (reg.all_of<CControllerConstraints>(e)) {
@@ -1324,6 +1355,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED();
     articulated::compound::SetArticulatedJointVelocities(reg, e, velocities, error);
     MOCHI_ERROR_RETURN(error);
+    MOCHI_DEFER(WakeUp());
 
     // If there is a controller, set the target velocity
     if (reg.all_of<CControllerConstraints>(e)) {
@@ -1457,6 +1489,8 @@ class ActorInterfaceImpl : public ActorInterface {
   void AddArticulatedPoseController(PoseControllerParams const& params, Error& error) override {
     MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED();
     articulated::compound::AddPoseController(reg, e, scene, params, error);
+    MOCHI_ERROR_RETURN(error);
+    WakeUp();
   }
 
   void SetArticulatedForceAndTargetPose(
@@ -1465,6 +1499,8 @@ class ActorInterfaceImpl : public ActorInterface {
       Span<int const> dofOrLinkIndices,
       Error& error) {
     using experimental::ControlType;
+    // The target and force setters called by this function wake the actor.
+
     // Local helper function - returns value count for each control type
     auto const getValueCount = [](ControlType type) -> int {
       switch (type) {
@@ -1669,6 +1705,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
   void RemoveArticulatedPoseController(Error& error) override {
     MOCHI_ERROR_RETURN_IF_NO_CONTROLLER();
+    MOCHI_DEFER(WakeUp());
 
     // Destroy controller constraints
     auto const& constraints = reg.get<CControllerConstraints>(e).impl;
@@ -1702,6 +1739,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
     articulated::compound::SetTargetLinkTransforms(reg, e, worldFromTargets, error);
     MOCHI_ERROR_RETURN(error);
+    WakeUp();
     if (auto* targetOwners = reg.try_get<CTargetOwners>(e)) {
       SetArticulatedTargetPoseOwner(
           TargetOwner::TargetLinkTransforms,
@@ -1724,6 +1762,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
     articulated::compound::SetTargetPose(reg, e, poseSpan, error);
     MOCHI_ERROR_RETURN(error);
+    WakeUp();
     if (auto* targetOwners = reg.try_get<CTargetOwners>(e)) {
       SetArticulatedTargetPoseOwner(
           TargetOwner::TargetPose,
@@ -1740,6 +1779,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
     articulated::compound::ResetTargetLinkTransforms(reg, e, worldFromTargets, error);
     MOCHI_ERROR_RETURN(error);
+    WakeUp();
     SetArticulatedTargetOwnersAfterReset(TargetOwner::ResetTargetLinkTransforms);
   }
 
@@ -1756,6 +1796,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
     articulated::compound::ResetTargetPose(reg, e, poseSpan, error);
     MOCHI_ERROR_RETURN(error);
+    WakeUp();
     SetArticulatedTargetOwnersAfterReset(TargetOwner::ResetTargetPose);
   }
 
@@ -1765,6 +1806,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
     articulated::compound::SetTargetJointVelocities(reg, e, velocity, error);
     MOCHI_ERROR_RETURN(error);
+    WakeUp();
     if (auto* targetOwners = reg.try_get<CTargetOwners>(e)) {
       SetArticulatedTargetVelOwner(
           TargetOwner::TargetVelocity, reg.ctx<CSceneStepCounter const>().value, *targetOwners);
@@ -1787,6 +1829,7 @@ class ActorInterfaceImpl : public ActorInterface {
   void SetArticulatedPoseControllerParams(PoseControllerParams const& params, Error& error)
       override {
     MOCHI_ERROR_RETURN_IF_NO_CONTROLLER();
+    // Each constraint setter called here wakes the actor.
     articulated::compound::SetPoseControllerParams(reg, e, params, error);
   }
 
@@ -1866,6 +1909,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
     // External state changes invalidate step history.
     InvalidateActorStepHistory(reg, e);
+    WakeUp();
   }
 
   Span<real const> GetElementsDeformationGradient(Error& error) const override {
@@ -1877,10 +1921,14 @@ class ActorInterfaceImpl : public ActorInterface {
     ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
 
     mochi::SetNodePositionsLocal(reg, e, positionsLocal, error);
+    MOCHI_ERROR_RETURN(error);
+    WakeUp();
   }
 
   void SetNodeVelocitiesLocal(Span<real const> velocitiesLocal, Error& error) override {
     mochi::SetNodeVelocitiesLocal(reg, e, velocitiesLocal, error);
+    MOCHI_ERROR_RETURN(error);
+    WakeUp();
   }
 
   Span<real const> GetSurfaceMeshNodeNormalsLocal(Error& error) const override {
@@ -1987,6 +2035,10 @@ class ActorInterfaceImpl : public ActorInterface {
             "Boundary condition count exceeds the actor's degree-of-freedom count, indicating at "
             "least one DoF has duplicate boundary conditions. Duplicates increase the per-step "
             "cost. Consider calling ClearBoundaryConditions before re-adding.");
+      }
+
+      if (!dofIndices.empty()) {
+        WakeUp();
       }
     };
 
@@ -2249,8 +2301,15 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void ClearBoundaryConditions() override {
-    if (auto* bc = reg.try_get<CDofPositionsBC>(e)) { // Optional component
-      bc->Clear();
+    auto* bc = reg.try_get<CDofPositionsBC>(e); // Optional component
+    if (!bc) {
+      return;
+    }
+    // Permanent boundary conditions are not cleared.
+    int const numDofsBefore = isize(bc->dofIndices);
+    bc->Clear();
+    if (isize(bc->dofIndices) != numDofsBefore) {
+      WakeUp();
     }
   }
 
@@ -2267,7 +2326,10 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
 
     if (dofIndices.empty()) {
-      externalForces->Clear();
+      if (!externalForces->Empty()) {
+        externalForces->Clear();
+        WakeUp();
+      }
       return;
     }
 
@@ -2294,12 +2356,14 @@ class ActorInterfaceImpl : public ActorInterface {
     // forces.
     externalForces->dofs.assign(dofIndices.begin(), dofIndices.end());
     externalForces->forces.assign(forceValues.begin(), forceValues.end());
+    WakeUp();
   }
 
   void ClearExternalForces() override {
     auto* externalForces = reg.try_get<CExternalForces>(e); // optional component
-    if (externalForces) {
+    if (externalForces && !externalForces->Empty()) {
       externalForces->Clear();
+      WakeUp();
     }
   }
 
@@ -2477,6 +2541,7 @@ void experimental::SetArticulatedForceAndTargetPose(
   auto* actorImpl = dynamic_cast<ActorInterfaceImpl*>(actor);
   MOCHI_ERROR_IF(!actorImpl, error, "Invalid actor implementation.");
   MOCHI_ERROR_RETURN(error);
+  // The target and force setters called here wake the actor.
   actorImpl->SetArticulatedForceAndTargetPose(target, controlTypes, dofOrLinkIndices, error);
 }
 
@@ -2489,7 +2554,11 @@ int experimental::AddLinearTransmission(
   auto* actorImpl = dynamic_cast<ActorInterfaceImpl*>(actor);
   MOCHI_ERROR_IF(!actorImpl, error, "Invalid actor implementation");
   MOCHI_ERROR_RETURN(error, -1);
-  return transmission::AddLinearTransmission(actorImpl->reg, actorImpl->e, params, error);
+  int const index =
+      transmission::AddLinearTransmission(actorImpl->reg, actorImpl->e, params, error);
+  MOCHI_ERROR_RETURN(error, index);
+  actorImpl->WakeUp();
+  return index;
 }
 
 int experimental::AddSpatialTendon(Actor* actor, SpatialTendonParams const& params, Error& error) {
@@ -2498,7 +2567,10 @@ int experimental::AddSpatialTendon(Actor* actor, SpatialTendonParams const& para
   auto* actorImpl = dynamic_cast<ActorInterfaceImpl*>(actor);
   MOCHI_ERROR_IF(!actorImpl, error, "Invalid actor implementation");
   MOCHI_ERROR_RETURN(error, -1);
-  return transmission::AddSpatialTendon(actorImpl->reg, actorImpl->e, params, error);
+  int const index = transmission::AddSpatialTendon(actorImpl->reg, actorImpl->e, params, error);
+  MOCHI_ERROR_RETURN(error, index);
+  actorImpl->WakeUp();
+  return index;
 }
 
 void experimental::AttachDisplacementControlActuator(
@@ -2513,6 +2585,8 @@ void experimental::AttachDisplacementControlActuator(
   MOCHI_ERROR_RETURN(error);
   transmission::AttachDisplacementControlActuator(
       actorImpl->reg, actorImpl->e, transmissionIndex, params, error);
+  MOCHI_ERROR_RETURN(error);
+  actorImpl->WakeUp();
 }
 
 void experimental::AttachForceControlActuator(
@@ -2527,6 +2601,8 @@ void experimental::AttachForceControlActuator(
   MOCHI_ERROR_RETURN(error);
   transmission::AttachForceControlActuator(
       actorImpl->reg, actorImpl->e, transmissionIndex, params, error);
+  MOCHI_ERROR_RETURN(error);
+  actorImpl->WakeUp();
 }
 
 void experimental::AttachMcKibbenActuator(
@@ -2541,6 +2617,8 @@ void experimental::AttachMcKibbenActuator(
   MOCHI_ERROR_RETURN(error);
   transmission::AttachMcKibbenActuator(
       actorImpl->reg, actorImpl->e, transmissionIndex, params, error);
+  MOCHI_ERROR_RETURN(error);
+  actorImpl->WakeUp();
 }
 
 void experimental::SetTransmissionActuatorStateVariables(
@@ -2555,6 +2633,8 @@ void experimental::SetTransmissionActuatorStateVariables(
   MOCHI_ERROR_RETURN(error);
   transmission::SetTransmissionActuatorStateVariables(
       actorImpl->reg, actorImpl->e, transmissionIndex, stateVariables, error);
+  MOCHI_ERROR_RETURN(error);
+  actorImpl->WakeUp();
 }
 
 real experimental::GetTransmissionDisplacement(
@@ -2664,6 +2744,7 @@ void experimental::EnableNewtonEulerInertia(Actor* actor, bool enable, Error& er
       error,
       "EnableNewtonEulerInertia is only supported for rigid and articulated actors.");
   MOCHI_ERROR_RETURN(error);
+  MOCHI_DEFER(actorImpl->WakeUp());
 
   // Newton-Euler inertia should not be used with differentiability. But perhaps the user is not
   // setting it up to compute derivatives, so just log a warning.

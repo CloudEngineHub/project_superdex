@@ -158,6 +158,9 @@ DestroyAllItemsInArticulatedActor(SceneImpl& scene, entt::registry& registry, en
 }
 
 static void DestroyActorEntity(SceneImpl& scene, entt::registry& registry, entt::entity e) {
+  // Wake any islands affected by this actor.
+  sleep::WakeUp(registry, e);
+
   // If this actor was affected by constraint, then destroy those constraints.
   if (auto* constraintMemberInfo = registry.try_get<CConstraintMemberInfo>(e)) {
     auto constraintsCopy = constraintMemberInfo->constraints;
@@ -436,13 +439,21 @@ SceneHandle SceneImpl::GetHandle() const {
 }
 
 void SceneImpl::SetGravity(Real3 const& gravityAccelWorld) {
+  Vec4r const newGravityAccel = ToSimd(gravityAccelWorld, 0_r);
+  auto& gravity = _registry.ctx<CSceneGravity>();
+  if (gravity.accel == newGravityAccel) {
+    return; // no change
+  }
+
   // Store in the CSceneGravity component (global to our registry)
-  _registry.ctx<CSceneGravity>().accel = ToSimd(gravityAccelWorld, 0_r);
+  gravity.accel = newGravityAccel;
 
   // Invalidate actor convergence weights.
   for (auto&& [e, weights] : _registry.view<CActorConvergenceWeights>().each()) {
     InvalidateActorConvergenceWeights(_registry, e);
   }
+
+  sleep::WakeAll(_registry);
 }
 
 SolverParams SceneImpl::GetSolverParams() const {
@@ -450,6 +461,12 @@ SolverParams SceneImpl::GetSolverParams() const {
 }
 
 void SceneImpl::SetSolverParams(SolverParams const& params, Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  SolverParams& storedParams = _registry.ctx<CSimulationParams>();
+  if (storedParams == params) {
+    return; // No change
+  }
+
   MOCHI_ERROR_IF_NOT(
       IsValidEnumValue(params.nonLinearSolver.solverType, NonLinearSolverType::Count),
       error,
@@ -555,8 +572,8 @@ void SceneImpl::SetSolverParams(SolverParams const& params, Error& error) {
   MOCHI_ERROR_RETURN(error);
 
   // Store in CSimulationParams (global to our registry)
-  SolverParams& storedParams = _registry.ctx<CSimulationParams>();
   storedParams = params;
+  sleep::WakeAll(_registry);
 
   if (_registry.try_ctx<TagDifferentiableScene>() && !params.experimentalEval.explicitNormals) {
     MOCHI_LOG_WARNING(
@@ -790,6 +807,10 @@ void SceneImpl::RestoreStateFromBytes(Span<uint8_t const> data, Error& error) {
   ScopedSchedulerBinding schedulerBinding(this);
 
   capture::RestoreState(_registry, data, error);
+
+  // TODO[T229060237] - Restore CIslandSleepState::numConsecutiveRestSteps and TagIslandIsAwake,
+  // so that forward simulation repeats the same deterministic results.
+  sleep::WakeAll(_registry);
 }
 
 void SceneImpl::RestorePartialState(
@@ -804,6 +825,10 @@ void SceneImpl::RestorePartialState(
 
   // Restore state from stateBuffer
   capture::RestorePartialState(_registry, stateBuffer, excludedAttributes, error);
+
+  // TODO[T229060237] - Restore CIslandSleepState::numConsecutiveRestSteps and TagIslandIsAwake,
+  // so that forward simulation repeats the same deterministic results.
+  sleep::WakeAll(_registry);
 
   // Optionally release the handle now (even if !error.IsOK())
   if (releaseImmediately) {
@@ -953,9 +978,20 @@ static void EnableLayerContactImpl(
   auto& table = reg.ctx<CContactFilterTable>();
   auto a = GetOrAddContactLayerId(table, layerA);
   auto b = GetOrAddContactLayerId(table, layerB);
-  table.EnableLayerContact(a, b, enable);
-  if (symmetric) {
+  bool changed = false;
+  if (table.IsLayerContactEnabled(a, b) != enable) {
+    table.EnableLayerContact(a, b, enable);
+    changed = true;
+  }
+  if (symmetric && table.IsLayerContactEnabled(b, a) != enable) {
     table.EnableLayerContact(b, a, enable);
+    changed = true;
+  }
+
+  // This is conservative. It would be sufficient to wake actors that have one of
+  // the specified contact layers.
+  if (changed) {
+    sleep::WakeAll(reg);
   }
 }
 
@@ -1023,7 +1059,11 @@ void SceneImpl::EnableActorContactAsymmetric(
     for (auto colliderHandle : colliderHandles) {
       auto eCollider = GetEntity(_registry, colliderHandle, error);
       MOCHI_ERROR_RETURN(error);
-      table.EnableEntityContact(eColliding, eCollider, enable);
+      if (table.IsEntityContactEnabled(eColliding, eCollider) != enable) {
+        table.EnableEntityContact(eColliding, eCollider, enable);
+        sleep::WakeUp(_registry, eColliding);
+        sleep::WakeUp(_registry, eCollider);
+      }
     }
   }
 }
@@ -1060,7 +1100,15 @@ void SceneImpl::SetContactPairParamsOverride(
       "Both actors must have contact parameters.");
   MOCHI_ERROR_RETURN(error);
 
-  _registry.ctx<CContactPairParamsOverrideTable>().Set(entityA, entityB, paramsOverride);
+  auto& table = _registry.ctx<CContactPairParamsOverrideTable>();
+  if (auto const* existing = table.Find(entityA, entityB);
+      existing && *existing == paramsOverride) {
+    return; // No change
+  }
+
+  table.Set(entityA, entityB, paramsOverride);
+  sleep::WakeUp(_registry, entityA);
+  sleep::WakeUp(_registry, entityB);
 }
 
 void SceneImpl::ClearContactPairParamsOverride(
@@ -1072,7 +1120,14 @@ void SceneImpl::ClearContactPairParamsOverride(
   entt::entity const entityB = GetEntity(_registry, actorB, error);
   MOCHI_ERROR_RETURN(error);
 
-  _registry.ctx<CContactPairParamsOverrideTable>().Clear(entityA, entityB);
+  auto& table = _registry.ctx<CContactPairParamsOverrideTable>();
+  if (table.Find(entityA, entityB) == nullptr) {
+    return; // No change
+  }
+
+  table.Clear(entityA, entityB);
+  sleep::WakeUp(_registry, entityA);
+  sleep::WakeUp(_registry, entityB);
 }
 
 bool SceneImpl::HasContactPairParamsOverride(ActorHandle actorA, ActorHandle actorB, Error& error)
@@ -1490,6 +1545,9 @@ Actor* SceneImpl::CreateRigidActorImpl(
   if (!params.isStatic) {
     // Must be in an island to simulate
     island::CreateForActor(_registry, e);
+  } else {
+    // Wake actors near the new static actor.
+    sleep::WakeUp(_registry, e);
   }
   _registry.emplace<TagFullyInitialized>(e);
   ValidateNewActorComposition(e);
@@ -2313,6 +2371,7 @@ Actor* SceneImpl::CreateArticulatedActorImpl(
     if (isStatic[i]) {
       auto link = GetEntity(_registry, links[i], error);
       _registry.emplace_or_replace<TagStaticActor>(link);
+      sleep::WakeUp(_registry, link); // Wake islands near this static actor
     }
   }
 
@@ -2905,6 +2964,9 @@ Constraint* SceneImpl::CreateConstraintImpl(
   // Needed by every type of constraint
   _registry.emplace<CConstraintGlobalSparsityCache>(e);
 
+  // Wake the constrained actors.
+  sleep::WakeUp(_registry, e);
+
   ++_numConstraints;
 
   // If the user doesn't manually add this constraint to a compound, then we will do it
@@ -3127,6 +3189,9 @@ void SceneImpl::DestroyConstraint(ConstraintHandle constraint) {
         "Constraints created automatically while creating or configuring an actor cannot be destroyed individually. Remove the corresponding actor feature, if supported, or destroy the actor.");
     return;
   }
+
+  // Wake the constrained actors.
+  sleep::WakeUp(_registry, constraintEntity);
 
   // Update CConstraintMemberInfo on each affected actor, so that they no longer point
   // back to this constraint entity.
@@ -3461,6 +3526,10 @@ void experimental::RestoreStateFromScene(
   MOCHI_ERROR_RETURN(error);
 
   capture::RestoreState(assert_cast<SceneImpl*>(sceneTo)->GetRegistry(), stateBuffer, error);
+
+  // TODO[T229060237] - Restore CIslandSleepState::numConsecutiveRestSteps and TagIslandIsAwake,
+  // so that forward simulation repeats the same deterministic results.
+  sleep::WakeAll(assert_cast<SceneImpl*>(sceneTo)->GetRegistry());
 }
 
 #define MOCHI_RETURN_IF_NOT_DIFFERENTIABLE(CONST_QUALIFIER, ...)                                  \

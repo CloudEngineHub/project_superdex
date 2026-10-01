@@ -21,6 +21,7 @@
 #include "mochi_discretization_functions.h"
 #include "mochi_integration.h"
 #include "mochi_scene_recorder.h"
+#include "mochi_sleep.h"
 #include "mochi_soft.h"
 #include "mochi_soft_rom_linear_systems.h"
 #include "mochi_soft_rom_neural_net_crom_systems.h"
@@ -686,6 +687,7 @@ void mochi::rom::RomFomSwitchingPipeline(
         params.params);
     if (shouldSwitch) {
       RomToFomImpl(reg, e);
+      sleep::WakeUp(reg, e);
     }
   } else {
     bool const shouldSwitch = std::visit(
@@ -695,6 +697,7 @@ void mochi::rom::RomFomSwitchingPipeline(
         params.params);
     if (shouldSwitch) {
       FomToRomImpl(reg, e);
+      sleep::WakeUp(reg, e);
     }
   }
 }

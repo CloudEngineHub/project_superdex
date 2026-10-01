@@ -24,6 +24,7 @@
 #include <mochi_physics/src/mochi_island.h>
 #include <mochi_physics/src/mochi_sleep.h>
 
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <string>
@@ -166,6 +167,24 @@ class SceneSleep : public test::MochiSceneTestBase {
         Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), test::ExpectOK{});
   }
 
+  Actor* CreateStaticBox(Real3 const& corner, real size) {
+    RigidActorParams params;
+    params.isStatic = true;
+    params.shape = CreateCubeShape(size);
+    params.colliderType = ColliderType::Box;
+    params.worldFromLocal.SetTranslation(corner);
+    return _scene->CreateRigidActor(params, test::ExpectOK{});
+  }
+
+  Actor* CreateStaticArticulatedBox(Real3 const& corner, real size) {
+    ArticulatedActorParams params;
+    params.joints = {{.type = ArticulatedJointType::Hard}};
+    params.links = {
+        {.parentLink = -1, .shape = CreateCubeShape(size), .colliderType = ColliderType::Box}};
+    params.worldFromRoot.SetTranslation(corner);
+    return _scene->CreateArticulatedActor(params, test::ExpectOK{});
+  }
+
   // Create an actor whose bottom is at the given height, centered on x = z = 0.
   Actor* CreateTestActor(ActorType type, real bottomHeight = 0.02_r) {
     constexpr real kCubeSize = 0.2_r; // Edge length of rigid and soft cubes [m]
@@ -288,6 +307,11 @@ class SceneSleep : public test::MochiSceneTestBase {
       Step();
       ASSERT_TRUE(IsAwake(actor));
     }
+  }
+
+  // Apply pending wake-up requests without simulating, as the next step would.
+  void ApplyWakeRequests() {
+    sleep::PreStep(GetRegistry());
   }
 
   // Position of the actor, for measuring how far it moved. Articulated actors have no world AABB,
@@ -498,6 +522,25 @@ TEST_P(SceneSleepPerType, FullyConstrainedSleeps) {
   StepUntilAsleep(actor);
 }
 
+TEST_P(SceneSleepPerType, DestroyingGroundWakesActorAndItFalls) {
+  Actor const* actor = CreateTestActor(GetParam());
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  real const height = GetPosition(actor)[1];
+  _scene->DestroyActor(_ground);
+  StepExpectAwake(actor, 20);
+  EXPECT_LT(GetPosition(actor)[1], height - 0.1_r);
+}
+
+TEST_P(SceneSleepPerType, LoweringGroundWakesActorUntilItSettlesAgain) {
+  constexpr real kDrop = 0.1_r;
+  Actor const* actor = CreateTestActor(GetParam());
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  real const height = GetPosition(actor)[1];
+  _ground->SetRootTransform(TransformRT{Real3{0_r, -kDrop, 0_r}}, test::ExpectOK{});
+  StepUntilAsleep(actor);
+  EXPECT_NEAR(height - kDrop, GetPosition(actor)[1], 0.01_r);
+}
+
 namespace {
 // Swinging from a pivot 0.5 m away (rigid), or from one of its nodes (deformables).
 class SceneSleepPendulum : public SceneSleepPerType {};
@@ -605,15 +648,6 @@ TEST_F(SceneSleep, SleepsAfterMinStepsAtMaxThreshold) {
   StepUntilAsleep(actor, /*maxSteps=*/6);
 }
 
-TEST_F(SceneSleep, ChangingSleepParamsWakesAllIslands) {
-  Actor const* actor = CreateTestActor(ActorType::Rigid);
-  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
-  auto params = experimental::GetSleepParams(_scene, test::ExpectOK{});
-  params.sleepThreshold = 0.25_r;
-  experimental::SetSleepParams(_scene, params, test::ExpectOK{});
-  StepUntilAsleep(actor);
-}
-
 TEST_F(SceneSleep, DisablingSleepWakesAllIslands) {
   experimental::SetSleepParams(
       _scene, {.canSleep = true, .minStepsBeforeSleep = 2}, test::ExpectOK{});
@@ -653,6 +687,16 @@ TEST_F(SceneSleep, DestroyingSupportWakesStack) {
       << "The top actor should fall onto the ground.";
 }
 
+TEST_F(SceneSleep, RegisteringQueryWakesIsland) {
+  Actor* actor = CreateTestActor(ActorType::Rigid);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  auto const query = actor->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
+  StepUntilAsleep(actor);
+  real const weight = actor->GetMass(test::ExpectOK{}) * Norm(_scene->GetGravity());
+  EXPECT_NEAR(weight, actor->GetContactForceWorld(test::ExpectOK{})[1], 0.01_r * weight);
+  actor->CancelQuery(query);
+}
+
 /***************************************************************************************************
   Scene statistics
 */
@@ -676,4 +720,619 @@ TEST_F(SceneSleep, SolverStatsAggregateAwakeIslands) {
   ASSERT_NE(GetIsland(sleeping), GetIsland(falling));
   EXPECT_NE(ConvergenceStatus::None, falling->GetConvergenceStatus());
   EXPECT_EQ(falling->GetConvergenceStatus(), _scene->GetSolverStats().convergenceStatus);
+}
+
+/***************************************************************************************************
+  Wake-up conditions
+
+  Each case calls the public API while the actor's island is asleep, and expects the call to wake
+  the island. Then the case repeats the same call on the sleeping island, and expects a wake-up only
+  if OnRepeat says so. Setters that ignore unchanged values should not wake the island again. To
+  cover a new wake-up condition, add a case to GetWakeCases(). A case's apply must make the same
+  call each time it runs, so use fixed values rather than values relative to the current state.
+*/
+
+namespace {
+// Whether repeating a case's call with the same arguments wakes the island again.
+enum class OnRepeat {
+  WakeUp,
+  NoWake, // The value is unchanged, so there is nothing to wake for.
+  NotRepeatable, // The call cannot be repeated (e.g. removing something that no longer exists).
+};
+
+struct WakeContext {
+  Scene* scene = nullptr;
+  Actor* actor = nullptr;
+  Actor* ground = nullptr;
+  Constraint* constraint = nullptr; // Created by WakeCase::setup, if needed
+  StateHandle state; // Captured by WakeCase::setup, if needed
+  DynamicArray<uint8_t> stateBytes; // Captured by WakeCase::setup, if needed
+};
+
+struct WakeCase {
+  std::string name;
+  DynamicArray<ActorType> types; // Actor types the case applies to
+  OnRepeat onRepeat;
+  std::function<void(WakeContext&)> apply;
+  std::function<void(WakeContext&)> setup = {}; // Runs before the actor first settles
+};
+
+struct WakeTestParam {
+  WakeCase const* wakeCase = nullptr;
+  ActorType actorType = {};
+};
+
+class SceneSleepWake : public SceneSleep, public testing::WithParamInterface<WakeTestParam> {};
+} // namespace
+
+// Holds a rigid actor in place at its center of mass.
+static void CreatePivotAtCenterOfMass(WakeContext& ctx) {
+  RigidPivotPositionConstraintParams params;
+  params.actor = ctx.actor->GetHandle();
+  params.localPosition = ctx.actor->GetRigidCenterOfMassLocal(test::ExpectOK{});
+  params.targetPosition = ctx.actor->GetRootTransform().TransformPoint(params.localPosition);
+  ctx.constraint = ctx.scene->CreateRigidPivotPositionConstraint(params, test::ExpectOK{});
+}
+
+static void CreateRotationConstraint(WakeContext& ctx) {
+  RigidPivotRotationConstraintParams params;
+  params.actor = ctx.actor->GetHandle();
+  ctx.constraint = ctx.scene->CreateRigidPivotRotationConstraint(params, test::ExpectOK{});
+}
+
+static void CreateSingleDofTargetConstraint(WakeContext& ctx) {
+  ArticulatedSingleDofTargetConstraintParams params;
+  params.actor = ctx.actor->GetHandle();
+  ctx.constraint = ctx.scene->CreateArticulatedSingleDofTargetConstraint(params, test::ExpectOK{});
+}
+
+static void AddPoseController(WakeContext& ctx) {
+  ctx.actor->AddArticulatedPoseController(PoseControllerParams{}, test::ExpectOK{});
+}
+
+static void SetZeroExternalForce(WakeContext& ctx) {
+  int const dof = 0;
+  real const force = 0_r;
+  ctx.actor->SetExternalForcesOnDofs(Span{&dof, 1}, Span{&force, 1}, test::ExpectOK{});
+}
+
+static void SetPairFrictionOverride(WakeContext& ctx) {
+  ContactPairParamsOverride const params{.coulombFrictionCoefficient = 0.25_r};
+  ctx.scene->SetContactPairParamsOverride(
+      ctx.actor->GetHandle(), ctx.ground->GetHandle(), params, test::ExpectOK{});
+}
+
+// Zeros except for one entry.
+static DynamicArray<real> MakeUnitArray(int size, int index, real value) {
+  DynamicArray<real> values(size, 0_r);
+  values[index] = value;
+  return values;
+}
+
+static DynamicArray<WakeCase> const& GetWakeCases() {
+  DynamicArray<ActorType> const kAll = GetAllActorTypes();
+  DynamicArray<ActorType> const kRigidOnly = {ActorType::Rigid};
+  DynamicArray<ActorType> const kRigidAndSoft = {ActorType::Rigid, ActorType::Soft};
+  DynamicArray<ActorType> const kDeformables = {ActorType::Soft, ActorType::Shell, ActorType::Rod};
+  DynamicArray<ActorType> const kArticulatedOnly = {ActorType::Articulated};
+  DynamicArray<ActorType> const kWithContactParams = {
+      ActorType::Rigid, ActorType::Soft, ActorType::Shell, ActorType::Rod};
+  DynamicArray<ActorType> const kWithExternalForces = {
+      ActorType::Rigid, ActorType::Shell, ActorType::Rod, ActorType::Articulated};
+  static DynamicArray<WakeCase> const cases = {
+      // Actor state
+      {"SetRootTransform",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->SetRootTransform(TransformRT{Real3{0_r, 1_r, 0_r}}, test::ExpectOK{});
+       }},
+      {"SetVelocity",
+       kRigidAndSoft,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->SetVelocity(Real3{0_r, 0.01_r, 0_r}, Real3{}, test::ExpectOK{});
+       }},
+      {"SetNodeVelocitiesLocal",
+       kDeformables,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto const velocities = MakeUnitArray(c.actor->GetNumDofs(), 1, 0.01_r);
+         c.actor->SetNodeVelocitiesLocal(MakeConstSpan(velocities), test::ExpectOK{});
+       }},
+      {"SetDisplacements",
+       {ActorType::Soft, ActorType::Shell},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         int const size = isize(c.actor->GetDisplacements(test::ExpectOK{}));
+         auto const displacements = MakeUnitArray(size, 1, 0.001_r);
+         c.actor->SetDisplacements(MakeConstSpan(displacements), test::ExpectOK{});
+       }},
+      {"SetNodePositionsLocal",
+       {ActorType::Soft},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         MeshDataView const mesh = c.actor->GetMesh();
+         DynamicArray<real> positions;
+         positions.assign(mesh.coordinates.begin(), mesh.coordinates.end());
+         positions[1] += 0.001_r;
+         c.actor->SetNodePositionsLocal(MakeConstSpan(positions), test::ExpectOK{});
+       }},
+      {"SetZeroDisplacementsAndVelocities",
+       {ActorType::Soft, ActorType::Shell},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.actor->SetZeroDisplacementsAndVelocities(test::ExpectOK{}); }},
+      {"SetArticulatedPoseFromJoints",
+       kArticulatedOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto const pose = MakeUnitArray(c.actor->GetNumDofs(), 1, 0.1_r);
+         c.actor->SetArticulatedPoseFromJoints(MakeConstSpan(pose), test::ExpectOK{});
+       }},
+      {"SetArticulatedJointVelocities",
+       kArticulatedOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto const velocities = MakeUnitArray(c.actor->GetNumDofs(), 1, 0.01_r);
+         c.actor->SetArticulatedJointVelocities(MakeConstSpan(velocities), test::ExpectOK{});
+       }},
+      // Actor properties
+      {"SetDensity",
+       kRigidAndSoft,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.actor->SetDensity(1500_r, test::ExpectOK{}); }},
+      {"SetInertiaProperties",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->SetInertiaProperties(
+             10_r,
+             c.actor->GetRigidCenterOfMassLocal(test::ExpectOK{}),
+             c.actor->GetRigidMomentOfInertiaLocal(test::ExpectOK{}),
+             test::ExpectOK{});
+       }},
+      {"SetSoftMaterialParams",
+       {ActorType::Soft},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto params = c.actor->GetSoftMaterialParams(test::ExpectOK{});
+         params.density = 1500_r;
+         c.actor->SetSoftMaterialParams(params, test::ExpectOK{});
+       }},
+      {"SetRecenteringParams",
+       {ActorType::Soft},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto params = c.actor->GetRecenteringParams();
+         params.translationEpsilon = 0.01_r;
+         c.actor->SetRecenteringParams(params, test::ExpectOK{});
+       }},
+      {"SetContactParams",
+       kWithContactParams,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto params = c.actor->GetContactParams(test::ExpectOK{});
+         params.coulombFrictionCoefficient = 0.25_r;
+         c.actor->SetContactParams(params, test::ExpectOK{});
+       }},
+      {"SetContactLayer",
+       kWithContactParams,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.actor->SetContactLayer("WakeTestLayer"); }},
+      {"SetArticulatedJointFrictionParams",
+       kArticulatedOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto const current = c.actor->GetArticulatedJointFrictionParams(test::ExpectOK{});
+         DynamicArray<ArticulatedJointFrictionParams> friction;
+         friction.assign(current.begin(), current.end());
+         friction[0].viscous = 0.05_r;
+         c.actor->SetArticulatedJointFrictionParams(MakeConstSpan(friction), test::ExpectOK{});
+       }},
+      {"SetArticulatedJointInertiaParams",
+       kArticulatedOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto const current = c.actor->GetArticulatedJointInertiaParams(test::ExpectOK{});
+         DynamicArray<real> inertia;
+         inertia.assign(current.begin(), current.end());
+         inertia[0] = 0.05_r;
+         c.actor->SetArticulatedJointInertiaParams(MakeConstSpan(inertia), test::ExpectOK{});
+       }},
+      {"EnableNewtonEulerInertia",
+       {ActorType::Rigid, ActorType::Articulated},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { EnableNewtonEulerInertia(c.actor, true, test::ExpectOK{}); }},
+      // Forces, boundary conditions and queries
+      {"SetExternalForcesOnDofs", kWithExternalForces, OnRepeat::WakeUp, SetZeroExternalForce},
+      {"ClearExternalForces",
+       kWithExternalForces,
+       OnRepeat::NoWake,
+       [](WakeContext& c) { c.actor->ClearExternalForces(); },
+       SetZeroExternalForce},
+      {"AddBoundaryConditionDofsWorld",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         // The first 3 DoFs of a rigid actor are its center of mass in world space.
+         DynamicArray<int> const dofs = {0, 1, 2};
+         auto const values = GetAllDofValues(c.actor);
+         c.actor->AddBoundaryConditionDofsWorld(
+             MakeConstSpan(dofs), Span{values.data(), 3}, test::ExpectOK{});
+       }},
+      {"AddBoundaryConditionNodesWorld",
+       {ActorType::Soft, ActorType::Shell},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         DynamicArray<int> const nodes = {0};
+         DynamicArray<Real3> const positions = {SceneSleep::GetRestNodePositionsWorld(c.actor)[0]};
+         c.actor->AddBoundaryConditionNodesWorld(
+             MakeConstSpan(nodes), Flatten(MakeConstSpan(positions)), test::ExpectOK{});
+       }},
+      {"ClearBoundaryConditions",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) { c.actor->ClearBoundaryConditions(); },
+       [](WakeContext& c) { SceneSleep::ConstrainInPlace(c.actor); }},
+      {"RegisterQuery",
+       kRigidAndSoft,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
+       }},
+      {"RegisterQueryAndCompute_SurfaceNodePositions",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, test::ExpectOK{});
+       }},
+      {"RegisterQueryAndCompute_NodePositions",
+       {ActorType::Soft},
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->RegisterQueryAndCompute(QueryType::NodePositions, test::ExpectOK{});
+       }},
+      // Pose controllers
+      {"AddArticulatedPoseController",
+       kArticulatedOnly,
+       OnRepeat::NotRepeatable,
+       AddPoseController},
+      {"SetArticulatedTargetPose",
+       kArticulatedOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto const pose = MakeUnitArray(c.actor->GetNumDofs(), 1, 0.1_r);
+         c.actor->SetArticulatedTargetPose(MakeConstSpan(pose), test::ExpectOK{});
+       },
+       AddPoseController},
+      {"RemoveArticulatedPoseController",
+       kArticulatedOnly,
+       OnRepeat::NotRepeatable,
+       [](WakeContext& c) { c.actor->RemoveArticulatedPoseController(test::ExpectOK{}); },
+       AddPoseController},
+      // Constraints
+      {"CreateConstraint", kRigidOnly, OnRepeat::WakeUp, CreatePivotAtCenterOfMass},
+      {"DestroyConstraint",
+       kRigidOnly,
+       OnRepeat::NotRepeatable,
+       [](WakeContext& c) { c.scene->DestroyConstraint(c.constraint); },
+       CreatePivotAtCenterOfMass},
+      {"Constraint_SetStiffness",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.constraint->SetStiffness(12345_r, test::ExpectOK{}); },
+       CreatePivotAtCenterOfMass},
+      {"Constraint_SetDamping",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.constraint->SetDamping(0.5_r, test::ExpectOK{}); },
+       CreatePivotAtCenterOfMass},
+      {"Constraint_SetSaturation",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.constraint->SetSaturation(-2_r, test::ExpectOK{}); },
+       CreatePivotAtCenterOfMass},
+      {"Constraint_SetTargetPosition",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.constraint->SetTargetPosition(Real3{0_r, 1_r, 0_r}, test::ExpectOK{});
+       },
+       CreatePivotAtCenterOfMass},
+      {"Constraint_SetTargetRotation",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.constraint->SetTargetRotation(
+             Quaternion::FromRotationVector(Real3{0.001_r, 0_r, 0_r}), test::ExpectOK{});
+       },
+       CreateRotationConstraint},
+      {"Constraint_SetTargetDof",
+       kArticulatedOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.constraint->SetTargetDof(0.001_r, test::ExpectOK{}); },
+       CreateSingleDofTargetConstraint},
+      {"Constraint_UpdateOldTarget",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.constraint->UpdateOldTarget(test::ExpectOK{}); },
+       CreatePivotAtCenterOfMass},
+      {"Constraint_RegisterQuery",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.constraint->RegisterQuery(QueryType::ConstraintForce, test::ExpectOK{});
+       },
+       CreatePivotAtCenterOfMass},
+      // Scene settings
+      {"SetGravity",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) { c.scene->SetGravity(Real3{0_r, -5_r, 0_r}); }},
+      {"SetSolverParams",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         SolverParams params = c.scene->GetSolverParams();
+         params.nonLinearSolver.maxIter = 37;
+         c.scene->SetSolverParams(params, test::ExpectOK{});
+       }},
+      {"SetSleepParams",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         auto params = experimental::GetSleepParams(c.scene, test::ExpectOK{});
+         params.sleepThreshold = 0.25_r;
+         experimental::SetSleepParams(c.scene, params, test::ExpectOK{});
+       }},
+      {"EnableLayerContact",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         c.scene->EnableLayerContactSymmetric("unusedA", "unusedB", false, test::ExpectOK{});
+       }},
+      {"EnableActorContact",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         c.scene->EnableActorContactSymmetric(
+             c.actor->GetHandle(),
+             c.actor->GetHandle(),
+             false,
+             IncludeNestedActors::No,
+             test::ExpectOK{});
+       }},
+      {"SetContactPairParamsOverride",
+       kWithContactParams,
+       OnRepeat::NoWake,
+       SetPairFrictionOverride},
+      {"ClearContactPairParamsOverride",
+       kWithContactParams,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         c.scene->ClearContactPairParamsOverride(
+             c.actor->GetHandle(), c.ground->GetHandle(), test::ExpectOK{});
+       },
+       SetPairFrictionOverride},
+      {"RestoreState",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.scene->RestoreState(c.state, /*releaseImmediately=*/false, test::ExpectOK{});
+       },
+       [](WakeContext& c) { c.state = c.scene->CaptureState(test::ExpectOK{}); }},
+      {"RestoreStateFromBytes",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.scene->RestoreStateFromBytes(MakeConstSpan(c.stateBytes), test::ExpectOK{});
+       },
+       [](WakeContext& c) { c.scene->CaptureStateToBytes(c.stateBytes, test::ExpectOK{}); }},
+      // Static ground
+      {"Ground_SetRootTransform",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.ground->SetRootTransform(TransformRT{Real3{0_r, -0.001_r, 0_r}}, test::ExpectOK{});
+       }},
+      {"Ground_SetVelocity",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.ground->SetVelocity(Real3{}, Real3{}, test::ExpectOK{}); }},
+      {"Ground_SetContactParams",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         auto params = c.ground->GetContactParams(test::ExpectOK{});
+         params.coulombFrictionCoefficient = 0.25_r;
+         c.ground->SetContactParams(params, test::ExpectOK{});
+       }},
+      {"Ground_SetContactLayer",
+       kAll,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) { c.ground->SetContactLayer("GroundWakeTestLayer"); }},
+  };
+  return cases;
+}
+
+static DynamicArray<WakeTestParam> GetWakeTestParams() {
+  DynamicArray<WakeTestParam> params;
+  for (auto const& wakeCase : GetWakeCases()) {
+    for (auto type : wakeCase.types) {
+      params.push_back({&wakeCase, type});
+    }
+  }
+  return params;
+}
+
+TEST_P(SceneSleepWake, WakesIsland) {
+  auto const& [wakeCase, actorType] = GetParam();
+  WakeContext context{.scene = _scene, .actor = CreateTestActor(actorType), .ground = _ground};
+  if (wakeCase->setup) {
+    wakeCase->setup(context);
+  }
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(context.actor));
+
+  wakeCase->apply(context);
+  ApplyWakeRequests();
+  ASSERT_TRUE(IsAwake(context.actor));
+  if (wakeCase->onRepeat == OnRepeat::NotRepeatable) {
+    return;
+  }
+
+  GetRegistry().get<CIslandSleepState>(GetIsland(context.actor)).numConsecutiveRestSteps =
+      experimental::GetSleepParams(_scene, test::ExpectOK{}).minStepsBeforeSleep;
+
+  wakeCase->apply(context);
+  ApplyWakeRequests();
+  EXPECT_EQ(wakeCase->onRepeat == OnRepeat::WakeUp, IsAwake(context.actor))
+      << "Unexpected wake-up state after repeating the call.";
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllCases,
+    SceneSleepWake,
+    testing::ValuesIn(GetWakeTestParams()),
+    [](testing::TestParamInfo<WakeTestParam> const& info) {
+      return info.param.wakeCase->name + "_" + SReflect::EnumToString(info.param.actorType);
+    });
+
+TEST_F(SceneSleep, ReadingStateDoesNotWake) {
+  Actor* actor = CreateTestActor(ActorType::Rigid);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  (void)actor->GetRootTransform();
+  (void)GetAllDofValues(actor);
+  (void)actor->GetContactParams(test::ExpectOK{});
+  actor->SetUserData(nullptr);
+  Step();
+  EXPECT_FALSE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, WakingOneIslandLeavesOthersAsleep) {
+  Actor* a = CreateTestActor(ActorType::Rigid);
+  Actor* b = CreateTestActor(ActorType::Rigid);
+  b->SetRootTransform(
+      TransformRT{b->GetRootTransform().GetTranslation() + Real3{2_r, 0_r, 0_r}}, test::ExpectOK{});
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(a));
+  ASSERT_FALSE(IsAwake(b));
+  ASSERT_NE(GetIsland(a), GetIsland(b));
+  a->SetVelocity(Real3{0_r, 0.01_r, 0_r}, Real3{}, test::ExpectOK{});
+  Step();
+  EXPECT_TRUE(IsAwake(a));
+  EXPECT_FALSE(IsAwake(b));
+}
+
+/***************************************************************************************************
+  Static actors
+*/
+
+TEST_F(SceneSleep, AddingStaticActorNearbyWakesActor) {
+  Actor const* actor = CreateTestActor(ActorType::Rigid);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  // A box of the same size, just beside the actor.
+  Aabb const aabb = actor->GetAabbWorld(test::ExpectOK{});
+  CreateStaticBox(Real3{aabb.GetMax()[0] + 0.001_r, 0_r, aabb.GetMin()[2]}, aabb.GetSize()[0]);
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, MovingStaticActorNearbyWakesActor) {
+  Actor* farBox = CreateStaticBox(Real3{5_r, 0_r, 5_r}, 0.2_r);
+  Actor const* actor = CreateTestActor(ActorType::Rigid);
+  Aabb const aabb = actor->GetAabbWorld(test::ExpectOK{});
+  Step();
+
+  sleep::ForceSleep(GetRegistry(), GetIsland(actor));
+  Step();
+  EXPECT_FALSE(IsAwake(actor));
+
+  // A static actor moving to be near the dynamic actor wakes it up.
+  farBox->SetRootTransform(
+      TransformRT{Real3{aabb.GetMax()[0] + 0.001_r, 0_r, aabb.GetMin()[2]}}, test::ExpectOK{});
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+
+  sleep::ForceSleep(GetRegistry(), GetIsland(actor));
+  Step();
+  EXPECT_FALSE(IsAwake(actor));
+
+  // A static actor moving away from the dynamic actor wakes it up.
+  farBox->SetRootTransform(TransformRT{Real3{5_r, 0_r, 5_r}}, test::ExpectOK{});
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, ChangingDistantStaticActorLeavesActorAsleep) {
+  Actor* farBox = CreateStaticBox(Real3{5_r, 0_r, 5_r}, 0.2_r);
+  Actor const* actor = CreateTestActor(ActorType::Rigid);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  farBox->SetContactParams(farBox->GetContactParams(test::ExpectOK{}), test::ExpectOK{});
+  farBox->SetRootTransform(TransformRT{Real3{6_r, 0_r, 6_r}}, test::ExpectOK{});
+  Step();
+  EXPECT_FALSE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, AddingStaticArticulatedLinkNearbyWakesActor) {
+  _scene->SetGravity(Real3{});
+  Actor const* actor = CreateTestActor(ActorType::Rigid, /*bottomHeight=*/1_r);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+
+  Aabb const aabb = actor->GetAabbWorld(test::ExpectOK{});
+  Actor* articulation = CreateStaticArticulatedBox(
+      Real3{aabb.GetMax()[0] + 0.001_r, aabb.GetMin()[1], aabb.GetMin()[2]}, aabb.GetSize()[0]);
+  auto const links = articulation->GetNestedLinkActors(test::ExpectOK{});
+  ASSERT_EQ(1, links.size());
+  Actor const* link = _scene->GetActor(links[0]);
+  ASSERT_NE(nullptr, link);
+  EXPECT_TRUE(link->IsStatic());
+  EXPECT_EQ(GetIsland(articulation), GetIsland(link));
+  EXPECT_NE(GetIsland(actor), GetIsland(link));
+
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, ChangingStaticArticulatedLinkContactWakesActor) {
+  _scene->SetGravity(Real3{});
+  Actor* actor = CreateTestActor(ActorType::Rigid, /*bottomHeight=*/1_r);
+  Aabb const aabb = actor->GetAabbWorld(test::ExpectOK{});
+  Actor* articulation = CreateStaticArticulatedBox(
+      Real3{aabb.GetMax()[0] + 0.001_r, aabb.GetMin()[1], aabb.GetMin()[2]}, aabb.GetSize()[0]);
+  Actor* link = _scene->GetActor(articulation->GetNestedLinkActors(test::ExpectOK{})[0]);
+  ASSERT_NE(nullptr, link);
+  ASSERT_TRUE(link->IsStatic());
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+
+  auto params = link->GetContactParams(test::ExpectOK{});
+  params.coulombFrictionCoefficient = 0_r;
+  link->SetContactParams(params, test::ExpectOK{});
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, MovingStaticArticulatedLinkNearbyWakesActor) {
+  _scene->SetGravity(Real3{});
+  Actor* articulation = CreateStaticArticulatedBox(Real3{5_r, 1_r, 5_r}, 0.2_r);
+  Actor const* actor = CreateTestActor(ActorType::Rigid, /*bottomHeight=*/1_r);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+
+  Aabb const aabb = actor->GetAabbWorld(test::ExpectOK{});
+  articulation->SetRootTransform(
+      TransformRT{Real3{aabb.GetMax()[0] + 0.001_r, aabb.GetMin()[1], aabb.GetMin()[2]}},
+      test::ExpectOK{});
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+}
+
+TEST_F(SceneSleep, DestroyingStaticArticulatedLinkWakesActor) {
+  _scene->SetGravity(Real3{});
+  Actor* actor = CreateTestActor(ActorType::Rigid, /*bottomHeight=*/1_r);
+  Aabb const aabb = actor->GetAabbWorld(test::ExpectOK{});
+  Actor* articulation = CreateStaticArticulatedBox(
+      Real3{aabb.GetMax()[0] + 0.001_r, aabb.GetMin()[1], aabb.GetMin()[2]}, aabb.GetSize()[0]);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+
+  _scene->DestroyActor(articulation);
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
 }
