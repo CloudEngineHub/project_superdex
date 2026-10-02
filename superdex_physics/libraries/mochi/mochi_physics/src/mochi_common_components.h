@@ -153,10 +153,16 @@ struct CRootTransform : public NoCopy {
   MOCHI_STRUCT_END();
 };
 
-// Helper function to resolve the root transform of an actor at a given time.
+// Helper function to resolve the root transform of an actor at a given time, given its
+// CRootTransform.
 template <TimeStep kTimeStep>
-TransformRT const& GetRootTransform(entt::registry const& reg, entt::entity entity) {
-  auto const& crt = reg.get<CRootTransform const>(entity);
+[[nodiscard]] TransformRT const& GetRootTransform(
+    [[maybe_unused]] entt::registry const& reg,
+    [[maybe_unused]] entt::entity entity,
+    CRootTransform const& crt) {
+  MOCHI_ASSERT_VERBOSE(
+      &crt == reg.try_get<CRootTransform const>(entity),
+      "Expected the CRootTransform of the given entity.");
   if constexpr (kTimeStep == TimeStep::Current) {
     return crt.worldFromLocal;
   } else if constexpr (kTimeStep == TimeStep::Previous) {
@@ -179,6 +185,12 @@ TransformRT const& GetRootTransform(entt::registry const& reg, entt::entity enti
       return crt.worldFromLocal;
     }
   }
+}
+
+// Helper function to resolve the root transform of an actor at a given time.
+template <TimeStep kTimeStep>
+[[nodiscard]] TransformRT const& GetRootTransform(entt::registry const& reg, entt::entity entity) {
+  return GetRootTransform<kTimeStep>(reg, entity, reg.get<CRootTransform const>(entity));
 }
 
 // Contains the inertia information of a dynamic rigid body.

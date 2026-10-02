@@ -276,6 +276,11 @@ static void UpdatePotentialColliders(
   // Discard previous colliders
   potentialColliders.clear();
 
+  // Without far SDF queries, the potential colliders are a subset of the conservative ones.
+  if (!kAllowFarSdfQuery && conservativeColliders.empty()) {
+    return;
+  }
+
   // Get colliding transform
   TransformRT const& worldFromColliding = GetRootTransform<kTimeStep>(reg, colliding);
 
@@ -348,6 +353,9 @@ static void UpdatePotentialColliders(
     // bounds.
     AnyShape const worldBoundsColliding =
         TransformShape(worldFromColliding, boundsColliding.localShape);
+    auto const& rootTransforms = reg.storage<CRootTransform>();
+    auto const& boundingVolumes = reg.storage<CBoundingVolume>();
+    auto const& contactParams = reg.storage<CContactParams>();
     for (entt::entity const collider : conservativeColliders) {
       MOCHI_ASSERT_VERBOSE(
           (reg.all_of<CBoundingVolume, CColliderInfo, CContactParams, CRootTransform>(collider)),
@@ -359,13 +367,14 @@ static void UpdatePotentialColliders(
           "CConservativePotentialColliders should only list entities with valid colliders.");
 
       // Get root transform.
-      TransformRT const& worldFromCollider = GetRootTransform<kTimeStep>(reg, collider);
+      TransformRT const& worldFromCollider =
+          GetRootTransform<kTimeStep>(reg, collider, rootTransforms.get(collider));
 
       // Get the world-space bounds of the collider and pad it by the penalty threshold distance
       // We use the penalty threshold of the collider, which is the one used for contact
-      auto const& boundsCollider = reg.get<CBoundingVolume const>(collider);
+      auto const& boundsCollider = boundingVolumes.get(collider);
 
-      auto const& paramsCollider = reg.get<CContactParams const>(collider);
+      auto const& paramsCollider = contactParams.get(collider);
       AnyShape worldBoundsCollider = TransformShape(
           worldFromCollider,
           ExpandColliderBoundsForContact(boundsCollider.localShape, paramsCollider));
