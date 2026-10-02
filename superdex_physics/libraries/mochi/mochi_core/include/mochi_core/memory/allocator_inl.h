@@ -113,7 +113,7 @@ inline void Allocator::deallocate(void* ptr, std::size_t sizeInBytes, std::size_
 }
 
 inline bool Allocator::is_equal(Allocator const& other) const noexcept {
-  return do_is_equal(other);
+  return this == &other || do_is_equal(other);
 }
 
 /*********************************************************************************************
