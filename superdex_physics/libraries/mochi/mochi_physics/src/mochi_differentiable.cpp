@@ -976,8 +976,8 @@ void mochi::ResetBackPropagationContainers(
 void mochi::PrepareContactForceAdjoints(
     CQueryActorContactForces const& /*queryActorContactForces*/,
     [[maybe_unused]] CRequiresFarSdfEvaluation const* farSdfEval,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& outActiveCollisionsAsync,
-    CActiveCollisions<ContactType::Sync, TimeStep::Current>& outActiveCollisionsSync,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& outActiveCollisionsAsync,
+    CActiveCollisions</*kIsSync*/ true, TimeStep::Current>& outActiveCollisionsSync,
     CCollJacs<CollRole::Collider>* outColliderJacs) {
   MOCHI_ASSERT_VERBOSE(
       !farSdfEval, "Far SDF evaluation is not compatible with contact-force queries.");

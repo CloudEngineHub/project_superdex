@@ -398,7 +398,7 @@ void mochi::soft::AssembleAsyncContact(
     CBoundaryNodalBasedStructure const& bdNbs,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CRootTransform const& rootTransform,
     CRomProjectionStrategy const* romProjectionStrategy,
     CDeformablePointAsyncCollisionsResponse& outResponse,

@@ -703,4 +703,48 @@ BENCHMARK_CAPTURE(FindPointContacts_Mesh_vs_SdfWithBsh, FindPointContacts_MeshVs
 BENCHMARK_CAPTURE(FindPointContacts_Mesh_vs_SdfWithBsh, FindPointContacts_MeshVsSdfWithBsh_OverlapPct100, kMeshPath, 1.0_r)->Name("FindPointContacts/MeshVsSdfWithBsh/OverlapPct100");
 // clang-format on
 
+static void ActiveCollisionsSparseCache(benchmark::State& state) {
+  int const numColliders = StaticCast<int>(state.range(0));
+  int const numPartitions = StaticCast<int>(state.range(1));
+  int const numActivePartitions = StaticCast<int>(state.range(2));
+  bool const rotate = state.range(3) != 0;
+
+  CPotentialColliders</*kIsSync*/ false> potentialColliders;
+  potentialColliders.reserve(numColliders);
+  for (int c = 0; c < numColliders; ++c) {
+    potentialColliders.emplace_back(static_cast<entt::entity>(c + 1));
+  }
+
+  CActiveCollisions</*kIsSync*/ false, TimeStep::Current> activeCollisions(numPartitions);
+  int firstPartition = 0;
+  for (auto _ : state) {
+    activeCollisions.SetUp(potentialColliders);
+    for (entt::entity const collider : potentialColliders) {
+      activeCollisions.GetNarrowPhaseResult(collider).sampleIndices.reserve(32);
+    }
+    // With one partition, every potential collider is already active.
+    if (numPartitions > 1) {
+      for (entt::entity const collider : potentialColliders) {
+        for (int p = 0; p < numActivePartitions; ++p) {
+          activeCollisions.ActivatePartitionResult(collider, (firstPartition + p) % numPartitions)
+              .sampleIndices.reserve(32);
+        }
+      }
+      activeCollisions.FinalizeActiveCollisions();
+    }
+    benchmark::DoNotOptimize(activeCollisions.data());
+    if (rotate) {
+      firstPartition = (firstPartition + 1) % numPartitions;
+    }
+  }
+
+  state.counters["active_records"] = activeCollisions.size();
+}
+
+BENCHMARK(ActiveCollisionsSparseCache)
+    ->ArgNames({"colliders", "partitions", "active", "rotate"})
+    ->Args({64, 1, 1, 0})
+    ->ArgsProduct({{64}, {4, 32, 128}, {0}, {0}})
+    ->ArgsProduct({{64}, {4, 32, 128}, {1, 4}, {0, 1}});
+
 #endif // MOCHI_INTERNAL

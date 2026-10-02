@@ -65,11 +65,11 @@ class MochiIsland : public test::MochiSceneTestBase {
   // These tests modify CConservativePotentialColliders right before islands are updated.
   // This lets us test the island code independent of collision detection.
   struct FakePotentialCollider {
-    FakePotentialCollider(ActorHandle a, ActorHandle b, ContactType type)
-        : actorA(a), actorB(b), contactType(type) {}
+    FakePotentialCollider(ActorHandle a, ActorHandle b, bool isSyncIn)
+        : actorA(a), actorB(b), isSync(isSyncIn) {}
     ActorHandle actorA;
     ActorHandle actorB;
-    ContactType contactType = {};
+    bool isSync = false;
   };
   std::vector<FakePotentialCollider> _fakePotentialColliders;
 
@@ -109,24 +109,24 @@ class MochiIsland : public test::MochiSceneTestBase {
   void PreIslandUpdate() {
     // Clear all potential colliders reported by actual collision detection.
     auto& reg = GetRegistry();
-    reg.view<CConservativePotentialColliders<mochi::ContactType::Async>>().each(
+    reg.view<CConservativePotentialColliders</*kIsSync*/ false>>().each(
         [&](auto& pc) { pc.clear(); });
-    reg.view<CConservativePotentialColliders<mochi::ContactType::Sync>>().each(
+    reg.view<CConservativePotentialColliders</*kIsSync*/ true>>().each(
         [&](auto& pc) { pc.clear(); });
 
     // Report just the "fake" potential colliders (relationships may not be symmetrical)
-    for (auto [a, b, type] : _fakePotentialColliders) {
-      if (type == ContactType::Async) {
+    for (auto [a, b, isSync] : _fakePotentialColliders) {
+      if (!isSync) {
         auto* potentialColliders =
-            reg.try_get<CConservativePotentialColliders<mochi::ContactType::Async>>(GetEntity(a));
+            reg.try_get<CConservativePotentialColliders</*kIsSync*/ false>>(GetEntity(a));
         EXPECT_NE((decltype(potentialColliders))nullptr, potentialColliders);
         auto colliderEntity = GetEntity(b);
         EXPECT_TRUE(reg.all_of<TagStaticActor>(colliderEntity))
-            << "ContactType::Async should only be used for static colliders";
+            << "Async contact should only be used for static colliders";
         potentialColliders->emplace_back(colliderEntity);
-      } else if (type == ContactType::Sync) {
+      } else {
         auto* potentialColliders =
-            reg.try_get<CConservativePotentialColliders<mochi::ContactType::Sync>>(GetEntity(a));
+            reg.try_get<CConservativePotentialColliders</*kIsSync*/ true>>(GetEntity(a));
         EXPECT_NE((decltype(potentialColliders))nullptr, potentialColliders);
         potentialColliders->emplace_back(GetEntity(b));
       }
@@ -214,21 +214,21 @@ class MochiIsland : public test::MochiSceneTestBase {
   void CheckAllPotentialColliders() const {
     auto const& reg = GetRegistry();
 
-    // Make sure that all potential colliders using ContactType::Async are valid
-    reg.view<CConservativePotentialColliders<mochi::ContactType::Async>>().each(
+    // Make sure that all async potential colliders are valid
+    reg.view<CConservativePotentialColliders</*kIsSync*/ false>>().each(
         [&](auto const& potentialColliders) {
-          for (auto const& collider : potentialColliders) {
-            EXPECT_TRUE(reg.valid(collider.entity));
+          for (entt::entity const collider : potentialColliders) {
+            EXPECT_TRUE(reg.valid(collider));
           }
         });
 
-    // Make sure that all potential colliders using ContactType::Sync are in the same islands.
-    reg.view<CConservativePotentialColliders<mochi::ContactType::Sync>>().each(
+    // Make sure that all sync potential colliders are in the same islands.
+    reg.view<CConservativePotentialColliders</*kIsSync*/ true>>().each(
         [&](auto e, auto const& potentialColliders) {
           entt::entity island = GetIsland(e);
-          for (auto const& collider : potentialColliders) {
-            EXPECT_TRUE(reg.valid(collider.entity));
-            EXPECT_EQ(island, GetIsland(collider.entity)); // Should be in same island by now
+          for (entt::entity const collider : potentialColliders) {
+            EXPECT_TRUE(reg.valid(collider));
+            EXPECT_EQ(island, GetIsland(collider)); // Should be in same island by now
           }
         });
   }
@@ -289,20 +289,16 @@ TEST_F(MochiIslandParallel, StaticArticulatedLinkIsStableAsyncCollider) {
   EXPECT_TRUE(reg.all_of<TagStaticActor>(rootEntity));
   EXPECT_FALSE(reg.all_of<TagStaticActor>(childEntity));
 
-  _fakePotentialColliders.emplace_back(cubeHandle, rootHandle, ContactType::Async);
+  _fakePotentialColliders.emplace_back(cubeHandle, rootHandle, /*kIsSync*/ false);
 
   test::SetSceneIntegrationMethod(_scene, IntegrationMethod::DIRK33);
   Step();
   EXPECT_NE(GetIsland(cubeHandle), GetIsland(articulationHandle));
 
   auto const* potentialColliders =
-      reg.try_get<CPotentialColliders<ContactType::Async> const>(cubeEntity);
+      reg.try_get<CPotentialColliders</*kIsSync*/ false> const>(cubeEntity);
   ASSERT_NE(nullptr, potentialColliders);
-  EXPECT_TRUE(
-      std::any_of(
-          potentialColliders->begin(),
-          potentialColliders->end(),
-          [rootEntity](auto const& collider) { return collider.entity == rootEntity; }));
+  EXPECT_TRUE(Contains(*potentialColliders, rootEntity));
 
   int constexpr kNumSteps = 16;
   for (int step = 1; step < kNumSteps; ++step) {
@@ -431,9 +427,6 @@ TEST_F(MochiIsland, VariousContactType) {
     // Try various types of contact interactions (not necessarily symetrical)
     for (int enableAB = 0; enableAB < 2; ++enableAB) {
       for (int enableBA = 0; enableBA < 2; ++enableBA) {
-        auto abContactType = enableAB ? ContactType::Sync : ContactType::None;
-        auto baContactType = enableBA ? ContactType::Sync : ContactType::None;
-
         // Override CConservativePotentialColliders so contact code sees no potential colliders
         _fakePotentialColliders.clear();
 
@@ -445,16 +438,19 @@ TEST_F(MochiIsland, VariousContactType) {
           EXPECT_EQ(GetIsland(actorB), GetIsland(actorC)); // C is in the same compound as B
         }
 
-        // Override CConservativePotentialColliders so contact code sees potential colliders
-        // according to abContactType and baContactType.
+        // Override CConservativePotentialColliders so contact code sees sync potential colliders
+        // according to enableAB and enableBA.
         _fakePotentialColliders.clear();
-        _fakePotentialColliders.emplace_back(actorA, actorB, abContactType);
-        _fakePotentialColliders.emplace_back(actorB, actorA, baContactType);
+        if (enableAB) {
+          _fakePotentialColliders.emplace_back(actorA, actorB, /*isSync*/ true);
+        }
+        if (enableBA) {
+          _fakePotentialColliders.emplace_back(actorB, actorA, /*isSync*/ true);
+        }
 
-        // The actors islands should split or merge according to ContactType
+        // The actors islands should split or merge according to the sync potential colliders
         Step();
-        bool shouldMerge =
-            (abContactType == ContactType::Sync) || (baContactType == ContactType::Sync);
+        bool const shouldMerge = enableAB || enableBA;
         if (shouldMerge) {
           EXPECT_EQ(1, GetNumIslands());
           EXPECT_EQ(GetIsland(actorA), GetIsland(actorB));
@@ -493,8 +489,8 @@ TEST_F(MochiIsland, MergeSplitSameStep) {
 
   // Override CConservativePotentialColliders so that two islands will be formed: {a, b} and {c, d}
   _fakePotentialColliders.clear();
-  _fakePotentialColliders.emplace_back(a, b, ContactType::Sync);
-  _fakePotentialColliders.emplace_back(c, d, ContactType::Sync);
+  _fakePotentialColliders.emplace_back(a, b, /*kIsSync*/ true);
+  _fakePotentialColliders.emplace_back(c, d, /*kIsSync*/ true);
   Step();
   EXPECT_EQ(2, GetNumIslands());
   EXPECT_EQ(GetIsland(a), GetIsland(b));
@@ -503,8 +499,8 @@ TEST_F(MochiIsland, MergeSplitSameStep) {
 
   // Cause islands {b, c} and {a, d} to be formed (requires a merge and a split in the same step)
   _fakePotentialColliders.clear();
-  _fakePotentialColliders.emplace_back(b, c, ContactType::Sync);
-  _fakePotentialColliders.emplace_back(a, d, ContactType::Sync);
+  _fakePotentialColliders.emplace_back(b, c, /*kIsSync*/ true);
+  _fakePotentialColliders.emplace_back(a, d, /*kIsSync*/ true);
   Step();
   EXPECT_EQ(2, GetNumIslands());
   EXPECT_EQ(GetIsland(a), GetIsland(d));
@@ -513,8 +509,8 @@ TEST_F(MochiIsland, MergeSplitSameStep) {
 
   // Cause isands {a, c} and {b, d} to be formed.
   _fakePotentialColliders.clear();
-  _fakePotentialColliders.emplace_back(a, c, ContactType::Sync);
-  _fakePotentialColliders.emplace_back(b, d, ContactType::Sync);
+  _fakePotentialColliders.emplace_back(a, c, /*kIsSync*/ true);
+  _fakePotentialColliders.emplace_back(b, d, /*kIsSync*/ true);
   Step();
   EXPECT_EQ(2, GetNumIslands());
   EXPECT_EQ(GetIsland(a), GetIsland(c));
@@ -523,8 +519,7 @@ TEST_F(MochiIsland, MergeSplitSameStep) {
 
   // Finally, cause islands {B, C} and {A} and {D} to be formed.
   _fakePotentialColliders.clear();
-  _fakePotentialColliders.emplace_back(b, c, ContactType::Sync);
-  _fakePotentialColliders.emplace_back(d, c, ContactType::None); // Does not cause merger
+  _fakePotentialColliders.emplace_back(b, c, /*isSync*/ true);
   Step();
   EXPECT_EQ(3, GetNumIslands());
   EXPECT_EQ(GetIsland(b), GetIsland(c));
@@ -545,7 +540,7 @@ TEST_F(MochiIsland, SplitMultiple) {
     handle = CreateRigidActor();
   }
   for (int i = 0; i < isize(actors); i += 2) {
-    _fakePotentialColliders.emplace_back(actors[i], actors[i + 1], ContactType::Sync);
+    _fakePotentialColliders.emplace_back(actors[i], actors[i + 1], /*kIsSync*/ true);
   }
   Step();
   EXPECT_EQ(10, GetNumIslands());
@@ -579,7 +574,7 @@ TEST_F(MochiIsland, SplitPermutation) {
     _fakePotentialColliders.clear();
     for (int i = 0; i < kNumActors; ++i) {
       for (int j = i + 1; j < kNumActors; ++j) {
-        _fakePotentialColliders.emplace_back(actors[i], actors[j], ContactType::Sync);
+        _fakePotentialColliders.emplace_back(actors[i], actors[j], /*kIsSync*/ true);
       }
     }
     // Uses island::PreStep not Scene::Step for speed.
@@ -604,7 +599,7 @@ TEST_F(MochiIsland, SplitPermutation) {
             for (int i = 0; i < kNumActors; ++i) {
               for (int j = 0; j < kNumActors; ++j) {
                 if (mask[i] & (1 << j)) {
-                  _fakePotentialColliders.emplace_back(actors[i], actors[j], ContactType::Sync);
+                  _fakePotentialColliders.emplace_back(actors[i], actors[j], /*kIsSync*/ true);
                 }
               }
             }

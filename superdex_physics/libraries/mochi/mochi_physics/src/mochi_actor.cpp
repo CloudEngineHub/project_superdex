@@ -2945,7 +2945,7 @@ static void GetContactForceWorldBackwardImpl(
 
   Vec4r const gradForceWorld = Load<RigidSize::kDTrans, Vec4r>(gradOutput.data());
   if (auto* collisionsAsync =
-          reg.try_get<CActiveCollisions<ContactType::Async, TimeStep::Current>>(e)) {
+          reg.try_get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(e)) {
     for (auto& collision : *collisionsAsync) {
       if (exclusiveEntity == entt::null || collision.colliderEntity == exclusiveEntity) {
         AccumulateContactForceWorldAdjoints(reg, e, collision.collisionResult, gradForceWorld);
@@ -2953,7 +2953,7 @@ static void GetContactForceWorldBackwardImpl(
     }
   }
   if (auto* collisionsSync =
-          reg.try_get<CActiveCollisions<ContactType::Sync, TimeStep::Current>>(e)) {
+          reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e)) {
     for (auto& collision : *collisionsSync) {
       if (exclusiveEntity == entt::null || collision.colliderEntity == exclusiveEntity) {
         AccumulateContactForceWorldAdjoints(reg, e, collision.collisionResult, gradForceWorld);

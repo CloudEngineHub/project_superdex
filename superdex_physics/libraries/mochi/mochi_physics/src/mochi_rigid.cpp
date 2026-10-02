@@ -95,7 +95,7 @@ static void AssembleRigidBodyAsyncContactResponse(
     ContactSamples const& sample,
     real dtStage,
     TransformRT const& pose,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     double* outEnergy,
     RigidGradient* outGradient,
     RigidHessian* outHessian) {
@@ -425,7 +425,7 @@ void rigid::SetupCollidingJacobiansImpl(
 
   // Compute Jacobians
   for (auto& jac : outJacobians) {
-    if (jac.type == ContactType::Sync) {
+    if (jac.isSync) {
       auto& jacs = *jac.jacs;
       if (jac.bothRigid) {
         dmapSyncRigid.GetJac(jac.query->sampleIndices, jacs);
@@ -477,13 +477,13 @@ void rigid::SetupColliderJacobiansImpl(
   }
 }
 
-template <ContactType kContactType>
+template <bool kIsSync>
 void mochi::rigid::SetupActiveCollisionNormals(
     ecs::RequiredTag<TagRigidActor>,
     ecs::CtxGlobal<CSimulationParams const> simParams,
     CContactSamples<TimeStep::Current> const& samples,
     CRootTransform const& transform,
-    CActiveCollisions<kContactType, TimeStep::Current>& activeCollisions) {
+    CActiveCollisions<kIsSync, TimeStep::Current>& activeCollisions) {
   MOCHI_PROFILE_SCOPE();
 
   MOCHI_ASSERT_VERBOSE(
@@ -524,15 +524,15 @@ void mochi::rigid::SetupActiveCollisionNormals(
   }
 }
 
-#define MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS(contactType) \
-  template void mochi::rigid::SetupActiveCollisionNormals<contactType>(  \
-      ecs::RequiredTag<TagRigidActor>,                                   \
-      ecs::CtxGlobal<CSimulationParams const>,                           \
-      CContactSamples<TimeStep::Current> const&,                         \
-      CRootTransform const&,                                             \
-      CActiveCollisions<contactType, TimeStep::Current>&);
-MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS(ContactType::Sync);
-MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS(ContactType::Async);
+#define MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS(isSync) \
+  template void mochi::rigid::SetupActiveCollisionNormals<isSync>(  \
+      ecs::RequiredTag<TagRigidActor>,                              \
+      ecs::CtxGlobal<CSimulationParams const>,                      \
+      CContactSamples<TimeStep::Current> const&,                    \
+      CRootTransform const&,                                        \
+      CActiveCollisions<isSync, TimeStep::Current>&);
+MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS(/*kIsSync*/ true);
+MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS(/*kIsSync*/ false);
 #undef MOCHI_SPECIALIZE_SETUP_ACTIVE_COLLISIONS_KINEMATICS
 
 static void EntityPostNewSolutionImpl(
@@ -611,7 +611,7 @@ void mochi::rigid::EntityAssemble(
     CExternalForces const& externalForces,
     CColliderInfo const& colliderInfo,
     CContactSamples<TimeStep::Current> const* contactSample,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>* activeCollisions) {
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>* activeCollisions) {
   MOCHI_PROFILE_SCOPE();
 
   // If this is an input grad target, all we need to do is resize the residual to 0
@@ -1035,17 +1035,17 @@ static void InitRigidActor_Dynamic(
     });
 
     // Emplace helper component to map stage-start and current contact results
-    reg.emplace<CContactCorrespondence<ContactType::Async>>(e, numSamples);
-    reg.emplace<CContactCorrespondence<ContactType::Sync>>(e, numSamples);
+    reg.emplace<CContactCorrespondence</*kIsSync*/ false>>(e, numSamples);
+    reg.emplace<CContactCorrespondence</*kIsSync*/ true>>(e, numSamples);
 
-    reg.emplace<CConservativePotentialColliders<ContactType::Async>>(e);
-    reg.emplace<CConservativePotentialColliders<ContactType::Sync>>(e);
-    reg.emplace<CPotentialColliders<ContactType::Async>>(e);
-    reg.emplace<CPotentialColliders<ContactType::Sync>>(e);
-    reg.emplace<CActiveCollisions<ContactType::Async, TimeStep::Current>>(e);
-    reg.emplace<CActiveCollisions<ContactType::Async, TimeStep::StageStart>>(e);
-    reg.emplace<CActiveCollisions<ContactType::Sync, TimeStep::Current>>(e);
-    reg.emplace<CActiveCollisions<ContactType::Sync, TimeStep::StageStart>>(e);
+    reg.emplace<CConservativePotentialColliders</*kIsSync*/ false>>(e);
+    reg.emplace<CConservativePotentialColliders</*kIsSync*/ true>>(e);
+    reg.emplace<CPotentialColliders</*kIsSync*/ false>>(e);
+    reg.emplace<CPotentialColliders</*kIsSync*/ true>>(e);
+    reg.emplace<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(e, /*numPartitions*/ 1);
+    reg.emplace<CActiveCollisions</*kIsSync*/ false, TimeStep::StageStart>>(e, /*numPartitions*/ 1);
+    reg.emplace<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e, /*numPartitions*/ 1);
+    reg.emplace<CActiveCollisions</*kIsSync*/ true, TimeStep::StageStart>>(e, /*numPartitions*/ 1);
     reg.emplace<CCollJacs<CollRole::Colliding>>(e);
   }
 

@@ -177,7 +177,7 @@ void AssembleAndProjectAsyncContact(
     CBoundaryLocal2GlobalMap const& bdL2g,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CRootTransform const& rootTransform,
     CTimeIntegratorState const& intState,
     CRomJacobian const& jacobian,

@@ -270,12 +270,13 @@ TEST(MochiContact, SetupActiveCollisionNormalsCachesLinearElementNormal) {
   Real3 const expectedNormal =
       transform.worldFromLocal.GetRotation() * surfaceMesh.GetElementNormals()[0];
   auto runTest = [&](auto const& discretization) {
-    CActiveCollisions<ContactType::Sync, TimeStep::Current> collisions;
-    collisions.emplace_back(ActiveCollision{});
+    CActiveCollisions</*kIsSync*/ true, TimeStep::Current> collisions(/*numPartitions*/ 1);
+    entt::entity const collider{};
+    collisions.SetUp(MakeSingletonConstSpan(collider));
     auto& result = collisions.front().collisionResult;
     result.sampleIndices = {0, 1, 3};
     result.jacColliderFromWorld.resize(3, VEye<3>());
-    deformable::SetupActiveCollisionNormals<ContactType::Sync>(
+    deformable::SetupActiveCollisionNormals</*kIsSync*/ true>(
         {},
         ecs::CtxGlobal<CSimulationParams const>{simulationParams},
         discretization,
@@ -1772,7 +1773,7 @@ TEST_F(SkinnedContactPairCapacityTest, PartitionedPairsCanExceedActorPairs) {
   int numActiveCollisions = 0;
   for (auto actor : actors) {
     if (auto const* activeCollisions =
-            reg.try_get<CActiveCollisions<ContactType::Sync, TimeStep::Current> const>(actor)) {
+            reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const>(actor)) {
       numActiveCollisions += isize(*activeCollisions);
     }
   }
@@ -1894,6 +1895,71 @@ class ZeroDofSkinContact : public test::MochiSceneTestBase {
     return GetRegistry().get<CArticulatedReducedPose<TimeStep::Current> const>(skinEntity).value[0];
   }
 
+  static void ExpectJacDataMatches(
+      std::vector<JacData> const& jacs,
+      int jacId,
+      entt::entity otherEntity,
+      ContactDetectionResult const& result) {
+    ASSERT_GE(jacId, 0);
+    ASSERT_LT(jacId, isize(jacs));
+    JacData const& jac = jacs[jacId];
+    EXPECT_EQ(otherEntity, jac.otherEntity);
+    EXPECT_EQ(result.collidingPartitionId, jac.collidingPartitionId);
+    EXPECT_EQ(&result, jac.query);
+  }
+
+  // Returns the number of active collisions checked.
+  template <bool kIsSync>
+  int ExpectActiveCollisionsMatchJacData(entt::entity e) const {
+    auto const& reg = GetRegistry();
+    auto const& collisions = reg.get<CActiveCollisions<kIsSync, TimeStep::Current> const>(e);
+    auto const& collidingJacs = reg.get<CCollJacs<CollRole::Colliding> const>(e);
+    for (auto const& collision : collisions) {
+      ExpectJacDataMatches(
+          collidingJacs,
+          collision.collidingJacId,
+          collision.colliderEntity,
+          collision.collisionResult);
+      if constexpr (kIsSync) {
+        ExpectJacDataMatches(
+            reg.get<CCollJacs<CollRole::Collider> const>(collision.colliderEntity),
+            collision.colliderJacId,
+            e,
+            collision.collisionResult);
+      }
+    }
+    return isize(collisions);
+  }
+
+  // Sparse partitions drop and recreate JacData as contact moves across partitions. Every active
+  // collision must index the JacData of its pair, and no stale JacData may remain.
+  void ExpectJacDataMatchesActiveCollisions() const {
+    auto const& reg = GetRegistry();
+    reg.view<CCollJacs<CollRole::Colliding> const>().each(
+        [&](entt::entity e, auto const& collidingJacs) {
+          int const numCollisions = ExpectActiveCollisionsMatchJacData</*kIsSync*/ false>(e) +
+              ExpectActiveCollisionsMatchJacData</*kIsSync*/ true>(e);
+          EXPECT_EQ(numCollisions, isize(collidingJacs));
+        });
+    reg.view<CCollJacs<CollRole::Collider> const>().each(
+        [&](entt::entity collider, auto const& colliderJacs) {
+          int numSyncCollisions = 0;
+          reg.view<CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const>().each(
+              [&](auto const& collisions) {
+                numSyncCollisions += StaticCast<int>(std::count_if(
+                    collisions.begin(), collisions.end(), [&](ActiveCollision const& collision) {
+                      return collision.colliderEntity == collider;
+                    }));
+              });
+          EXPECT_EQ(numSyncCollisions, isize(colliderJacs));
+        });
+  }
+
+  void Step() {
+    _scene->Step(kTimeStep);
+    ExpectJacDataMatchesActiveCollisions();
+  }
+
   void ExpectEmptyAndNonemptyPartitions(entt::entity skinEntity) {
     auto const& partitions = GetRegistry().get<CContactPartitions const>(skinEntity);
     bool hasEmpty = false;
@@ -1909,12 +1975,12 @@ class ZeroDofSkinContact : public test::MochiSceneTestBase {
     EXPECT_TRUE(hasNonempty);
   }
 
-  template <ContactType kContactType>
+  template <bool kIsSync>
   std::pair<int, int> CountContactsByDofType(entt::entity skinEntity, entt::entity boxEntity) {
     auto const& reg = GetRegistry();
     auto const& partitions = reg.get<CContactPartitions const>(skinEntity);
     auto const& collisions =
-        reg.get<CActiveCollisions<kContactType, TimeStep::Current> const>(skinEntity);
+        reg.get<CActiveCollisions<kIsSync, TimeStep::Current> const>(skinEntity);
     int zeroDofContacts = 0;
     int nonzeroDofContacts = 0;
     for (auto const& collision : collisions) {
@@ -1944,7 +2010,7 @@ class ZeroDofSkinContact : public test::MochiSceneTestBase {
   BlendedContactStats GetBlendedContactStats(entt::entity skinEntity, entt::entity boxEntity) {
     auto const& reg = GetRegistry();
     auto const& collisions =
-        reg.get<CActiveCollisions<ContactType::Async, TimeStep::Current> const>(skinEntity);
+        reg.get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const>(skinEntity);
     auto const& partitions = reg.get<CContactPartitions const>(skinEntity);
     BlendedContactStats stats;
     for (auto const& collision : collisions) {
@@ -1984,9 +2050,9 @@ class ZeroDofSkinContact : public test::MochiSceneTestBase {
       skin->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
     }
 
-    _scene->Step(kTimeStep);
+    Step();
     auto const [zeroDofContacts, nonzeroDofContacts] =
-        CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity);
+        CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity);
     EXPECT_GT(zeroDofContacts, 0);
     EXPECT_EQ(0, nonzeroDofContacts);
     EXPECT_FALSE(UsesSkinnedContactInSolver(skinEntity));
@@ -1994,8 +2060,8 @@ class ZeroDofSkinContact : public test::MochiSceneTestBase {
 
     ShiftBoxX(box, kMixedBoxMaxX - kZeroDofBoxMaxX);
     real const poseBefore = GetPrismaticPose(skinEntity);
-    _scene->Step(kTimeStep);
-    EXPECT_GT(CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity).second, 0);
+    Step();
+    EXPECT_GT(CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity).second, 0);
     EXPECT_TRUE(UsesSkinnedContactInSolver(skinEntity));
     EXPECT_NE(poseBefore, GetPrismaticPose(skinEntity));
   }
@@ -2009,13 +2075,13 @@ TEST_F(ZeroDofSkinContact, StaticBoxReportsForceFromAsyncContact) {
 
   skin->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
   skin->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{});
-  _scene->Step(kTimeStep);
+  Step();
 
   auto const [zeroDofContacts, nonzeroDofContacts] =
-      CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity);
+      CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity);
   EXPECT_GT(zeroDofContacts, 0);
   EXPECT_EQ(0, nonzeroDofContacts);
-  EXPECT_EQ((std::pair{0, 0}), CountContactsByDofType<ContactType::Sync>(skinEntity, boxEntity));
+  EXPECT_EQ((std::pair{0, 0}), CountContactsByDofType</*kIsSync*/ true>(skinEntity, boxEntity));
   EXPECT_FALSE(GetRegistry().get<CSkinnedContactSnle const>(skinEntity).useInSolver);
   EXPECT_FALSE(skin->GetContactPointsWorld(test::ExpectOK{}).empty());
   EXPECT_GT(Norm(skin->GetContactForceWorld(test::ExpectOK{})), 0_r);
@@ -2030,13 +2096,13 @@ TEST_F(ZeroDofSkinContact, DynamicBoxMovesFromSyncContact) {
   skin->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
   box->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
   real const initialBoxX = box->GetRootTransform().GetTranslation()[0];
-  _scene->Step(kTimeStep);
+  Step();
 
   auto const [zeroDofContacts, nonzeroDofContacts] =
-      CountContactsByDofType<ContactType::Sync>(skinEntity, boxEntity);
+      CountContactsByDofType</*kIsSync*/ true>(skinEntity, boxEntity);
   EXPECT_GT(zeroDofContacts, 0);
   EXPECT_EQ(0, nonzeroDofContacts);
-  EXPECT_EQ((std::pair{0, 0}), CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity));
+  EXPECT_EQ((std::pair{0, 0}), CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity));
   EXPECT_LT(box->GetRootTransform().GetTranslation()[0], initialBoxX);
   Real3 const skinForce = skin->GetContactForceWorld(test::ExpectOK{});
   Real3 const boxForce = box->GetContactForceWorld(test::ExpectOK{});
@@ -2054,10 +2120,10 @@ TEST_F(ZeroDofSkinContact, MixedPartitionsPreserveAsyncSolverContactAndQueries) 
   skin->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
   real const initialPose =
       GetRegistry().get<CArticulatedReducedPose<TimeStep::Current> const>(skinEntity).value[0];
-  _scene->Step(kTimeStep);
+  Step();
 
   auto const [zeroDofContacts, nonzeroDofContacts] =
-      CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity);
+      CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity);
   EXPECT_GT(zeroDofContacts, 0);
   EXPECT_GT(nonzeroDofContacts, 0);
   EXPECT_TRUE(GetRegistry().get<CSkinnedContactSnle const>(skinEntity).useInSolver);
@@ -2066,7 +2132,7 @@ TEST_F(ZeroDofSkinContact, MixedPartitionsPreserveAsyncSolverContactAndQueries) 
       GetRegistry().get<CArticulatedReducedPose<TimeStep::Current> const>(skinEntity).value[0]);
 
   auto const& collisions =
-      GetRegistry().get<CActiveCollisions<ContactType::Async, TimeStep::Current> const>(skinEntity);
+      GetRegistry().get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const>(skinEntity);
   auto const& partitions = GetRegistry().get<CContactPartitions const>(skinEntity);
   real maxZeroDofForce = 0_r;
   for (auto const& collision : collisions) {
@@ -2091,7 +2157,7 @@ TEST_F(ZeroDofSkinContact, BlendedContactSkipsOnlyPartitionsWithoutSoftDofs) {
   entt::entity const skinEntity = GetEntity(skin->GetHandle());
   entt::entity const boxEntity = GetEntity(box->GetHandle());
   skin->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
-  _scene->Step(kTimeStep);
+  Step();
 
   BlendedContactStats const stats = GetBlendedContactStats(skinEntity, boxEntity);
   EXPECT_GT(stats.contactsWithoutSoftDofs, 0);
@@ -2105,7 +2171,7 @@ TEST_F(ZeroDofSkinContact, BlendedContactWithoutSoftDofsReportsForceOutsideSolve
   entt::entity const skinEntity = GetEntity(skin->GetHandle());
   entt::entity const boxEntity = GetEntity(box->GetHandle());
   skin->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
-  _scene->Step(kTimeStep);
+  Step();
 
   BlendedContactStats const stats = GetBlendedContactStats(skinEntity, boxEntity);
   EXPECT_GT(stats.contactsWithoutSoftDofs, 0);
@@ -2119,10 +2185,10 @@ TEST_F(ZeroDofSkinContact, StaticBoxWithoutQuerySkipsAsyncContact) {
   auto [skin, box] = CreateActors(/*isBoxStatic=*/true);
   entt::entity const skinEntity = GetEntity(skin->GetHandle());
   entt::entity const boxEntity = GetEntity(box->GetHandle());
-  _scene->Step(kTimeStep);
+  Step();
 
   auto const [zeroDofContacts, nonzeroDofContacts] =
-      CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity);
+      CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity);
   EXPECT_GT(zeroDofContacts, 0);
   EXPECT_EQ(0, nonzeroDofContacts);
   EXPECT_FALSE(UsesSkinnedContactInSolver(skinEntity));
@@ -2133,10 +2199,10 @@ TEST_F(ZeroDofSkinContact, MixedPartitionsWithoutQueryAssembleDofContacts) {
   entt::entity const skinEntity = GetEntity(skin->GetHandle());
   entt::entity const boxEntity = GetEntity(box->GetHandle());
   real const initialPose = GetPrismaticPose(skinEntity);
-  _scene->Step(kTimeStep);
+  Step();
 
   auto const [zeroDofContacts, nonzeroDofContacts] =
-      CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity);
+      CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity);
   EXPECT_GT(zeroDofContacts, 0);
   EXPECT_GT(nonzeroDofContacts, 0);
   EXPECT_TRUE(UsesSkinnedContactInSolver(skinEntity));
@@ -2148,14 +2214,14 @@ TEST_F(ZeroDofSkinContact, SolverUseStopsWhenOnlyZeroDofContactRemains) {
   entt::entity const skinEntity = GetEntity(skin->GetHandle());
   entt::entity const boxEntity = GetEntity(box->GetHandle());
 
-  _scene->Step(kTimeStep);
-  EXPECT_GT(CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity).second, 0);
+  Step();
+  EXPECT_GT(CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity).second, 0);
   EXPECT_TRUE(UsesSkinnedContactInSolver(skinEntity));
 
   ShiftBoxX(box, kZeroDofBoxMaxX - kMixedBoxMaxX);
-  _scene->Step(kTimeStep);
+  Step();
   auto const [zeroDofContacts, nonzeroDofContacts] =
-      CountContactsByDofType<ContactType::Async>(skinEntity, boxEntity);
+      CountContactsByDofType</*kIsSync*/ false>(skinEntity, boxEntity);
   EXPECT_GT(zeroDofContacts, 0);
   EXPECT_EQ(0, nonzeroDofContacts);
   EXPECT_FALSE(UsesSkinnedContactInSolver(skinEntity));

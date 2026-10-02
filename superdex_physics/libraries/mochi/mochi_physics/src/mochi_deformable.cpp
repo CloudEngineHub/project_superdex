@@ -126,7 +126,7 @@ void deformable::UpdateMaxGeometrySpeed(
   outStepBounds.maxGeometrySpeed = Max(physicsMaxSpeed, contactSkinMaxSpeed);
 }
 
-template <ContactType kContactType, typename DiscretizationT>
+template <bool kIsSync, typename DiscretizationT>
 void deformable::SetupActiveCollisionNormals(
     ecs::Excluded<TagShellActor, TagRodActor>,
     ecs::CtxGlobal<CSimulationParams const> simParams,
@@ -135,7 +135,7 @@ void deformable::SetupActiveCollisionNormals(
     CFinalDisplacementRef<TimeStep::StageStart> const& stageStartDispl,
     CRootTransform const& transform,
     [[maybe_unused]] CContactSamples<TimeStep::Current> const& contactPositions,
-    CActiveCollisions<kContactType, TimeStep::Current>& activeCollisions) {
+    CActiveCollisions<kIsSync, TimeStep::Current>& activeCollisions) {
   MOCHI_PROFILE_SCOPE();
   static_assert(
       std::is_same_v<DiscretizationT, CFemBoundaryDiscretization> ||
@@ -238,20 +238,20 @@ void deformable::SetupActiveCollisionNormals(
   });
 }
 
-#define MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(CONTACT_TYPE, DISCRETIZATION_TYPE)    \
-  template void deformable::SetupActiveCollisionNormals<CONTACT_TYPE, DISCRETIZATION_TYPE>( \
-      ecs::Excluded<TagShellActor, TagRodActor>,                                            \
-      ecs::CtxGlobal<CSimulationParams const>,                                              \
-      DISCRETIZATION_TYPE const&,                                                           \
-      CFinalDisplacementRef<TimeStep::Current> const&,                                      \
-      CFinalDisplacementRef<TimeStep::StageStart> const&,                                   \
-      CRootTransform const&,                                                                \
-      CContactSamples<TimeStep::Current> const&,                                            \
-      CActiveCollisions<CONTACT_TYPE, TimeStep::Current>&);
-MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(ContactType::Async, CFemBoundaryDiscretization);
-MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(ContactType::Sync, CFemBoundaryDiscretization);
-MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(ContactType::Async, CFemSurfaceDiscretization);
-MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(ContactType::Sync, CFemSurfaceDiscretization);
+#define MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(IS_SYNC, DISCRETIZATION_TYPE)    \
+  template void deformable::SetupActiveCollisionNormals<IS_SYNC, DISCRETIZATION_TYPE>( \
+      ecs::Excluded<TagShellActor, TagRodActor>,                                       \
+      ecs::CtxGlobal<CSimulationParams const>,                                         \
+      DISCRETIZATION_TYPE const&,                                                      \
+      CFinalDisplacementRef<TimeStep::Current> const&,                                 \
+      CFinalDisplacementRef<TimeStep::StageStart> const&,                              \
+      CRootTransform const&,                                                           \
+      CContactSamples<TimeStep::Current> const&,                                       \
+      CActiveCollisions<IS_SYNC, TimeStep::Current>&);
+MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(/*kIsSync*/ false, CFemBoundaryDiscretization);
+MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(/*kIsSync*/ true, CFemBoundaryDiscretization);
+MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(/*kIsSync*/ false, CFemSurfaceDiscretization);
+MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(/*kIsSync*/ true, CFemSurfaceDiscretization);
 #undef MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST
 
 template <typename ElementT>
@@ -264,7 +264,7 @@ static void ComputeAsyncContactResponseImpl(
     [[maybe_unused]] CContactSamples<TimeStep::Current> const& samples,
     ContactEvalConfig const& config,
     real dtStage,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CDeformablePointAsyncCollisionsResponse& outResponse,
     bool evalEner,
     bool evalGrad,
@@ -367,7 +367,7 @@ void deformable::ComputeAsyncContactResponse(
     DiscretizationType const& femBoundaryDisc,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CTimeIntegratorState const& intState,
     CRootTransform const& rootTransform,
     AssemblyParams const& params,
@@ -411,7 +411,7 @@ void deformable::ComputeAsyncContactResponse(
       DISCRETIZATION_TYPE const&,                                                         \
       CContactSamples<TimeStep::Current> const&,                                          \
       CColliderInfo const&,                                                               \
-      CActiveCollisions<ContactType::Async, TimeStep::Current>&,                          \
+      CActiveCollisions</*kIsSync*/ false, TimeStep::Current>&,                           \
       CTimeIntegratorState const&,                                                        \
       CRootTransform const&,                                                              \
       AssemblyParams const&,                                                              \
@@ -446,7 +446,7 @@ void deformable::SetupCollidingJacobians(
     DynamicArray<JacData*> syncJacs(&tempAlloc);
     syncJacs.reserve(outJacobians.size());
     for (int i = 0; i < isize(outJacobians); ++i) {
-      if (outJacobians[i].type == ContactType::Sync) {
+      if (outJacobians[i].isSync) {
         syncJacs.push_back(&outJacobians[i]);
       }
     }
@@ -455,7 +455,7 @@ void deformable::SetupCollidingJacobians(
     int constexpr kMinPerTask = 2;
     ParallelForEach(
         "deformable::SetupCollidingJacobians Range", syncJacs, kMinPerTask, [&](JacData* jac) {
-          MOCHI_ASSERT_VERBOSE(jac->type == ContactType::Sync);
+          MOCHI_ASSERT_VERBOSE(jac->isSync);
 
           // Create differentiable map
           using DQuad = DMapQuad<typename DiscretizationT::ElementT>;
@@ -509,20 +509,21 @@ void deformable::SetupColliderJacobians(
 void deformable::EmplaceContactComponents(
     entt::registry& reg,
     entt::entity e,
-    int numCollidingSamples) {
+    int numCollidingSamples,
+    int numContactPartitions) {
   reg.emplace<TagUseContact>(e);
-  reg.emplace<CConservativePotentialColliders<ContactType::Async>>(e);
-  reg.emplace<CConservativePotentialColliders<ContactType::Sync>>(e);
-  reg.emplace<CPotentialColliders<ContactType::Async>>(e);
-  reg.emplace<CPotentialColliders<ContactType::Sync>>(e);
+  reg.emplace<CConservativePotentialColliders</*kIsSync*/ false>>(e);
+  reg.emplace<CConservativePotentialColliders</*kIsSync*/ true>>(e);
+  reg.emplace<CPotentialColliders</*kIsSync*/ false>>(e);
+  reg.emplace<CPotentialColliders</*kIsSync*/ true>>(e);
   reg.emplace<CContactSamples<TimeStep::Current>>(e, numCollidingSamples);
   reg.emplace<CContactSamples<TimeStep::StageStart>>(e, numCollidingSamples);
-  reg.emplace<CContactCorrespondence<ContactType::Async>>(e, numCollidingSamples);
-  reg.emplace<CContactCorrespondence<ContactType::Sync>>(e, numCollidingSamples);
-  reg.emplace<CActiveCollisions<ContactType::Async, TimeStep::Current>>(e);
-  reg.emplace<CActiveCollisions<ContactType::Async, TimeStep::StageStart>>(e);
-  reg.emplace<CActiveCollisions<ContactType::Sync, TimeStep::Current>>(e);
-  reg.emplace<CActiveCollisions<ContactType::Sync, TimeStep::StageStart>>(e);
+  reg.emplace<CContactCorrespondence</*kIsSync*/ false>>(e, numCollidingSamples);
+  reg.emplace<CContactCorrespondence</*kIsSync*/ true>>(e, numCollidingSamples);
+  reg.emplace<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(e, numContactPartitions);
+  reg.emplace<CActiveCollisions</*kIsSync*/ false, TimeStep::StageStart>>(e, numContactPartitions);
+  reg.emplace<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e, numContactPartitions);
+  reg.emplace<CActiveCollisions</*kIsSync*/ true, TimeStep::StageStart>>(e, numContactPartitions);
   reg.emplace<CCollJacs<CollRole::Colliding>>(e);
 }
 

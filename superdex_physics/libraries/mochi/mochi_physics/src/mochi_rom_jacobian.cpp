@@ -82,7 +82,7 @@ void mochi::rom::SetupCollidingJacobians(
 
     // Compute Jacobians
     for (auto& jac : outJacobians) {
-      if (jac.type == ContactType::Sync) {
+      if (jac.isSync) {
         // Create differentiable map.
         DQuad dquad(discretizationImpl.femElements, jac.query->jacColliderFromWorld);
         DMapThis dmap(

@@ -3338,9 +3338,9 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
         !_registry.any_of<TagStaticActor>(e), "Static actor should not have TagUseContact");
     MOCHI_ASSERT(_registry.all_of<CConservativeStepBounds>(e), "Missing required component");
     MOCHI_ASSERT(
-        _registry.all_of<CPotentialColliders<ContactType::Async>>(e), "Missing required component");
+        _registry.all_of<CPotentialColliders</*kIsSync*/ false>>(e), "Missing required component");
     MOCHI_ASSERT(
-        _registry.all_of<CPotentialColliders<ContactType::Sync>>(e), "Missing required component");
+        _registry.all_of<CPotentialColliders</*kIsSync*/ true>>(e), "Missing required component");
   }
 
   bool const usesContactSkin = _registry.all_of<TagUseDeformableContactSkin>(e);

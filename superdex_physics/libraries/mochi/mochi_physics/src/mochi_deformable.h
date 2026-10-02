@@ -73,7 +73,7 @@ void ComputeLumpedMassMatrix(
     CLumpedMassMatrix& outLumpedMassMatrix);
 
 // (Actors with a deforming surface) Set up normals of all active collision points.
-template <ContactType kContactType, typename DiscretizationT>
+template <bool kIsSync, typename DiscretizationT>
 void SetupActiveCollisionNormals(
     ecs::Excluded<TagShellActor, TagRodActor>,
     ecs::CtxGlobal<CSimulationParams const> simParams,
@@ -82,7 +82,7 @@ void SetupActiveCollisionNormals(
     CFinalDisplacementRef<TimeStep::StageStart> const& stageStartDispl,
     CRootTransform const& transform,
     CContactSamples<TimeStep::Current> const& contactPositions,
-    CActiveCollisions<kContactType, TimeStep::Current>& activeCollisions);
+    CActiveCollisions<kIsSync, TimeStep::Current>& activeCollisions);
 
 template <typename DiscretizationType, int kNumFields>
 void ComputeAsyncContactResponse(
@@ -93,7 +93,7 @@ void ComputeAsyncContactResponse(
     DiscretizationType const& femBoundaryDisc,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CTimeIntegratorState const& intState,
     CRootTransform const& rootTransform,
     AssemblyParams const& params,
@@ -207,7 +207,11 @@ void SetupColliderJacobians(
 
 // Emplace components needed for contact of all deformable actors. Sub-types (soft volume, shell,
 // articulated skin, etc.) may need additional components.
-void EmplaceContactComponents(entt::registry& reg, entt::entity e, int numCollidingSamples);
+void EmplaceContactComponents(
+    entt::registry& reg,
+    entt::entity e,
+    int numCollidingSamples,
+    int numContactPartitions);
 
 void RecordState(
     CDisplacementSlice<real, TimeStep::Current> const* disp,

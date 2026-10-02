@@ -2100,8 +2100,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
     result.jacColliderFromWorld.push_back(VEye<3>());
   }
   CCollJacs<CollRole::Colliding> collidingJacobians;
-  collidingJacobians.emplace_back(
-      ContactType::Async, &result, false, entt::null, /*collidingPartitionId=*/0);
+  collidingJacobians.emplace_back(false, &result, false, entt::null, /*collidingPartitionId=*/0);
   SetupContactSkinCollidingJacobians(
       {},
       reg.get<CFemSurfaceDiscretization const>(entity),
@@ -2136,8 +2135,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
   CDofOffset shiftedOffset;
   shiftedOffset.dofsOffset = dofOffset + 17;
   CCollJacs<CollRole::Colliding> shiftedJacobians;
-  shiftedJacobians.emplace_back(
-      ContactType::Async, &result, false, entt::null, /*collidingPartitionId=*/0);
+  shiftedJacobians.emplace_back(false, &result, false, entt::null, /*collidingPartitionId=*/0);
   SetupContactSkinCollidingJacobians(
       {},
       reg.get<CFemSurfaceDiscretization const>(entity),

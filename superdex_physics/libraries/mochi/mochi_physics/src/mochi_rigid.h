@@ -216,13 +216,13 @@ void EntityPostLastStage(
     CRootTransform& rootTransform);
 
 // Set up kinematic data of all active collision points; specific for rigid actors
-template <ContactType kContactType>
+template <bool kIsSync>
 void SetupActiveCollisionNormals(
     ecs::RequiredTag<TagRigidActor>,
     ecs::CtxGlobal<CSimulationParams const> simParams,
     CContactSamples<TimeStep::Current> const& samples,
     CRootTransform const& rootTransform,
-    CActiveCollisions<kContactType, TimeStep::Current>& activeCollisions);
+    CActiveCollisions<kIsSync, TimeStep::Current>& activeCollisions);
 
 // Compute the contact Jacobians as colliding actor
 void SetupCollidingJacobiansImpl(
@@ -335,7 +335,7 @@ void EntityAssemble(
     CExternalForces const& externalForces,
     CColliderInfo const& colliderInfo,
     CContactSamples<TimeStep::Current> const* contactSample,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>* activeCollisions);
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>* activeCollisions);
 
 /*
  * System to copy a column vector with the position state of the rigid actor to its CRigidState

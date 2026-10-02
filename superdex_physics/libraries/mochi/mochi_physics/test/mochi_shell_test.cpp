@@ -1152,7 +1152,7 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
   }
   CCollJacs<CollRole::Colliding> collidingJacobians;
   collidingJacobians.emplace_back(
-      ContactType::Async, &result, false, entt::null, /*collidingPartitionId=*/0);
+      /*isSync*/ false, &result, false, entt::null, /*collidingPartitionId=*/0);
   SetupContactSkinCollidingJacobians(
       {},
       reg.get<CFemSurfaceDiscretization const>(entity),

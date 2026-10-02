@@ -59,7 +59,7 @@ static void AccumulateAsyncContactForceAdjoints(
     CTimeIntegratorState const& intState,
     CRigidState<GetTimeStep<kGradTarget>()> const& pose,
     CQueryActorContactForces const& /*queryActorContactForces*/,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& activeCollisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& activeCollisions,
     CDiffContactGrad<kGradTarget>& outGrad) {
   if (activeCollisions.empty()) {
     return;
@@ -152,8 +152,7 @@ static void AccumulateAllSyncRigidContactForceAdjoints(
     if (!reg.all_of<TagRigidActor>(e)) {
       continue;
     }
-    auto* activeCollisions =
-        reg.try_get<CActiveCollisions<ContactType::Sync, TimeStep::Current>>(e);
+    auto* activeCollisions = reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e);
     if (!activeCollisions) {
       continue;
     }

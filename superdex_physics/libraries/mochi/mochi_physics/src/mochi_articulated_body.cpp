@@ -1379,12 +1379,13 @@ void mochi::InitCollidingSkinMesh(
 
   reg.emplace_or_replace<CBoundingVolume>(e, shape.GetBoundingVolume(ErrorAssert{}));
 
-  // Other components for collision detection (as colliding object, not as collider)
-  deformable::EmplaceContactComponents(reg, e, numCollidingSamples);
-  reg.emplace_or_replace<CConservativeStepBounds>(e);
+  // Initialize contact partitions.
+  auto const& contactPartitions = reg.emplace<CContactPartitions>(
+      e, InitializeContactPartitions(reg, e, articulated, strategies));
 
-  // Initialize contact partitions
-  reg.emplace<CContactPartitions>(e, InitializeContactPartitions(reg, e, articulated, strategies));
+  // Other components for collision detection (as colliding object, not as collider).
+  deformable::EmplaceContactComponents(reg, e, numCollidingSamples, isize(contactPartitions));
+  reg.emplace_or_replace<CConservativeStepBounds>(e);
 }
 
 template <TimeStep kStep>
@@ -1976,34 +1977,31 @@ void articulated::compound::SetupCollidingJacobians(
     CCollJacs<CollRole::Colliding>& outJacobians) {
   MOCHI_PROFILE_SCOPE();
 
-  // Reserve stack memory for up to 256 elements.
-  MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(JacData*) * 256);
-  auto jacobiansActive = outJacobians.GetPtrsNonEmpty(&allocator);
-  if (jacobiansActive.empty()) {
-    return;
-  }
-
   discretization.Visit([&](auto const& discretizationImpl) {
     using ElementT = typename std::decay_t<decltype(discretizationImpl)>::ElementT;
     using DQuad = DMapQuad<ElementT>;
     // Process all Jacobians in parallel
     ParallelForEach(
-        "SetupCollidingJacobiansArticulatedCompound", jacobiansActive, 1, [&](JacData* jac) {
+        "SetupCollidingJacobiansArticulatedCompound", outJacobians, 1, [&](JacData& jac) {
+          if (jac.query->sampleIndices.empty()) {
+            return;
+          }
+
           // Create differentiable map
           auto const& dofsVariant =
-              contactPartitions[jac->query->collidingPartitionId].GetDofDescriptors()[0];
+              contactPartitions[jac.query->collidingPartitionId].GetDofDescriptors()[0];
           auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(dofsVariant));
           if (dofs.empty()) {
-            jac->SetZeroDofJacobian();
+            jac.SetZeroDofJacobian();
             return;
           }
           DMapSkinNoInput dskinning(0, skinningData.jacobianDJoints, dofs, dofOffset.dofsOffset);
-          DQuad dquad(discretizationImpl.femElements, jac->query->jacColliderFromWorld);
+          DQuad dquad(discretizationImpl.femElements, jac.query->jacColliderFromWorld);
           DMap<DQuad, DMapSkinNoInput> dmap(&dquad, &dskinning);
 
           // Compute Jacobian
-          auto& jacs = *jac->jacs;
-          dmap.GetJac(jac->query->sampleIndices, jacs);
+          auto& jacs = *jac.jacs;
+          dmap.GetJac(jac.query->sampleIndices, jacs);
           jacs[0].CompressIndices();
         });
   });

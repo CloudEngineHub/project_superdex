@@ -169,7 +169,7 @@ static void EmplaceShellActorContact(
   reg.emplace<CContactParams>(e, params.contact);
 
   // Components to detect and compute contact against other actors
-  deformable::EmplaceContactComponents(reg, e, numCollidingSamples);
+  deformable::EmplaceContactComponents(reg, e, numCollidingSamples, /*numContactPartitions*/ 1);
   reg.emplace<CDeformablePointAsyncCollisionsResponse>(e);
 
   reg.emplace<CActorAsyncContactSemaphore>(e);

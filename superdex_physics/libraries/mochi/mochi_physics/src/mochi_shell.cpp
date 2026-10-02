@@ -454,7 +454,7 @@ void mochi::shell::AssembleAsyncContact(
     CContactNodalBasedStructure const& contactNbs,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CRootTransform const& rootTransform,
     CDeformablePointAsyncCollisionsResponse& outResponse,
     CActorSnle& outActorSnle) {

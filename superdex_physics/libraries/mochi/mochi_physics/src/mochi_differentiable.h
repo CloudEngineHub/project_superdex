@@ -274,8 +274,8 @@ void ResetBackPropagationContainers(
 void PrepareContactForceAdjoints(
     CQueryActorContactForces const& queryActorContactForces,
     CRequiresFarSdfEvaluation const* farSdfEval,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& outActiveCollisionsAsync,
-    CActiveCollisions<ContactType::Sync, TimeStep::Current>& outActiveCollisionsSync,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& outActiveCollisionsAsync,
+    CActiveCollisions</*kIsSync*/ true, TimeStep::Current>& outActiveCollisionsSync,
     CCollJacs<CollRole::Collider>* outColliderJacs);
 
 // System to accumulate contact force adjoints to actor level.

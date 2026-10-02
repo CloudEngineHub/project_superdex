@@ -1228,7 +1228,7 @@ static void EmplaceRodActorContact(
   reg.emplace<CContactParams>(e, params.contact);
 
   // Components to detect and compute contact against other actors
-  deformable::EmplaceContactComponents(reg, e, numCollidingSamples);
+  deformable::EmplaceContactComponents(reg, e, numCollidingSamples, /*numContactPartitions*/ 1);
   reg.emplace<CDeformablePointAsyncCollisionsResponse>(e);
 
   reg.emplace<CActorAsyncContactSemaphore>(e);
@@ -1855,7 +1855,7 @@ void AssembleAsyncContact(
     CContactNodalBasedStructure const& contactNbs,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CRootTransform const& rootTransform,
     CDeformablePointAsyncCollisionsResponse& outResponse,
     CActorSnle& outActorSnle) {

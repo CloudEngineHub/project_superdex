@@ -1009,7 +1009,7 @@ static void RegisterDebugDrawSystem_ContactDistances(DebugDrawInternal& debugDra
           out.AddSphere(s);
         }
       };
-  debugDraw.RegisterSystem<CActiveCollisions<ContactType::Async, TimeStep::Current>>(system);
+  debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(system);
 }
 
 static void RegisterDebugDrawSystem_ActiveContactForces(DebugDrawInternal& debugDraw) {
@@ -1048,7 +1048,7 @@ static void RegisterDebugDrawSystem_ActiveContactForces(DebugDrawInternal& debug
         out.AddLines(verts);
       };
   // Actors with CRequiresFarSdfEvaluation do not support contact queries
-  debugDraw.RegisterSystem<CActiveCollisions<ContactType::Async, TimeStep::Current>>(
+  debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(
       system, ecs::Excluded<CRequiresFarSdfEvaluation>{});
 }
 
@@ -1076,7 +1076,7 @@ static void RegisterDebugDrawSystem_ActiveContactNormals(DebugDrawInternal& debu
         out.AddLines(verts);
       };
   // Actors with CRequiresFarSdfEvaluation do not support contact queries
-  debugDraw.RegisterSystem<CActiveCollisions<ContactType::Async, TimeStep::Current>>(
+  debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(
       system, ecs::Excluded<CRequiresFarSdfEvaluation>{});
 }
 
@@ -1161,7 +1161,7 @@ static void RegisterDebugDrawSystem_ActiveContactPositions(DebugDrawInternal& de
     }
   };
   // Actors with CRequiresFarSdfEvaluation do not support contact queries
-  debugDraw.RegisterSystem<CActiveCollisions<ContactType::Async, TimeStep::Current>>(
+  debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(
       system, ecs::Excluded<CRequiresFarSdfEvaluation>{});
 }
 
@@ -1196,7 +1196,7 @@ static void RegisterDebugDrawSystem_ActiveContactVelocities(DebugDrawInternal& d
         out.AddLines(verts);
       };
   // Actors with CRequiresFarSdfEvaluation do not support contact queries
-  debugDraw.RegisterSystem<CActiveCollisions<ContactType::Async, TimeStep::Current>>(
+  debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(
       system, ecs::Excluded<CRequiresFarSdfEvaluation>{});
 }
 
@@ -1237,7 +1237,7 @@ static void RegisterDebugDrawSystem_NodeContactForces(DebugDrawInternal& debugDr
         out.AddLines(verts);
       };
   // Rod actors and actors with CRequiresFarSdfEvaluation do not support contact queries
-  debugDraw.RegisterSystem<CActiveCollisions<ContactType::Async, TimeStep::Current>>(
+  debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(
       system, ecs::Excluded<CRequiresFarSdfEvaluation, TagRodActor>{});
 }
 
@@ -1325,10 +1325,10 @@ static void RegisterDebugDrawSystem_PotentialColliders(DebugDrawInternal& debugD
         actorRoot.worldFromLocal.TransformPoint(GetBoundingSphere(actorBv.localShape).GetCenter());
 
     // Async and sync colliders
-    auto registerCollisionsFunc = [&](Span<PotentialColliderData const> colls) {
-      for (auto const& coll : colls) {
-        auto const& collRoot = reg.get<CRootTransform const>(coll.entity);
-        auto const& collBv = reg.get<CBoundingVolume const>(coll.entity);
+    auto registerCollisionsFunc = [&](Span<entt::entity const> colls) {
+      for (entt::entity const coll : colls) {
+        auto const& collRoot = reg.get<CRootTransform const>(coll);
+        auto const& collBv = reg.get<CBoundingVolume const>(coll);
         auto const collCenter = collRoot.worldFromLocal.TransformPoint(
             GetBoundingSphere(collBv.localShape).GetCenter());
         LineVertex verts[2];
@@ -1339,11 +1339,10 @@ static void RegisterDebugDrawSystem_PotentialColliders(DebugDrawInternal& debugD
         out.AddLines(verts);
       }
     };
-    if (auto const* asyncColliders =
-            reg.try_get<CPotentialColliders<ContactType::Async> const>(e)) {
+    if (auto const* asyncColliders = reg.try_get<CPotentialColliders</*kIsSync*/ false> const>(e)) {
       registerCollisionsFunc(*asyncColliders);
     }
-    if (auto const* syncColliders = reg.try_get<CPotentialColliders<ContactType::Sync> const>(e)) {
+    if (auto const* syncColliders = reg.try_get<CPotentialColliders</*kIsSync*/ true> const>(e)) {
       registerCollisionsFunc(*syncColliders);
     }
   };

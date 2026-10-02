@@ -444,8 +444,8 @@ TEST(CDeformablePointAsyncCollisionsResponse, ClearAllowsReuse) {
 // CActiveCollisions
 // ---------------------------------------------------------------------------------------
 
-using CActiveAsync = CActiveCollisions<ContactType::Async, TimeStep::Current>;
-using CPotentialAsync = CPotentialColliders<ContactType::Async>;
+using CActiveAsync = CActiveCollisions</*kIsSync*/ false, TimeStep::Current>;
+using CPotentialAsync = CPotentialColliders</*kIsSync*/ false>;
 
 [[nodiscard]] static CPotentialAsync MakePotentialColliders(
     std::initializer_list<int> colliderEntities) {
@@ -468,58 +468,121 @@ using CPotentialAsync = CPotentialColliders<ContactType::Async>;
   return entries;
 }
 
-TEST(CActiveCollisions, SetUpBuildsSortedPartitionedEntries) {
-  CActiveAsync activeCollisions;
-  activeCollisions.SetUp(MakePotentialColliders({30, 10, 20}), /*numPartitions*/ 2);
+TEST(CActiveCollisions, ExposesOnlyActivatedPartitionsInSortedOrder) {
+  CActiveAsync activeCollisions(/*numPartitions*/ 3);
+  activeCollisions.SetUp(MakePotentialColliders({30, 10, 20}));
+  EXPECT_TRUE(activeCollisions.empty());
 
-  // Each collider is expanded to all partitions and sorted by (colliderEntity,
-  // collidingPartitionId), regardless of input order.
-  DynamicArray<std::pair<int, int>> const expected{
-      {10, 0}, {10, 1}, {20, 0}, {20, 1}, {30, 0}, {30, 1}};
+  activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(30), 1);
+  activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), 2);
+  activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), 0);
+  activeCollisions.FinalizeActiveCollisions();
+
+  DynamicArray<std::pair<int, int>> const expected{{10, 2}, {20, 0}, {30, 1}};
   EXPECT_EQ(EntriesOf(activeCollisions), expected);
-
-  // A single partition expands each collider to exactly one entry.
-  CActiveAsync singlePartition;
-  singlePartition.SetUp(MakePotentialColliders({30, 10, 20}), /*numPartitions*/ 1);
-  DynamicArray<std::pair<int, int>> const expectedSingle{{10, 0}, {20, 0}, {30, 0}};
-  EXPECT_EQ(EntriesOf(singlePartition), expectedSingle);
 }
 
-TEST(CActiveCollisions, SetUpAddsRemovesAndKeepsAcrossCalls) {
-  CActiveAsync activeCollisions;
-  activeCollisions.SetUp(MakePotentialColliders({10, 20, 30}), /*numPartitions*/ 2);
-  activeCollisions.SetUp(MakePotentialColliders({30, 20, 10}), /*numPartitions*/ 2);
+TEST(CActiveCollisions, PreservesSinglePartitionBehavior) {
+  CActiveAsync activeCollisions(/*numPartitions*/ 1);
+  activeCollisions.SetUp(MakePotentialColliders({30, 10, 20}));
+  activeCollisions.SetUp(MakePotentialColliders({30, 20, 10}));
   EXPECT_EQ(
-      (DynamicArray<std::pair<int, int>>{{10, 0}, {10, 1}, {20, 0}, {20, 1}, {30, 0}, {30, 1}}),
-      EntriesOf(activeCollisions));
+      (DynamicArray<std::pair<int, int>>{{10, 0}, {20, 0}, {30, 0}}), EntriesOf(activeCollisions));
 
   // Removing without appending preserves sorted order regardless of input order.
-  activeCollisions.SetUp(MakePotentialColliders({30, 10}), /*numPartitions*/ 2);
-  EXPECT_EQ(
-      (DynamicArray<std::pair<int, int>>{{10, 0}, {10, 1}, {30, 0}, {30, 1}}),
-      EntriesOf(activeCollisions));
+  activeCollisions.SetUp(MakePotentialColliders({30, 10}));
+  EXPECT_EQ((DynamicArray<std::pair<int, int>>{{10, 0}, {30, 0}}), EntriesOf(activeCollisions));
 
-  // Flag every entry so we can verify SetUp clears the retained data of kept colliders.
-  // isSdfGradUnitary is a convenient observable: ContactDetectionResult::Clear() resets it to true,
-  // and (unlike the contact arrays) it needs no size-consistent setup.
+  // Verify that retained data is cleared and newly appended entries preserve sorted order.
   for (auto& collision : activeCollisions) {
-    EXPECT_TRUE(collision.collisionResult.isSdfGradUnitary); // Just checking
+    EXPECT_TRUE(collision.collisionResult.isSdfGradUnitary);
     collision.collisionResult.isSdfGradUnitary = false;
   }
-
-  // Re-run with a different collider set: 10 removed, 30 kept (not duplicated), 20 added.
-  activeCollisions.SetUp(MakePotentialColliders({30, 20}), /*numPartitions*/ 2);
-
-  DynamicArray<std::pair<int, int>> const expected{{20, 0}, {20, 1}, {30, 0}, {30, 1}};
-  EXPECT_EQ(expected, EntriesOf(activeCollisions));
-
-  // Kept collider 30 had its retained data cleared; added collider 20 starts fresh, so every
-  // surviving entry's contact result must be reset. Catches removal of the SetUp clear loop.
+  activeCollisions.SetUp(MakePotentialColliders({30, 20}));
+  EXPECT_EQ((DynamicArray<std::pair<int, int>>{{20, 0}, {30, 0}}), EntriesOf(activeCollisions));
   for (auto const& collision : activeCollisions) {
     EXPECT_TRUE(collision.collisionResult.isSdfGradUnitary);
   }
+}
 
-  // Re-running with no potential colliders removes everything.
-  activeCollisions.SetUp(MakePotentialColliders({}), /*numPartitions*/ 2);
+TEST(CActiveCollisions, ReusesInactivePairStorage) {
+  auto const potentialColliders = MakePotentialColliders({10, 20});
+  CActiveAsync activeCollisions(/*numPartitions*/ 3);
+  activeCollisions.SetUp(potentialColliders);
+
+  auto& firstResult =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 1);
+  firstResult.sampleIndices.reserve(8);
+  size_t const firstRetainedCapacity = firstResult.sampleIndices.capacity();
+  auto& secondResult =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), /*partitionId*/ 2);
+  secondResult.sampleIndices.reserve(16);
+  secondResult.isSdfGradUnitary = false;
+  size_t const secondRetainedCapacity = secondResult.sampleIndices.capacity();
+  activeCollisions.FinalizeActiveCollisions();
+
+  activeCollisions.SetUp(potentialColliders);
+  EXPECT_TRUE(activeCollisions.empty());
+
+  auto& reusedFirst =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 1);
+  EXPECT_EQ(reusedFirst.sampleIndices.capacity(), firstRetainedCapacity);
+  auto& reusedSecond =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), /*partitionId*/ 2);
+  EXPECT_TRUE(reusedSecond.sampleIndices.empty());
+  EXPECT_TRUE(reusedSecond.isSdfGradUnitary);
+  EXPECT_EQ(reusedSecond.sampleIndices.capacity(), secondRetainedCapacity);
+}
+
+TEST(CActiveCollisions, DropsPairStorageWhenColliderIsNoLongerPotential) {
+  CActiveAsync activeCollisions(/*numPartitions*/ 2);
+  activeCollisions.SetUp(MakePotentialColliders({10}));
+  auto& result =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 1);
+  result.sampleIndices.reserve(16);
+
+  activeCollisions.SetUp(MakePotentialColliders({}));
+  activeCollisions.SetUp(MakePotentialColliders({10}));
+  auto& recreated =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 1);
+  EXPECT_EQ(recreated.sampleIndices.capacity(), 0);
+}
+
+TEST(CActiveCollisions, ReusesRetainedPairAfterDroppingOtherCollider) {
+  CActiveAsync activeCollisions(/*numPartitions*/ 2);
+  activeCollisions.SetUp(MakePotentialColliders({10, 20}));
+  activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 1);
+  auto& retainedResult =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), /*partitionId*/ 1);
+  retainedResult.sampleIndices.reserve(16);
+  size_t const retainedCapacity = retainedResult.sampleIndices.capacity();
+  activeCollisions.FinalizeActiveCollisions();
+
+  activeCollisions.SetUp(MakePotentialColliders({20}));
+  auto& reusedResult =
+      activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), /*partitionId*/ 1);
+
+  EXPECT_EQ(reusedResult.sampleIndices.capacity(), retainedCapacity);
+}
+
+TEST(CActiveCollisions, RestoresAggregateStorageAfterPartitionZeroSwap) {
+  auto const potentialColliders = MakePotentialColliders({10});
+  CActiveAsync activeCollisions(/*numPartitions*/ 2);
+  activeCollisions.SetUp(potentialColliders);
+
+  auto& aggregate = activeCollisions.GetNarrowPhaseResult(static_cast<entt::entity>(10));
+  aggregate.sampleIndices.reserve(16);
+  size_t const retainedCapacity = aggregate.sampleIndices.capacity();
+  activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 0);
+  activeCollisions.FinalizeActiveCollisions();
+  std::swap(
+      activeCollisions.GetNarrowPhaseResult(static_cast<entt::entity>(10)),
+      activeCollisions.GetActivePartitionResult(static_cast<entt::entity>(10), /*partitionId*/ 0));
+
+  activeCollisions.SetUp(potentialColliders);
+
+  EXPECT_EQ(
+      activeCollisions.GetNarrowPhaseResult(static_cast<entt::entity>(10)).sampleIndices.capacity(),
+      retainedCapacity);
   EXPECT_TRUE(activeCollisions.empty());
 }

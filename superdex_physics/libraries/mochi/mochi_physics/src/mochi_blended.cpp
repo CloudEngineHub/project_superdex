@@ -378,10 +378,8 @@ void blended::SetupCollidingJacobians(
     CCollJacs<CollRole::Colliding>& outJacobians) {
   MOCHI_PROFILE_SCOPE();
 
-  // Reserve stack memory for up to 256 elements.
-  MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(JacData*) * 256);
-  auto jacobiansActive = outJacobians.GetPtrsNonEmpty(&allocator);
-  if (jacobiansActive.empty()) {
+  if (std::ranges::all_of(
+          outJacobians, [](JacData const& jac) { return jac.query->sampleIndices.empty(); })) {
     return;
   }
 
@@ -393,13 +391,17 @@ void blended::SetupCollidingJacobians(
       skinningInfo.skinningTransform, linkTransforms, rotations);
 
   // Compute Jacobians
-  ParallelForEach("SetupCollidingJacobianSoftSkinned", jacobiansActive, 1, [&](JacData* jacData) {
+  ParallelForEach("SetupCollidingJacobianSoftSkinned", outJacobians, 1, [&](JacData& jacData) {
+    if (jacData.query->sampleIndices.empty()) {
+      return;
+    }
+
     auto const& descriptors =
-        contactPartitions[jacData->query->collidingPartitionId].GetDofDescriptors();
+        contactPartitions[jacData.query->collidingPartitionId].GetDofDescriptors();
     auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(descriptors[0]));
     int const softId = std::get<int>(descriptors[1]);
     if (dofs.empty() && softId < 0) {
-      jacData->SetZeroDofJacobian();
+      jacData.SetZeroDofJacobian();
       return;
     }
 
@@ -444,7 +446,7 @@ void blended::SetupCollidingJacobians(
       }
 
       // Prepare the quadrature dmap
-      DQuad dquad(discretizationImpl.femElements, jacData->query->jacColliderFromWorld);
+      DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
 
       // Create per-partition differentiable map
       DMapThis dmap = soft
@@ -453,8 +455,8 @@ void blended::SetupCollidingJacobians(
           : DMapThis{DNoSoft(&dquad, &dskinNoIn.value())};
 
       // Compute Jacobian
-      auto& jacs = *jacData->jacs;
-      std::visit([&](auto const& dmap) { dmap.GetJac(jacData->query->sampleIndices, jacs); }, dmap);
+      auto& jacs = *jacData.jacs;
+      std::visit([&](auto const& dmap) { dmap.GetJac(jacData.query->sampleIndices, jacs); }, dmap);
       jacs[0].CompressIndices();
       jacs[1].CompressIndices();
     });

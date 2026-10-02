@@ -170,7 +170,7 @@ static void EmplaceSoftActorContact(
 
   // Components to detect and compute contact against other actors
   if (useContact) {
-    deformable::EmplaceContactComponents(reg, e, numCollidingSamples);
+    deformable::EmplaceContactComponents(reg, e, numCollidingSamples, /*numContactPartitions*/ 1);
     reg.emplace<CDeformablePointAsyncCollisionsResponse>(e);
   }
   if (collider.type != ColliderType::None) {

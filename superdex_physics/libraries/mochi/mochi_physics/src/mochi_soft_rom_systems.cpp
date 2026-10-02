@@ -291,7 +291,7 @@ void mochi::rom::AssembleAndProjectAsyncContact(
     CBoundaryLocal2GlobalMap const& bdL2g,
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
-    CActiveCollisions<ContactType::Async, TimeStep::Current>& collisions,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& collisions,
     CRootTransform const& rootTransform,
     CTimeIntegratorState const& intState,
     CRomJacobian const& jacobian,
@@ -530,8 +530,8 @@ static void ResolveDisplacementAndJacobianOnActiveNodes(
 */
 
 static int CountActiveCollisionPoints(
-    CActiveCollisions<ContactType::Async, TimeStep::Current> const& activeCollisionsAsync,
-    CActiveCollisions<ContactType::Sync, TimeStep::Current> const& activeCollisionsSync) {
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const& activeCollisionsAsync,
+    CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const& activeCollisionsSync) {
   int count = 0;
   for (auto const& collisions : activeCollisionsAsync) {
     count += isize(collisions.collisionResult.sampleIndices);
@@ -652,14 +652,14 @@ static bool ShouldSwitchModel(
     SwitchDirection const& direction) {
   MOCHI_ASSERT_VERBOSE(
       (reg.all_of<
-          CActiveCollisions<ContactType::Async, TimeStep::Current>,
-          CActiveCollisions<ContactType::Sync, TimeStep::Current>>(e)),
+          CActiveCollisions</*kIsSync*/ false, TimeStep::Current>,
+          CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e)),
       "Missing required components.");
 
   auto const& activeCollisionsAsync =
-      reg.get<CActiveCollisions<ContactType::Async, TimeStep::Current> const>(e);
+      reg.get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const>(e);
   auto const& activeCollisionsSync =
-      reg.get<CActiveCollisions<ContactType::Sync, TimeStep::Current> const>(e);
+      reg.get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const>(e);
   int const count = CountActiveCollisionPoints(activeCollisionsAsync, activeCollisionsSync);
 
   switch (direction) {
@@ -1499,8 +1499,8 @@ static void WarnIfUnderdetermined(
 }
 
 static void ClosestDistanceBySamplePoint(
-    CActiveCollisions<ContactType::Async, TimeStep::Current> const& activeCollisionsAsync,
-    CActiveCollisions<ContactType::Sync, TimeStep::Current> const& activeCollisionsSync,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const& activeCollisionsAsync,
+    CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const& activeCollisionsSync,
     int numSamples,
     DynamicArray<real>& outDistances) {
   MOCHI_PROFILE_SCOPE();
@@ -1535,8 +1535,8 @@ static void SwapActiveElementsBshStrategy(
     CDisplacementSlice<real, TimeStep::Current> const& displacements,
     CRootTransform const& transform,
     ecs::CtxGlobal<CSceneTime const> time,
-    CActiveCollisions<ContactType::Async, TimeStep::Current> const& activeCollisionsAsync,
-    CActiveCollisions<ContactType::Sync, TimeStep::Current> const& activeCollisionsSync,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const& activeCollisionsAsync,
+    CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const& activeCollisionsSync,
     CRequiresFarSdfEvaluation const& farSdfEval,
     rom::hyper::CDynamicSampleMeshBshManager& manager) {
   MOCHI_PROFILE_SCOPE();

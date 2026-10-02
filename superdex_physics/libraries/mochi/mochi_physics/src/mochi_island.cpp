@@ -331,11 +331,11 @@ static void TryMergeIslands(entt::registry& reg) {
   MOCHI_PROFILE_SCOPE();
   // If any dynamic actor has a potential collider
   for (auto&& [e, syncColls, membership] :
-       reg.view<CConservativePotentialColliders<ContactType::Sync> const, CIslandMemberInfo const>()
+       reg.view<CConservativePotentialColliders</*kIsSync*/ true> const, CIslandMemberInfo const>()
            .each()) {
     entt::entity dstIsland = membership.island;
-    for (auto const& col : syncColls) {
-      auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(col.entity);
+    for (entt::entity const col : syncColls) {
+      auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(col);
       if (memberInfo) {
         entt::entity srcIsland = memberInfo->island;
         if (srcIsland != dstIsland) {
@@ -389,10 +389,8 @@ static void TrySplitIslands(entt::registry& reg) {
       // Find all entities that might collide with iActor, or with any of iActor's descendants.
       ForEntityAndEachDescendant(reg, iActor, [&](entt::entity e) {
         if (auto const* potentialColliders =
-                reg.try_get<CConservativePotentialColliders<ContactType::Sync>>(e)) {
-          for (auto const& jCollider : *potentialColliders) {
-            entt::entity jActor = jCollider.entity;
-
+                reg.try_get<CConservativePotentialColliders</*kIsSync*/ true>>(e)) {
+          for (entt::entity jActor : *potentialColliders) {
             auto const* jInfo = &reg.get<CIslandMemberInfo const>(jActor);
             MOCHI_ASSERT_VERBOSE(
                 jInfo->island == island, "These islands should have already merged");
@@ -618,11 +616,11 @@ void island::PreStep(entt::registry& reg) {
   bool hasGlobalIsland = UpdateForceGlobalIsland(reg);
 
   if (!hasGlobalIsland) {
-    // Merge islands if they contain actors that might interact with ContactType::Sync
+    // Merge islands if they contain actors that might interact with sync contact
     TryMergeIslands(reg);
 
     // Split islands if we can find a subset of the actors that do not interact with the others via
-    // ContactType::Sync
+    // sync contact
     TrySplitIslands(reg);
   }
 

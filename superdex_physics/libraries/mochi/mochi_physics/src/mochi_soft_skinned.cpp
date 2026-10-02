@@ -32,6 +32,7 @@
 #include <mochi_core/utils/sparsity_utils.h>
 #include <mochi_core/utils/task_scheduler.h>
 
+#include <algorithm>
 #include <optional>
 #include <tuple>
 #include <type_traits>
@@ -808,10 +809,8 @@ void skinned::SetupCollidingJacobians(
     CCollJacs<CollRole::Colliding>& outJacobians) {
   MOCHI_PROFILE_SCOPE();
 
-  // Reserve stack memory for up to 256 elements.
-  MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(JacData*) * 256);
-  auto jacobiansActive = outJacobians.GetPtrsNonEmpty(&allocator);
-  if (jacobiansActive.empty()) {
+  if (std::ranges::all_of(
+          outJacobians, [](JacData const& jac) { return jac.query->sampleIndices.empty(); })) {
     return;
   }
 
@@ -838,7 +837,11 @@ void skinned::SetupCollidingJacobians(
   }
 
   // Compute Jacobians
-  ParallelForEach("SetupCollidingJacobianSoftSkinned", jacobiansActive, 1, [&](JacData* jacData) {
+  ParallelForEach("SetupCollidingJacobianSoftSkinned", outJacobians, 1, [&](JacData& jacData) {
+    if (jacData.query->sampleIndices.empty()) {
+      return;
+    }
+
     discretization.Visit([&](auto const& discretizationImpl) {
       using DiscretizationT = std::decay_t<decltype(discretizationImpl)>;
       using DQuad = DMapQuad<typename DiscretizationT::ElementT>;
@@ -850,21 +853,21 @@ void skinned::SetupCollidingJacobians(
 
       // Prepare the skinning dmap, specific to the partition
       auto const& dofsVariant =
-          contactPartitions[jacData->query->collidingPartitionId].GetDofDescriptors()[0];
+          contactPartitions[jacData.query->collidingPartitionId].GetDofDescriptors()[0];
       auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(dofsVariant));
       DMapSkinInput dskinning(
           1, skinningJacobian, dofs, articulatedDofOffset, skinningData, rotations);
 
       // Prepare the quadrature dmap
-      DQuad dquad(discretizationImpl.femElements, jacData->query->jacColliderFromWorld);
+      DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
 
       // Create per-partition differentiable map
       DMapThis dmap = drom ? DMapThis{DRom(&dquad, &dskinning, &drom.value())}
                            : DMapThis{DSoft(&dquad, &dskinning, &dsoft.value())};
 
       // Compute Jacobian
-      auto& jacs = *jacData->jacs;
-      std::visit([&](auto const& dmap) { dmap.GetJac(jacData->query->sampleIndices, jacs); }, dmap);
+      auto& jacs = *jacData.jacs;
+      std::visit([&](auto const& dmap) { dmap.GetJac(jacData.query->sampleIndices, jacs); }, dmap);
       jacs[0].CompressIndices();
       jacs[1].CompressIndices();
     });
