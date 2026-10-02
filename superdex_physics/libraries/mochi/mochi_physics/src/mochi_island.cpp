@@ -21,6 +21,7 @@
 #include "mochi_contact_filter.h"
 #include "mochi_differentiable.h"
 #include "mochi_ecs.h"
+#include "mochi_ecs_utils.h"
 #include "mochi_simulation.h"
 #include "mochi_sleep.h"
 #include "mochi_snle.h"
@@ -329,13 +330,14 @@ static void MergeIslandPair(entt::registry& reg, entt::entity srcIsland, entt::e
 
 static void TryMergeIslands(entt::registry& reg) {
   MOCHI_PROFILE_SCOPE();
+  auto const& memberInfos = reg.storage<CIslandMemberInfo>();
   // If any dynamic actor has a potential collider
   for (auto&& [e, syncColls, membership] :
        reg.view<CConservativePotentialColliders</*kIsSync*/ true> const, CIslandMemberInfo const>()
            .each()) {
     entt::entity dstIsland = membership.island;
     for (entt::entity const col : syncColls) {
-      auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(col);
+      auto const* memberInfo = TryGet(memberInfos, col);
       if (memberInfo) {
         entt::entity srcIsland = memberInfo->island;
         if (srcIsland != dstIsland) {
@@ -360,6 +362,13 @@ static void TrySplitIslands(entt::registry& reg) {
       islands.push_back(e);
     }
   }
+  if (islands.empty()) {
+    return;
+  }
+
+  auto const& syncColliders = reg.storage<CConservativePotentialColliders</*kIsSync*/ true>>();
+  auto const& memberInfos = reg.storage<CIslandMemberInfo>();
+  auto const& groupMemberInfos = reg.storage<CGroupMemberInfo>();
 
   // For each island
   int const numIslandsBeforeAnySplits = isize(islands);
@@ -388,17 +397,16 @@ static void TrySplitIslands(entt::registry& reg) {
 
       // Find all entities that might collide with iActor, or with any of iActor's descendants.
       ForEntityAndEachDescendant(reg, iActor, [&](entt::entity e) {
-        if (auto const* potentialColliders =
-                reg.try_get<CConservativePotentialColliders</*kIsSync*/ true>>(e)) {
+        if (auto const* potentialColliders = TryGet(syncColliders, e)) {
           for (entt::entity jActor : *potentialColliders) {
-            auto const* jInfo = &reg.get<CIslandMemberInfo const>(jActor);
+            auto const* jInfo = &memberInfos.get(jActor);
             MOCHI_ASSERT_VERBOSE(
                 jInfo->island == island, "These islands should have already merged");
 
             // If the other actor is nested in a group, then find the parent group instead.
             while (jInfo->isNested) {
-              jActor = reg.get<CGroupMemberInfo const>(jActor).group;
-              jInfo = &reg.get<CIslandMemberInfo const>(jActor);
+              jActor = groupMemberInfos.get(jActor).group;
+              jInfo = &memberInfos.get(jActor);
               MOCHI_ASSERT_VERBOSE(
                   jInfo->island == island, "These islands should have already merged");
             }

@@ -1619,16 +1619,23 @@ void mochi::FarSdfCollisionDetection(
 static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity const> actors) {
   MOCHI_PROFILE_SCOPE();
 
+  auto& collidingJacsStorage = reg.storage<CCollJacs<CollRole::Colliding>>();
+  auto& colliderJacsStorage = reg.storage<CCollJacs<CollRole::Collider>>();
+  auto& activeCollsAsyncStorage =
+      reg.storage<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>();
+  auto& activeCollsSyncStorage =
+      reg.storage<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>();
+
   // At input, the contact Jacobians are from the previous assembly. Reset their queries, which
   // point to the previous collision results, to signal that they may no longer be in contact.
   for (auto const& e : actors) {
-    if (auto* collidingJacs = reg.try_get<CCollJacs<CollRole::Colliding>>(e)) {
+    if (auto* collidingJacs = TryGet(collidingJacsStorage, e)) {
       for (auto& collJac : *collidingJacs) {
         MOCHI_ASSERT_VERBOSE(collJac.query, "Expected a registered contact Jacobian.");
         collJac.query = nullptr;
       }
     }
-    if (auto* colliderJacs = reg.try_get<CCollJacs<CollRole::Collider>>(e)) {
+    if (auto* colliderJacs = TryGet(colliderJacsStorage, e)) {
       for (auto& collJac : *colliderJacs) {
         MOCHI_ASSERT_VERBOSE(collJac.query, "Expected a registered contact Jacobian.");
         collJac.query = nullptr;
@@ -1638,14 +1645,13 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
 
   // Register the contact Jacobians for all the active collisions.
   for (auto const& e : actors) {
-    auto* activeCollsAsync =
-        reg.try_get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(e);
-    auto* activeCollsSync = reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e);
+    auto* activeCollsAsync = TryGet(activeCollsAsyncStorage, e);
+    auto* activeCollsSync = TryGet(activeCollsSyncStorage, e);
     if (!activeCollsAsync && !activeCollsSync) {
       continue; // No active collisions.
     }
 
-    auto& collidingJacs = reg.get<CCollJacs<CollRole::Colliding>>(e);
+    auto& collidingJacs = collidingJacsStorage.get(e);
     int const prevCollidingJacs = isize(collidingJacs);
     collidingJacs.reserve(
         prevCollidingJacs + (activeCollsAsync ? isize(*activeCollsAsync) : 0) +
@@ -1686,7 +1692,7 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
           // Register collider Jacobian (owned by the other entity).
           MOCHI_ASSERT_VERBOSE(
               Contains(actors, activeColl.colliderEntity), "Invalid collider entity.");
-          auto& colliderJacs = reg.get<CCollJacs<CollRole::Collider>>(activeColl.colliderEntity);
+          auto& colliderJacs = colliderJacsStorage.get(activeColl.colliderEntity);
           wasPreviouslyActive = false;
           for (int i = 0; i < isize(colliderJacs); ++i) {
             auto& collJac = colliderJacs[i];
@@ -1758,27 +1764,25 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
   for (int i = 0; i < numActors; ++i) {
     auto const e = actors[i];
 
-    if (auto* colliderJacs = reg.try_get<CCollJacs<CollRole::Collider>>(e)) {
+    if (auto* colliderJacs = TryGet(colliderJacsStorage, e)) {
       colliderJacIdMappings.emplace_back(e, JacIdArray(&filoAllocator)); // Insert pair
       removeInactiveJacs(*colliderJacs, colliderJacIdMappings.back().second);
     }
 
     JacIdArray collidingJacIdMapping(&filoAllocator);
 
-    if (auto* collidingJacs = reg.try_get<CCollJacs<CollRole::Colliding>>(e)) {
+    if (auto* collidingJacs = TryGet(collidingJacsStorage, e)) {
       removeInactiveJacs(*collidingJacs, collidingJacIdMapping);
     }
 
     // Update colliding Jacobian IDs.
-    if (auto* activeCollsAsync =
-            reg.try_get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(e)) {
+    if (auto* activeCollsAsync = TryGet(activeCollsAsyncStorage, e)) {
       for (auto& activeColl : *activeCollsAsync) {
         MOCHI_ASSERT_VERBOSE(collidingJacIdMapping[activeColl.collidingJacId] >= 0);
         activeColl.collidingJacId = collidingJacIdMapping[activeColl.collidingJacId];
       }
     }
-    if (auto* activeCollsSync =
-            reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e)) {
+    if (auto* activeCollsSync = TryGet(activeCollsSyncStorage, e)) {
       for (auto& activeColl : *activeCollsSync) {
         MOCHI_ASSERT_VERBOSE(collidingJacIdMapping[activeColl.collidingJacId] >= 0);
         activeColl.collidingJacId = collidingJacIdMapping[activeColl.collidingJacId];
@@ -1788,8 +1792,7 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
 
   // Update collider Jacobian IDs now that colliderJacIdMappings has been computed for all actors.
   for (auto const& e : actors) {
-    if (auto* activeCollsSync =
-            reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(e)) {
+    if (auto* activeCollsSync = TryGet(activeCollsSyncStorage, e)) {
       for (auto& activeColl : *activeCollsSync) {
         // Linear search for the collider entity (the list is usually pretty short)
         [[maybe_unused]] bool foundIt = false;
@@ -4224,23 +4227,28 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
   }
 
   // Find pairs of overlapping actors and update CConservativePotentialColliders
+  auto const& layers = reg.storage<CContactLayer>();
+  auto const& usesContact = reg.storage<TagUseContact>();
+  auto& asyncColliders = reg.storage<CConservativePotentialColliders</*kIsSync*/ false>>();
+  auto& syncColliders = reg.storage<CConservativePotentialColliders</*kIsSync*/ true>>();
   CConservativePotentialColliders</*kIsSync*/ false>* iAsync = nullptr;
   CConservativePotentialColliders</*kIsSync*/ true>* iSync = nullptr;
   int const numDynamic = isize(dynamicEntities);
   int const numStatic = isize(staticColliders);
   for (int i = 0; i < numDynamic; ++i) {
     entt::entity ie = dynamicEntities[i];
-    auto iLayer = reg.get<CContactLayer>(ie).id;
-    bool iUseContact = reg.all_of<TagUseContact>(ie);
+    Aabb const iBounds = dynamicBounds[i];
+    auto iLayer = layers.get(ie).id;
+    bool iUseContact = usesContact.contains(ie);
     if (iUseContact) {
-      iAsync = &reg.get<CConservativePotentialColliders</*kIsSync*/ false>>(ie);
-      iSync = &reg.get<CConservativePotentialColliders</*kIsSync*/ true>>(ie);
+      iAsync = &asyncColliders.get(ie);
+      iSync = &syncColliders.get(ie);
 
       // Find static actors that overlap entity ie.
       for (int j = 0; j < numStatic; ++j) {
-        if (HasOverlap(dynamicBounds[i], staticBounds[j])) {
+        if (HasOverlap(iBounds, staticBounds[j])) {
           entt::entity je = staticColliders[j];
-          ContactLayerId jLayer = reg.get<CContactLayer>(je).id;
+          ContactLayerId jLayer = layers.get(je).id;
           if (contactTable.IsContactEnabled(ie, je, iLayer, jLayer)) {
             MOCHI_ASSERT_VERBOSE(iAsync != nullptr);
             iAsync->emplace_back(je); // NOLINT(facebook-hte-NullableDereference)
@@ -4252,9 +4260,9 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
     // Iterate over all other dynamic actors, starting at (i + 1).
     // They may contact entity ie even if it doesn't contact them.
     for (int j = i + 1; j < numDynamic; ++j) {
-      if (HasOverlap(dynamicBounds[i], dynamicBounds[j])) {
+      if (HasOverlap(iBounds, dynamicBounds[j])) {
         entt::entity je = dynamicEntities[j];
-        ContactLayerId jLayer = reg.get<CContactLayer>(je).id;
+        ContactLayerId jLayer = layers.get(je).id;
 
         // Consider i-vs-j
         if (iUseContact && dynamicHasCollider[j]) {
@@ -4265,9 +4273,9 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
         }
 
         // Consider j-vs-i
-        if (reg.all_of<TagUseContact>(je) && dynamicHasCollider[i]) {
+        if (usesContact.contains(je) && dynamicHasCollider[i]) {
           if (contactTable.IsContactEnabled(je, ie, jLayer, iLayer)) {
-            auto& jSync = reg.get<CConservativePotentialColliders</*kIsSync*/ true>>(je);
+            auto& jSync = syncColliders.get(je);
             jSync.emplace_back(ie);
           }
         }
