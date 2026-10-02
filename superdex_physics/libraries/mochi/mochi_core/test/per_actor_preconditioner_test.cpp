@@ -18,6 +18,7 @@
 #include <mochi_core/solvers/per_actor_preconditioner.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/task_scheduler.h>
 
 #include <gtest/gtest.h>
 
@@ -68,7 +69,7 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
     return _parallelism;
   }
 
-  ActorPreconditionerCost GetConcurrentSolveCost() const override {
+  [[nodiscard]] ActorPreconditionerCost GetConcurrentSolveCost() const override {
     return _cost;
   }
 
@@ -910,4 +911,58 @@ TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSeri
 
   expectPlanMatchesSerial({0, 3, 6, 9, 12, 15, 18});
   expectPlanMatchesSerial({0, 6, 12, 18});
+}
+
+TEST(PerActorPreconditioner, SolveSplitsActorsAcrossThreads) {
+  // Called from a bound thread that is not a worker, with one worker, ParallelForN queues every
+  // item but the last on the worker and runs the last item on the caller.
+  auto expectSolve = [](double denseCost, int denseThreadId, double smallCost, int smallThreadId) {
+    constexpr int kNumSparseRows = 30000;
+    TaskScheduler scheduler(1);
+
+    // Costly per row, so it may run on another thread, in its own item if it costs enough.
+    ActorPreconditionerCost const dense{.fixedCost = denseCost, .maxUsefulWorkers = 1};
+    // Also costly per row: the remainder after the dense item, or its own item if it costs enough.
+    ActorPreconditionerCost const smallDense{.fixedCost = smallCost, .maxUsefulWorkers = 1};
+    // Costly in total but as cheap per row as 4x4 block Jacobi, so it stays on the caller.
+    ActorPreconditionerCost const sparse{
+        .parallelCost = 8.0 * kNumSparseRows, .maxUsefulWorkers = 1};
+
+    RecordingActorPreconditioner first(
+        ActorPreconditionerParallelMode::SingleWorker, 1, 2_r, dense);
+    RecordingActorPreconditioner second(
+        ActorPreconditionerParallelMode::SingleWorker, 1, 3_r, smallDense);
+    RecordingActorPreconditioner third(
+        ActorPreconditionerParallelMode::SingleWorker, 1, 5_r, sparse);
+    PerActorPrec<real> prec({{0, 2, first}, {2, 2, second}, {4, kNumSparseRows, third}});
+
+    ColumnVector<real> x(4 + kNumSparseRows), Px(4 + kNumSparseRows), expected(4 + kNumSparseRows);
+    x.SetRandom(32);
+    Px.SetZero();
+    expected.TopRows(2) = 2_r * x.TopRows(2);
+    expected.MiddleRows(2, 2) = 3_r * x.MiddleRows(2, 2);
+    expected.BottomRows(kNumSparseRows) = 5_r * x.BottomRows(kNumSparseRows);
+
+    gPhysicalWorkerId = 0; // Tags the caller; the scheduler's worker keeps -1.
+    prec.Solve(x, Px);
+    gPhysicalWorkerId = -1;
+
+    EXPECT_EQ((DynamicArray<int>{denseThreadId}), first.SolvePhysicalWorkerIds());
+    EXPECT_EQ((DynamicArray<int>{smallThreadId}), second.SolvePhysicalWorkerIds());
+    EXPECT_EQ((DynamicArray<int>{0}), third.SolvePhysicalWorkerIds());
+    EXPECT_TRUE(mochi::test::NearEqualMatrices(Px, expected, 0_r));
+  };
+
+  // Items [first] on the worker and [second, third] on the caller: [first] outweighs the caller's
+  // share, but not eightfold.
+  expectSolve(/*denseCost*/ 3e5, /*denseThreadId*/ -1, /*smallCost*/ 100.0, /*smallThreadId*/ 0);
+
+  // Less than one task's worth of work on other threads: a single item, run inline.
+  expectSolve(/*denseCost*/ 1e4, /*denseThreadId*/ 0, /*smallCost*/ 100.0, /*smallThreadId*/ 0);
+
+  // The caller's share is below an eighth of [first], so the caller takes it, leaving one item.
+  expectSolve(/*denseCost*/ 4e6, /*denseThreadId*/ 0, /*smallCost*/ 100.0, /*smallThreadId*/ 0);
+
+  // Items [first] and [second]: the caller takes [first], and [second] stays on the worker.
+  expectSolve(/*denseCost*/ 4e6, /*denseThreadId*/ 0, /*smallCost*/ 3e5, /*smallThreadId*/ -1);
 }

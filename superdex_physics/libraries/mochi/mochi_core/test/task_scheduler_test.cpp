@@ -496,7 +496,7 @@ static void TestUtil_ParallelForRange() {
     auto const callingThreadId = std::this_thread::get_id();
     bool const shouldRunOnCallingThread = !scheduler || (scheduler->GetNumThreads() == 0);
     ParallelForRange("Test", rangeBegin, rangeEnd, minPerTask, maxPerTask, [&](int begin, int end) {
-      if (shouldRunOnCallingThread) {
+      if (shouldRunOnCallingThread || end == rangeEnd) {
         EXPECT_EQ(callingThreadId, std::this_thread::get_id());
       }
       for (int i = begin; i < end; ++i) {

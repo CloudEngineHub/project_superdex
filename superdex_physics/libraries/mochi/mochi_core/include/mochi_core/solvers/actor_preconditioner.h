@@ -68,9 +68,13 @@ struct ActorPreconditionerParallelism {
 
 /** @brief Estimated cost of concurrently applying an actor preconditioner.
  *
- * @details @ref PerActorPrec uses these estimates to assign actor rows to workers so that all
- * workers finish each preconditioner application at about the same time. Estimates may change
- * after @ref ActorPreconditioner::Update.
+ * @details @ref PerActorPrec uses these estimates in two ways:
+ * - @ref PerActorPrec::ConcurrentSolve assigns actor rows to workers so that all workers finish
+ *   each application at about the same time.
+ * - @ref PerActorPrec::Solve groups actors into tasks, taking the duration on one worker,
+ *   @c fixedCost+parallelCost, as the cost of each @ref ActorPreconditioner::Solve call.
+ *
+ * Estimates may change after @ref ActorPreconditioner::Update.
  *
  * The costs use common FLOP-like work units. @ref PerActorPrec converts synchronization time to
  * the same units. For an actor containing @c numBlockRows aligned block rows, its estimated
@@ -134,6 +138,8 @@ namespace details {
  * - Workers may finish their preconditioner tasks at different times, but all remain in the
  *   enclosing concurrent solve. Actor preconditioner operations must not throw.
  * - An instance must not participate in multiple linear solves concurrently.
+ * - @ref Solve may run concurrently on different instances, so instances must not share mutable
+ *   state, such as a static scratch buffer.
  */
 template <typename T>
 struct ActorPreconditioner {

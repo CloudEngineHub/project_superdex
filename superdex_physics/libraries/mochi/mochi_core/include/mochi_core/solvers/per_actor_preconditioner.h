@@ -22,6 +22,7 @@
 #include <mochi_core/solvers/actor_preconditioner.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/task_scheduler.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -362,19 +363,30 @@ struct PerActorPrec final : Preconditioner<T> {
   /** @brief Construct a per-actor preconditioner from an ordered row partition.
    *
    * @param[in] actorPrecs Entries must have positive sizes, be contiguous in increasing offset
-   * order starting at zero, and reference preconditioners that outlive this object.
+   * order starting at zero, and reference distinct preconditioners that outlive this object.
    */
   explicit PerActorPrec(std::vector<ActorPreconditionerEntry<T>>&& actorPrecs)
-      : _actorPrecs(std::move(actorPrecs)) {}
+      : _actorPrecs(std::move(actorPrecs)) {
+    UpdateSolveItems();
+  }
 
   ~PerActorPrec() override = default;
   MOCHI_DECLARE_NO_COPY_NO_MOVE(PerActorPrec);
 
+  /** @brief Apply every actor preconditioner. Different actors may be applied concurrently on
+   * task-scheduler threads.
+   */
   void Solve(ColumnVectorView<T const> x, ColumnVectorView<T> y) const override {
-    // TODO[T175051452]: Introduce efficient parallelization.
-    for (auto const& actor : _actorPrecs) {
-      actor.Solve(x, y);
-    }
+    MOCHI_ASSERT_VERBOSE(
+        isize(_solveOrder) == isize(_actorPrecs) && _solveItemRanges.back() == isize(_actorPrecs),
+        "Stale Solve items.");
+    // TODO[T175051452]: Use a dynamically balanced, cost-aware ParallelForN once available, so work
+    // can move away from tasks that start late or run longer than estimated.
+    ParallelForN("PerActorPrecSolve", isize(_solveItemRanges) - 1, /*minPerTask*/ 1, [&](int item) {
+      for (int i = _solveItemRanges[item]; i < _solveItemRanges[item + 1]; ++i) {
+        _actorPrecs[_solveOrder[i]].Solve(x, y);
+      }
+    });
   }
 
   void ConcurrentSolve(
@@ -1152,7 +1164,81 @@ struct PerActorPrec final : Preconditioner<T> {
     return plan;
   }
 
+  // Orders the actors for Solve and cuts the order into items. Actors with at least
+  // kMinSolveCostPerRow estimated work per row come first, in row order, cut into items of at least
+  // kMinSolveCostPerTask. Their remainder, then the other actors, each in row order, form the last
+  // item, which ParallelForN runs on the calling thread. If that item is small next to the heaviest
+  // item, the heaviest item joins it.
+  void UpdateSolveItems() {
+    // Minimum estimated work per task, in ActorPreconditionerCost units.
+    constexpr double kMinSolveCostPerTask = 200000.0; // ~20 μs @ 10 GFLOP/s
+
+    // Minimum estimated work per row for Solve to apply an actor on another thread. The serial
+    // Krylov solvers write the input of Solve and read its output on the calling thread, so
+    // applying an actor on another thread moves its rows of both between cores. That costs about as
+    // much as block Jacobi's own work per row but far less than, e.g., ILU0's or AMG's, so the
+    // threshold keeps block Jacobi (at most 8 units per row) on the calling thread and lets ILU0
+    // (13 or more) run elsewhere. This holds while the input and output fit in the caches, which
+    // covers islands far larger than typical ones.
+    constexpr double kMinSolveCostPerRow = 10.0;
+
+    int const numActors = isize(_actorPrecs);
+    _solveOrder.resize_noinit(numActors);
+    _solveItemRanges.clear();
+    _solveItemRanges.push_back(0);
+    int numOffloadable = 0;
+    int firstOnCaller = numActors;
+    double itemCost = 0.0;
+    double callerCost = 0.0;
+    int heaviestItem = 0;
+    double heaviestCost = 0.0;
+    for (int actorIndex = 0; actorIndex < numActors; ++actorIndex) {
+      auto const actorCost = _actorPrecs[actorIndex].preconditioner.get().GetConcurrentSolveCost();
+      double const cost = actorCost.fixedCost + actorCost.parallelCost;
+      if (cost < kMinSolveCostPerRow * _actorPrecs[actorIndex].size) {
+        _solveOrder[--firstOnCaller] = actorIndex; // Reversed into row order below.
+        callerCost += cost;
+        continue;
+      }
+      _solveOrder[numOffloadable++] = actorIndex;
+      itemCost += cost;
+      if (itemCost >= kMinSolveCostPerTask) {
+        if (itemCost > heaviestCost) {
+          heaviestItem = isize(_solveItemRanges) - 1;
+          heaviestCost = itemCost;
+        }
+        _solveItemRanges.push_back(numOffloadable);
+        itemCost = 0.0;
+      }
+    }
+    std::reverse(_solveOrder.begin() + firstOnCaller, _solveOrder.end());
+    callerCost += itemCost;
+
+    // Running an item on another thread costs somewhat more than on the calling thread, which wrote
+    // the item's input and reads its output. With its share C and the heaviest item H, the calling
+    // thread finishes after C + H and another thread after a bit more than H, so the calling thread
+    // takes H only when C is small next to H. The factor of 1/8 is a rough estimate of that extra
+    // cost; results are insensitive to halving or doubling it.
+    if (8.0 * callerCost < heaviestCost) {
+      int const begin = _solveItemRanges[heaviestItem];
+      int const size = _solveItemRanges[heaviestItem + 1] - begin;
+      std::rotate(
+          _solveOrder.begin() + begin, _solveOrder.begin() + begin + size, _solveOrder.end());
+      _solveItemRanges.erase(_solveItemRanges.begin() + heaviestItem + 1);
+      for (int item = heaviestItem + 1; item < isize(_solveItemRanges); ++item) {
+        _solveItemRanges[item] -= size;
+      }
+    }
+    if (_solveItemRanges.back() < numActors) {
+      _solveItemRanges.push_back(numActors);
+    }
+  }
+
   std::vector<ActorPreconditionerEntry<T>> _actorPrecs;
+  // Item i of Solve applies the actors _solveOrder[j] for j in [_solveItemRanges[i],
+  // _solveItemRanges[i + 1]). Both are recomputed whenever _actorPrecs is set.
+  DynamicArray<int> _solveOrder;
+  DynamicArray<int> _solveItemRanges;
   mutable std::optional<ConcurrentSolvePlan> _concurrentSolvePlan;
 };
 

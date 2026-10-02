@@ -236,6 +236,7 @@ struct IslandOperators {
 template <typename T>
 void PerActorPrec<T>::Update(IslandOperators<T> const& A) {
   _actorPrecs = A.MakePerActorPreconditionerEntries();
+  UpdateSolveItems();
   _concurrentSolvePlan.reset();
 }
 
