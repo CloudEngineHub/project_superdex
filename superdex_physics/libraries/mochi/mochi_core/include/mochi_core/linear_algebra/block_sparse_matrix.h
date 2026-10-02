@@ -239,23 +239,23 @@ class BlockSparseMatrix {
   }
 
   /// @brief Returns the maximum number of non-zeros per row.
-  CRIdx MaxNnzPerRow() const {
+  MOCHI_FORCE_INLINE CRIdx MaxNnzPerRow() const {
     return _maxNnzPerRow;
   }
 
   // @brief Returns the total number of rows in the matrix.
   // It is a multiple of kBlockSize.
-  CRIdx Rows() const {
+  MOCHI_FORCE_INLINE CRIdx Rows() const {
     return BlockRows() * static_cast<CRIdx>(kBlockSize);
   }
 
   // @brief Returns the number of blocks in the row direction.
   // Note that kBlockSize * BlockRows() is equal to rows()
-  CRIdx BlockRows() const {
+  MOCHI_FORCE_INLINE CRIdx BlockRows() const {
     return _ptr.empty() ? 0 : static_cast<CRIdx>(_ptr.size() - 1);
   }
 
-  [[nodiscard]] constexpr auto CERows() const {
+  [[nodiscard]] MOCHI_FORCE_INLINE constexpr auto CERows() const {
     static_assert(
         std::is_same_v<NonConstIdx, int>,
         "BlockSparseMatrix can only be used in matrix expressions if CRIdx = int");
@@ -264,46 +264,46 @@ class BlockSparseMatrix {
 
   // @brief Returns the total number of columns in the matrix.
   // It is a multiple of kBlockSize.
-  CRIdx Cols() const {
+  MOCHI_FORCE_INLINE CRIdx Cols() const {
     return static_cast<CRIdx>(kBlockSize) * _nBlockCols;
   }
 
   // @brief Returns the number of blocks in the column direction.
   // Note that kBlockSize * BlockCols() is equal to cols()
-  CRIdx BlockCols() const {
+  MOCHI_FORCE_INLINE CRIdx BlockCols() const {
     return _nBlockCols;
   }
 
-  [[nodiscard]] constexpr auto CECols() const {
+  [[nodiscard]] MOCHI_FORCE_INLINE constexpr auto CECols() const {
     static_assert(
         std::is_same_v<NonConstIdx, int>,
         "BlockSparseMatrix can only be used in matrix expressions if CRIdx = int");
     return details::IntOrEmpty<-1>{Cols()};
   }
 
-  Ptr NumNonZeros() const {
+  MOCHI_FORCE_INLINE Ptr NumNonZeros() const {
     return static_cast<Ptr>(_idx.size()) * kBlockSize * kBlockSize;
   }
 
   // @brief Number of non-zero blocks in the block row range [brBegin, brEnd).
   // @note The range end is NOT inclusive.
-  Ptr NumNonZeroBlocksInBlockRowRange(CRIdx brBegin, CRIdx brEnd) const {
+  MOCHI_FORCE_INLINE Ptr NumNonZeroBlocksInBlockRowRange(CRIdx brBegin, CRIdx brEnd) const {
     MOCHI_ASSERT_VERBOSE(
         brBegin >= 0 && brEnd <= BlockRows() && brBegin <= brEnd, "Invalid range.");
     return (_ptr[brEnd] - _ptr[brBegin]);
   }
 
-  Ptr NumNonZeroBlocks() const {
+  MOCHI_FORCE_INLINE Ptr NumNonZeroBlocks() const {
     return static_cast<Ptr>(_idx.size());
   }
 
-  auto Indices(CRIdx r_c) const {
+  MOCHI_FORCE_INLINE auto Indices(CRIdx r_c) const {
     return Span<CRIdx const>{
         _idx.data() + _ptr[r_c],
         static_cast<typename Span<CRIdx const>::size_type>(_ptr[r_c + 1] - _ptr[r_c])};
   }
 
-  auto Values(CRIdx r_c) {
+  MOCHI_FORCE_INLINE auto Values(CRIdx r_c) {
     // TODO Revise the pointer offset when implementing aligned starts of row
     // data.
     auto const numBlocks = _ptr[r_c + 1] - _ptr[r_c];
@@ -313,7 +313,7 @@ class BlockSparseMatrix {
         static_cast<CRIdx>(numBlocks)};
   }
 
-  auto Values(CRIdx r_c) const {
+  MOCHI_FORCE_INLINE auto Values(CRIdx r_c) const {
     // TODO Revise the pointer offset when implementing aligned starts of row
     // data.
     auto const numBlocks = _ptr[r_c + 1] - _ptr[r_c];
@@ -397,19 +397,19 @@ class BlockSparseMatrix {
     return *this;
   }
 
-  Span<Scalar> Values() {
+  MOCHI_FORCE_INLINE Span<Scalar> Values() {
     return _v;
   }
 
-  Span<Scalar const> Values() const {
+  MOCHI_FORCE_INLINE Span<Scalar const> Values() const {
     return _v;
   }
 
-  Span<CRIdx const> Indices() const {
+  MOCHI_FORCE_INLINE Span<CRIdx const> Indices() const {
     return _idx;
   }
 
-  Span<Ptr const> Pointers() const {
+  MOCHI_FORCE_INLINE Span<Ptr const> Pointers() const {
     return _ptr;
   }
 
@@ -430,17 +430,17 @@ class BlockSparseMatrix {
   }
 
   // Return true if there are zero rows or columns (see default constructor).
-  bool empty() const {
+  MOCHI_FORCE_INLINE bool empty() const {
     return Rows() == 0 || Cols() == 0;
   }
 
-  bool IsBlockRowEmpty(CRIdx br) const {
+  MOCHI_FORCE_INLINE bool IsBlockRowEmpty(CRIdx br) const {
     MOCHI_ASSERT_VERBOSE(br >= 0 && br < BlockRows(), "Out of range block row index.");
     return (_ptr[br] == _ptr[br + 1]);
   }
 
   // Return true if not empty (i.e. it was initialized with non-zero rows & columns).
-  explicit operator bool() const {
+  MOCHI_FORCE_INLINE explicit operator bool() const {
     return !empty();
   }
 
@@ -770,13 +770,14 @@ struct RowMultiplier {
   ///   multiple columns. If the latter use-case is important, performance could be optimized
   ///   further, e.g. by moving the loop over columns from outside to inside the kernel to improve
   ///   cache efficiency.
+  /// - Force-inlined, like its kernels: GCC and MSVC otherwise call them once per block row.
   template <
       typename Indices,
       typename Values,
       typename AccessorIn,
       typename AccessorOut,
       typename Idx>
-  static void ApplyToColVector(
+  MOCHI_FORCE_INLINE static void ApplyToColVector(
       Indices const& rowIndices,
       Values const& rowValues,
       int numBlocks,
@@ -892,7 +893,7 @@ struct RowMultiplier {
   ///   further, e.g. by moving the loop over columns from outside to inside the kernel to improve
   ///   cache efficiency.
   template <typename Indices, typename Values, typename AccessorIn, typename AccessorOut>
-  static void ApplyToColVector3x3Simd8(
+  MOCHI_FORCE_INLINE static void ApplyToColVector3x3Simd8(
       Indices const& rowIndices,
       Values const& rowValues,
       int numBlocks,
@@ -989,7 +990,7 @@ struct RowMultiplier {
   ///   further, e.g. by moving the loop over columns from outside to inside the kernel to improve
   ///   cache efficiency.
   template <typename Indices, typename Values, typename AccessorIn, typename AccessorOut>
-  static void ApplyToColVector3x3Simd4(
+  MOCHI_FORCE_INLINE static void ApplyToColVector3x3Simd4(
       Indices const& rowIndices,
       Values const& rowValues,
       int numBlocks,
@@ -1009,51 +1010,57 @@ struct RowMultiplier {
     int j = 0;
     int jb = 0;
     V4 v0, v1, v2, v3;
-    V4 results[kBlockSize] = {}; // Initializes to zero.
+    // One named sum per row: with an array and loops over the rows, MSVC keeps the sums in memory
+    // once this kernel is inlined.
+    V4 r0{}, r1{}, r2{};
     //--- Batches of 4 blocks.
     for (; jb + 4 <= numBlocks; jb += 4, j += 4 * kBlockSize) {
       v0 = x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb + 0], c);
       v1 = Shuffle<1, 2, 3, 0>(
           x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb + 1], c));
-      for (int k = 0; k < kBlockSize; ++k) {
-        results[k] += Load<V4>(&rowValues[k * rowLeadDim + j + 0]) * Blend<0, 0, 0, 1>(v0, v1);
-      }
+      V4 vec = Blend<0, 0, 0, 1>(v0, v1);
+      r0 += Load<V4>(&rowValues[0 * rowLeadDim + j + 0]) * vec;
+      r1 += Load<V4>(&rowValues[1 * rowLeadDim + j + 0]) * vec;
+      r2 += Load<V4>(&rowValues[2 * rowLeadDim + j + 0]) * vec;
 
       v2 = Shuffle<2, 3, 0, 1>(
           x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb + 2], c));
-      for (int k = 0; k < kBlockSize; ++k) {
-        results[k] += Load<V4>(&rowValues[k * rowLeadDim + j + 4]) * Blend<0, 0, 1, 1>(v1, v2);
-      }
+      vec = Blend<0, 0, 1, 1>(v1, v2);
+      r0 += Load<V4>(&rowValues[0 * rowLeadDim + j + 4]) * vec;
+      r1 += Load<V4>(&rowValues[1 * rowLeadDim + j + 4]) * vec;
+      r2 += Load<V4>(&rowValues[2 * rowLeadDim + j + 4]) * vec;
 
       v3 = Shuffle<3, 0, 1, 2>(
           x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb + 3], c));
-      for (int k = 0; k < kBlockSize; ++k) {
-        results[k] += Load<V4>(&rowValues[k * rowLeadDim + j + 8]) * Blend<0, 1, 1, 1>(v2, v3);
-      }
+      vec = Blend<0, 1, 1, 1>(v2, v3);
+      r0 += Load<V4>(&rowValues[0 * rowLeadDim + j + 8]) * vec;
+      r1 += Load<V4>(&rowValues[1 * rowLeadDim + j + 8]) * vec;
+      r2 += Load<V4>(&rowValues[2 * rowLeadDim + j + 8]) * vec;
     }
     //--- Additional batches of 2 blocks.
     for (; jb + 2 <= numBlocks; jb += 2, j += 2 * kBlockSize) {
       v0 = x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb + 0], c);
       v1 = Shuffle<1, 2, 3, 0>(
           x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb + 1], c));
-      for (int k = 0; k < kBlockSize; ++k) {
-        results[k] += Load<V4>(&rowValues[k * rowLeadDim + j + 0]) * Blend<0, 0, 0, 1>(v0, v1);
-      }
-      for (int k = 0; k < kBlockSize; ++k) {
-        results[k] += Load<2, V4>(&rowValues[k * rowLeadDim + j + 4]) * v1;
-      }
+      V4 const vec = Blend<0, 0, 0, 1>(v0, v1);
+      r0 += Load<V4>(&rowValues[0 * rowLeadDim + j + 0]) * vec;
+      r1 += Load<V4>(&rowValues[1 * rowLeadDim + j + 0]) * vec;
+      r2 += Load<V4>(&rowValues[2 * rowLeadDim + j + 0]) * vec;
+      r0 += Load<2, V4>(&rowValues[0 * rowLeadDim + j + 4]) * v1;
+      r1 += Load<2, V4>(&rowValues[1 * rowLeadDim + j + 4]) * v1;
+      r2 += Load<2, V4>(&rowValues[2 * rowLeadDim + j + 4]) * v1;
     }
     //--- Last block.
     if (jb < numBlocks) {
       v0 = x.template ColVector<V4, kBlockSize>(kBlockSize * rowIndices[jb], c);
-      for (int k = 0; k < kBlockSize; ++k) {
-        results[k] += Load<kBlockSize, V4>(&rowValues[k * rowLeadDim + j]) * v0;
-      }
+      r0 += Load<kBlockSize, V4>(&rowValues[0 * rowLeadDim + j]) * v0;
+      r1 += Load<kBlockSize, V4>(&rowValues[1 * rowLeadDim + j]) * v0;
+      r2 += Load<kBlockSize, V4>(&rowValues[2 * rowLeadDim + j]) * v0;
     }
     //--- Store result.
-    for (int k = 0; k < kBlockSize; ++k) {
-      Ax.Store(k + br * kBlockSize, c, HSum(results[k]));
-    }
+    Ax.Store(0 + br * kBlockSize, c, HSum(r0));
+    Ax.Store(1 + br * kBlockSize, c, HSum(r1));
+    Ax.Store(2 + br * kBlockSize, c, HSum(r2));
   }
 
   /// @brief Kernel for the product between a block row with block size of 4 and a column vector.
@@ -1066,7 +1073,7 @@ struct RowMultiplier {
   ///   further, e.g. by moving the loop over columns from outside to inside the kernel to improve
   ///   cache efficiency.
   template <typename Indices, typename Values, typename AccessorIn, typename AccessorOut>
-  static void ApplyToColVector4x4(
+  MOCHI_FORCE_INLINE static void ApplyToColVector4x4(
       Indices const& rowIndices,
       Values const& rowValues,
       int numBlocks,

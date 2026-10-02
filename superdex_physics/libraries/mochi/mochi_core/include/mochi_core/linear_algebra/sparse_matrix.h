@@ -223,51 +223,51 @@ class SparseMatrix {
     }
   }
 
-  CRIdx Rows() const {
+  MOCHI_FORCE_INLINE CRIdx Rows() const {
     return _ptr.empty() ? 0 : (static_cast<CRIdx>(_ptr.size()) - 1);
   }
 
-  [[nodiscard]] constexpr auto CERows() const {
+  [[nodiscard]] MOCHI_FORCE_INLINE constexpr auto CERows() const {
     static_assert(
         std::is_same_v<NonConstIdx, int>,
         "SparseMatrix can only be used in matrix expressions if CRIdx = int");
     return details::IntOrEmpty<-1>{Rows()};
   }
 
-  CRIdx Cols() const {
+  MOCHI_FORCE_INLINE CRIdx Cols() const {
     return _nCol;
   }
 
-  [[nodiscard]] constexpr auto CECols() const {
+  [[nodiscard]] MOCHI_FORCE_INLINE constexpr auto CECols() const {
     static_assert(
         std::is_same_v<NonConstIdx, int>,
         "SparseMatrix can only be used in matrix expressions if CRIdx = int");
     return details::IntOrEmpty<-1>{Cols()};
   }
 
-  Ptr NumNonZeros() const {
+  MOCHI_FORCE_INLINE Ptr NumNonZeros() const {
     return static_cast<Ptr>(_idx.size());
   }
 
   // @brief Number of non-zeros in the row range [rBegin, rEnd).
   // @note The range end is NOT inclusive.
-  Ptr NumNonZerosInRowRange(CRIdx rBegin, CRIdx rEnd) const {
+  MOCHI_FORCE_INLINE Ptr NumNonZerosInRowRange(CRIdx rBegin, CRIdx rEnd) const {
     MOCHI_ASSERT_VERBOSE(rBegin >= 0 && rEnd <= Rows() && rBegin <= rEnd, "Invalid row range.");
     return (_ptr[rEnd] - _ptr[rBegin]);
   }
 
   // Return true if there are zero rows or columns (see default constructor).
-  [[nodiscard]] bool empty() const {
+  [[nodiscard]] MOCHI_FORCE_INLINE bool empty() const {
     return Rows() == 0 || Cols() == 0;
   }
 
-  bool IsRowEmpty(CRIdx r) const {
+  MOCHI_FORCE_INLINE bool IsRowEmpty(CRIdx r) const {
     MOCHI_ASSERT_VERBOSE(r >= 0 && r < Rows(), "Out of range row index.");
     return (_ptr[r] == _ptr[r + 1]);
   }
 
   // Return true if not empty (i.e. it was initialized with non-zero rows & columns).
-  explicit operator bool() const {
+  MOCHI_FORCE_INLINE explicit operator bool() const {
     return !empty();
   }
 
@@ -275,7 +275,7 @@ class SparseMatrix {
   /// @param[in] r Row index
   /// @returns Span of column indices
   ///
-  auto Indices(CRIdx r) {
+  MOCHI_FORCE_INLINE auto Indices(CRIdx r) {
     MOCHI_ASSERT_VERBOSE(r >= 0 && r < Rows(), "Out of range row index.");
     return Span{_idx.data() + _ptr[r], static_cast<size_t>(NumNonZerosInRowRange(r, r + 1))};
   }
@@ -284,7 +284,7 @@ class SparseMatrix {
   /// @param[in] r Row index
   /// @returns Span of column indices
   ///
-  auto Indices(CRIdx r) const {
+  MOCHI_FORCE_INLINE auto Indices(CRIdx r) const {
     MOCHI_ASSERT_VERBOSE(r >= 0 && r < Rows(), "Out of range row index.");
     return Span{_idx.data() + _ptr[r], static_cast<size_t>(NumNonZerosInRowRange(r, r + 1))};
   }
@@ -293,7 +293,7 @@ class SparseMatrix {
   /// @param[in] r Row index
   /// @returns Span of numerical values
   ///
-  auto Values(CRIdx r) {
+  MOCHI_FORCE_INLINE auto Values(CRIdx r) {
     MOCHI_ASSERT_VERBOSE(r >= 0 && r < Rows(), "Out of range row index.");
     return Span{_v.data() + _ptr[r], static_cast<size_t>(NumNonZerosInRowRange(r, r + 1))};
   }
@@ -302,7 +302,7 @@ class SparseMatrix {
   /// @param[in] r Row index
   /// @returns Span of numerical values
   ///
-  auto Values(CRIdx r) const {
+  MOCHI_FORCE_INLINE auto Values(CRIdx r) const {
     MOCHI_ASSERT_VERBOSE(r >= 0 && r < Rows(), "Out of range row index.");
     return Span{_v.data() + _ptr[r], static_cast<size_t>(NumNonZerosInRowRange(r, r + 1))};
   }
@@ -335,19 +335,19 @@ class SparseMatrix {
   template <typename MatrixIn, typename MatrixOut>
   void TransposeApply(MatrixIn const& x, MatrixOut&& Atx) const;
 
-  Span<Scalar> Values() {
+  MOCHI_FORCE_INLINE Span<Scalar> Values() {
     return _v;
   }
 
-  Span<Scalar const> Values() const {
+  MOCHI_FORCE_INLINE Span<Scalar const> Values() const {
     return _v;
   }
 
-  Span<CRIdx const> Indices() const {
+  MOCHI_FORCE_INLINE Span<CRIdx const> Indices() const {
     return _idx;
   }
 
-  Span<Ptr const> Pointers() const {
+  MOCHI_FORCE_INLINE Span<Ptr const> Pointers() const {
     return _ptr;
   }
 
