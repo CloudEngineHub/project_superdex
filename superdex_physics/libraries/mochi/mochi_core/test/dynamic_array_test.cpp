@@ -336,6 +336,15 @@ TEST(DynamicArray, InitialSize) {
   EXPECT_EQ(0, TestAllocator::s_bytes);
   EXPECT_EQ(alignof(Snoop), TestAllocator::s_lastAllocAlignment);
   EXPECT_EQ(alignof(Snoop), TestAllocator::s_lastDeallocAlignment);
+  TestAllocator::ResetCounters();
+
+  // Zero size does not allocate
+  TestAllocator alloc;
+  DynamicArray<int> a(0, &alloc);
+  DynamicArray<int> b(0, 888, &alloc);
+  EXPECT_EQ((int*)nullptr, a.data());
+  EXPECT_EQ((int*)nullptr, b.data());
+  EXPECT_EQ(0, TestAllocator::s_allocate);
 }
 
 TEST(DynamicArray, ConstructFromRange) {
@@ -351,12 +360,14 @@ TEST(DynamicArray, ConstructFromRange) {
 
   // Empty range
   {
-    DynamicArray<Snoop> a((Snoop*)nullptr, (Snoop*)nullptr);
+    DynamicArray<Snoop> a((Snoop*)nullptr, (Snoop*)nullptr, &alloc);
     EXPECT_EQ(0, a.size());
     EXPECT_EQ(0, a.capacity());
-    DynamicArray<Snoop> b(inList.begin(), inList.begin());
-    EXPECT_EQ(0, a.size());
-    EXPECT_EQ(0, a.capacity());
+    EXPECT_EQ((Snoop*)nullptr, a.data());
+    DynamicArray<Snoop> b(inList.begin(), inList.begin(), &alloc);
+    EXPECT_EQ(0, b.size());
+    EXPECT_EQ(0, b.capacity());
+    EXPECT_EQ((Snoop*)nullptr, b.data());
     EXPECT_EQ(0, TestAllocator::s_allocate);
     Snoop::ExpectCounters(0, 0, 0, 0, 0, 0, 0); // nothing happened
   }
@@ -1049,6 +1060,14 @@ TEST(DynamicArray, CopyConstruct) {
   Snoop::ExpectCounters(0, 1, 0, 0, 0, 0, 0); // copy 1
   Snoop::ResetCounters();
 
+  // Copying an empty array does not allocate
+  DynamicArray<Snoop> empty(&alloc);
+  DynamicArray<Snoop> d(empty);
+  DynamicArray<Snoop> e(empty, &alloc2);
+  EXPECT_EQ((Snoop*)nullptr, d.data());
+  EXPECT_EQ((Snoop*)nullptr, e.data());
+  EXPECT_EQ(3, TestAllocator::s_allocate); // no change
+
   TestAllocator::ResetCounters();
 }
 
@@ -1192,6 +1211,12 @@ TEST(DynamicArray, MoveConstruct) {
   EXPECT_EQ(&alloc3, d.get_allocator()); // same allocator
   Snoop::ExpectCounters(0, 0, 1, 0, 0, 0, 1); // Move construct 1, destroy 1
   Snoop::ResetCounters();
+
+  // Moving an empty array to an incompatible allocator does not allocate
+  DynamicArray<Snoop> empty(&alloc);
+  DynamicArray<Snoop> e(std::move(empty), &alloc3);
+  EXPECT_EQ((Snoop*)nullptr, e.data());
+  EXPECT_EQ(2, TestAllocator::s_allocate); // no change
 
   // Cleanup
   TestAllocator::s_compatibleWithOtherInstances = true;

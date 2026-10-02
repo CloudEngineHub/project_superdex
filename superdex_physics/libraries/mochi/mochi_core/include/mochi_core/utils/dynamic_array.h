@@ -133,11 +133,12 @@ class DynamicArray {
    * @param allocator Pointer to a polymorphic allocator. Must outlive this DynamicArray object.
    */
   explicit DynamicArray(size_type size, Allocator* allocator = GetDefaultAllocator())
-      : _begin(static_cast<T*>(allocator->allocate(size * sizeof(T), alignof(T)))),
-        _end(_begin + size),
-        _endCapacity(_end),
-        _allocator(allocator) {
-    DefaultConstructRange(_begin, _end);
+      : _allocator(allocator) {
+    if (size > 0) {
+      _begin = static_cast<T*>(allocator->allocate(size * sizeof(T), alignof(T)));
+      _end = _endCapacity = _begin + size;
+      DefaultConstructRange(_begin, _end);
+    }
   }
 
   /**
@@ -153,11 +154,12 @@ class DynamicArray {
       size_type size,
       FromT const& defaultValue,
       Allocator* allocator = GetDefaultAllocator())
-      : _begin(static_cast<T*>(allocator->allocate(size * sizeof(T), alignof(T)))),
-        _end(_begin + size),
-        _endCapacity(_end),
-        _allocator(allocator) {
-    CopyConstructRangeFromValue(_begin, _end, defaultValue);
+      : _allocator(allocator) {
+    if (size > 0) {
+      _begin = static_cast<T*>(allocator->allocate(size * sizeof(T), alignof(T)));
+      _end = _endCapacity = _begin + size;
+      CopyConstructRangeFromValue(_begin, _end, defaultValue);
+    }
   }
 
   /**
@@ -178,9 +180,11 @@ class DynamicArray {
       : _allocator(allocator) {
     MOCHI_DARRAY_ASSERT_FORWARD_ITERATOR(InputIt);
     auto size = static_cast<size_type>(std::distance(rangeBegin, rangeEnd));
-    _begin = static_cast<T*>(allocator->allocate(size * sizeof(T), alignof(T)));
-    _end = _endCapacity = _begin + size;
-    CopyConstructRange(_begin, rangeBegin, rangeEnd);
+    if (size > 0) {
+      _begin = static_cast<T*>(allocator->allocate(size * sizeof(T), alignof(T)));
+      _end = _endCapacity = _begin + size;
+      CopyConstructRange(_begin, rangeBegin, rangeEnd);
+    }
   }
 
   /**
@@ -230,9 +234,9 @@ class DynamicArray {
    * @brief Construct a DynamicArray by moving memory or values from another one.
    *
    * @remarks If the allocators are equal, then array memory ownership will be transferred from
-   * the other array to this one. Otherwise, new memory will be allocated for this array and then
-   * the other array's values will be moved into it. Either way, the other array will be empty
-   * after this call.
+   * the other array to this one. Otherwise, new memory will be allocated for this array (if
+   * necessary) and then the other array's values will be moved into it. Either way, the other
+   * array will be empty after this call.
    *
    * @param other Another DynamicArray from which memory or values will be moved
    * @param allocator Pointer to a polymorphic allocator. Must outlive this DynamicArray object.
@@ -245,7 +249,7 @@ class DynamicArray {
         _endCapacity = other._endCapacity;
         other._begin = other._end = other._endCapacity = nullptr;
       }
-    else {
+    else if (!other.empty()) {
       auto size = other.size();
       _begin = static_cast<T*>(_allocator->allocate(size * sizeof(T), alignof(T)));
       _end = _begin;
