@@ -119,6 +119,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("translation_epsilon") = mochi::RecenteringParams{}.translationEpsilon
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RecenteringParams const& self) { return mochi::RecenteringParams(self); })
     .def("__deepcopy__", [](mochi::RecenteringParams const& self, nb::dict) { return mochi::RecenteringParams(self); })
     .def_rw("use_recentering", &mochi::RecenteringParams::useRecentering, "Whether recentering is enabled.")

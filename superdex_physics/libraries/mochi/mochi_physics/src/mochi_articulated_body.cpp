@@ -749,7 +749,8 @@ static void SetControllerTargets(
   }
 }
 
-static void SetTargetPoseImpl(
+// Returns whether the stored target changed.
+static bool SetTargetPoseImpl(
     entt::registry& reg,
     entt::entity e,
     Span<real const> pose,
@@ -759,7 +760,10 @@ static void SetTargetPoseImpl(
 
   // Update the local target pose and link transforms
   auto& target = reg.get<CControllerTarget<TimeStep::Current>>(e);
+  bool const changed =
+      pose != MakeConstSpan(target.JointPose()) || linkTransformsCom != target.LinkTransformsCom();
   target.Set(AsConstView(pose), linkTransformsCom);
+  return changed;
 }
 
 static void InitializeOldTargetImpl(entt::registry& reg, entt::entity e) {
@@ -792,14 +796,14 @@ void articulated::compound::GetTargetLinkTransforms(
   ComLinkTransformsToRootLinkTransforms(reg, e, linksCom, outWorldFromTarget);
 }
 
-void articulated::compound::SetTargetLinkTransforms(
+bool articulated::compound::SetTargetLinkTransforms(
     entt::registry& reg,
     entt::entity e,
     Span<TransformRT const> worldFromTarget,
     Error& error) {
   auto const& props = reg.get<CArticulatedProps const>(e);
   MOCHI_ERROR_IF(worldFromTarget.size() != props.numLinks, error, "Invalid number of transforms");
-  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_RETURN(error, false);
 
   // Reserve stack memory for 128 transforms and pose (up to 256 joints with 4 values per joint).
   MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(TransformRT) * 128 + sizeof(real) * 4 * 256);
@@ -815,7 +819,7 @@ void articulated::compound::SetTargetLinkTransforms(
   pose.resize_noinit(props.reducedPoseDim);
   GetPoseFromLinkTransformsCom(reg, e, linkTransformsCom, pose);
 
-  SetTargetPoseImpl(reg, e, pose, linkTransformsCom);
+  return SetTargetPoseImpl(reg, e, pose, linkTransformsCom);
 }
 
 void articulated::compound::CombinePoseAndLinkTargets(
@@ -886,14 +890,14 @@ void articulated::compound::CombinePoseAndLinkTargets(
   ComLinkTransformsToRootLinkTransforms(reg, e, outLinkTransforms, outLinkTransforms);
 }
 
-void articulated::compound::SetTargetPose(
+bool articulated::compound::SetTargetPose(
     entt::registry& reg,
     entt::entity e,
     Span<real const> pose,
     Error& error) {
   auto const& props = reg.get<CArticulatedProps const>(e);
   MOCHI_ERROR_IF(pose.size() != props.reducedPoseDim, error, "Invalid pose size");
-  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_RETURN(error, false);
 
   // Reserve stack memory for the transforms (up to 256 links).
   MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(TransformRT) * 256);
@@ -901,7 +905,7 @@ void articulated::compound::SetTargetPose(
   linkTransformsCom.resize_noinit(props.numLinks);
   GetLinkTransformsComFromPose(reg, e, pose, linkTransformsCom);
 
-  SetTargetPoseImpl(reg, e, pose, linkTransformsCom);
+  return SetTargetPoseImpl(reg, e, pose, linkTransformsCom);
 }
 
 static void SetZeroTargetJointVelocity(entt::registry& reg, entt::entity e, Error& error) {

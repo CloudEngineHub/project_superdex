@@ -314,15 +314,17 @@ void GetTargetLinkTransforms(
     Span<TransformRT> outWorldFromTargets,
     Error& error);
 
-// Set the target world-from-local link transforms for the pose controller
-void SetTargetLinkTransforms(
+// Set the target world-from-local link transforms for the pose controller. Returns whether the
+// stored target changed.
+bool SetTargetLinkTransforms(
     entt::registry& reg,
     entt::entity e,
     Span<TransformRT const> worldFromTargets,
     Error& error);
 
-// Set the target pose (as joint dofs) for the pose controller
-void SetTargetPose(entt::registry& reg, entt::entity e, Span<real const> pose, Error& error);
+// Set the target pose (as joint dofs) for the pose controller. Returns whether the stored target
+// changed.
+bool SetTargetPose(entt::registry& reg, entt::entity e, Span<real const> pose, Error& error);
 
 // Combine joint-level and link-level control targets into a single set of target link transforms.
 // linkTransforms must contain root-frame transforms with 3D controls already applied.

@@ -780,6 +780,14 @@ static void CreateRotationConstraint(WakeContext& ctx) {
   ctx.constraint = ctx.scene->CreateRigidPivotRotationConstraint(params, test::ExpectOK{});
 }
 
+// Holds a rigid actor in place with a transform target, which has a position and a rotation.
+static void CreatePivotToRigidTarget(WakeContext& ctx) {
+  RigidPivotToRigidTargetConstraintParams params;
+  params.actor = ctx.actor->GetHandle();
+  params.targetTransform = ctx.actor->GetCenterOfMassTransform(test::ExpectOK{});
+  ctx.constraint = ctx.scene->CreateRigidPivotToRigidTargetConstraint(params, test::ExpectOK{});
+}
+
 static void CreateSingleDofTargetConstraint(WakeContext& ctx) {
   ArticulatedSingleDofTargetConstraintParams params;
   params.actor = ctx.actor->GetHandle();
@@ -826,6 +834,12 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        OnRepeat::WakeUp,
        [](WakeContext& c) {
          c.actor->SetRootTransform(TransformRT{Real3{0_r, 1_r, 0_r}}, test::ExpectOK{});
+       }},
+      {"SetCenterOfMassTransform",
+       kRigidOnly,
+       OnRepeat::WakeUp,
+       [](WakeContext& c) {
+         c.actor->SetCenterOfMassTransform(TransformRT{Real3{0_r, 1_r, 0_r}}, test::ExpectOK{});
        }},
       {"SetVelocity",
        kRigidAndSoft,
@@ -879,11 +893,11 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
       // Actor properties
       {"SetDensity",
        kRigidAndSoft,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.actor->SetDensity(1500_r, test::ExpectOK{}); }},
       {"SetInertiaProperties",
        kRigidOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          c.actor->SetInertiaProperties(
              10_r,
@@ -901,7 +915,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        }},
       {"SetRecenteringParams",
        {ActorType::Soft},
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          auto params = c.actor->GetRecenteringParams();
          params.translationEpsilon = 0.01_r;
@@ -909,7 +923,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        }},
       {"SetContactParams",
        kWithContactParams,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          auto params = c.actor->GetContactParams(test::ExpectOK{});
          params.coulombFrictionCoefficient = 0.25_r;
@@ -917,11 +931,11 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        }},
       {"SetContactLayer",
        kWithContactParams,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.actor->SetContactLayer("WakeTestLayer"); }},
       {"SetArticulatedJointFrictionParams",
        kArticulatedOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          auto const current = c.actor->GetArticulatedJointFrictionParams(test::ExpectOK{});
          DynamicArray<ArticulatedJointFrictionParams> friction;
@@ -931,7 +945,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        }},
       {"SetArticulatedJointInertiaParams",
        kArticulatedOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          auto const current = c.actor->GetArticulatedJointInertiaParams(test::ExpectOK{});
          DynamicArray<real> inertia;
@@ -999,10 +1013,19 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        AddPoseController},
       {"SetArticulatedTargetPose",
        kArticulatedOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          auto const pose = MakeUnitArray(c.actor->GetNumDofs(), 1, 0.1_r);
          c.actor->SetArticulatedTargetPose(MakeConstSpan(pose), test::ExpectOK{});
+       },
+       AddPoseController},
+      {"SetArticulatedTargetLinkTransforms",
+       kArticulatedOnly,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         auto const numLinks = c.actor->GetNestedLinkActors(test::ExpectOK{}).size();
+         DynamicArray<TransformRT> const targets(numLinks, TransformRT{Real3{0_r, 1_r, 0_r}});
+         c.actor->SetArticulatedTargetLinkTransforms(MakeConstSpan(targets), test::ExpectOK{});
        },
        AddPoseController},
       {"RemoveArticulatedPoseController",
@@ -1019,37 +1042,52 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        CreatePivotAtCenterOfMass},
       {"Constraint_SetStiffness",
        kRigidOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.constraint->SetStiffness(12345_r, test::ExpectOK{}); },
        CreatePivotAtCenterOfMass},
       {"Constraint_SetDamping",
        kRigidOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.constraint->SetDamping(0.5_r, test::ExpectOK{}); },
        CreatePivotAtCenterOfMass},
       {"Constraint_SetSaturation",
        kRigidOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.constraint->SetSaturation(-2_r, test::ExpectOK{}); },
        CreatePivotAtCenterOfMass},
       {"Constraint_SetTargetPosition",
        kRigidOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          c.constraint->SetTargetPosition(Real3{0_r, 1_r, 0_r}, test::ExpectOK{});
        },
        CreatePivotAtCenterOfMass},
+      {"Constraint_SetTargetPosition_RigidTarget",
+       kRigidOnly,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         c.constraint->SetTargetPosition(Real3{0_r, 1_r, 0_r}, test::ExpectOK{});
+       },
+       CreatePivotToRigidTarget},
       {"Constraint_SetTargetRotation",
        kRigidOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          c.constraint->SetTargetRotation(
              Quaternion::FromRotationVector(Real3{0.001_r, 0_r, 0_r}), test::ExpectOK{});
        },
        CreateRotationConstraint},
+      {"Constraint_SetTargetRotation_RigidTarget",
+       kRigidOnly,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         c.constraint->SetTargetRotation(
+             Quaternion::FromRotationVector(Real3{0.001_r, 0_r, 0_r}), test::ExpectOK{});
+       },
+       CreatePivotToRigidTarget},
       {"Constraint_SetTargetDof",
        kArticulatedOnly,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.constraint->SetTargetDof(0.001_r, test::ExpectOK{}); },
        CreateSingleDofTargetConstraint},
       {"Constraint_UpdateOldTarget",
@@ -1141,7 +1179,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        [](WakeContext& c) { c.ground->SetVelocity(Real3{}, Real3{}, test::ExpectOK{}); }},
       {"Ground_SetContactParams",
        kAll,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) {
          auto params = c.ground->GetContactParams(test::ExpectOK{});
          params.coulombFrictionCoefficient = 0.25_r;
@@ -1149,8 +1187,21 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        }},
       {"Ground_SetContactLayer",
        kAll,
-       OnRepeat::WakeUp,
+       OnRepeat::NoWake,
        [](WakeContext& c) { c.ground->SetContactLayer("GroundWakeTestLayer"); }},
+      {"ClearBoundaryConditions_KeepsPermanent",
+       kRigidOnly,
+       OnRepeat::NoWake,
+       [](WakeContext& c) { c.actor->ClearBoundaryConditions(); },
+       [](WakeContext& c) {
+         auto const values = GetAllDofValues(c.actor);
+         DynamicArray<int> const permanent = {0, 1, 2};
+         DynamicArray<int> const temporary = {3, 4, 5};
+         c.actor->AddBoundaryConditionDofsWorldPermanent(
+             MakeConstSpan(permanent), Span{values.data(), 3}, test::ExpectOK{});
+         c.actor->AddBoundaryConditionDofsWorld(
+             MakeConstSpan(temporary), Span{values.data() + 3, 3}, test::ExpectOK{});
+       }},
   };
   return cases;
 }

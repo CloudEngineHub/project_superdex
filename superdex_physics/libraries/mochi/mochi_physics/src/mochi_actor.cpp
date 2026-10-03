@@ -498,15 +498,18 @@ class ActorInterfaceImpl : public ActorInterface {
 
     if (auto* rigidInertia = reg.try_get<CRigidBodyInertia>(e)) {
       // Rigid
+      if (rigidInertia->GetDensity() == density) {
+        return; // No change
+      }
       rigidInertia->SetDensity(density);
     } else if (auto* material = reg.try_get<CSoftMaterialParams>(e)) {
       // Soft
-      auto const prevDensity = material->density;
-      material->density = density;
-      if (density != prevDensity) {
-        ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
-        ecs::TryInvokeOnEntity(&soft::UpdateSoftMass, reg, e);
+      if (material->density == density) {
+        return; // No change
       }
+      material->density = density;
+      ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+      ecs::TryInvokeOnEntity(&soft::UpdateSoftMass, reg, e);
     } else {
       MOCHI_ERROR_SET(error, "SetDensity not supported for this actor type.");
       return;
@@ -561,6 +564,12 @@ class ActorInterfaceImpl : public ActorInterface {
       MOCHI_LOG_WARNING(
           "New moment-of-inertia tensor for actor \"%s\" is not physically valid: principal moments must be non-negative and satisfy the triangle inequality.",
           GetName());
+    }
+
+    if (mass == rigidInertia->GetMass() &&
+        centerOfMass == GetRigidCenterOfMassLocal(ErrorAssert{}) &&
+        momentOfInertia == GetRigidMomentOfInertiaLocal(ErrorAssert{})) {
+      return; // No change
     }
 
     // Convert Real6 (upper triangle: xx, xy, xz, yy, yz, zz) → VMatrix3x3r (symmetric 3×3)
@@ -623,6 +632,9 @@ class ActorInterfaceImpl : public ActorInterface {
       ValidatePointCloudColliderParams(*pointCloudParams, newParams, error);
       MOCHI_ERROR_RETURN(error);
     }
+    if (*params == newParams) {
+      return; // No change
+    }
 
     if (pointCloudParams) {
       real const oldContactThreshold = params->GetPenaltyThresholdDist(/*addPadding*/ true);
@@ -659,6 +671,9 @@ class ActorInterfaceImpl : public ActorInterface {
   void SetRecenteringParams(RecenteringParams const& params, Error& error) override {
     auto* comp = MOCHI_TRY_GET(CRecenteringParams, reg, e, error);
     MOCHI_ERROR_RETURN(error);
+    if (*comp == params) {
+      return; // No change
+    }
     *comp = params;
     WakeUp();
   }
@@ -783,8 +798,11 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetContactLayer(std::string_view const& layer) override {
-    auto& table = reg.ctx<CContactFilterTable>();
     auto& comp = reg.get<CContactLayer>(e);
+    if (comp.name == layer) {
+      return; // No change
+    }
+    auto& table = reg.ctx<CContactFilterTable>();
     comp.id = GetOrAddContactLayerId(table, layer);
     comp.name = std::string(layer);
     WakeUp();
@@ -1163,6 +1181,9 @@ class ActorInterfaceImpl : public ActorInterface {
       ValidateFriction(params, error);
     }
     MOCHI_ERROR_RETURN(error);
+    if (friction == MakeConstSpan(current)) {
+      return; // No change
+    }
 
     std::copy(friction.begin(), friction.end(), current.begin());
     WakeUp();
@@ -1199,6 +1220,9 @@ class ActorInterfaceImpl : public ActorInterface {
       ValidateInertia(value, error);
     }
     MOCHI_ERROR_RETURN(error);
+    if (inertia == MakeConstSpan(current)) {
+      return; // No change
+    }
 
     std::copy(inertia.begin(), inertia.end(), current.begin());
     WakeUp();
@@ -1770,9 +1794,12 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN_IF_NO_CONTROLLER();
     MOCHI_ERROR_IF_NOT(IsFinite(worldFromTargets), error, "Target link transforms must be finite.");
     MOCHI_ERROR_RETURN(error);
-    articulated::compound::SetTargetLinkTransforms(reg, e, worldFromTargets, error);
+    bool const changed =
+        articulated::compound::SetTargetLinkTransforms(reg, e, worldFromTargets, error);
     MOCHI_ERROR_RETURN(error);
-    WakeUp();
+    if (changed) {
+      WakeUp();
+    }
     if (auto* targetOwners = reg.try_get<CTargetOwners>(e)) {
       SetArticulatedTargetPoseOwner(
           TargetOwner::TargetLinkTransforms,
@@ -1793,9 +1820,11 @@ class ActorInterfaceImpl : public ActorInterface {
     Span<real const> poseSpan = ConvertArticulatedDofsToPoseIfNeeded(pose, poseContainer, error);
     MOCHI_ERROR_RETURN(error);
 
-    articulated::compound::SetTargetPose(reg, e, poseSpan, error);
+    bool const changed = articulated::compound::SetTargetPose(reg, e, poseSpan, error);
     MOCHI_ERROR_RETURN(error);
-    WakeUp();
+    if (changed) {
+      WakeUp();
+    }
     if (auto* targetOwners = reg.try_get<CTargetOwners>(e)) {
       SetArticulatedTargetPoseOwner(
           TargetOwner::TargetPose,
@@ -1862,7 +1891,7 @@ class ActorInterfaceImpl : public ActorInterface {
   void SetArticulatedPoseControllerParams(PoseControllerParams const& params, Error& error)
       override {
     MOCHI_ERROR_RETURN_IF_NO_CONTROLLER();
-    // Each constraint setter called here wakes the actor.
+    // Each constraint setter called here wakes the actor if its value changes.
     articulated::compound::SetPoseControllerParams(reg, e, params, error);
   }
 
@@ -2335,13 +2364,7 @@ class ActorInterfaceImpl : public ActorInterface {
 
   void ClearBoundaryConditions() override {
     auto* bc = reg.try_get<CDofPositionsBC>(e); // Optional component
-    if (!bc) {
-      return;
-    }
-    // Permanent boundary conditions are not cleared.
-    int const numDofsBefore = isize(bc->dofIndices);
-    bc->Clear();
-    if (isize(bc->dofIndices) != numDofsBefore) {
+    if (bc && bc->Clear()) {
       WakeUp();
     }
   }

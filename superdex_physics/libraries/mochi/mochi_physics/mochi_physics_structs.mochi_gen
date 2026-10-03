@@ -44,7 +44,7 @@ struct SolverParams [equality] {
 // and local-space displacements reflect only deformation, not global rotation or translation.
 //
 // @see Actor::GetRecenteringParams, Actor::SetRecenteringParams
-struct RecenteringParams {
+struct RecenteringParams [equality] {
 
   // @brief Whether recentering is enabled.
   bool useRecentering = true;

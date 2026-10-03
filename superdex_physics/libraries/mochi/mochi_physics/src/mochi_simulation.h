@@ -138,14 +138,16 @@ struct CDofPositionsBC : public NoCopy {
   /// dof, pose, and colValue arrays.
   DynamicArray<PermanentRange> permanentRanges;
 
-  void Clear() {
+  // Removes all non-permanent boundary conditions. Returns true if any were removed.
+  bool Clear() {
     if (permanentRanges.empty()) {
+      bool const hadAny = !dofIndices.empty() || !poseIndices.empty();
       dofIndices.clear();
       poseIndices.clear();
       dofValues.clear();
       poseValues.clear();
       colValueIndices.clear();
-      return;
+      return hadAny;
     }
 
     int permanentDofCount = 0;
@@ -162,7 +164,7 @@ struct CDofPositionsBC : public NoCopy {
         "BC value arrays must stay in lockstep with their index arrays.");
     if (permanentDofCount == isize(dofIndices) && permanentPoseCount == isize(poseIndices) &&
         permanentColValueCount == isize(colValueIndices)) {
-      return;
+      return false;
     }
 
     std::vector<int> newDofIndices;
@@ -219,6 +221,7 @@ struct CDofPositionsBC : public NoCopy {
     poseValues = std::move(newPoseValues);
     colValueIndices = std::move(newColValueIndices);
     permanentRanges = std::move(newPermanentRanges);
+    return true;
   }
 };
 

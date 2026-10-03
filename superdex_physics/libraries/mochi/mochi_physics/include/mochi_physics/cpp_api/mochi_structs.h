@@ -87,6 +87,10 @@ struct RecenteringParams {
   real rotationEpsilonDeg = 0_r;
 
   real translationEpsilon = 0_r;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RecenteringParams const&) const = default;
+#endif
 };
 
 struct BoundarySubsamplingParams {
