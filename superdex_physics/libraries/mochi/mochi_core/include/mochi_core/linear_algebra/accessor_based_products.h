@@ -482,7 +482,7 @@ MOCHI_ANY void PackColData(
   constexpr bool kUseSimd = VType::kIsSupported && (kCostsA.first < kCostsA.second);
   if constexpr (kUseSimd) {
     constexpr int kVecSize = VType::kSize;
-    if (row + kRowCount < m) {
+    if (row + kRowCount <= m) {
       for (int c = 0; c < k; ++c) {
         auto s1 = A.template ColVector<VType>(row, c);
         auto s2 = A.template ColVector<VType>(row + kVecSize, c);
