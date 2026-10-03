@@ -90,6 +90,7 @@ class DMapImpl {
   // Given a set of output points defined by indices 'indsY', propagate the Jacobian of input points
   // 'jacX', resulting in 'outJacY'. The implementation may use the result of index remapping
   // 'remap'. The default implementation does nothing, for maps that don't take input points 'x'.
+  // Implementations that may receive an auxiliary Jacobian in 'jacX' must forward it to 'outJacY'.
   virtual void PropagateJacobianSlice(
       Remapping const& /* remap */,
       Span<int const> /* indsY */,
@@ -153,6 +154,8 @@ class DMap<Impl1, Impl2, Impls...> {
     for (int slice = 0; slice < dhdq.size(); slice++) {
       if (dhdq[slice].nContacts > 0) {
         _g->PropagateJacobianSlice(remap, indsY, dhdq[slice], outJacsY[slice]);
+        MOCHI_ASSERT_VERBOSE(
+            !dhdq[slice].JacAux() || outJacsY[slice].JacAux(), "Auxiliary Jacobian not forwarded");
       }
     }
   }
@@ -504,6 +507,12 @@ class DMapQuad final : public DMapImpl {
         nDoFMultiplier * jacX.nDoFsInternal,
         nDoFMultiplier * jacX.nDoFsState,
         indsY.size());
+    MOCHI_ASSERT_VERBOSE(
+        !jacX.JacAux() || jacX.hasSharedDoFs,
+        "Auxiliary Jacobians require shared DoFs through quadrature");
+    if (jacX.JacAux()) {
+      outJacY.SetJacAuxView(jacX.JacAux());
+    }
 
     // Propagate partial derivatives wrt input. If the DoFs are shared, add the weighted input of
     // all ElementT::kNumNodes points. If the DoFs are not shared, write the weighted input of
@@ -558,19 +567,19 @@ class DMapQuad final : public DMapImpl {
  * or not (i.e. recursive or non-recursive). It is initialized with the state slice, the skinning
  * Jacobian, the articulated DoFs of the state slice and the DoF offset (plus the skinning data and
  * the bone rotations if it has an input). This class is used for articulated bodies and skinned
- * soft actors.
+ * soft actors. Deprecated: use @ref DMapSkinning.
  */
 template <bool InputT>
-class DMapSkinning final : public DMapImpl {
+class DMapSkinningDeprecated final : public DMapImpl {
  public:
   // Constructor if it has no input
   template <bool InputQ = InputT, typename = std::enable_if_t<!InputQ>>
-  DMapSkinning(int slice, RowMatrixView<real const> jac, Span<int const> dofs, int offset)
+  DMapSkinningDeprecated(int slice, RowMatrixView<real const> jac, Span<int const> dofs, int offset)
       : _slice(slice), _jac(jac), _dofs(dofs), _offset(offset) {}
 
   // Constructor if it has an input
   template <bool InputQ = InputT, typename = std::enable_if_t<InputQ>>
-  DMapSkinning(
+  DMapSkinningDeprecated(
       int slice,
       RowMatrixView<real const> jac,
       Span<int const> dofs,
@@ -648,8 +657,121 @@ class DMapSkinning final : public DMapImpl {
   std::conditional_t<InputT, Span<VMatrix3x3r const>, Nothing> _boneRotations{};
 };
 
-using DMapSkinNoInput = DMapSkinning<false>;
-using DMapSkinInput = DMapSkinning<true>;
+using DMapSkinNoInput = DMapSkinningDeprecated<false>;
+using DMapSkinInput = DMapSkinningDeprecated<true>;
+
+// Skinning Jacobian data of one bone.
+struct SkinningBoneJacobianData {
+  VMatrix3x3r worldFromReferenceRotationTranspose{};
+  Vec4r linkOriginToReferenceOrigin{};
+  MatrixView<real const> linkFromArticulationJacobian{}; // The owner must outlive the Jacobians.
+  Span<int const> articulatedDofs{};
+};
+
+/**************************************************************************************************
+ * Differentiable map for linear blend skinning. It writes one rigid Jacobian slice for each bone in
+ * 'activeBoneIds', in that order, starting at 'firstSlice', and propagates input Jacobians through
+ * the skinning transformation. 'positions' are the node positions before skinning. 'bones' holds
+ * the data of all bones, indexed by bone id.
+ */
+class DMapSkinning final : public DMapImpl {
+ public:
+  DMapSkinning(
+      int firstSlice,
+      DSkinningTransform const& skinningTransform,
+      Span<Real3 const> positions,
+      Span<SkinningBoneJacobianData const> bones,
+      Span<int const> activeBoneIds,
+      int offset)
+      : _firstSlice(firstSlice),
+        _skinningTransform(skinningTransform),
+        _positions(positions),
+        _bones(bones),
+        _activeBoneIds(activeBoneIds),
+        _offset(offset) {
+    MOCHI_ASSERT_VERBOSE(isize(_bones) == _skinningTransform.GetBoneCount());
+  }
+
+  void WriteJacobianSlice(Span<int const> indsY, Span<ContactJac> outJacsY) const override {
+    MOCHI_ASSERT(
+        _firstSlice + _activeBoneIds.size() <= outJacsY.size(), "Insufficient Jacobian slices");
+    if (_activeBoneIds.empty()) {
+      return;
+    }
+    MOCHI_ASSERT_VERBOSE(isize(_positions) == _skinningTransform.GetNumVertices());
+
+    MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(int) * 256);
+    DynamicArray<int> boneToSlice(isize(_bones), -1, &allocator);
+    Matrix<real, 3, 3> identity;
+    identity.SetIdentity();
+
+    for (int slice = 0; slice < _activeBoneIds.size(); ++slice) {
+      int const boneId = _activeBoneIds[slice];
+      MOCHI_ASSERT_VERBOSE(boneId >= 0 && boneId < _bones.size());
+      MOCHI_ASSERT_VERBOSE(boneToSlice[boneId] == -1, "Duplicate active bone");
+      boneToSlice[boneId] = slice;
+
+      auto const& bone = _bones[boneId];
+      auto& jac = outJacsY[_firstSlice + slice];
+      jac.Resize(true, false, RigidSize::kDAll, isize(bone.articulatedDofs), isize(indsY));
+      jac.SetZero();
+      jac.SetJacAuxView(bone.linkFromArticulationJacobian);
+      for (int dof = 0; dof < bone.articulatedDofs.size(); ++dof) {
+        jac.Inds(0)[dof] = _offset + bone.articulatedDofs[dof];
+      }
+    }
+
+    for (int contact = 0; contact < indsY.size(); ++contact) {
+      int const vertex = indsY[contact];
+      // Only bones with nonzero weight are stored. Skip inactive bones.
+      for (auto const& [boneId, weight] : _skinningTransform.perVertexBones[vertex]) {
+        int const slice = boneToSlice[boneId];
+        if (slice == -1) {
+          continue;
+        }
+
+        auto const& bone = _bones[boneId];
+        auto jac = outJacsY[_firstSlice + slice].Jac(contact);
+        jac.template LeftCols<3>(3) += weight * identity;
+        Vec4r const radius =
+            DotVecMat3x3(ToSimd(_positions[vertex]), bone.worldFromReferenceRotationTranspose) +
+            bone.linkOriginToReferenceOrigin;
+        jac.template MiddleCols<3>(3, 3) += AsMatrixView(lie::DMultRotVecDRot(weight * radius));
+      }
+    }
+  }
+
+  void PropagateJacobianSlice(
+      Remapping const& remap,
+      Span<int const> indsY,
+      ContactJac const& jacX,
+      ContactJac& outJacY) const override {
+    MOCHI_ASSERT(remap.indsX.size() == indsY.size(), "Sizes of indices don't match");
+
+    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsInternal, jacX.nDoFsState, isize(indsY));
+
+    for (int i = 0; i < outJacY.nContacts; i++) {
+      VMatrix3x3r weightedRotationTranspose{};
+      for (auto const& [boneId, weight] : _skinningTransform.perVertexBones[indsY[i]]) {
+        weightedRotationTranspose += weight * _bones[boneId].worldFromReferenceRotationTranspose;
+      }
+      VMatrix3x3r const weightedRotation = Transpose3x3(weightedRotationTranspose);
+      outJacY.Jac(i) = AsMatrixView(weightedRotation) * jacX.Jac(i);
+    }
+
+    for (int i = 0; i < (outJacY.hasSharedDoFs ? 1 : outJacY.nContacts); i++) {
+      std::copy(jacX.Inds(i).begin(), jacX.Inds(i).end(), outJacY.Inds(i).begin());
+    }
+  }
+
+ private:
+  int const _firstSlice;
+  DSkinningTransform const& _skinningTransform;
+  Span<Real3 const> _positions;
+  Span<SkinningBoneJacobianData const> _bones;
+  Span<int const> _activeBoneIds;
+  int const _offset;
+};
 
 /**************************************************************************************************
  * Differentiable map for sparse skinning. Maps skin mesh node positions to actor DoFs where
