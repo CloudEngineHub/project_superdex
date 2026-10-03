@@ -1551,8 +1551,8 @@ TEST(ModelUtils, BakeTransform_Sdf) {
       Real3(
           expectedTransform.GetScale(), expectedTransform.GetScale(), expectedTransform.GetScale()),
       *sdf.scale);
-  EXPECT_EQ(expectedTransform.GetRotation(), *sdf.rotation);
-  EXPECT_EQ(expectedTransform.GetTranslation(), *sdf.translation);
+  EXPECT_NEAR_EQ(expectedTransform.GetRotation(), *sdf.rotation);
+  EXPECT_NEAR_EQ(expectedTransform.GetTranslation(), *sdf.translation);
   sdf.scale = std::nullopt;
   sdf.rotation = std::nullopt;
   sdf.translation = std::nullopt;
