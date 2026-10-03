@@ -16,6 +16,7 @@
 
 #include <mochi_physics/src/mochi_contact.h>
 
+#include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/dynamic_array.h>
@@ -585,4 +586,81 @@ TEST(CActiveCollisions, RestoresAggregateStorageAfterPartitionZeroSwap) {
       activeCollisions.GetNarrowPhaseResult(static_cast<entt::entity>(10)).sampleIndices.capacity(),
       retainedCapacity);
   EXPECT_TRUE(activeCollisions.empty());
+}
+
+// ---------------------------------------------------------------------------------------
+// JacData
+// ---------------------------------------------------------------------------------------
+
+static JacData MakeJacData(int otherEntity = 1) {
+  return {/*isSync*/ true,
+          nullptr,
+          /*bothRigid*/ false,
+          static_cast<entt::entity>(otherEntity),
+          /*partitionId*/ 0};
+}
+
+static void PopulateJac(ContactJac& jac, int dofIndex) {
+  jac.Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1, 1);
+  jac.Inds(0)[0] = dofIndex;
+  jac.CompressIndices();
+}
+
+static DynamicArray<ContactJac const*> GetActiveJacs(JacData const& jacData) {
+  DynamicArray<ContactJac const*> activeJacs;
+  jacData.GetActiveJacs(activeJacs);
+  return activeJacs;
+}
+
+TEST(JacData, ZeroDofJacobian) {
+  ContactDetectionResult query;
+  query.sampleIndices = {0, 1, 2};
+  JacData jacData = MakeJacData();
+  jacData.query = &query;
+  auto const expectZeroDofJacobian = [&jacData]() {
+    auto const jacs = jacData.GetJacs();
+    ASSERT_EQ(jacs.size(), 1);
+    EXPECT_EQ(jacs[0].nContacts, 3);
+    EXPECT_EQ(jacs[0].nDoFsState, 0);
+    EXPECT_TRUE(jacs[0].JacAux().empty());
+    EXPECT_FALSE(jacData.HasSolverDoFs());
+  };
+
+  // Fresh storage
+  jacData.SetZeroDofJacobian();
+  expectZeroDofJacobian();
+
+  // Recycled slice with DoFs and an auxiliary Jacobian
+  Matrix<real> jacAux(1, 1);
+  jacAux.SetZero();
+  auto& jac = jacData.PrepareJacs(1)[0];
+  PopulateJac(jac, 4);
+  jac.SetJacAuxView(jacAux);
+  jacData.SetZeroDofJacobian();
+  expectZeroDofJacobian();
+}
+
+TEST(JacData, InvalidateDeactivatesPreparedSlices) {
+  ContactDetectionResult query;
+  JacData jacData = MakeJacData();
+  jacData.query = &query;
+
+  // Only populated slices are active, in slice order.
+  auto jacs = jacData.PrepareJacs(2);
+  PopulateJac(jacs[1], 7);
+  auto activeJacs = GetActiveJacs(jacData);
+  ASSERT_EQ(activeJacs.size(), 1);
+  EXPECT_EQ(activeJacs[0], &jacs[1]);
+
+  PopulateJac(jacs[0], 4);
+  jacData.Invalidate();
+  EXPECT_EQ(jacData.query, nullptr);
+  EXPECT_TRUE(GetActiveJacs(jacData).empty());
+
+  // Re-preparing reuses the slices, and re-populating one reactivates only that one.
+  EXPECT_EQ(jacData.PrepareJacs(2).data(), jacs.data());
+  PopulateJac(jacs[1], 8);
+  activeJacs = GetActiveJacs(jacData);
+  ASSERT_EQ(activeJacs.size(), 1);
+  EXPECT_EQ(activeJacs[0], &jacs[1]);
 }

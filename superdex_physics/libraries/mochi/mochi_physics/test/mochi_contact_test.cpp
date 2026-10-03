@@ -319,6 +319,45 @@ struct TestParams {
 };
 } // namespace
 
+TEST(MochiContact, MakeContactGraphWithFiveContactJacobians) {
+  entt::registry reg;
+  auto const colliding = reg.create();
+  auto const collider = reg.create();
+
+  auto& activeCollisions =
+      reg.emplace<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(colliding, 1);
+  activeCollisions.SetUp(MakeSingletonConstSpan(collider));
+  auto& collision = activeCollisions.back();
+  collision.collisionResult.sampleIndices.push_back(0);
+
+  auto& collidingJacs = reg.emplace<CCollJacs<CollRole::Colliding>>(colliding);
+  collidingJacs.emplace_back(
+      /*isSync*/ true, &collision.collisionResult, /*bothRigid*/ false, collider, 0);
+  auto collidingSlices = collidingJacs[0].PrepareJacs(3);
+  auto& colliderJacs = reg.emplace<CCollJacs<CollRole::Collider>>(collider);
+  colliderJacs.emplace_back(
+      /*isSync*/ true, &collision.collisionResult, /*bothRigid*/ false, colliding, 0);
+  auto colliderSlices = colliderJacs[0].PrepareJacs(2);
+
+  std::array<ContactJac*, 5> const slices{
+      &collidingSlices[0],
+      &collidingSlices[1],
+      &collidingSlices[2],
+      &colliderSlices[0],
+      &colliderSlices[1]};
+  std::array<int, 5> const dofIndices{0, 1, 2, 0, 3};
+  for (int i = 0; i < isize(slices); ++i) {
+    slices[i]->Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1, 1);
+    slices[i]->Inds(0)[0] = dofIndices[i];
+  }
+
+  auto graph = MakeContactGraph<1, /*kIsSync*/ true>(reg, MakeSingletonConstSpan(colliding));
+  std::array<int, 5> const expectedPointers{0, 4, 8, 12, 16};
+  std::array<int, 16> const expectedTargets{0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+  EXPECT_SPAN_EQ(graph.GetPointers(), MakeConstSpan(expectedPointers));
+  EXPECT_SPAN_EQ(graph.GetTargets(), MakeConstSpan(expectedTargets));
+}
+
 // Base class to implement contact tests between a colliding actor and a collider actor. The tests
 // create a Mochi scene with both actors, compute objective, residual and dresidual at the initial
 // state, and validate the residual and dresidual through finite differences.

@@ -426,7 +426,7 @@ void rigid::SetupCollidingJacobiansImpl(
   // Compute Jacobians
   for (auto& jac : outJacobians) {
     if (jac.isSync) {
-      auto& jacs = *jac.jacs;
+      auto jacs = jac.PrepareJacs(1);
       if (jac.bothRigid) {
         dmapSyncRigid.GetJac(jac.query->sampleIndices, jacs);
       } else {
@@ -466,7 +466,7 @@ void rigid::SetupColliderJacobiansImpl(
 
   // Compute Jacobians
   for (auto& jac : outJacobians) {
-    auto& jacs = *jac.jacs;
+    auto jacs = jac.PrepareJacs(1);
     if (jac.bothRigid) {
       dmapSyncRigid.GetJac(jac.query->sampleIndices, jacs);
     } else {

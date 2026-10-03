@@ -455,7 +455,7 @@ void blended::SetupCollidingJacobians(
           : DMapThis{DNoSoft(&dquad, &dskinNoIn.value())};
 
       // Compute Jacobian
-      auto& jacs = *jacData.jacs;
+      auto jacs = jacData.PrepareJacs(2);
       std::visit([&](auto const& dmap) { dmap.GetJac(jacData.query->sampleIndices, jacs); }, dmap);
       jacs[0].CompressIndices();
       jacs[1].CompressIndices();

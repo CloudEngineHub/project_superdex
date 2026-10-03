@@ -495,24 +495,28 @@ struct CPrevRigidVelocity : NoCopy {
   contact is recycled across assemblies until the actors are no longer in contact.
   - Contact Jacobians of the contact pair for the owning entity. They are used for assembly of
   implicit (sync) contact for all actors, and for async contact for some actors (i.e., articulated
-  bodies with a skinned surface). The size of the array is defined by the maximum number of
-  fundamental actors that may define a contact point (currently 2, in soft skinned actors).
-  - A flag indicating sync (true) or async (false) contact.
+  bodies with a skinned surface). The size of the array is defined by the number of different state
+  slices (typically the number of different actors) that may define a contact point.
   - A pointer to the result of the contact detection query. Null while the Jacobian awaits
   re-registration; Jacobians that remain null after registration are no longer in contact.
   - The other entity in the contact pair (not the owner).
   - The ID of the colliding actor's contact sample partition.
+  - A flag indicating sync (true) or async (false) contact.
   - A flag indicating if both actors are rigid, to signal dedicated collision response functions.
 */
 struct JacData {
-  static constexpr int kMaxJacs = 2; // Current max is 2. Needed for soft skinned actors.
-  bool isSync = false;
+ private:
+  // The slice count is established by the owning actor on first use and remains fixed for the
+  // lifetime of this JacData.
+  DynamicArray<ContactJac> _jacs;
+
+ public:
+  // Members are ordered by decreasing alignment to minimize padding.
   ContactDetectionResult* query = nullptr;
-  std::unique_ptr<std::array<ContactJac, kMaxJacs>> jacs =
-      std::make_unique<std::array<ContactJac, kMaxJacs>>();
-  bool bothRigid = false; // True if both colliding and collider actors are rigid.
   entt::entity otherEntity = {}; // The other entity in the contact pair (not the owner).
   int collidingPartitionId = 0; // ID of the colliding actor's contact sample partition.
+  bool isSync = false;
+  bool bothRigid = false; // True if both colliding and collider actors are rigid.
 
   JacData(
       bool isSyncIn,
@@ -520,40 +524,68 @@ struct JacData {
       bool bothRigidIn,
       entt::entity otherEntityIn,
       int collidingPartitionIdIn)
-      : isSync(isSyncIn),
-        query(queryIn),
-        bothRigid(bothRigidIn),
+      : query(queryIn),
         otherEntity(otherEntityIn),
-        collidingPartitionId(collidingPartitionIdIn) {}
+        collidingPartitionId(collidingPartitionIdIn),
+        isSync(isSyncIn),
+        bothRigid(bothRigidIn) {}
 
   MOCHI_DECLARE_MOVE_ONLY(JacData); // Avoid copies for performance reasons.
 
-  template <class ContainerT>
-  void GetJacs(ContainerT& outJacs) const {
-    for (auto const& jac : *jacs) {
+  Span<ContactJac> PrepareJacs(int numJacs) {
+    MOCHI_ASSERT_VERBOSE(numJacs > 0, "Number of contact Jacobians must be positive.");
+    MOCHI_ASSERT_VERBOSE(
+        _jacs.empty() || isize(_jacs) == numJacs,
+        "The number of contact Jacobian slices for a contact partition cannot change.");
+    if (_jacs.empty()) {
+      _jacs.resize(numJacs);
+    }
+    return _jacs;
+  }
+
+  [[nodiscard]] Span<ContactJac const> GetJacs() const {
+    return _jacs;
+  }
+
+  template <class FnT>
+  void ForEachActiveJac(FnT const& fn) const {
+    for (auto const& jac : _jacs) {
       if (jac.nContacts > 0) {
-        outJacs.push_back(&jac);
+        fn(jac);
       }
     }
   }
 
+  template <class ContainerT>
+  void GetActiveJacs(ContainerT& outJacs) const {
+    ForEachActiveJac([&](ContactJac const& jac) { outJacs.push_back(&jac); });
+  }
+
   [[nodiscard]] bool HasSolverDoFs() const {
-    return std::any_of(jacs->begin(), jacs->end(), [](ContactJac const& jac) {
+    return std::any_of(_jacs.begin(), _jacs.end(), [](ContactJac const& jac) {
       return jac.nContacts > 0 && jac.nDoFsState > 0;
     });
   }
 
-  // Clear recycled slices, then preserve the contact count in the first slice with zero columns.
-  // Sync sparsity construction needs a colliding Jacobian to pair with the collider Jacobian; the
-  // slice identity is irrelevant because it contains no DoFs.
-  void SetZeroDofJacobian() {
-    MOCHI_ASSERT_VERBOSE(query != nullptr, "Missing contact query");
-    for (auto& jac : *jacs) {
+  // Signal that the pair may no longer be in contact, before its contact Jacobian is registered and
+  // set up again. Setup writes only the slices that receive contacts, so all recycled slices are
+  // deactivated here, keeping their capacity.
+  void Invalidate() {
+    query = nullptr;
+    for (auto& jac : _jacs) {
       jac.Resize(false, false, 0, 0, 0);
       jac.SetJacAuxView({});
     }
-    auto& jac = jacs->front();
+  }
+
+  // Prepare a single slice with zero columns that preserves the contact count. Sync sparsity
+  // construction needs a colliding Jacobian to pair with the collider Jacobian; the slice identity
+  // is irrelevant because it contains no DoFs.
+  void SetZeroDofJacobian() {
+    MOCHI_ASSERT_VERBOSE(query != nullptr, "Missing contact query");
+    auto& jac = PrepareJacs(1).front();
     jac.Resize(true, false, 0, 0, isize(query->sampleIndices));
+    jac.SetJacAuxView({});
     jac.CompressIndices();
   }
 };
@@ -1032,13 +1064,6 @@ void CheckConservativeStepBounds(entt::registry const& reg, entt::entity e);
  */
 template <int kBlockSize, bool kIsSync>
 Graph<int, int> MakeContactGraph(entt::registry const& reg, Span<entt::entity const> actors);
-
-extern template Graph<int, int> MakeContactGraph<1, /*kIsSync*/ false>(
-    entt::registry const& reg,
-    Span<entt::entity const> actors);
-extern template Graph<int, int> MakeContactGraph<3, /*kIsSync*/ false>(
-    entt::registry const& reg,
-    Span<entt::entity const> actors);
 
 /**************************************************************************
   ECS collider-related systems

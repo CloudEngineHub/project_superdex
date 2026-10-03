@@ -2108,7 +2108,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
       reg.get<CDofOffset const>(entity),
       skinningData,
       collidingJacobians);
-  ContactJac const& contactJacobian = (*collidingJacobians[0].jacs)[0];
+  ContactJac const& contactJacobian = collidingJacobians[0].GetJacs()[0];
 
   int constexpr kExpectedWidth = 2 * fem::kNumRodFields;
   int const dofOffset = reg.get<CDofOffset const>(entity).dofsOffset;
@@ -2130,7 +2130,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
       skinningData,
       collidingJacobians);
   test::ExpectEqualContactJacSnapshots(
-      firstSetup, test::SnapshotContactJac((*collidingJacobians[0].jacs)[0]));
+      firstSetup, test::SnapshotContactJac(collidingJacobians[0].GetJacs()[0]));
 
   CDofOffset shiftedOffset;
   shiftedOffset.dofsOffset = dofOffset + 17;
@@ -2143,7 +2143,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
       shiftedOffset,
       skinningData,
       shiftedJacobians);
-  ContactJac const& shiftedJacobian = (*shiftedJacobians[0].jacs)[0];
+  ContactJac const& shiftedJacobian = shiftedJacobians[0].GetJacs()[0];
   for (int contact = 0; contact < shiftedJacobian.nContacts; ++contact) {
     for (int column = 0; column < kExpectedWidth; ++column) {
       EXPECT_EQ(contactJacobian.Inds(contact)[column] + 17, shiftedJacobian.Inds(contact)[column]);

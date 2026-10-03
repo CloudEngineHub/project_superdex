@@ -462,7 +462,7 @@ void deformable::SetupCollidingJacobians(
           DQuad dquad(discretizationImpl.femElements, jac->query->jacColliderFromWorld);
           DMap<DQuad, DMapRTConst, DMapDeformable<kNumFields>> dmap(&dquad, &dtransform, &dsoft);
 
-          auto& jacs = *(jac->jacs);
+          auto jacs = jac->PrepareJacs(1);
           dmap.GetJac(jac->query->sampleIndices, jacs);
           jacs[0].CompressIndices();
         });
@@ -500,7 +500,7 @@ void deformable::SetupColliderJacobians(
   // Compute Jacobians
   for (auto& jac : outJacobians) {
     dinvmap.SetData(jac.query);
-    auto& jacs = *jac.jacs;
+    auto jacs = jac.PrepareJacs(1);
     dmap.GetJac({}, jacs);
     jacs[0].CompressIndices();
   }

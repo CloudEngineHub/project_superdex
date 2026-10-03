@@ -223,7 +223,7 @@ void mochi::SetupContactSkinCollidingJacobians(
       dmap::DMap<DQuad, dmap::DMapRTConst, dmap::DMapSparseSkinning> dmap(
           &dquad, &dtransform, &sparseSkinning);
 
-      auto& jacs = *jac.jacs;
+      auto jacs = jac.PrepareJacs(1);
       {
         MOCHI_PROFILE_SCOPE_N("GetJac");
         dmap.GetJac(jac.query->sampleIndices, jacs);
@@ -1626,19 +1626,19 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
   auto& activeCollsSyncStorage =
       reg.storage<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>();
 
-  // At input, the contact Jacobians are from the previous assembly. Reset their queries, which
-  // point to the previous collision results, to signal that they may no longer be in contact.
+  // At input, the contact Jacobians are from the previous assembly. Invalidate them, since their
+  // queries point to the previous collision results and they may no longer be in contact.
   for (auto const& e : actors) {
     if (auto* collidingJacs = TryGet(collidingJacsStorage, e)) {
       for (auto& collJac : *collidingJacs) {
         MOCHI_ASSERT_VERBOSE(collJac.query, "Expected a registered contact Jacobian.");
-        collJac.query = nullptr;
+        collJac.Invalidate();
       }
     }
     if (auto* colliderJacs = TryGet(colliderJacsStorage, e)) {
       for (auto& collJac : *colliderJacs) {
         MOCHI_ASSERT_VERBOSE(collJac.query, "Expected a registered contact Jacobian.");
-        collJac.query = nullptr;
+        collJac.Invalidate();
       }
     }
   }
@@ -3280,13 +3280,6 @@ Graph<int, int> mochi::MakeContactGraph(
   DynamicArray<PtrT> ptr;
   DynamicArray<int> targetIndices;
 
-  int const kJacsReserveSize = 2 * JacData::kMaxJacs; // 2x for collider & colliding
-  int const kJacsReserveSizeInBytes = kJacsReserveSize * sizeof(ContactJac*);
-  MOCHI_FILO_STACK_ALLOCATOR(filoAllocator, kJacsReserveSizeInBytes);
-
-  DynamicArray<ContactJac const*> jacs(&filoAllocator);
-  jacs.reserve(kJacsReserveSize);
-
   ptr.push_back(0);
   for (auto e : actors) {
     auto const* activeCollisions =
@@ -3296,78 +3289,47 @@ Graph<int, int> mochi::MakeContactGraph(
     }
     // Traverse colliding entities
     for (auto const& coll : *activeCollisions) {
-      auto e2 = coll.colliderEntity;
-      // Get contact Jacobians
-      jacs.clear();
-      reg.get<CCollJacs<CollRole::Colliding> const>(e)[coll.collidingJacId].GetJacs(jacs);
+      // Lambda on active contact Jacobians of the pair. Async contact has only colliding Jacobians.
+      auto const& collidingJacData =
+          reg.get<CCollJacs<CollRole::Colliding> const>(e)[coll.collidingJacId];
+      [[maybe_unused]] JacData const* colliderJacData = nullptr;
       if constexpr (kIsSync) {
-        reg.get<CCollJacs<CollRole::Collider> const>(e2)[coll.colliderJacId].GetJacs(jacs);
+        colliderJacData =
+            &reg.get<CCollJacs<CollRole::Collider> const>(coll.colliderEntity)[coll.colliderJacId];
       }
-      for (int i0 = 0; i0 < jacs.size(); i0++) {
-        ContactJac const& j0 = *jacs[i0];
-        if constexpr (!kIsSync) {
-          if (j0.hasSharedDoFs) {
-            AppendBlockIndices<kBlockSize>(targetIndices, j0.Inds(0));
-            ptr.push_back(static_cast<PtrT>(targetIndices.size()));
-          } else {
-            Span<int const> lastIndices0{};
-            for (int i = 0; i < j0.nContacts; ++i) {
-              auto indices0 = j0.Inds(i);
-              if (indices0 != lastIndices0) {
-                AppendBlockIndices<kBlockSize>(targetIndices, indices0);
-                ptr.push_back(static_cast<PtrT>(targetIndices.size()));
-                lastIndices0 = indices0;
-              }
-            }
+      auto const forEachActiveJac = [&](auto const& fn) {
+        collidingJacData.ForEachActiveJac(fn);
+        if constexpr (kIsSync) {
+          colliderJacData->ForEachActiveJac(fn);
+        }
+      };
+
+      // Gather the number of contacts and whether all Jacobians share DoFs.
+      int nContacts = 0;
+      bool allSharedDoFs = true;
+      forEachActiveJac([&](ContactJac const& jac) {
+        MOCHI_ASSERT_VERBOSE(nContacts == 0 || jac.nContacts == nContacts);
+        nContacts = jac.nContacts;
+        allSharedDoFs = allSharedDoFs && jac.hasSharedDoFs;
+      });
+
+      // Add one row per group of consecutive contacts with identical DoFs, holding the DoFs of all
+      // active slices. Traverse() below couples all the DoFs of a row.
+      int const numRows = allSharedDoFs ? Min(nContacts, 1) : nContacts;
+      for (int i = 0; i < numRows; ++i) {
+        if (i > 0) {
+          bool sameDofs = true;
+          forEachActiveJac([&](ContactJac const& jac) {
+            sameDofs = sameDofs && (jac.Inds(i) == jac.Inds(i - 1));
+          });
+          if (sameDofs) {
+            continue;
           }
         }
-        for (int i1 = i0 + 1; i1 < jacs.size(); i1++) {
-          ContactJac const& j1 = *jacs[i1];
-          MOCHI_ASSERT(j0.nContacts == j1.nContacts);
-          if (j0.hasSharedDoFs && j1.hasSharedDoFs) {
-            AppendBlockIndices<kBlockSize>(targetIndices, j0.Inds(0));
-            AppendBlockIndices<kBlockSize>(targetIndices, j1.Inds(0));
-            ptr.push_back(static_cast<PtrT>(targetIndices.size()));
-          } else if (j0.hasSharedDoFs) {
-            Span<int const> lastIndices1{};
-            auto indices0 = j0.Inds(0);
-            for (int i = 0; i < j0.nContacts; ++i) {
-              auto indices1 = j1.Inds(i);
-              if (indices1 != lastIndices1) {
-                AppendBlockIndices<kBlockSize>(targetIndices, indices0);
-                AppendBlockIndices<kBlockSize>(targetIndices, indices1);
-                ptr.push_back(static_cast<PtrT>(targetIndices.size()));
-                lastIndices1 = indices1;
-              }
-            }
-          } else if (j1.hasSharedDoFs) {
-            Span<int const> lastIndices0{};
-            auto indices1 = j1.Inds(0);
-            for (int i = 0; i < j1.nContacts; ++i) {
-              auto indices0 = j0.Inds(i);
-              if (indices0 != lastIndices0) {
-                AppendBlockIndices<kBlockSize>(targetIndices, indices0);
-                AppendBlockIndices<kBlockSize>(targetIndices, indices1);
-                ptr.push_back(static_cast<PtrT>(targetIndices.size()));
-                lastIndices0 = indices0;
-              }
-            }
-          } else {
-            Span<int const> lastIndices0{};
-            Span<int const> lastIndices1{};
-            for (int i = 0; i < j0.nContacts; ++i) {
-              auto indices0 = j0.Inds(i);
-              auto indices1 = j1.Inds(i);
-              if (!((indices0 == lastIndices0) && (indices1 == lastIndices1))) {
-                AppendBlockIndices<kBlockSize>(targetIndices, indices0);
-                AppendBlockIndices<kBlockSize>(targetIndices, indices1);
-                ptr.push_back(static_cast<PtrT>(targetIndices.size()));
-                lastIndices0 = indices0;
-                lastIndices1 = indices1;
-              }
-            }
-          }
-        }
+        forEachActiveJac([&](ContactJac const& jac) {
+          AppendBlockIndices<kBlockSize>(targetIndices, jac.Inds(i));
+        });
+        ptr.push_back(static_cast<PtrT>(targetIndices.size()));
       }
     }
   }
@@ -3376,11 +3338,8 @@ Graph<int, int> mochi::MakeContactGraph(
   return Traverse(Reverse(cToN), cToN).SortTargets();
 }
 
-// Templates externed in mochi_contact.h
-template Graph<int, int> mochi::MakeContactGraph<1, /*kIsSync*/ false>(
-    entt::registry const& reg,
-    Span<entt::entity const> actors);
-template Graph<int, int> mochi::MakeContactGraph<3, /*kIsSync*/ false>(
+// Template specialization used outside this file
+template Graph<int, int> mochi::MakeContactGraph<1, /*kIsSync*/ true>(
     entt::registry const& reg,
     Span<entt::entity const> actors);
 
@@ -3424,27 +3383,39 @@ static void AssembleAllSyncContactPairs(
     double costPerPoint = 0;
   };
 
-  // Count contact pairs before reserving storage for them and their ContactJacs.
+  // FILO-backed arrays must reserve their full capacities before they begin filling. The number of
+  // contact Jacobians is an upper bound on the active ones.
   int numContactPairs = 0;
+  int numJacs = 0;
   for (auto entity0 : actors) {
     if (auto const* activeCollisions =
             regActiveColls.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(
                 entity0)) {
       numContactPairs += isize(*activeCollisions);
+      if (needJacs) {
+        auto const& collidingJacs = reg.get<CCollJacs<CollRole::Colliding> const>(entity0);
+        for (auto const& coll : *activeCollisions) {
+          entt::entity const entity1 = coll.colliderEntity;
+          auto const& colliderJacs = reg.get<CCollJacs<CollRole::Collider> const>(entity1);
+          numJacs += isize(collidingJacs[coll.collidingJacId].GetJacs());
+          numJacs += isize(colliderJacs[coll.colliderJacId].GetJacs());
+        }
+      }
     }
   }
+
   if (numContactPairs == 0) {
     return; // No contact
   }
 
-  DynamicArray<ContactJac const*> allJacs;
-  DynamicArray<ContactPair> allPairs(filoAllocator);
+  DynamicArray<ContactJac const*> allJacs(filoAllocator);
   if (needJacs) {
-    allJacs.reserve(2 * JacData::kMaxJacs * numContactPairs);
+    allJacs.reserve(numJacs);
   }
-  allPairs.reserve(numContactPairs);
 
-  // Enumerate the contacting pairs and their ContactJacs.
+  // Enumerate the contacting pairs and their ContactJacs
+  DynamicArray<ContactPair> allPairs(filoAllocator);
+  allPairs.reserve(numContactPairs);
   for (auto entity0 : actors) {
     if (auto* activeCollisions =
             regActiveColls.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(
@@ -3454,9 +3425,9 @@ static void AssembleAllSyncContactPairs(
         if (needJacs) {
           // For each contact pair, colliding Jacobian(s) must go before collider Jacobian(s).
           entt::entity entity1 = coll.colliderEntity;
-          reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId].GetJacs(
+          reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId].GetActiveJacs(
               allJacs);
-          reg.get<CCollJacs<CollRole::Collider> const>(entity1)[coll.colliderJacId].GetJacs(
+          reg.get<CCollJacs<CollRole::Collider> const>(entity1)[coll.colliderJacId].GetActiveJacs(
               allJacs);
         }
         ContactPair pair;
@@ -3927,7 +3898,14 @@ void mochi::AssembleAsyncSkinnedContact(
       params.assemRes,
       params.assemDRes && hasContactWithDofs);
   DynamicArray<ContactJac const*> jacs(&filoAllocator);
-  jacs.reserve(JacData::kMaxJacs);
+
+  // Reserve memory for the contact Jacobians of any pair (an upper bound on the active ones)
+  int maxJacs = 0;
+  for (auto const& coll : activeCollisions) {
+    maxJacs = Max(maxJacs, isize(collJacs[coll.collidingJacId].GetJacs()));
+  }
+  jacs.reserve(maxJacs);
+
   ContactEvalConfig config{
       .psdDRes = params.psdDRes,
       .addPadding = ShouldAddPenaltyPadding(colliderInfo.type),
@@ -3974,7 +3952,7 @@ void mochi::AssembleAsyncSkinnedContact(
     if (collisionHasStateDofs) {
       // Get contact Jacobians
       jacs.clear();
-      jacData.GetJacs(jacs);
+      jacData.GetActiveJacs(jacs);
 
       // Perform assembly.
       auto& outContactResidual = outContactSnle.residuals[0].second;

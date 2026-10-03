@@ -2004,7 +2004,7 @@ void articulated::compound::SetupCollidingJacobians(
           DMap<DQuad, DMapSkinNoInput> dmap(&dquad, &dskinning);
 
           // Compute Jacobian
-          auto& jacs = *jac.jacs;
+          auto jacs = jac.PrepareJacs(1);
           dmap.GetJac(jac.query->sampleIndices, jacs);
           jacs[0].CompressIndices();
         });

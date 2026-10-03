@@ -1160,7 +1160,7 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
       reg.get<CDofOffset const>(entity),
       reg.get<CContactSkinningData const>(entity),
       collidingJacobians);
-  ContactJac const& contactJacobian = (*collidingJacobians[0].jacs)[0];
+  ContactJac const& contactJacobian = collidingJacobians[0].GetJacs()[0];
   EXPECT_EQ(12, contactJacobian.nDoFsInternal);
   EXPECT_EQ(12, contactJacobian.nDoFsState);
   EXPECT_EQ(3, contactJacobian.nContacts);
@@ -1174,7 +1174,7 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
       reg.get<CContactSkinningData const>(entity),
       collidingJacobians);
   test::ExpectEqualContactJacSnapshots(
-      firstSetup, test::SnapshotContactJac((*collidingJacobians[0].jacs)[0]));
+      firstSetup, test::SnapshotContactJac(collidingJacobians[0].GetJacs()[0]));
 
   auto& displacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(entity).value;
   ColumnVector<real> const baseDisplacement = displacement;
