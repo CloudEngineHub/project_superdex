@@ -298,7 +298,7 @@ void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& de
  * - Can be called concurrently for different actors.
  * - May schedule additional work. Wait for the semaphore to ensure completion.
  */
-static void UpdateActorQueriesAsync(TaskSemaphore sem, entt::registry& reg, entt::entity e) {
+static void UpdateActorQueriesAsync(TaskSemaphore const& sem, entt::registry& reg, entt::entity e) {
   bool isDeformable = reg.any_of<TagSoftActor, TagBlendedActor, TagShellActor, TagRodActor>(e);
   if (isDeformable) {
     // Update CBoundingVolume for actors that deform

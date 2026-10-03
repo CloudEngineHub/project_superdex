@@ -208,7 +208,7 @@ class TaskScheduler final {
     See GetNumOtherThreads.
   */
   template <typename FN>
-  void AddTask(TaskSemaphore sem, std::string_view debugNameStringLiteral, FN&& fn);
+  void AddTask(TaskSemaphore const& sem, std::string_view debugNameStringLiteral, FN&& fn);
 
   /**
     Add a task with no profiling overhead. Used to implement parallel algorithms that handle the
@@ -310,7 +310,7 @@ class TaskScheduler final {
 
   Example:
       TaskSemaphore sem(1);
-      scheduler.AddTask([sem]() { // capture semaphore BY VALUE
+      scheduler.AddTask("DoWork", [sem]() { // capture semaphore BY VALUE
         // Do work
         sem.Done();
       });
@@ -319,7 +319,7 @@ class TaskScheduler final {
 class TaskSemaphore {
  public:
   // Constructs the WaitGroup with the specified initial count.
-  TaskSemaphore(int initialCount = 0);
+  explicit TaskSemaphore(int initialCount = 0);
 
   // Increments the internal counter by count.
   void Add(int count = 1) const;
@@ -368,7 +368,7 @@ void Schedule(std::string_view debugNameStringLiteral, FN&& fn);
 // or if the TaskScheduler has no other threads that could performance the work concurrently. If you
 // have a task that must be scheduled to avoid deadlocks, then use TaskScheduler::AddTask directly.
 template <typename FN>
-void Schedule(TaskSemaphore sem, std::string_view debugNameStringLiteral, FN&& fn);
+void Schedule(TaskSemaphore const& sem, std::string_view debugNameStringLiteral, FN&& fn);
 
 /**
   Subdivide a range of indices into one or more sub-ranges. Then, calls forRange(subRangeBegin,
@@ -508,7 +508,7 @@ void BusyWaitFor(Predicate&& condition, TimeSpan yieldPeriod = TimeSpanFromSecon
   EXAMPLE:
       ParallelBarrier barrier(5);
       for (int workerId = 0; workerId < 5; ++workerId) {
-        scheduler.AddTask([barrier]() { // Capture barrier BY VALUE
+        scheduler.AddTask("ParallelBarrier", [barrier]() { // Capture barrier BY VALUE
           // Do work
           barrier.Wait();
           // Do more work

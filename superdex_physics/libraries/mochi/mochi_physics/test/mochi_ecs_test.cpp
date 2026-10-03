@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#include <mochi_core/utils/defer.h>
+#include <mochi_core/utils/log.h>
+#include <mochi_core/utils/task_scheduler.h>
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/src/mochi_ecs.h>
 
@@ -29,10 +32,10 @@
 using namespace mochi;
 using namespace mochi::ecs;
 
-namespace {
-
 // NOLINTBEGIN(clang-diagnostic-unused-parameter) - This file contains many lambdas to test ESC
 // system functionality, but they don't actually use the lambda parameters.
+
+namespace {
 
 /******************************************************************************************
  ECS Components
@@ -67,12 +70,14 @@ struct GlobalData2 {
   int valueToAdd;
 };
 
+} // namespace
+
 /******************************************************************************************
  ECS Systems
 */
 
 // A system that is invoked on the whole registry, rather than an individual system
-void GlobalSystem(View<ComponentA, ComponentB> view, GlobalData const& global) {
+static void GlobalSystem(View<ComponentA, ComponentB> view, GlobalData const& global) {
   // Add global.valueToAdd to all ComponentA's
   for (auto e : view) {
     view.get<ComponentA>(e).value += global.valueToAdd;
@@ -89,7 +94,7 @@ void GlobalSystem(View<ComponentA, ComponentB> view, GlobalData const& global) {
   }
 }
 
-void GlobalSystem2(
+static void GlobalSystem2(
     View<ComponentA const, ComponentB> view,
     View<ComponentA const, ComponentC, TagA const> view2) {
   for (auto e : view) {
@@ -103,7 +108,7 @@ void GlobalSystem2(
   }
 }
 
-void GlobalSystemWithPartialRegistry(
+static void GlobalSystemWithPartialRegistry(
     PartialRegistry<ComponentA, ComponentB, ComponentC, TagA const> reg) {
   auto vA = reg.view<ComponentA>();
   for (auto e : vA) {
@@ -479,12 +484,13 @@ TEST(EcsSystem, GlobalSystemsMetadata) {
 }
 
 // Helper to collect all entities into a std::vector
-auto GetAllEntities(entt::registry const& reg) {
+static auto GetAllEntities(entt::registry const& reg) {
   std::vector<entt::entity> entities;
   reg.each([&](auto e) { entities.push_back(e); });
   return entities;
 }
 
+namespace {
 // Used to repeat the same test code with different invocation functions
 enum struct MethodToTest {
   InvokeOnEntity,
@@ -497,6 +503,7 @@ enum struct MethodToTest {
   ScheduleInvokeForEach,
   ScheduleInvokeForEachGlobal,
 };
+} // namespace
 
 // Helper to call to call a per-entity system for a list of entities
 template <MethodToTest kMethod, typename SystemT, typename SubsetT, typename... ExternalT>
@@ -537,7 +544,11 @@ static void TestInvokeForEach(SystemT system, entt::registry& reg, ExternalT... 
     }
   } else if constexpr (kMethod == MethodToTest::TryScheduleInvokeOnEntity) {
     TaskSemaphore sem;
-    TryScheduleInvokeOnEntity(sem, "label", system, reg, extParams...);
+    auto invoker = InvokerImpl<entt::type_list<>, ExternalT...>(extParams...);
+    for (auto e : GetAllEntities(reg)) {
+      bool wasCalled = TryScheduleInvokeOnEntity(sem, "label", system, reg, e, extParams...);
+      EXPECT_EQ(invoker.CanInvokeOnEntity(system, reg, e), wasCalled);
+    }
     sem.Wait();
   } else if constexpr (kMethod == MethodToTest::InvokeForEachGlobal) {
     InvokeForEachGlobal(system, reg, extParams...);
@@ -863,6 +874,22 @@ static void TestInvokeForEach() {
   // clang-format on
 }
 
+// Without a TaskScheduler, Schedule runs systems inline; with one, it runs them as async tasks.
+template <MethodToTest kMethod>
+static void TestInvokeForEachSyncAndAsync() {
+  TestInvokeForEach<kMethod>();
+
+  constexpr int kNumThreads = 2;
+  bool const wasWarningEnabled = IsLogChannelEnabled(LogChannel::Warning);
+  if (kNumThreads > TaskScheduler::GetNumSupportedLogicalProcessors()) {
+    // Disable warnings about using more threads than can run concurrently on the device.
+    EnableLogChannel(LogChannel::Warning, false);
+  }
+  MOCHI_DEFER(EnableLogChannel(LogChannel::Warning, wasWarningEnabled));
+  TaskScheduler scheduler(kNumThreads);
+  TestInvokeForEach<kMethod>();
+}
+
 TEST(EcsSystem, InvokeOnEntity) {
   TestInvokeForEach<MethodToTest::InvokeOnEntity>();
 }
@@ -871,19 +898,23 @@ TEST(EcsSystem, TryInvokeOnEntity) {
   TestInvokeForEach<MethodToTest::TryInvokeOnEntity>();
 }
 
+TEST(EcsSystem, TryScheduleInvokeOnEntity) {
+  TestInvokeForEachSyncAndAsync<MethodToTest::TryScheduleInvokeOnEntity>();
+}
+
 TEST(EcsSystem, InvokeForEach) {
   TestInvokeForEach<MethodToTest::InvokeForEach>();
   TestInvokeForEach<MethodToTest::InvokeForEachGlobal>();
 }
 
 TEST(EcsSystem, ParallelInvokeForEach) {
-  TestInvokeForEach<MethodToTest::ParallelInvokeForEach>();
-  TestInvokeForEach<MethodToTest::ParallelInvokeForEachGlobal>();
+  TestInvokeForEachSyncAndAsync<MethodToTest::ParallelInvokeForEach>();
+  TestInvokeForEachSyncAndAsync<MethodToTest::ParallelInvokeForEachGlobal>();
 }
 
 TEST(EcsSystem, ScheduleInvokeForEach) {
-  TestInvokeForEach<MethodToTest::ScheduleInvokeForEach>();
-  TestInvokeForEach<MethodToTest::ScheduleInvokeForEachGlobal>();
+  TestInvokeForEachSyncAndAsync<MethodToTest::ScheduleInvokeForEach>();
+  TestInvokeForEachSyncAndAsync<MethodToTest::ScheduleInvokeForEachGlobal>();
 }
 
 TEST(EcsSystem, SystemObjects) {
@@ -1020,5 +1051,3 @@ TEST(EcsSystem, PartialRegistryCallFunctions) {
 }
 
 // NOLINTEND(clang-diagnostic-unused-parameter)
-
-} // namespace

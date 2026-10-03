@@ -1574,7 +1574,7 @@ TryInvokeOnEntity(SystemT system, entt::registry& reg, entt::entity e, ExternalT
 
 template <typename... Policies, typename SystemT, typename... ExternalT>
 inline bool TryScheduleInvokeOnEntity(
-    TaskSemaphore sem,
+    TaskSemaphore const& sem,
     std::string_view debugLabel,
     SystemT system,
     entt::registry& reg,

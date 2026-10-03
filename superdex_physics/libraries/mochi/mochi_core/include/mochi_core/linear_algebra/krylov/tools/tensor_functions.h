@@ -229,6 +229,8 @@ struct UsualDot {
  * different type.
  *
  * WARNINGS:
+ * - Workers busy-wait for each other, so each worker must run on a different thread (which can be
+ *   accomplished through TaskScheduler::BatchEnqueueOnAvailableWorkers) to prevent deadlocks.
  * - Each worker must have a COPY (not a reference) of the parallel dot object.
  * - All workers must make the same collective call in each phase, with matching operations.
  *   Mixing calls or operations produces invalid results.
@@ -237,8 +239,11 @@ struct UsualDot {
  *     ParallelDot<real> parDot(5);
  *     UsualDot dotType1 = {};
  *     MyCustomDot dotType2 = {};
- *     for (int i = 0; i < 5; ++i) {
- *       scheduler.AddTask([parDot]() { // Capture parDot BY VALUE
+ *     for (int workerIdx = 0; workerIdx < 5; ++workerIdx) {
+ *       scheduler.AddTask("ParallelDot", [&, parDot, workerIdx]() { // Capture parDot BY VALUE
+ *         // Each worker contributes the partial dot product of its own rows.
+ *         int const rowStart = (workerIdx * x1.Rows()) / 5;
+ *         int const rowEnd = ((workerIdx + 1) * x1.Rows()) / 5;
  *         // Do work
  *         parDot.Dot(dotType1, x1, x2, rowStart, rowEnd, workerIdx);
  *         // Do more work
