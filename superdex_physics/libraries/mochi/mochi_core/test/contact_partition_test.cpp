@@ -69,6 +69,20 @@ static std::array<int, kNumSamples> InitializeIds() {
   return InitializeSamples(ids, samples);
 }
 
+static std::array<DynamicArray<int>, kNumSamples> InitializeBoneIds() {
+  // Define some distinct sets of governing bone ids, sorted and unique as BoneIdsDescriptor
+  // requires.
+  std::array<DynamicArray<int>, kNumPartitions> groups{
+      DynamicArray<int>{0},
+      DynamicArray<int>{0, 1},
+      DynamicArray<int>{1},
+      DynamicArray<int>{2, 3, 4}};
+
+  // Define bone-id sets for a set of samples
+  std::array<int, kNumSamples> samples{{0, 1, 0, 2, 3, 1, 3, 0, 1, 0}};
+  return InitializeSamples(groups, samples);
+}
+
 static void TestPartitions(Span<ContactPartition const> partitions) {
   // Test if the intersection of all partitions is empty
   for (int i = 0; i < partitions.size(); i++) {
@@ -104,6 +118,17 @@ TEST(ContactPartition, Ids) {
   TestPartitions(partitions);
 }
 
+TEST(ContactPartition, BoneIds) {
+  auto samples = InitializeBoneIds();
+  auto partitions = CreateContactPartitions<BoneIdsDescriptor>(samples);
+
+  EXPECT_EQ(partitions.size(), 4);
+  TestPartitions(partitions);
+  for (auto const& partition : partitions) {
+    EXPECT_TRUE(std::holds_alternative<DynamicArray<int>>(partition.GetDofDescriptors()[0]));
+  }
+}
+
 TEST(ContactPartition, Combined) {
   auto partitionsA = CreateContactPartitions<IndexGroupsDescriptor>(InitializeIndexGroups());
   auto partitionsB = CreateContactPartitions<IdDescriptor>(InitializeIds());
@@ -112,4 +137,20 @@ TEST(ContactPartition, Combined) {
   EXPECT_GE(partitions.size(), 4);
   EXPECT_LE(partitions.size(), kNumSamples);
   TestPartitions(partitions);
+}
+
+TEST(ContactPartition, CombinedBoneIds) {
+  auto partitionsA = CreateContactPartitions<BoneIdsDescriptor>(InitializeBoneIds());
+  auto partitionsB = CreateContactPartitions<IdDescriptor>(InitializeIds());
+  auto partitions = CombinePartitions(partitionsA, partitionsB);
+
+  // 7 distinct (bone set, id) pairs occur across the samples.
+  EXPECT_EQ(partitions.size(), 7);
+  TestPartitions(partitions);
+  for (auto const& partition : partitions) {
+    auto const descriptors = partition.GetDofDescriptors();
+    ASSERT_EQ(descriptors.size(), 2);
+    EXPECT_TRUE(std::holds_alternative<DynamicArray<int>>(descriptors[0]));
+    EXPECT_TRUE(std::holds_alternative<int>(descriptors[1]));
+  }
 }

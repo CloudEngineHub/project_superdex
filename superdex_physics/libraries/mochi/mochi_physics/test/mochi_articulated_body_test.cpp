@@ -25,6 +25,7 @@
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_physics/src/mochi_articulated_body.h>
 #include <mochi_physics/src/mochi_blended.h>
+#include <mochi_physics/src/mochi_contact_partition.h>
 #include <mochi_physics/src/mochi_context.h>
 #include <mochi_physics/src/mochi_discretization_components.h>
 #include <mochi_physics/src/mochi_group.h>
@@ -2163,13 +2164,13 @@ TEST_IF_F(
 
 namespace {
 
-// Build a TetrahedralMeshShape with single-bone skinning (every node pinned to bone 0)
+// Build a TetrahedralMeshShape with single-bone skinning (every node pinned to bone 'boneIndex')
 // and register it with the context. Returns the resulting handle.
-ShapeHandle CreateUnitCubeTetMeshShapeWithSkinning(Context* context) {
+ShapeHandle CreateUnitCubeTetMeshShapeWithSkinning(Context* context, int boneIndex = 0) {
   auto&& [coords, connectivity] = test::CreateMinimalTetMeshUnitCube();
   auto mesh = std::make_shared<TetrahedralMesh const>(coords, connectivity);
   auto skinning = std::make_shared<SkinningData const>(
-      test::MakeSingleBoneSkinning(mesh->GetNumNodes(), /*boneIndex=*/0));
+      test::MakeSingleBoneSkinning(mesh->GetNumNodes(), boneIndex));
   auto shape = std::make_shared<TetrahedralMeshShape>(mesh, skinning);
   return assert_cast<ContextImpl*>(context)->RegisterShape(shape, test::ExpectOK{});
 }
@@ -2397,6 +2398,48 @@ TEST_F(CreateSkinnedArticulatedActorTest, TetMesh) {
   Actor const* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
   ASSERT_NE(nullptr, actor);
   EXPECT_EQ(ActorType::Articulated, actor->GetType());
+}
+
+// SharedBones keeps only the skinning bones that depend on articulated DoFs. With a Hard root
+// joint, bone 0 is static and must be dropped, while bone 1 (Spherical joint) must be kept.
+TEST_F(CreateSkinnedArticulatedActorTest, SharedBonesKeepsOnlyActiveSkinningBones) {
+  struct Case {
+    int skinnedBone;
+    DynamicArray<int> expectedBoneIds;
+  };
+  Case const cases[] = {{0, {}}, {1, {1}}};
+
+  for (auto const& c : cases) {
+    SCOPED_TRACE(c.skinnedBone);
+    auto params = MakeMinimalSkinnedParams(
+        CreateUnitCubeTetMeshShapeWithSkinning(_mochiContext, c.skinnedBone));
+    ShapeHandle const linkShape = params.links[0].shape;
+    params.joints = {
+        {.type = ArticulatedJointType::Hard}, {.type = ArticulatedJointType::Spherical}};
+    params.links = {
+        {.parentLink = -1, .shape = linkShape, .colliderType = ColliderType::None},
+        {.parentLink = 0, .shape = linkShape, .colliderType = ColliderType::None}};
+
+    Actor* const actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+    ASSERT_NE(nullptr, actor);
+
+    auto const& reg = GetRegistry();
+    entt::entity const entity = GetEntity(actor);
+    ContactPartitionStrategy const strategy = ContactPartitionStrategy::SharedBones;
+    auto partitions =
+        InitializeContactPartitions(reg, entity, entity, MakeSingletonConstSpan(strategy));
+
+    ASSERT_EQ(1, partitions.size());
+    auto const descriptors = partitions[0].GetDofDescriptors();
+    ASSERT_EQ(1, descriptors.size());
+    ASSERT_TRUE(std::holds_alternative<DynamicArray<int>>(descriptors[0]));
+    EXPECT_SPAN_EQ(
+        MakeConstSpan(c.expectedBoneIds),
+        MakeConstSpan(std::get<DynamicArray<int>>(descriptors[0])));
+    EXPECT_EQ(
+        reg.get<CFemBoundaryDiscretization const>(entity).GetNumQuadPoints(),
+        partitions[0].GetIndices().size());
+  }
 }
 
 // Create a minimal one-bone articulated actor whose skin is a triangular mesh, with

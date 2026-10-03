@@ -22,6 +22,8 @@
 #include <mochi_core/utils/spmat_utils.h>
 #include <mochi_core/utils/subset_map.h>
 
+#include <algorithm>
+#include <functional>
 #include <set>
 #include <unordered_map>
 #include <variant>
@@ -45,11 +47,14 @@
  * 2) CombinePartitions() takes as input partitions created according to two descriptors f and g,
  * and outputs the partitions resulting from the combined descriptor (f, g).
  *
- * Currently, contact partitions may be created according to two possible descriptors/strategies:
+ * Currently, contact partitions may be created according to three possible descriptors/strategies:
  * 1) IndexGroups: This descriptor/strategy is used for partitioning the surface of skinned meshes,
  * based on the underlying articulated-body DoFs that govern the contact samples.
  * 2) int: This descriptor/strategy is used for partitioning the surface of soft skinned actors,
  * based on the id of the governing soft actor.
+ * 3) DynamicArray<int>: This descriptor/strategy is used for partitioning the surface of skinned
+ * meshes, based on the set of governing bones that depend on simulation DoFs. Producers must store
+ * the bone ids sorted and unique, so that equal sets compare equal.
  */
 
 namespace mochi {
@@ -59,7 +64,8 @@ namespace mochi {
  * At simulation runtime, the DoF representation will be fetched by contact assembly and used
  * appropriately assuming knowledge of the underlying partition descriptor/strategy. This variant
  * wraps the DoF representations for the currently supported descriptors:
- * - std::vector<int>: For IndexGroups descriptor. It stores the DoF indices of an articulated body.
+ * - DynamicArray<int>: For IndexGroups descriptor, it stores the DoF indices of an articulated
+ * body. For BoneIdsDescriptor, it stores the governing bone ids.
  * - int: For int descriptor. It stores the soft-actor id.
  */
 using VariantDofDescriptor = std::variant<DynamicArray<int>, int>;
@@ -111,6 +117,39 @@ class IndexGroupsDescriptor : public PartitionDescriptorImpl<IndexGroups> {
 class IdDescriptor : public PartitionDescriptorImpl<int> {
  public:
   IdDescriptor(int const& descriptor) : PartitionDescriptorImpl(descriptor) {}
+
+  VariantDofDescriptor GetDoFs() const override {
+    return _descriptor;
+  }
+};
+
+/**************************************************************************************************
+ * Partition descriptor for a set of active governing bone ids. Used with skinned meshes.
+ */
+class BoneIdsDescriptor : public PartitionDescriptorImpl<DynamicArray<int>> {
+  struct Hash {
+    size_t operator()(DynamicArray<int> const& boneIds) const {
+      size_t hash = 0;
+      std::hash<int> hashInt;
+      for (int id : boneIds) {
+        hash ^= hashInt(id) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+      }
+      return hash;
+    }
+  };
+
+  struct Less {
+    bool operator()(DynamicArray<int> const& a, DynamicArray<int> const& b) const {
+      return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+    }
+  };
+
+ public:
+  // Overwrite Map and Set with type-specific hash/less classes
+  using Map = std::unordered_multimap<DynamicArray<int>, int, Hash>;
+  using Set = std::set<DynamicArray<int>, Less>;
+
+  BoneIdsDescriptor(DynamicArray<int> const& descriptor) : PartitionDescriptorImpl(descriptor) {}
 
   VariantDofDescriptor GetDoFs() const override {
     return _descriptor;

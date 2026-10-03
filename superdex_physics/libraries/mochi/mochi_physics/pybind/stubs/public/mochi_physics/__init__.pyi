@@ -6021,6 +6021,11 @@ class ArticulatedSkinParams:
     Note:
         A shape can be shared by multiple actors, even actors in different scenes.
 
+    Note:
+        The number of skinning links per vertex impacts performance. Keep it as low
+        as possible to maximize performance, e.g., by clamping tiny skinning weights
+        to zero.
+
     See Also:
         :class:`~superdex.physics.ShapeHandle`,
         :func:`~superdex.physics.load_shape_from_file`

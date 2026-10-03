@@ -69,6 +69,9 @@ template std::vector<ContactPartition> mochi::CreateContactPartitions<IndexGroup
 template std::vector<ContactPartition> mochi::CreateContactPartitions<IdDescriptor>(
     Span<typename IdDescriptor::Descriptor const> samples);
 
+template std::vector<ContactPartition> mochi::CreateContactPartitions<BoneIdsDescriptor>(
+    Span<typename BoneIdsDescriptor::Descriptor const> samples);
+
 std::vector<ContactPartition> mochi::CombinePartitions(
     Span<ContactPartition const> partitionsA,
     Span<ContactPartition const> partitionsB) {
