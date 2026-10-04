@@ -1235,6 +1235,12 @@ void BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>::AccessorApplyTo
       minBlockRowsPerTask,
       numBlockRows,
       [&](CRIdx blkRowBeginTask, CRIdx blkRowEndTask) {
+        //--- Local view of the matrix and copies of the accessors: compilers would otherwise
+        //--- reload their pointers and strides in every block row. They must reload them after
+        //--- stores that may alias them, and they do not hoist loads out of conditional paths.
+        BlockSparseMatrixView<Scalar const, kBlockSize, CRIdx const, Ptr const> const A(*this);
+        auto const xLocal = x;
+        auto AxLocal = Ax;
         constexpr auto kCostsX = AccessorIn::RowColCosts();
         if constexpr (kCostsX.first == 1) {
           //--- Col-major X.
@@ -1246,19 +1252,28 @@ void BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>::AccessorApplyTo
             //--- Compute the product looping over block rows. Using moving pointers to indices and
             //--- values instead of creating views for every block row improves performance for some
             //--- compilers and architectures.
-            auto const* idxPtr = Indices(blkRowBeginTask).data();
-            auto const* vPtr = Values(blkRowBeginTask).data();
+            auto const* idxPtr = A.Indices(blkRowBeginTask).data();
+            auto const* vPtr = A.Values(blkRowBeginTask).data();
             for (Idx br = blkRowBeginTask; br < blkRowEndTask; ++br) {
-              auto const numBlocksInRow = static_cast<int>(_ptr[br + 1] - _ptr[br]);
+              auto const numBlocksInRow = static_cast<int>(A._ptr[br + 1] - A._ptr[br]);
               if (numBlocksInRow > 0) {
                 auto const rowLeadDim = kBlockSize * numBlocksInRow;
                 details::RowMultiplier<NonConstScalar, kBlockSize>::ApplyToColVector(
-                    idxPtr, vPtr, numBlocksInRow, rowLeadDim, x, Ax, br, c, xTmp, xTmpRequiredSize);
+                    idxPtr,
+                    vPtr,
+                    numBlocksInRow,
+                    rowLeadDim,
+                    xLocal,
+                    AxLocal,
+                    br,
+                    c,
+                    xTmp,
+                    xTmpRequiredSize);
                 idxPtr += numBlocksInRow;
                 vPtr += kBlockSize * rowLeadDim;
               } else {
                 MOCHI_ASSERT_VERBOSE(numBlocksInRow == 0, "Number of blocks must not be negative.");
-                details::SetBlockRowToZero<kBlockSize>(Ax, br, nCols);
+                details::SetBlockRowToZero<kBlockSize>(AxLocal, br, nCols);
               }
             }
           }
@@ -1266,11 +1281,11 @@ void BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>::AccessorApplyTo
           //--- Row-major X.
           static_assert(kCostsX.second == 1, "Unexpected case");
           for (Idx br = blkRowBeginTask; br < blkRowEndTask; ++br) {
-            if (!IsBlockRowEmpty(br)) {
+            if (!A.IsBlockRowEmpty(br)) {
               details::RowMultiplier<NonConstScalar, kBlockSize>::ApplyToRowMajor(
-                  Indices(br), Values(br), x, Ax, br, nCols);
+                  A.Indices(br), A.Values(br), xLocal, AxLocal, br, nCols);
             } else {
-              details::SetBlockRowToZero<kBlockSize>(Ax, br, nCols);
+              details::SetBlockRowToZero<kBlockSize>(AxLocal, br, nCols);
             }
           }
         }

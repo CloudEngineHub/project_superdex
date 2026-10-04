@@ -740,33 +740,39 @@ void SparseMatrix<Scalar, CRIdx, Ptr, Storage>::AccessorApplyToRange(
       minRowsPerTask,
       numRows,
       [&](CRIdx rowBeginTask, CRIdx rowEndTask) {
+        //--- Local view of the matrix and copies of the accessors: compilers would otherwise reload
+        //--- their pointers and strides in every row. They must reload them after stores that may
+        //--- alias them, and they do not hoist loads out of conditional paths.
+        SparseMatrixView<Scalar const, CRIdx const, Ptr const> const A(*this);
+        auto const XLocal = X;
+        auto AXLocal = AX;
         constexpr auto kCostsX = AccessorIn::RowColCosts();
         if constexpr (kCostsX.first == 1) {
           //--- X is col-major
           for (NonConstIdx c = 0; c < numColsX; ++c) {
             for (NonConstIdx r = rowBeginTask; r < rowEndTask; ++r) {
               NonConstScalar result = 0;
-              if (!IsRowEmpty(r)) {
-                auto const rowIndices = Indices(r);
-                auto const valRow = Values(r);
+              if (!A.IsRowEmpty(r)) {
+                auto const rowIndices = A.Indices(r);
+                auto const valRow = A.Values(r);
                 details::AddRowSparseTimesColumnVector<NonConstScalar, NonConstIdx>(
-                    rowIndices, valRow, &X(0, c), result);
+                    rowIndices, valRow, &XLocal(0, c), result);
               }
-              AX.Store(r, c, result);
+              AXLocal.Store(r, c, result);
             }
           }
         } else {
           //--- X is row-major
           static_assert(kCostsX.second == 1, "Unexpected cost");
           for (NonConstIdx r = rowBeginTask; r < rowEndTask; ++r) {
-            if (!IsRowEmpty(r)) {
-              auto const rowIndices = Indices(r);
-              auto const rowValues = Values(r);
+            if (!A.IsRowEmpty(r)) {
+              auto const rowIndices = A.Indices(r);
+              auto const rowValues = A.Values(r);
               details::RowSparseTimesRowMajorDense<Scalar, CRIdx>(
-                  r, rowIndices, rowValues, X, AX, numColsX);
+                  r, rowIndices, rowValues, XLocal, AXLocal, numColsX);
             } else {
               for (int c = 0; c < numColsX; ++c) {
-                AX.Store(r, c, 0);
+                AXLocal.Store(r, c, 0);
               }
             }
           }
