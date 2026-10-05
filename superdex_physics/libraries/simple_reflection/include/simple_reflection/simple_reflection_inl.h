@@ -1037,10 +1037,12 @@ struct SReflectTypeTraits<std::string> {
 // T[N] c-style array
 /////////////////////////////////////////////////////////////////////////////
 template <typename T, size_t N>
+// NOLINTNEXTLINE(facebook-hte-CArray, modernize-avoid-c-arrays): Supports raw-array reflection.
 struct SReflectTypeTraits<T[N]> {
   static constexpr SReflect::CoreType coreType = SReflect::CoreType::CT_array;
   static SReflect::ArrayTypeInfo const& GetTypeInfo() {
     static auto* s_typeInfo = []() {
+      // NOLINTNEXTLINE(facebook-hte-CArray, modernize-avoid-c-arrays): Preserves raw-array RTTI.
       using OuterType = T[N];
       auto const& inner = SReflect::GetTypeInfo<T>();
       auto* ti = SReflect::detail::MakeFixedArrayTypeInfoImpl(
