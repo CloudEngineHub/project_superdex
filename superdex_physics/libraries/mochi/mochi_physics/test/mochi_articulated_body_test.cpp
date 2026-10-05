@@ -1154,6 +1154,58 @@ TEST_F(ArticulatedBodyDynamicsTest, TransmissionForces) {
       /* actorSetupCallback */ addTransmission);
 }
 
+// The links and full-DoF constraints contribute J^T * D * J to the reduced dresidual, with D their
+// full-DoF dresidual. The tree has a zero-DoF root link, links with non-contiguous ancestor DoFs,
+// and a cycle constraint that couples two links and leaves the last link unconstrained.
+TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
+  TransformRT const jointOffset{Real3{0.5_r, 0.2_r, 0.1_r}};
+  ArticulatedActorParams params;
+  params.joints = {
+      {.type = ArticulatedJointType::Hard},
+      {.type = ArticulatedJointType::Spherical, .parentLinkFromJoint = jointOffset},
+      {.type = ArticulatedJointType::Revolute,
+       .parentLinkFromJoint = jointOffset,
+       .axis = kReal3ZAxis},
+      {.type = ArticulatedJointType::Prismatic,
+       .parentLinkFromJoint = jointOffset,
+       .axis = kReal3XAxis},
+      {.type = ArticulatedJointType::Revolute,
+       .parentLinkFromJoint = jointOffset,
+       .axis = kReal3YAxis}};
+  for (int parent : {-1, 0, 1, 1, 0}) {
+    params.links.push_back({.parentLink = parent, .shape = _cubeShape, .layer = "Articulated"});
+  }
+  params.cycles = {{.parentLink = 2, .childLink = 3, .stiffness = 1e7_r}};
+  Actor* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+  auto& reg = GetRegistry();
+  auto const entity = GetEntity(actor->GetHandle());
+
+  // Re-initialize the problem, as on a change of global DoFs, after a gradient assembly resized the
+  // reduced residual for its target.
+  reg.get<CActorSnle>(entity).reducedResidual.Resize(0);
+  articulated::compound::InitFullDofProblem(reg, entity);
+  _scene->Step(CSceneTime::kDefaultTimeStep);
+
+  AssemblyParams const assemblyParams{.assemObj = false, .assemDRes = true};
+  ecs::InvokeOnEntity<ecs::policy::AllowReadWriteSameComponent>(
+      articulated::compound::EntityAssemble, reg, entity, std::cref(assemblyParams));
+
+  auto const& jacobian = reg.get<CArticulatedJacobian const>(entity).value;
+  Matrix<real> fullDRes = Matrix<real>::Zero(jacobian.Rows(), jacobian.Rows());
+  for (auto link : reg.get<CGroupMembers const>(entity).actors) {
+    int const offset = reg.get<CDofOffset const>(link).dofsOffset;
+    fullDRes.Block(offset, offset, RigidSize::kDAll, RigidSize::kDAll) =
+        std::get<Matrix<real>>(reg.get<CActorSnle const>(link).fullDResidual);
+  }
+  auto const constraintDRes =
+      ToMatrix(AsConstView(reg.get<CCompoundConstraintSnle const>(entity).dresiduals[0].matrix));
+  fullDRes.Block(0, 0, constraintDRes.Rows(), constraintDRes.Cols()) += constraintDRes;
+  Compare(
+      Matrix<real>(jacobian.Transpose() * fullDRes * jacobian),
+      std::get<Matrix<real>>(reg.get<CActorSnle const>(entity).reducedDResidual),
+      1e-5_r);
+}
+
 /**************************************************************************************
   ArticulatedActorApiTest - Test fixture for API queries on articulated actors
 **************************************************************************************/

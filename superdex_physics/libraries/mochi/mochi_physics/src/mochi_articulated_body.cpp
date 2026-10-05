@@ -1533,19 +1533,16 @@ void mochi::articulated::compound::InitFullDofProblem(entt::registry& reg, entt:
 
   // A compound with zero reduced dofs (e.g. an all-Hard/weld skeleton) has nothing to solve. Skip
   // the SNLE machinery entirely instead of running it as a chain of no-ops on a 0x0 problem.
-  if (reg.get<CActorDofInfo const>(e).dofsSize == 0) {
+  int const reducedSize = reg.get<CActorDofInfo const>(e).dofsSize;
+  if (reducedSize == 0) {
+    MOCHI_ASSERT(
+        !reg.any_of<CActorSnle>(e), "Articulated actors with no DoFs should not have CActorSnle.");
     return;
   }
 
   // Storage for assembly of the compound's SNLE problem.
-  if (auto* snle = reg.try_get<CActorSnle>(e)) {
-    MOCHI_ASSERT(snle->UseReduced(), "Expected reduced SNLE to be enabled.");
-    int const reducedSize = snle->reducedResidual.Rows();
-    reg.replace<CActorSnle>(
-        e, SparseMatrix<real>{fullSparsity.graph}, Matrix<real>::Zero(reducedSize, reducedSize));
-  } else {
-    reg.emplace<CActorSnle>(e, SparseMatrix<real>{fullSparsity.graph});
-  }
+  reg.emplace_or_replace<CActorSnle>(
+      e, SparseMatrix<real>{fullSparsity.graph}, Matrix<real>::Zero(reducedSize, reducedSize));
 
   // Non-linear solver convergence weights (lazily initialized). Preserved across re-invocations of
   // InitFullDofProblem. Nothing this function does invalidates the convergence weights.
@@ -1719,15 +1716,6 @@ void mochi::articulated::compound::InitArticulatedBodyActor(
   // dimensions from the full space ones. Create a new sparsity pattern based on the reduced space
   // dofs and overwrite compound-level sparsity pattern
   reg.emplace<CReducedSparsityPattern>(e, MakeDenseSparsityGraph(reducedDofsDim, reducedDofsDim));
-
-  // Lean assembly uses one actor residual & matrix for the articulated compound.
-  // CActorSnle only exists (initialized in InitFullDofProblem) when the compound has reduced dofs.
-  if (reducedDofsDim > 0) {
-    reg.get<CActorSnle>(e).EnableReduced(Matrix<real>::Zero(reducedDofsDim, reducedDofsDim));
-  } else {
-    MOCHI_ASSERT(
-        !reg.any_of<CActorSnle>(e), "Articulated actors with no DoFs should not have CActorSnle.");
-  }
 
   // Create vector of internal rigid actors' handles
   SceneHandle sceneHandle = reg.ctx<CSceneHandle const>().value;
@@ -2555,10 +2543,122 @@ static bool HasJointInertia(CArticulatedInertiaParams const& inertia) {
   return std::any_of(inertia.begin(), inertia.end(), [](real value) { return value != 0_r; });
 }
 
+// Assembles the reduced dresidual outJtDJ = J^T * D * J. D, the full-DoF dresidual, is block
+// diagonal in the links' 6x6 dresiduals, plus the constraints' dresidual, which spans the full DoFs
+// up to the last constrained one.
+static void AssembleReducedDResidual(
+    ecs::PartialRegistry<CActorSnle const, CDofOffset const, CArticulatedRigidJacobian const> reg,
+    Span<entt::entity const> links,
+    CArticulatedJacobian const& jacobian,
+    CCompoundConstraintSnle const* constraintFullSnle,
+    MatrixView<real> outJtDJ) {
+  MOCHI_ASSERT_VERBOSE(
+      outJtDJ.Rows() == jacobian.value.Cols() && outJtDJ.Cols() == jacobian.value.Cols(),
+      "Unexpected reduced dresidual size.");
+  outJtDJ.SetZero();
+
+  SparseMatrixView<real const> constraintFullDRes;
+  if (constraintFullSnle) {
+    MOCHI_ASSERT(constraintFullSnle->dresiduals.size() == 1, "Expected 1 DResidual.");
+    auto const& constraintDResidual = constraintFullSnle->dresiduals[0];
+    MOCHI_ASSERT(
+        constraintDResidual.rowOffset == 0 && constraintDResidual.colOffset == 0,
+        "Expected zero row and col offsets.");
+    constraintFullDRes =
+        std::get<SparseMatrixView<real const>>(AsConstView(constraintDResidual.matrix));
+    MOCHI_ASSERT(
+        constraintFullDRes.Rows() <= jacobian.value.Rows(),
+        "CCompoundConstraintSnle should have been resized to the number of full DOFs in this articulated compound");
+  }
+
+  // Scratch reused by every link, sized for a link that spans all reduced DoFs.
+  MOCHI_FILO_STACK_ALLOCATOR(tempAllocator, 64 * 1024);
+  int const numDofs = outJtDJ.Rows();
+  Matrix<real, RigidSize::kDAll, RigidSize::kDAll> diagonalBlock;
+  RowMatrix<real, RigidSize::kDAll> rowMajorJi(RigidSize::kDAll, numDofs, &tempAllocator);
+  Matrix<real, RigidSize::kDAll> DJ(RigidSize::kDAll, numDofs, &tempAllocator);
+  Matrix<real> linkJtDJ(numDofs, numDofs, &tempAllocator);
+  RowMatrix<real, RigidSize::kDAll> couplingDJ(RigidSize::kDAll, numDofs, &tempAllocator);
+
+  // Link i's 6 rows J_i of J are nonzero only in the columns of its ancestor joints' DoFs, which
+  // its compact Jacobian lists, so the 6x6 diagonal block D_ii contributes J_i^T * D_ii * J_i
+  // through them. Constraint entries C_i coupling link i with other links (e.g. in closed
+  // kinematic loops) contribute J_i^T * C_i * J.
+  for (int i = 0; i < isize(links); ++i) {
+    int const offset = i * RigidSize::kDAll;
+    MOCHI_ASSERT_VERBOSE(
+        reg.get<CDofOffset const>(links[i]).dofsOffset == offset, "Unexpected link offset.");
+    auto const& linkSnle = reg.get<CActorSnle const>(links[i]);
+    MOCHI_ASSERT_VERBOSE(
+        std::holds_alternative<Matrix<real>>(linkSnle.fullDResidual), "Expected dense storage.");
+    auto const& linkDRes = std::get<Matrix<real>>(linkSnle.fullDResidual);
+    MOCHI_ASSERT_VERBOSE(
+        linkDRes.Rows() == RigidSize::kDAll && linkDRes.Cols() == RigidSize::kDAll,
+        "Expected a 6x6 link dresidual.");
+
+    // D_ii is the link's own dresidual, copied only if constraints add to it (e.g. link-based pose
+    // control).
+    bool isConstrained = false;
+    bool isCoupled = false;
+    int const rowEnd = Min(offset + RigidSize::kDAll, constraintFullDRes.Rows());
+    for (int row = offset; row < rowEnd; ++row) {
+      auto const cols = constraintFullDRes.Indices(row);
+      auto const values = constraintFullDRes.Values(row);
+      for (int nz = 0; nz < isize(cols); ++nz) {
+        int const col = cols[nz];
+        if (col / RigidSize::kDAll == i) {
+          if (!isConstrained) {
+            diagonalBlock = linkDRes;
+            isConstrained = true;
+          }
+          diagonalBlock(row - offset, col - offset) += values[nz];
+          continue;
+        }
+        if (!isCoupled) {
+          couplingDJ.SetZero();
+          isCoupled = true;
+        }
+        couplingDJ.Row(row - offset) += values[nz] * jacobian.value.Row(col);
+      }
+    }
+
+    auto const& dofs = reg.get<CArticulatedRigidJacobian const>(links[i]).dofs;
+    int const numLinkDofs = isize(dofs);
+    // Gathering J_i's nonzero columns into row-major scratch makes J_i^T column-major, so the
+    // products below vectorize along their output columns instead of reducing over 6 rigid DoFs.
+    auto Ji = rowMajorJi.LeftCols(numLinkDofs);
+    for (int p = 0; p < numLinkDofs; ++p) {
+      int const dof = dofs[p];
+      for (int a = 0; a < RigidSize::kDAll; ++a) {
+        Ji(a, p) = jacobian.value(offset + a, dof);
+      }
+    }
+    if (isCoupled) {
+      auto couplingJtDJ = linkJtDJ.TopRows(numLinkDofs);
+      couplingJtDJ = Ji.Transpose() * couplingDJ;
+      for (int p = 0; p < numLinkDofs; ++p) {
+        outJtDJ.Row(dofs[p]) += couplingJtDJ.Row(p);
+      }
+    }
+
+    MatrixView<real const, RigidSize::kDAll, RigidSize::kDAll> const Dii(
+        isConstrained ? diagonalBlock.Data() : linkDRes.Data());
+    auto blockDJ = DJ.LeftCols(numLinkDofs);
+    blockDJ = Dii * Ji;
+    auto blockJtDJ = linkJtDJ.Block(0, 0, numLinkDofs, numLinkDofs);
+    blockJtDJ = Ji.Transpose() * blockDJ;
+    for (int q = 0; q < numLinkDofs; ++q) {
+      for (int p = 0; p < numLinkDofs; ++p) {
+        outJtDJ(dofs[p], dofs[q]) += blockJtDJ(p, q);
+      }
+    }
+  }
+}
+
 void articulated::compound::EntityAssemble(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,
-    ecs::PartialRegistry<CActorSnle const, CDofOffset const> reg,
+    ecs::PartialRegistry<CActorSnle const, CDofOffset const, CArticulatedRigidJacobian const> reg,
     ecs::OptionalTag<TagUseNewtonEulerInertia> useNewtonEulerInertia,
     CArticulatedProps const& props,
     CGroupMembers const& groupMembers,
@@ -2597,11 +2697,9 @@ void articulated::compound::EntityAssemble(
     }
   }
 
-  // This code currently assumes SparseMatrix format (TODO: Change this)
-  MOCHI_ASSERT(std::holds_alternative<SparseMatrix<real>>(outCompoundSnle.fullDResidual));
-  auto outCompoundFullDRes =
-      std::get<SparseMatrixView<real>>(AsView(outCompoundSnle.fullDResidual));
-  outCompoundSnle.SetFullToZero(params);
+  // The full-DoF dresidual is unused: the links' dresiduals are projected directly.
+  outCompoundSnle.SetFullToZero(
+      {.assemObj = params.assemObj, .assemRes = params.assemRes, .assemDRes = false});
 
   // First, assemble the full-DoF rigid bodies into this compound's CActorSnle.
   // TODO: We could skip this step if we had a way to go directly from the full-DoF bodies to the
@@ -2619,19 +2717,6 @@ void articulated::compound::EntityAssemble(
             bodyDofOffset.dofsOffset + RigidSize::kDAll <= outCompoundSnle.fullResidual.size());
         outCompoundSnle.fullResidual.MiddleRows(bodyDofOffset.dofsOffset, RigidSize::kDAll) =
             bodySnle.fullResidual;
-      }
-      if (params.assemDRes) {
-        MOCHI_ASSERT(
-            std::holds_alternative<Matrix<real>>(bodySnle.fullDResidual),
-            "Expected dense storage.");
-        auto const& bodyFullDRes = std::get<Matrix<real>>(bodySnle.fullDResidual);
-        MOCHI_ASSERT(
-            bodyFullDRes.Rows() == RigidSize::kDAll && bodyFullDRes.Cols() == RigidSize::kDAll);
-        MOCHI_ASSERT(bodyDofOffset.dofsOffset + RigidSize::kDAll <= outCompoundFullDRes.Rows());
-        // bodyFullDRes should be symmetric, so transpose in order to convert to row-matrix view
-        IndexGroup inds{.src = 0, .dst = bodyDofOffset.dofsOffset, .count = RigidSize::kDAll};
-        auto indsSpan = MakeSingletonConstSpan(inds);
-        MatAddSubBlocks(outCompoundFullDRes, indsSpan, indsSpan, bodyFullDRes.Transpose());
       }
     }
   }
@@ -2653,19 +2738,6 @@ void articulated::compound::EntityAssemble(
           "CCompoundConstraintSnle should have been resized to the number of full DOFs in this articulated compound");
       outCompoundSnle.fullResidual.MiddleRows(constraintOffset, constraintResidual.Rows()) +=
           constraintResidual;
-    }
-    if (params.assemDRes) {
-      MOCHI_ASSERT(constraintFullSnle->dresiduals.size() == 1, "Expected 1 DResidual.");
-      auto const& constraintDResidual = constraintFullSnle->dresiduals[0];
-      MOCHI_ASSERT(
-          constraintDResidual.rowOffset == 0 && constraintDResidual.colOffset == 0,
-          "Expected zero row and col offsets.");
-      MOCHI_ASSERT(
-          GetNumRows(constraintDResidual.matrix) <= GetNumRows(outCompoundSnle.fullDResidual),
-          "CCompoundConstraintSnle should have been resized to the number of full DOFs in this articulated compound");
-      auto constraintFullDRes =
-          std::get<SparseMatrixView<real const>>(AsConstView(constraintDResidual.matrix));
-      outCompoundFullDRes += constraintFullDRes;
     }
   }
 
@@ -2695,17 +2767,11 @@ void articulated::compound::EntityAssemble(
   // Reduced dresidual
   if (params.assemDRes) {
     MOCHI_ASSERT_VERBOSE(gradTarget == GradTarget::Current, "Unexpected grad target");
-
-    // Temporary storage
-    MOCHI_FILO_STACK_ALLOCATOR(tempAllocator, 32 * 1024);
-
-    // Project the Jacobian
-    Matrix<real> DJ(outCompoundFullDRes * jacobian.value, &tempAllocator);
     MOCHI_ASSERT(
         std::holds_alternative<Matrix<real>>(outCompoundSnle.reducedDResidual),
         "Expected dense storage.");
     auto& JtDJ = std::get<Matrix<real>>(outCompoundSnle.reducedDResidual);
-    JtDJ = jacobian.value.Transpose() * DJ;
+    AssembleReducedDResidual(reg, groupMembers.actors, jacobian, constraintFullSnle, JtDJ);
 
     // regularize the jacobian in case we want to do quasi-static optimization
     if (!IsFinite(intState.dtStage)) {

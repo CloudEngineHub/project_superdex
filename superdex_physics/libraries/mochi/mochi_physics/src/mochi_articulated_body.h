@@ -673,7 +673,7 @@ void EntityPostNewIncrement(
 void EntityAssemble(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,
-    ecs::PartialRegistry<CActorSnle const, CDofOffset const> reg,
+    ecs::PartialRegistry<CActorSnle const, CDofOffset const, CArticulatedRigidJacobian const> reg,
     ecs::OptionalTag<TagUseNewtonEulerInertia> useNewtonEulerInertia,
     CArticulatedProps const& props,
     CGroupMembers const& groupMembers,
