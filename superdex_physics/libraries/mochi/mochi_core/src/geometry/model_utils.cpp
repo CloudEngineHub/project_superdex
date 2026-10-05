@@ -1063,17 +1063,8 @@ static void BakeTransformMesh(MeshData& data, VMatrix4x4r const& matrix, Error& 
       error,
       "Coordinates array size must be a multiple of three.");
   MOCHI_ERROR_RETURN(error);
-  auto const matrixT = Transpose4x4(matrix);
   auto const coordinates = Unflatten<Real3>(data.coordinates);
-  // Do not use ArrayTransformPoints_MatT: its batch and tail kernels can round identical
-  // vertices differently depending on their array positions.
-  int constexpr kMinPerTask = 8 * 1024; // Same as ArrayTransformPoints_MatT
-  ParallelForN("BakeTransformMesh", isize(coordinates), kMinPerTask, [&](int i) {
-    auto& coordinate = coordinates[i];
-    auto const point = Load<3, Simd<real, 4>>(&coordinate[0]);
-    auto const transformed = DotVecMat4x4(ToSimdPoint(point), matrixT);
-    Store<3>(&coordinate[0], transformed);
-  });
+  ArrayTransformPoints_MatT(coordinates, MakeConstSpan(coordinates), Transpose4x4(matrix));
 }
 
 static void BakeTransformElementFrameAxes(

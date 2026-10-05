@@ -235,22 +235,27 @@ inline void ArrayTransformPoints_MatT(
     using V = Simd<T>;
     // Benchmarking shows no benefit to larger-than-native batch sizes for both NEON and AVX2.
     int constexpr kBatchSize = Simd<T>::kSize;
+    // Vectorize rotation and translation. Ignore the right column of the matrix.
+    auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
+    auto const trans = Broadcast3<V>(matT[3]); // 3xN
+    auto const transform = [&](NdArray<V, 3> const& pt)
+                               MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt, rotT) + trans; };
     int i = iBegin;
-    if (i + kBatchSize <= iEnd) {
-      // Vectorize rotation and translation. Ignore the right column of the matrix.
-      auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
-      auto const trans = Broadcast3<V>(matT[3]); // 3xN
-      for (; i + kBatchSize <= iEnd; i += kBatchSize) {
-        NdArray<V, 3> pt;
-        LoadTransposed(&src[i][0], pt);
-        auto result = DotVecMat(pt, rotT) + trans;
-        StoreTransposed(&dst[i][0], result);
-      }
+    for (; i + kBatchSize <= iEnd; i += kBatchSize) {
+      NdArray<V, 3> pt;
+      LoadTransposed(&src[i][0], pt);
+      auto const result = transform(pt);
+      StoreTransposed(&dst[i][0], result);
     }
-    for (; i < iEnd; ++i) {
-      auto pt = Load<3, Simd<T, 4>>(&src[i][0]);
-      auto result = DotVecMat4x4(ToSimdPoint(pt), matT);
-      Store<3>(&dst[i][0], result);
+    // Pad the tail to a full batch, so every point's result is independent of its index.
+    if (i < iEnd) {
+      alignas(V) NdArray<T, 3> buf[kBatchSize] = {};
+      std::copy_n(&src[i], iEnd - i, buf);
+      NdArray<V, 3> pt;
+      LoadTransposed(&buf[0][0], pt);
+      auto const result = transform(pt);
+      StoreTransposed(&buf[0][0], result);
+      std::copy_n(buf, iEnd - i, &dst[i]);
     }
   };
   if constexpr (kSingleThreaded) {
@@ -292,24 +297,32 @@ inline void ArrayTransformDisplacements_MatT(
     using V = Simd<T>;
     // Benchmarking shows no benefit to larger-than-native batch sizes for both NEON and AVX2.
     int constexpr kBatchSize = Simd<T>::kSize;
+    // Vectorize rotation and translation. Ignore the right column of the matrix.
+    auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
+    auto const trans = Broadcast3<V>(matT[3]); // 3xN
+    auto const transform =
+        [&](NdArray<V, 3> const& pt, NdArray<V, 3> const& ref)
+            MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt + ref, rotT) + trans - ref; };
     int i = iBegin;
-    if (i + kBatchSize <= iEnd) {
-      // Vectorize rotation and translation. Ignore the right column of the matrix.
-      auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
-      auto const trans = Broadcast3<V>(matT[3]); // 3xN
-      for (; i + kBatchSize <= iEnd; i += kBatchSize) {
-        NdArray<V, 3> ref, pt;
-        LoadTransposed(&refCoords[i][0], ref);
-        LoadTransposed(&srcDisplacements[i][0], pt);
-        auto result = DotVecMat(pt + ref, rotT) + trans - ref;
-        StoreTransposed(&dstDisplacements[i][0], result);
-      }
+    for (; i + kBatchSize <= iEnd; i += kBatchSize) {
+      NdArray<V, 3> ref, pt;
+      LoadTransposed(&refCoords[i][0], ref);
+      LoadTransposed(&srcDisplacements[i][0], pt);
+      auto const result = transform(pt, ref);
+      StoreTransposed(&dstDisplacements[i][0], result);
     }
-    for (; i < iEnd; ++i) {
-      auto ref = Load<3, Simd<T, 4>>(refCoords[i].data());
-      auto pt = Load<3, Simd<T, 4>>(srcDisplacements[i].data());
-      pt = DotVecMat4x4(ToSimdPoint(pt + ref), matT) - ref;
-      Store<3>(dstDisplacements[i].data(), pt);
+    // Pad the tail to a full batch, so every point's result is independent of its index.
+    if (i < iEnd) {
+      alignas(V) NdArray<T, 3> refBuf[kBatchSize] = {};
+      alignas(V) NdArray<T, 3> buf[kBatchSize] = {};
+      std::copy_n(&refCoords[i], iEnd - i, refBuf);
+      std::copy_n(&srcDisplacements[i], iEnd - i, buf);
+      NdArray<V, 3> ref, pt;
+      LoadTransposed(&refBuf[0][0], ref);
+      LoadTransposed(&buf[0][0], pt);
+      auto const result = transform(pt, ref);
+      StoreTransposed(&buf[0][0], result);
+      std::copy_n(buf, iEnd - i, &dstDisplacements[i]);
     }
   };
   if constexpr (kSingleThreaded) {
@@ -375,21 +388,26 @@ void ArrayRotateVectors_MatT(
     using V = Simd<T>;
     // Benchmarking shows no benefit to larger-than-native batch sizes for both NEON and AVX2.
     int constexpr kBatchSize = Simd<T>::kSize;
+    // Vectorize rotation. Ignore the right column of the matrix.
+    auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
+    auto const rotate = [&](NdArray<V, 3> const& pt)
+                            MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt, rotT); };
     int i = iBegin;
-    if (i + kBatchSize <= iEnd) {
-      // Vectorize rotation. Ignore the right column of the matrix.
-      auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
-      for (; i + kBatchSize <= iEnd; i += kBatchSize) {
-        NdArray<V, 3> pt;
-        LoadTransposed(&src[i][0], pt);
-        auto result = DotVecMat(pt, rotT);
-        StoreTransposed(&dst[i][0], result);
-      }
+    for (; i + kBatchSize <= iEnd; i += kBatchSize) {
+      NdArray<V, 3> pt;
+      LoadTransposed(&src[i][0], pt);
+      auto const result = rotate(pt);
+      StoreTransposed(&dst[i][0], result);
     }
-    for (; i < iEnd; ++i) {
-      auto pt = Load<3, Simd<T, 4>>(&src[i][0]);
-      auto result = DotVecMat3x3(pt, matT);
-      Store<3>(&dst[i][0], result);
+    // Pad the tail to a full batch, so every point's result is independent of its index.
+    if (i < iEnd) {
+      alignas(V) NdArray<T, 3> buf[kBatchSize] = {};
+      std::copy_n(&src[i], iEnd - i, buf);
+      NdArray<V, 3> pt;
+      LoadTransposed(&buf[0][0], pt);
+      auto const result = rotate(pt);
+      StoreTransposed(&buf[0][0], result);
+      std::copy_n(buf, iEnd - i, &dst[i]);
     }
   };
   if constexpr (kSingleThreaded) {
