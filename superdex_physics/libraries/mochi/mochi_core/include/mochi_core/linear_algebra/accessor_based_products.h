@@ -159,6 +159,7 @@ MOCHI_ANY void DirectProductSimdAlongM(
   //--- such as scalar type, register size and cache line size. 32 rows per batch is empirically
   //--- optimal (or near-optimal) for single-precision arithmetic on several x86-64 and ARM
   //--- architectures.
+  // TODO: Make MSVC keep 32-row double batches in registers without slowing other compilers.
   constexpr int kRowsPerBatch = 32;
   int r = 0;
   if constexpr (mATC == krylov::kDynamic || mATC >= kRowsPerBatch) {
