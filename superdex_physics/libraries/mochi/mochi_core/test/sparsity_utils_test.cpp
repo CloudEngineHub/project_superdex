@@ -417,22 +417,6 @@ TEST(SparsityUtils, MakeSparseMatrixFromL2G) {
   EXPECT_EQ(MakeSpan(zeros), spmat.Values());
 }
 
-TEST(SparsityUtils, AppendNonZeroCoordinates) {
-  // |xx |
-  // |xxx|
-  // |x x|
-  auto graph = Graph<int, int>{{0, 2, 5, 7}, {0, 1, 0, 1, 2, 0, 2}};
-  std::vector<Int2> coords;
-  coords.emplace_back(123, 456);
-  int dofOffset = 10;
-  AppendNonZeroCoordinates(coords, graph, dofOffset);
-  EXPECT_TRUE(
-      test::EqualSpan(
-          std::vector<Int2>{
-              {123, 456}, {10, 10}, {10, 11}, {11, 10}, {11, 11}, {11, 12}, {12, 10}, {12, 12}},
-          coords));
-}
-
 TEST(SparsityUtils, SetZeroOnRowsCols_SparseMatrix) {
   // |11 |
   // |111|

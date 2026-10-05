@@ -51,8 +51,9 @@ struct BaseSnle : NoCopy {
 /**
  * @brief Class storing the objective, residual and dresidual of an actor.
  * @details It stores both full and reduced representations of the residual and dresidual. The
- * reduced representation is optional. Query UseReduced() to check whether the reduced or full
- * representation should be used in the nonlinear solver.
+ * reduced representation is optional. An actor that assembles its reduced dresidual directly may
+ * leave the full dresidual empty as long as it stays reduced. Query UseReduced() to check whether
+ * the reduced or full representation should be used in the nonlinear solver.
  */
 struct ActorSnle : BaseSnle {
   ActorSnle(
@@ -67,19 +68,15 @@ struct ActorSnle : BaseSnle {
   }
 
   ActorSnle(
-      AnyMatrix<real>&& fullDRes,
       AnyMatrix<real>&& reducedDRes,
-      std::optional<PreconditionerType> fullPreconditionerType = std::nullopt,
+      int fullSize,
       std::optional<PreconditionerType> reducedPreconditionerType = std::nullopt)
-      : fullResidual(GetNumRows(fullDRes)),
-        fullDResidual(std::move(fullDRes)),
-        fullPreconditionerType(fullPreconditionerType),
+      : fullResidual(fullSize),
         reducedResidual(GetNumRows(reducedDRes)),
         reducedDResidual(std::move(reducedDRes)),
         reducedPreconditionerType(reducedPreconditionerType),
         _useReduced(true) {
     fullResidual.SetZero();
-    mochi::SetZero(fullDResidual);
     reducedResidual.SetZero();
     mochi::SetZero(reducedDResidual);
   }

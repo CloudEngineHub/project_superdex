@@ -163,13 +163,6 @@ SparseMatrix<T, int, int> MakeSparseMatrix(Local2GlobalMap const& map) {
   return SparseMatrix<T, int, int>{numCols, std::move(sparsity)};
 }
 
-// Enumerate the non-zero coordinates in an existing sparsity pattern, and append them to an output
-// vector. Does NOT clear the output vector.
-void AppendNonZeroCoordinates(
-    std::vector<Int2>& outCoordinates,
-    Graph<int, int> const& sparsity,
-    int dofOffset = 0);
-
 // Set the values on the specified rows of a matrix to zero, except for the diagonal, which will be
 // set the specified value (usually 1). The rowOffset is added to each of the rowIndices and may be
 // negative. The matrix may be smaller than 'rowIndices[i] + rowOffset', e.g. interaction matrices

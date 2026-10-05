@@ -316,22 +316,6 @@ Graph<int, int> mochi::MakeDenseSparsityGraph(int rows, int cols) {
   return Graph<int, int>{std::move(pointers), std::move(indices)};
 }
 
-void mochi::AppendNonZeroCoordinates(
-    std::vector<Int2>& outCoordinates,
-    Graph<int, int> const& sparsity,
-    int dofOffset) {
-  outCoordinates.reserve(outCoordinates.size() + sparsity.NumTargets());
-  auto pointers = sparsity.GetPointers();
-  auto indices = sparsity.GetTargets();
-  for (int r = 0; r < sparsity.size(); ++r) {
-    int rowLen = pointers[r + 1] - pointers[r];
-    for (int i = 0; i < rowLen; ++i) {
-      int c = indices[pointers[r] + i];
-      outCoordinates.emplace_back(r + dofOffset, c + dofOffset);
-    }
-  }
-}
-
 void mochi::SetZeroOnRows(
     SparseMatrixView<real> mat,
     Span<int const> rowIndices,

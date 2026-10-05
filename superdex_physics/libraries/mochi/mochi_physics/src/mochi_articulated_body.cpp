@@ -1417,65 +1417,6 @@ template void articulated::compound::UpdateBounds<TimeStep::StageStart>(
     CFinalDisplacementRef<TimeStep::StageStart> const&,
     CBoundingVolume&);
 
-static void InitFullSparsityPattern(
-    entt::registry const& reg,
-    entt::entity compound,
-    CFullSparsityPattern& outFullSparsity,
-    CCompoundConstraintSnle* outConstraintSnle) {
-  MOCHI_PROFILE_SCOPE();
-  MOCHI_ASSERT(reg.all_of<TagCompoundActor>(compound));
-  auto const& members = reg.get<CGroupMembers const>(compound);
-
-  // Find the non-zero coordinates from actors
-  std::vector<NdArray<int, 2>> totalEntries;
-  totalEntries.reserve(4096); // Reduce re-allocation
-  for (entt::entity a : members.actors) {
-    int actorDofOffset = reg.get<CDofOffset const>(a).dofsOffset;
-    if (auto const* reducedSparsity = reg.try_get<CReducedSparsityPattern const>(a)) {
-      AppendNonZeroCoordinates(totalEntries, reducedSparsity->graph, actorDofOffset);
-    } else {
-      auto const& fullSparsity = reg.get<CFullSparsityPattern const>(a);
-      AppendNonZeroCoordinates(totalEntries, fullSparsity.graph, actorDofOffset);
-    }
-  }
-
-  // Add the non-zero coordinates from constraints and update CCompoundConstraintSnle
-  if (!members.constraints.empty()) {
-    MOCHI_ASSERT(
-        outConstraintSnle != nullptr,
-        "A compound with constraints should have CCompoundConstraintSnle");
-
-    std::vector<NdArray<int, 2>> constraintEntries;
-    constraintEntries.reserve(512); // Reduce reallocation
-    for (entt::entity c : members.constraints) {
-      auto const& globalResIndices = reg.get<CConstraintGlobalSparsityCache const>(c).resIndices;
-      int const numGlobalDofs = isize(globalResIndices);
-      constraintEntries.reserve(constraintEntries.size() + Sqr(numGlobalDofs));
-      for (int d0 = 0; d0 < numGlobalDofs; ++d0) {
-        for (int d1 = 0; d1 < numGlobalDofs; ++d1) {
-          constraintEntries.emplace_back(globalResIndices[d0], globalResIndices[d1]);
-        }
-      }
-    }
-
-    Append(totalEntries, constraintEntries);
-
-    auto constraintSparsity = MakeSparsityGraph(std::move(constraintEntries));
-    outConstraintSnle->residuals.clear();
-    outConstraintSnle->dresiduals.clear();
-    outConstraintSnle->residuals.emplace_back(
-        /*offset*/ 0, ColumnVector<real>::Zero(isize(constraintSparsity)));
-    outConstraintSnle->dresiduals.emplace_back(
-        /*rowOffset*/ 0,
-        /*colOffset*/ 0,
-        SparseMatrix<real>{std::move(constraintSparsity)},
-        /*symmetricPair*/ std::nullopt);
-  }
-
-  // Store the compound's global sparsity
-  outFullSparsity.graph = MakeSparsityGraph(std::move(totalEntries));
-}
-
 static void InitSkinMesh(
     entt::registry& reg,
     entt::entity e,
@@ -1527,10 +1468,6 @@ void mochi::articulated::compound::InitFullDofProblem(entt::registry& reg, entt:
     fullConstraintSnle->useInSolver = false;
   }
 
-  // Initialize the full sparsity pattern
-  auto& fullSparsity = reg.emplace_or_replace<CFullSparsityPattern>(e);
-  InitFullSparsityPattern(reg, e, fullSparsity, fullConstraintSnle);
-
   // A compound with zero reduced dofs (e.g. an all-Hard/weld skeleton) has nothing to solve. Skip
   // the SNLE machinery entirely instead of running it as a chain of no-ops on a 0x0 problem.
   int const reducedSize = reg.get<CActorDofInfo const>(e).dofsSize;
@@ -1542,7 +1479,9 @@ void mochi::articulated::compound::InitFullDofProblem(entt::registry& reg, entt:
 
   // Storage for assembly of the compound's SNLE problem.
   reg.emplace_or_replace<CActorSnle>(
-      e, SparseMatrix<real>{fullSparsity.graph}, Matrix<real>::Zero(reducedSize, reducedSize));
+      e,
+      Matrix<real>::Zero(reducedSize, reducedSize),
+      isize(groupMembers.actors) * RigidSize::kDAll);
 
   // Non-linear solver convergence weights (lazily initialized). Preserved across re-invocations of
   // InitFullDofProblem. Nothing this function does invalidates the convergence weights.
@@ -1711,11 +1650,6 @@ void mochi::articulated::compound::InitArticulatedBodyActor(
 
   // Initialize data related to the full DoF problem
   InitFullDofProblem(reg, e);
-
-  // The articulated compound outputs a reduced space residual and dresidual, which has different
-  // dimensions from the full space ones. Create a new sparsity pattern based on the reduced space
-  // dofs and overwrite compound-level sparsity pattern
-  reg.emplace<CReducedSparsityPattern>(e, MakeDenseSparsityGraph(reducedDofsDim, reducedDofsDim));
 
   // Create vector of internal rigid actors' handles
   SceneHandle sceneHandle = reg.ctx<CSceneHandle const>().value;
@@ -2697,9 +2631,7 @@ void articulated::compound::EntityAssemble(
     }
   }
 
-  // The full-DoF dresidual is unused: the links' dresiduals are projected directly.
-  outCompoundSnle.SetFullToZero(
-      {.assemObj = params.assemObj, .assemRes = params.assemRes, .assemDRes = false});
+  outCompoundSnle.SetFullToZero(params);
 
   // First, assemble the full-DoF rigid bodies into this compound's CActorSnle.
   // TODO: We could skip this step if we had a way to go directly from the full-DoF bodies to the
