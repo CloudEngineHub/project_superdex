@@ -87,7 +87,8 @@ template <class T, int N>
   auto const ia = ReinterpretCast<IVec>(a);
   auto const zero = IVec{};
   auto const ones = ~zero;
-  return AllTrue(VEqual(ia, zero) | VEqual(ia, ones));
+  // The free AllTrue asserts IsValidLogicalMask, so calling it here would recurse.
+  return IVec::template AllTrue<N>(VEqual(ia, zero) | VEqual(ia, ones));
 }
 } // namespace details
 
@@ -779,12 +780,24 @@ MOCHI_ANY MOCHI_FORCE_INLINE V VNearZero(V a, V epsilon) {
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE bool AllTrue(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT; // -1 means "all"
+  // IsValidLogicalMask needs 4- or 8-byte lanes, so Simd<Half, N> masks go unchecked.
+  if constexpr (sizeof(T) == sizeof(int) || sizeof(T) == sizeof(int64_t)) {
+    MOCHI_ASSERT_VERBOSE(
+        mochi::details::IsValidLogicalMask(a),
+        "Not a valid logical mask. Each lane must be all-bits-0 or all-bits-1.");
+  }
   return Simd<T, N>::template AllTrue<COUNT_>(a);
 }
 
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE bool AnyTrue(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT; // -1 means "all"
+  // IsValidLogicalMask needs 4- or 8-byte lanes, so Simd<Half, N> masks go unchecked.
+  if constexpr (sizeof(T) == sizeof(int) || sizeof(T) == sizeof(int64_t)) {
+    MOCHI_ASSERT_VERBOSE(
+        mochi::details::IsValidLogicalMask(a),
+        "Not a valid logical mask. Each lane must be all-bits-0 or all-bits-1.");
+  }
   return Simd<T, N>::template AnyTrue<COUNT_>(a);
 }
 

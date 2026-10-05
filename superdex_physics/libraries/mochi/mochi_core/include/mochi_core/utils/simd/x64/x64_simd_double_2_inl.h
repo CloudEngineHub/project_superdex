@@ -74,23 +74,15 @@ class Simd<double, 2> {
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE bool AllTrue(Simd v) {
     static_assert(N >= 1 && N <= kSize, "Unsupported N");
-    auto mask = GetMSBitMask(v); // One bit for each byte in the vector
-    if constexpr (N == kSize) {
-      return mask == 0x0000FFFF;
-    } else {
-      return (mask & 0x000000FF) == 0x000000FF;
-    }
+    int constexpr kLanes = (1 << N) - 1;
+    return (ToMask(v) & kLanes) == kLanes;
   }
 
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE bool AnyTrue(Simd v) {
     static_assert(N >= 1 && N <= kSize, "Unsupported N");
-    int mask = GetMSBitMask(v); // One bit for each byte in the vector
-    if constexpr (N == kSize) {
-      return mask != 0;
-    } else {
-      return (mask & 0x000000FF) != 0;
-    }
+    int constexpr kLanes = (1 << N) - 1;
+    return (ToMask(v) & kLanes) != 0;
   }
 
   template <int x, int y>
@@ -196,7 +188,7 @@ class Simd<double, 2> {
   }
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {
-    auto mask = _mm_movemask_pd(condition.raw);
+    auto mask = ToMask(condition);
     auto swapped = _mm_shuffle_pd(values.raw, values.raw, 1); // swap halves
     auto blendMask =
         _mm_castsi128_pd(_mm_set1_epi32((mask & 1) - 1)); // swap first bit of mask is zero
@@ -405,13 +397,11 @@ class Simd<double, 2> {
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator==(Simd rhs) const {
-    auto mask = GetMSBitMask(Equal(raw, rhs.raw));
-    return mask == 0xFFFF; // All values equal
+    return ToMask(Equal(*this, rhs)) == 0x3; // All values equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator!=(Simd rhs) const {
-    auto mask = GetMSBitMask(NotEqual(raw, rhs.raw));
-    return mask != 0; // Any values not equal
+    return ToMask(NotEqual(*this, rhs)) != 0; // Any values not equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator~() const {
@@ -454,9 +444,9 @@ class Simd<double, 2> {
   }
 
  private:
-  // Integer mask with with the most significant bit of each byte in the vector
-  [[nodiscard]] static MOCHI_FORCE_INLINE int GetMSBitMask(Simd a) {
-    return _mm_movemask_epi8(_mm_castpd_si128(a.raw)); // SSE2, SSE2
+  // One bit per lane, from the lane's sign bit.
+  [[nodiscard]] static MOCHI_FORCE_INLINE int ToMask(Simd a) {
+    return _mm_movemask_pd(a.raw); // SSE2
   }
 };
 

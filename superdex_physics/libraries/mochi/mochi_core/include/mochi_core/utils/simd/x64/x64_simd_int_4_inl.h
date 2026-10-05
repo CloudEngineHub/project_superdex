@@ -111,27 +111,15 @@ class Simd<int, 4> {
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE bool AllTrue(Simd v) {
     static_assert(N >= 1 && N <= kSize, "Unsupported N");
-    int mask = GetMSBitMask(v); // One bit for each byte in the vector
-    if constexpr (N == kSize) {
-      return mask == 0x0000FFFF;
-    } else {
-      int constexpr kNumBits = N * sizeof(Scalar);
-      auto constexpr kMustBeSet = (1UL << kNumBits) - 1;
-      return (mask & kMustBeSet) == kMustBeSet;
-    }
+    int constexpr kLanes = (1 << N) - 1;
+    return (ToMask(v) & kLanes) == kLanes;
   }
 
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE bool AnyTrue(Simd v) {
     static_assert(N >= 1 && N <= kSize, "Unsupported N");
-    int mask = GetMSBitMask(v); // One bit for each byte in the vector
-    if constexpr (N == kSize) {
-      return mask != 0;
-    } else {
-      int constexpr kNumBits = N * sizeof(Scalar);
-      auto constexpr kMayBeSet = (1UL << kNumBits) - 1;
-      return (mask & kMayBeSet) != 0;
-    }
+    int constexpr kLanes = (1 << N) - 1;
+    return (ToMask(v) & kLanes) != 0;
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Broadcast(Scalar const* p) {
@@ -298,7 +286,7 @@ class Simd<int, 4> {
   }
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {
-    auto mask = _mm_movemask_ps(_mm_castsi128_ps(condition.raw));
+    auto mask = ToMask(condition);
     // Load the shuffle pattern from a lookup table.
     auto const* tableRow =
         reinterpret_cast<__m128i const*>(x64_simd::kStoreSelectedShuffleTableS4[mask]);
@@ -359,13 +347,11 @@ class Simd<int, 4> {
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator==(Simd rhs) const {
-    auto mask = GetMSBitMask(Equal(*this, rhs));
-    return mask == 0xFFFF; // All values equal
+    return ToMask(Equal(*this, rhs)) == 0xF; // All values equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator!=(Simd rhs) const {
-    auto mask = GetMSBitMask(NotEqual(*this, rhs));
-    return mask != 0; // Any values not equal
+    return ToMask(NotEqual(*this, rhs)) != 0; // Any values not equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator~() const {
@@ -426,9 +412,9 @@ class Simd<int, 4> {
   }
 
  private:
-  // Integer mask with the most significant bit of each byte in the vector
-  [[nodiscard]] static MOCHI_FORCE_INLINE int GetMSBitMask(Simd a) {
-    return _mm_movemask_epi8(a.raw); // SSE2
+  // One bit per lane, from the lane's sign bit.
+  [[nodiscard]] static MOCHI_FORCE_INLINE int ToMask(Simd a) {
+    return _mm_movemask_ps(_mm_castsi128_ps(a.raw)); // SSE, SSE2
   }
 };
 

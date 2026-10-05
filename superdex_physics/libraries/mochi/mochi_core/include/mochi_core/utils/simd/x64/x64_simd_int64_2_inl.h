@@ -54,12 +54,8 @@ class Simd<int64_t, 2> {
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE bool AllTrue(Simd v) {
     static_assert(N >= 1 && N <= kSize, "Unsupported N");
-    auto mask = GetMSBitMask(v); // One bit for each byte in the vector
-    if constexpr (N == kSize) {
-      return mask == 0x0000FFFF;
-    } else {
-      return (mask & 0x000000FF) == 0x000000FF;
-    }
+    int constexpr kLanes = (1 << N) - 1;
+    return (ToMask(v) & kLanes) == kLanes;
   }
 
   template <int x, int y>
@@ -202,11 +198,11 @@ class Simd<int64_t, 2> {
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {
 #if MOCHI_ARCH_X64_AVX512
-    auto const mask = _mm_movepi64_mask(condition.raw);
+    auto const mask = static_cast<__mmask8>(ToMask(condition));
     _mm_mask_compressstoreu_epi64(ptr, mask, values.raw); // AVX512VL
     return _mm_popcnt_u32(mask);
 #else
-    auto mask = _mm_movemask_pd(_mm_castsi128_pd(condition.raw));
+    auto mask = ToMask(condition);
     auto swapped = _mm_castpd_si128(_mm_shuffle_pd(
         _mm_castsi128_pd(values.raw), _mm_castsi128_pd(values.raw), 1)); // swap halves
     auto blendMask = _mm_set1_epi32((mask & 1) - 1); // swap first bit of mask is zero
@@ -263,13 +259,11 @@ class Simd<int64_t, 2> {
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator==(Simd rhs) const {
-    auto mask = GetMSBitMask(Equal(*this, rhs));
-    return mask == 0xFFFF; // All values equal
+    return ToMask(Equal(*this, rhs)) == 0x3; // All values equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator!=(Simd rhs) const {
-    auto mask = GetMSBitMask(NotEqual(*this, rhs));
-    return mask != 0; // Any values not equal
+    return ToMask(NotEqual(*this, rhs)) != 0; // Any values not equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator~() const {
@@ -340,9 +334,13 @@ class Simd<int64_t, 2> {
   }
 
  private:
-  // Integer mask with the most significant bit of each byte in the vector
-  [[nodiscard]] static MOCHI_FORCE_INLINE int GetMSBitMask(Simd a) {
-    return _mm_movemask_epi8(a.raw); // SSE2
+  // One bit per lane, from the lane's sign bit.
+  [[nodiscard]] static MOCHI_FORCE_INLINE int ToMask(Simd a) {
+#if MOCHI_ARCH_X64_AVX512
+    return _mm_movepi64_mask(a.raw); // AVX512DQ, AVX512VL
+#else
+    return _mm_movemask_pd(_mm_castsi128_pd(a.raw)); // SSE2, SSE2
+#endif
   }
 };
 

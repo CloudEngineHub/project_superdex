@@ -64,14 +64,8 @@ class Simd<int64_t, 4> {
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE bool AllTrue(Simd v) {
     static_assert(N >= 1 && N <= kSize, "Unsupported N");
-    int mask = GetMSBitMask(v); // One bit for each byte in the vector
-    if constexpr (N == kSize) {
-      return mask == 0xFFFFFFFF;
-    } else {
-      int constexpr kNumBits = N * sizeof(Scalar);
-      auto constexpr kMustBeSet = (1UL << kNumBits) - 1;
-      return (mask & kMustBeSet) == kMustBeSet;
-    }
+    int constexpr kLanes = (1 << N) - 1;
+    return (ToMask(v) & kLanes) == kLanes;
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Broadcast(Scalar const* p) {
@@ -262,11 +256,11 @@ class Simd<int64_t, 4> {
 
   MOCHI_FORCE_INLINE static int StoreSelected(Scalar* ptr, Simd condition, Simd values) {
 #if MOCHI_ARCH_X64_AVX512
-    auto const mask = _mm256_movepi64_mask(condition.raw);
+    auto const mask = static_cast<__mmask8>(ToMask(condition));
     _mm256_mask_compressstoreu_epi64(ptr, mask, values.raw); // AVX512VL
     return _mm_popcnt_u32(mask);
 #else
-    auto mask = _mm256_movemask_pd(_mm256_castsi256_pd(condition.raw));
+    auto mask = ToMask(condition);
     // Load 8 bytes from the table, then zero-exend to get the shuffle pattern.
     auto const* tableRow =
         reinterpret_cast<__m128i const*>(x64_simd::kStoreSelectedShuffleTableD4[mask]);
@@ -333,13 +327,11 @@ class Simd<int64_t, 4> {
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator==(Simd rhs) const {
-    auto mask = GetMSBitMask(Equal(*this, rhs));
-    return mask == 0xFFFFFFFF; // All values equal
+    return ToMask(Equal(*this, rhs)) == 0xF; // All values equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator!=(Simd rhs) const {
-    auto mask = GetMSBitMask(NotEqual(*this, rhs));
-    return mask != 0; // Any values not equal
+    return ToMask(NotEqual(*this, rhs)) != 0; // Any values not equal
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE Simd operator~() const {
@@ -418,9 +410,13 @@ class Simd<int64_t, 4> {
   }
 
  private:
-  // Integer mask with the most significant bit of each byte in the vector
-  [[nodiscard]] static MOCHI_FORCE_INLINE int GetMSBitMask(Simd a) {
-    return _mm256_movemask_epi8(a.raw); // AVX2
+  // One bit per lane, from the lane's sign bit.
+  [[nodiscard]] static MOCHI_FORCE_INLINE int ToMask(Simd a) {
+#if MOCHI_ARCH_X64_AVX512
+    return _mm256_movepi64_mask(a.raw); // AVX512DQ, AVX512VL
+#else
+    return _mm256_movemask_pd(_mm256_castsi256_pd(a.raw)); // AVX, AVX
+#endif
   }
 };
 
