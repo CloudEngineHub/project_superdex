@@ -201,7 +201,8 @@ struct ModelData {
    *
    * @details For triangular and tetrahedral primary meshes, the skinning data is a node-based
    * linear embedding whose indices reference primary-mesh nodes. For polylines, the indices
-   * reference primary-mesh elements and define the rod's element-based embedding.
+   * reference primary-mesh elements and define the rod's element-based embedding. Every
+   * contact-skin node must be referenced by at least one triangle.
    */
   std::optional<MeshData> contactSkinMesh;
   std::optional<DynamicArray<BlendingData>> blending;

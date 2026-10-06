@@ -1329,7 +1329,6 @@ class MochiRodSurfaceMeshes : public test::MochiSceneTestBase {
   ShapeHandle CreateRodShapeWithContactSkin(
       bool includeVisualMesh = true,
       bool isClosedLoop = false,
-      bool includeUnreferencedNode = false,
       bool includeContactSkinning = true) {
     ModelData model = CreateRodModelWithVisualMesh(isClosedLoop);
     model.contactSkinMesh.emplace();
@@ -1348,9 +1347,6 @@ class MochiRodSurfaceMeshes : public test::MochiSceneTestBase {
     for (int i = 0; i < _weightsPerNode; ++i) {
       model.contactSkinMesh->skinning->indices.push_back(_elementIndices[i]);
       model.contactSkinMesh->skinning->weights.push_back(_weights[i]);
-    }
-    if (includeUnreferencedNode) {
-      model.contactSkinMesh->connectivity = DynamicArray<int>{0, 2, 3};
     }
     if (!includeContactSkinning) {
       model.contactSkinMesh->skinning.reset();
@@ -1881,17 +1877,14 @@ TEST_F(MochiRodSurfaceMeshes, CenterlineContact_WhenContactSkinIsNotRequested) {
   EXPECT_EQ(4, actor->GetSurfaceMesh().GetNumNodes());
 }
 
-TEST_F(MochiRodSurfaceMeshes, ContactSkinSurfaceQueriesUseCompactActiveNodeOrdering) {
-  ShapeHandle const shape = CreateRodShapeWithContactSkin(
-      /*includeVisualMesh=*/false,
-      /*isClosedLoop=*/false,
-      /*includeUnreferencedNode=*/true);
+TEST_F(MochiRodSurfaceMeshes, ContactSkinSurfaceQueries) {
+  ShapeHandle const shape = CreateRodShapeWithContactSkin(/*includeVisualMesh=*/false);
   Actor* const actor = CreateTestRodActor(shape);
 
   MeshDataView const surfaceMesh = actor->GetSurfaceMesh();
-  ASSERT_EQ(3, surfaceMesh.GetNumNodes());
-  ASSERT_EQ(1, surfaceMesh.GetNumElements());
-  constexpr std::array kExpectedConnectivity = {0, 1, 2};
+  ASSERT_EQ(4, surfaceMesh.GetNumNodes());
+  ASSERT_EQ(2, surfaceMesh.GetNumElements());
+  constexpr std::array kExpectedConnectivity = {0, 1, 2, 0, 2, 3};
   EXPECT_SPAN_EQ(MakeConstSpan(kExpectedConnectivity), surfaceMesh.connectivity);
 
   actor->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, test::ExpectOK{});
@@ -2066,7 +2059,6 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_UnskinnedContactSkinFails) {
   ShapeHandle shape = CreateRodShapeWithContactSkin(
       /*includeVisualMesh=*/true,
       /*isClosedLoop=*/false,
-      /*includeUnreferencedNode=*/false,
       /*includeContactSkinning=*/false);
   RodActorParams params = GetRodActorParams(shape);
   params.useContactSkin = true;

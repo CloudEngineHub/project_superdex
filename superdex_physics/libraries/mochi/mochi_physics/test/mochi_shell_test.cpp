@@ -943,13 +943,12 @@ class MochiShellContactSkinTest : public test::MochiSceneTestBase {
       Int3{1, 2, 4},
       Int3{2, 3, 4},
       Int3{3, 0, 4}};
-  static constexpr std::array<Real3, 4> kSkinNodes = {
-      Real3{0.25_r, 0.55_r, 0_r},
+  static constexpr std::array<Real3, 3> kSkinNodes = {
       Real3{0.5_r, 0_r, 0_r},
       Real3{1_r, 0.25_r, 0_r},
       Real3{0.5_r, 1_r, 0_r},
   };
-  static constexpr std::array<Int3, 1> kSkinTriangles = {Int3{1, 2, 3}};
+  static constexpr std::array<Int3, 1> kSkinTriangles = {Int3{0, 1, 2}};
 
   ShapeHandle CreateShape(
       bool includeContactSkin = true,
@@ -966,7 +965,7 @@ class MochiShellContactSkinTest : public test::MochiSceneTestBase {
       model.contactSkinMesh->nodesPerElement = 3;
       auto skinNodes = kSkinNodes;
       if (extrapolateContactSkin) {
-        skinNodes[1][0] = 2_r;
+        skinNodes[0][0] = 2_r;
       }
       model.contactSkinMesh->coordinates = DynamicArray<real>{Flatten(MakeConstSpan(skinNodes))};
       model.contactSkinMesh->connectivity =
@@ -974,12 +973,8 @@ class MochiShellContactSkinTest : public test::MochiSceneTestBase {
       if (includeEmbedding) {
         model.contactSkinMesh->skinning.emplace();
         model.contactSkinMesh->skinning->weightsPerNode = 3;
-        model.contactSkinMesh->skinning->indices =
-            DynamicArray<int>{0, 3, 4, 0, 0, 1, 1, 1, 2, 2, 3, 3};
+        model.contactSkinMesh->skinning->indices = DynamicArray<int>{0, 0, 1, 1, 1, 2, 2, 3, 3};
         model.contactSkinMesh->skinning->weights = DynamicArray<real>{
-            0.2_r,
-            0.3_r,
-            0.5_r,
             extrapolateContactSkin ? -0.5_r : 0.25_r,
             extrapolateContactSkin ? -0.5_r : 0.25_r,
             extrapolateContactSkin ? 2_r : 0.5_r,
@@ -1035,7 +1030,7 @@ TEST_F(MochiShellContactSkinTest, AuthoredSkinIsExposedIndependentlyOfContactSel
   EXPECT_NE(nullptr, reg.get<CSurfaceMesh const>(entity).embedding);
 }
 
-TEST_F(MochiShellContactSkinTest, SurfaceQueriesFollowEmbeddingInCompactNodeOrder) {
+TEST_F(MochiShellContactSkinTest, SurfaceQueriesFollowEmbedding) {
   Actor* const actor = CreateActor(CreateShape());
   auto& reg = GetRegistry();
   entt::entity const entity = GetEntity(actor);

@@ -2633,7 +2633,7 @@ TEST_P(MochiContextTest, GetShapeSurfaceMesh_TriMeshOmitsUnreferencedNodes) {
   EXPECT_SPAN_EQ(MakeConstSpan(kExpectedSkinningWeights), surfaceView.skinning->weights);
 }
 
-TEST_P(MochiContextTest, GetShapeSurfaceMesh_PolylineReturnsContactSkin) {
+TEST_P(MochiContextTest, GetShapeContactSkinMesh_Polyline) {
   ModelData model;
   model.mesh.emplace();
   model.mesh->nodesPerElement = 2;
@@ -2642,31 +2642,18 @@ TEST_P(MochiContextTest, GetShapeSurfaceMesh_PolylineReturnsContactSkin) {
   model.elementFrameAxes = DynamicArray<real>{0_r, 1_r, 0_r};
   model.contactSkinMesh.emplace();
   model.contactSkinMesh->nodesPerElement = 3;
-  model.contactSkinMesh->coordinates = {
-      10_r, 10_r, 10_r, 0.5_r, 0_r, 0_r, 0.5_r, 0.1_r, 0_r, 0.5_r, 0_r, 0.1_r};
-  model.contactSkinMesh->connectivity = {1, 2, 3};
+  model.contactSkinMesh->coordinates = {0.5_r, 0_r, 0_r, 0.5_r, 0.1_r, 0_r, 0.5_r, 0_r, 0.1_r};
+  model.contactSkinMesh->connectivity = {0, 1, 2};
   model.contactSkinMesh->skinning.emplace();
   model.contactSkinMesh->skinning->weightsPerNode = 1;
-  model.contactSkinMesh->skinning->indices = {0, 0, 0, 0};
-  model.contactSkinMesh->skinning->weights = {1_r, 1_r, 1_r, 1_r};
+  model.contactSkinMesh->skinning->indices = {0, 0, 0};
+  model.contactSkinMesh->skinning->weights = {1_r, 1_r, 1_r};
 
   ShapeHandle const shape = _mochiContext->CreateModelShape(model, ExpectOK{});
-  MeshDataView const meshView = _mochiContext->GetShapeMesh(shape, ExpectOK{});
-  MeshDataView const surfaceView = _mochiContext->GetShapeSurfaceMesh(shape, ExpectOK{});
   MeshDataView const contactSkin = _mochiContext->GetShapeContactSkinMesh(shape, ExpectOK{});
 
-  EXPECT_EQ(2, meshView.nodesPerElement);
-  EXPECT_EQ(2, meshView.GetNumNodes());
-  EXPECT_EQ(3, surfaceView.nodesPerElement);
-  EXPECT_EQ(3, surfaceView.GetNumNodes());
-  EXPECT_SPAN_EQ(
-      MakeConstSpan(model.contactSkinMesh->coordinates).subspan(3), surfaceView.coordinates);
-  constexpr std::array kExpectedConnectivity = {0, 1, 2};
-  EXPECT_SPAN_EQ(MakeConstSpan(kExpectedConnectivity), surfaceView.connectivity);
-
-  EXPECT_SPAN_EQ(MakeConstSpan(model.contactSkinMesh->coordinates), contactSkin.coordinates);
-  EXPECT_SPAN_EQ(MakeConstSpan(model.contactSkinMesh->connectivity), contactSkin.connectivity);
-  EXPECT_FALSE(contactSkin.skinning.has_value());
+  EXPECT_EQ(MeshDataView{}, _mochiContext->GetShapeSurfaceMesh(shape, ExpectOK{}));
+  EXPECT_EQ(MeshData{contactSkin}, *model.contactSkinMesh);
 }
 
 // Verify GetShapeSurfaceMesh reports an error for a default-constructed (invalid) handle.
@@ -2776,6 +2763,18 @@ TEST_P(MochiContextTest, GetShapeContactSkinMesh_WithContactSkin) {
     EXPECT_SPAN_EQ(
         MakeConstSpan(model.contactSkinMesh->skinning->weights), contactSkin.skinning->weights);
   }
+}
+
+TEST_P(MochiContextTest, CreateModelShape_RejectsUnreferencedContactSkinNodes) {
+  ModelData model = CreateModelWithVisualMesh();
+  AddContactSkin(model);
+  EXPECT_TRUE(_mochiContext->CreateModelShape(model, ExpectOK{}).IsValid());
+  auto& skin = *model.contactSkinMesh;
+  skin.coordinates.append(Real3{2_r, 2_r, 2_r});
+  skin.skinning->indices.push_back(0);
+  skin.skinning->weights.push_back(1_r);
+
+  EXPECT_FALSE(_mochiContext->CreateModelShape(model, ExpectNotOK{}).IsValid());
 }
 
 TEST_P(MochiContextTest, GetShapeContactSkinMesh_NoContactSkinReturnsEmpty) {
@@ -2915,17 +2914,15 @@ TEST_P(MochiContextTest, GetModelData_PreservesPolylineAuxiliaryMeshes) {
   }
 }
 
-// Verify GetShapeVisualMesh returns correct visual mesh dimensions for a polyline shape.
+// Verify GetShapeVisualMesh returns the authored visual mesh and element-based skinning for a
+// polyline shape.
 TEST_P(MochiContextTest, GetShapeVisualMesh_PolylineWithVisualMesh) {
   ModelData model = CreatePolylineModelWithVisualMesh();
   ShapeHandle shape = _mochiContext->CreateModelShape(model, ExpectOK{});
   ASSERT_TRUE(shape.IsValid());
 
   MeshDataView visualView = _mochiContext->GetShapeVisualMesh(shape, ExpectOK{});
-  EXPECT_EQ(3, visualView.nodesPerElement);
-  EXPECT_EQ(model.visualMesh->GetNumNodes(), visualView.GetNumNodes());
-  EXPECT_EQ(model.visualMesh->GetNumElements(), visualView.GetNumElements());
-  EXPECT_FALSE(visualView.skinning.has_value());
+  EXPECT_EQ(MeshData{visualView}, *model.visualMesh);
 }
 
 TEST_P(MochiContextTest, GetShapeVisualMesh_PolylineWithoutSkinningPreservesGeometry) {

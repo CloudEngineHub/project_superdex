@@ -1073,21 +1073,37 @@ static MeshDataView MakeMeshDataView(MeshPtr const& mesh) {
   return view;
 }
 
+static std::optional<SkinningDataView> MakeSkinningDataView(LinearMeshEmbedding const* embedding) {
+  if (!embedding) {
+    return std::nullopt;
+  }
+  SkinningDataView view;
+  view.weightsPerNode = static_cast<int>(embedding->GetNumSkinningWeightsPerEntry());
+  view.indices = embedding->GetIndices();
+  view.weights = embedding->GetWeights();
+  return view;
+}
+
+static std::optional<SkinningDataView> MakeSkinningDataView(
+    RodSurfaceEmbeddingData const* embedding) {
+  if (!embedding) {
+    return std::nullopt;
+  }
+  SkinningDataView view;
+  view.weightsPerNode = embedding->weightsPerNode;
+  view.indices = embedding->elementIndices;
+  view.weights = embedding->weights;
+  return view;
+}
+
 static MeshDataView MakeAuxiliaryMeshDataView(
     TriangularMesh const* mesh,
-    MeshEmbedding const* embedding) {
+    std::optional<SkinningDataView> const& skinning) {
   if (!mesh) {
     return {};
   }
-
   auto view = MakeMeshDataView(mesh);
-  if (auto const* linearEmbedding = dynamic_cast<LinearMeshEmbedding const*>(embedding)) {
-    view.skinning.emplace();
-    view.skinning->weightsPerNode =
-        static_cast<int>(linearEmbedding->GetNumSkinningWeightsPerEntry());
-    view.skinning->indices = linearEmbedding->GetIndices();
-    view.skinning->weights = linearEmbedding->GetWeights();
-  }
+  view.skinning = skinning;
   return view;
 }
 
@@ -1146,19 +1162,24 @@ MeshDataView ContextImpl::GetShapeContactSkinMesh(ShapeHandle shape, Error& erro
   MOCHI_ERROR_RETURN(error, {});
 
   TriangularMesh const* contactSkinPtr = nullptr;
-  MeshEmbedding const* embeddingPtr = nullptr;
+  std::optional<SkinningDataView> skinning;
 
   if (auto const* tetmesh = dynamic_cast<TetrahedralMeshShape const*>(shapePtr.get())) {
     contactSkinPtr = tetmesh->GetContactSkin().get();
-    embeddingPtr = tetmesh->GetContactSkinEmbedding().get();
+    skinning = MakeSkinningDataView(tetmesh->GetContactSkinEmbedding().get());
   } else if (auto const* trimesh = dynamic_cast<TriangularMeshShape const*>(shapePtr.get())) {
     contactSkinPtr = trimesh->GetContactSkin().get();
-    embeddingPtr = trimesh->GetContactSkinEmbedding().get();
+    skinning = MakeSkinningDataView(trimesh->GetContactSkinEmbedding().get());
   } else if (auto const* polyline = dynamic_cast<PolylineShape const*>(shapePtr.get())) {
     contactSkinPtr = polyline->GetContactSkin().get();
+    skinning = MakeSkinningDataView(polyline->GetRodContactSkinEmbedding().get());
   }
 
-  return MakeAuxiliaryMeshDataView(contactSkinPtr, embeddingPtr);
+  // Model validation rejects unreferenced contact-skin nodes, so this raw view matches the
+  // compact surface mesh of any actor that uses the contact skin as its surface.
+  MOCHI_ASSERT_VERBOSE(
+      !contactSkinPtr || contactSkinPtr->GetNumActiveNodes() == contactSkinPtr->GetNumNodes());
+  return MakeAuxiliaryMeshDataView(contactSkinPtr, skinning);
 }
 
 MeshDataView ContextImpl::GetShapeVisualMesh(ShapeHandle shape, Error& error) const {
@@ -1169,20 +1190,22 @@ MeshDataView ContextImpl::GetShapeVisualMesh(ShapeHandle shape, Error& error) co
   MOCHI_ERROR_RETURN(error, {});
 
   TriangularMesh const* visualMeshPtr = nullptr;
-  MeshEmbedding const* embeddingPtr = nullptr;
+  std::optional<SkinningDataView> skinning;
 
   if (auto const* tetmesh = dynamic_cast<TetrahedralMeshShape const*>(shapePtr.get())) {
     visualMeshPtr = tetmesh->GetVisualMesh().get();
-    embeddingPtr = tetmesh->GetVisualEmbedding().get();
+    skinning = MakeSkinningDataView(
+        dynamic_cast<LinearMeshEmbedding const*>(tetmesh->GetVisualEmbedding().get()));
   } else if (auto const* trimesh = dynamic_cast<TriangularMeshShape const*>(shapePtr.get())) {
     visualMeshPtr = trimesh->GetVisualMesh().get();
-    embeddingPtr = trimesh->GetVisualEmbedding().get();
+    skinning = MakeSkinningDataView(
+        dynamic_cast<LinearMeshEmbedding const*>(trimesh->GetVisualEmbedding().get()));
   } else if (auto const* polyline = dynamic_cast<PolylineShape const*>(shapePtr.get())) {
     visualMeshPtr = polyline->GetVisualMesh().get();
-    // Polyline visual mesh embeddings are nonlinear and are not exposed by this view.
+    skinning = MakeSkinningDataView(polyline->GetRodVisualEmbedding().get());
   }
 
-  return MakeAuxiliaryMeshDataView(visualMeshPtr, embeddingPtr);
+  return MakeAuxiliaryMeshDataView(visualMeshPtr, skinning);
 }
 
 Aabb ContextImpl::GetShapeAabb(ShapeHandle shape, Error& error) const {

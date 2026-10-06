@@ -571,10 +571,6 @@ class PolylineShape final : public Shape {
     return _rodContactSkinEmbedding;
   }
 
-  std::shared_ptr<TriangularMesh const> const& GetSurfaceMesh() const override {
-    return _contactSkin;
-  }
-
   /// Returns the polyline's flat connectivity array. For an open polyline this is
   /// 2*(numNodes-1) entries [0,1, 1,2, ..., numNodes-2, numNodes-1]; for a closed-loop
   /// polyline a final wrap-around segment [numNodes-1, 0] is appended.

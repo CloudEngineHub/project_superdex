@@ -2401,6 +2401,17 @@ TEST(ModelUtils, Validate_ContactSkin) {
   }
 }
 
+TEST(ModelUtils, Validate_ContactSkinUnreferencedNodes) {
+  ModelData model =
+      GetTetMeshModelWithAuxiliaryMesh(/*weightsPerNode*/ 1, &ModelData::contactSkinMesh);
+  model::Validate(model, test::ExpectOK{});
+  auto& skin = *model.contactSkinMesh;
+  skin.coordinates.append(Real3{2_r, 2_r, 2_r});
+  skin.skinning->indices.push_back(0);
+  skin.skinning->weights.push_back(1_r);
+  model::Validate(model, test::ExpectNotOK{});
+}
+
 static MeshData MakeSingleTriangleContactSkin(int skinningIndex) {
   MeshData contactSkin;
   contactSkin.nodesPerElement = 3;

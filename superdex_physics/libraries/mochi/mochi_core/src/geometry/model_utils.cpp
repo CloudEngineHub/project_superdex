@@ -27,6 +27,7 @@
 #include <mochi_core/materials/material_params_utils.h>
 #include <mochi_core/utils/array_utils.h>
 #include <mochi_core/utils/basic_utils.h>
+#include <mochi_core/utils/container_utils.h>
 #include <mochi_core/utils/coordinate_space_converter.h>
 #include <mochi_core/utils/file_utils.h>
 #include <mochi_core/utils/hdf5_utils.h>
@@ -765,6 +766,19 @@ void mochi::model::Validate(ModelDataView const& data, Error& error) {
         data.contactSkinMesh->nodesPerElement != 3,
         error,
         "Contact skin mesh must have 3 nodes per element (triangles).");
+    MOCHI_ERROR_RETURN(error);
+
+    // Unreferenced nodes would make the contact skin's node ordering differ from the compact
+    // ordering of actor surface meshes built from it, misaligning per-node data such as skinning.
+    DynamicArray<bool> isNodeReferenced(data.contactSkinMesh->GetNumNodes(), false);
+    // ValidateMesh above guarantees connectivity indices are in range.
+    for (int const node : data.contactSkinMesh->connectivity) {
+      isNodeReferenced[node] = true;
+    }
+    MOCHI_ERROR_IF(
+        Contains(isNodeReferenced, false),
+        error,
+        "Contact skin mesh must not contain nodes that are unreferenced by its triangles.");
     MOCHI_ERROR_RETURN(error);
   }
   if (data.blending) {

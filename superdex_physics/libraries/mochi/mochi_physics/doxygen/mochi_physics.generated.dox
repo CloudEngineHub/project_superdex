@@ -4513,7 +4513,7 @@
 ///
 /// @brief Get a view of the shape's surface mesh data.
 ///
-/// @details Returns a triangle mesh (3 nodes per element) representing the shape's surface. The coordinate array contains exactly the surface nodes referenced by the returned connectivity; nodes present in the underlying main mesh but not referenced by any surface triangle are omitted. Connectivity values are indices into this returned coordinate array. For polyline shapes with an authored contact skin, returns that skin. For shapes without a surface mesh, returns an empty view.
+/// @details Returns a triangle mesh (3 nodes per element) representing the shape's surface. The coordinate array contains exactly the surface nodes referenced by the returned connectivity; nodes present in the underlying main mesh but not referenced by any surface triangle are omitted. Connectivity values are indices into this returned coordinate array. For shapes without a surface mesh, such as polyline shapes, returns an empty view.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -4528,9 +4528,9 @@
 
 /// @fn MeshDataView mochi::Context::GetShapeContactSkinMesh(ShapeHandle shape, Error& error) const
 ///
-/// @brief Get a view of the shape's contact-skin mesh data, including linear skinning data if available.
+/// @brief Get a view of the shape's contact-skin mesh data, including skinning data if available.
 ///
-/// @details Returns a triangle mesh (3 nodes per element) intended for contact handling. Coordinates and connectivity are returned in contact-skin node-index space, including any contact-skin nodes not referenced by the contact-skin connectivity. The mesh includes linear skinning data for deformation when available. Nonlinear skinning data, such as rod contact-skin embeddings, is not exposed. For shapes without a contact skin, returns an empty view.
+/// @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced by the contact-skin connectivity, so an actor surface mesh built from the contact skin has the same node ordering. The mesh includes the authored skinning data when available, in the format of @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh". For shapes without a contact skin, returns an empty view.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -4538,16 +4538,16 @@
 ///
 /// @note Can be called on any thread.
 /// @note The returned view will be invalid after the shape handle has been released.
-/// @note When linear contact-skin skinning data is present, skinning indices refer to the node ordering returned by @ref mochi::Context::GetShapeMesh "GetShapeMesh", not to the compact surface-node ordering returned by @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh".
+/// @note For tetrahedral and triangular mesh shapes, skinning indices refer to the node ordering returned by @ref mochi::Context::GetShapeMesh "GetShapeMesh", not to the compact surface-node ordering returned by @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh". For polyline shapes, skinning indices refer to polyline elements.
 ///
-/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Context::GetShapeMesh "GetShapeMesh", @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh", @ref mochi::Context::GetShapeVisualMesh "GetShapeVisualMesh"
+/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Context::GetShapeMesh "GetShapeMesh", @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh", @ref mochi::Context::GetShapeVisualMesh "GetShapeVisualMesh", @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh"
 ///
 
 /// @fn MeshDataView mochi::Context::GetShapeVisualMesh(ShapeHandle shape, Error& error) const
 ///
 /// @brief Get a view of the shape's visual mesh data, including skinning data if available.
 ///
-/// @details Returns a triangle mesh (3 nodes per element) intended for visual rendering. Coordinates and connectivity are returned in visual-mesh node-index space, including any visual mesh nodes not referenced by the visual connectivity. The mesh may include linear skinning data for deformation. For shapes without a visual mesh, returns an empty view.
+/// @details Returns a triangle mesh (3 nodes per element) intended for visual rendering. Coordinates and connectivity are returned in visual-mesh node-index space, including any visual mesh nodes not referenced by the visual connectivity. The mesh includes the authored skinning data when available. For shapes without a visual mesh, returns an empty view.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -4555,7 +4555,7 @@
 ///
 /// @note Can be called on any thread.
 /// @note The returned view will be invalid after the shape handle has been released.
-/// @note When linear visual-mesh skinning data is present, skinning indices refer to the node ordering returned by @ref mochi::Context::GetShapeMesh "GetShapeMesh", not to the compact surface-node ordering returned by @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh". Polyline visual mesh embeddings are nonlinear and are not exposed through this linear skinning field.
+/// @note For tetrahedral and triangular mesh shapes, skinning indices refer to the node ordering returned by @ref mochi::Context::GetShapeMesh "GetShapeMesh", not to the compact surface-node ordering returned by @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh". For polyline shapes, skinning indices refer to polyline elements.
 ///
 /// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Context::GetShapeMesh "GetShapeMesh", @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh", @ref mochi::Actor::GetVisualMesh "Actor::GetVisualMesh"
 ///

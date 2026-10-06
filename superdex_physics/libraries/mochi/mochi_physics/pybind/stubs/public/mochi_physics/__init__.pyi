@@ -2557,7 +2557,7 @@ class ModelData:
     For triangular and tetrahedral primary meshes, the skinning data is a node-based
     linear embedding whose indices reference primary-mesh nodes. For polylines, the
     indices reference primary-mesh elements and define the rod's element-based
-    embedding.
+    embedding. Every contact-skin node must be referenced by at least one triangle.
     """
     @property
     def blending(self) -> Optional[DynamicArrayBlendingData]: ...
@@ -2625,7 +2625,7 @@ class ModelDataView:
     For triangular and tetrahedral primary meshes, the skinning data is a node-based
     linear embedding whose indices reference primary-mesh nodes. For polylines, the
     indices reference primary-mesh elements and define the rod's element-based
-    embedding.
+    embedding. Every contact-skin node must be referenced by at least one triangle.
     """
     @property
     def blending(self) -> Optional[DynamicArrayBlendingDataView]: ...
@@ -8857,9 +8857,8 @@ def get_shape_surface_mesh(shape: ShapeHandle) -> MeshDataView:
     The coordinate array contains exactly the surface nodes referenced by the
     returned connectivity; nodes present in the underlying main mesh but not
     referenced by any surface triangle are omitted. Connectivity values are indices
-    into this returned coordinate array. For polyline shapes with an authored
-    contact skin, returns that skin. For shapes without a surface mesh, returns an
-    empty view.
+    into this returned coordinate array. For shapes without a surface mesh, such as
+    polyline shapes, returns an empty view.
 
     Args:
         shape (ShapeHandle): Handle to a valid shape.
@@ -8892,15 +8891,15 @@ def get_shape_surface_mesh(shape: ShapeHandle) -> MeshDataView:
     """
 
 def get_shape_contact_skin_mesh(shape: ShapeHandle) -> MeshDataView:
-    """Get a view of the shape's contact-skin mesh data, including linear skinning data
-    if available.
+    """Get a view of the shape's contact-skin mesh data, including skinning data if
+    available.
 
-    Returns a triangle mesh (3 nodes per element) intended for contact handling.
-    Coordinates and connectivity are returned in contact-skin node-index space,
-    including any contact-skin nodes not referenced by the contact-skin
-    connectivity. The mesh includes linear skinning data for deformation when
-    available. Nonlinear skinning data, such as rod contact-skin embeddings, is not
-    exposed. For shapes without a contact skin, returns an empty view.
+    Returns a triangle mesh (3 nodes per element). Every contact-skin node is
+    referenced by the contact-skin connectivity, so an actor surface mesh built from
+    the contact skin has the same node ordering. The mesh includes the authored
+    skinning data when available, in the format of
+    :attr:`~superdex.physics.ModelData.contact_skin_mesh`. For shapes without a
+    contact skin, returns an empty view.
 
     Args:
         shape (ShapeHandle): Handle to a valid shape.
@@ -8919,16 +8918,18 @@ def get_shape_contact_skin_mesh(shape: ShapeHandle) -> MeshDataView:
         The returned view will be invalid after the shape handle has been released.
 
     Note:
-        When linear contact-skin skinning data is present, skinning indices refer to
-        the node ordering returned by :func:`~superdex.physics.get_shape_mesh`, not
-        to the compact surface-node ordering returned by
-        :func:`~superdex.physics.get_shape_surface_mesh`.
+        For tetrahedral and triangular mesh shapes, skinning indices refer to the
+        node ordering returned by :func:`~superdex.physics.get_shape_mesh`, not to
+        the compact surface-node ordering returned by
+        :func:`~superdex.physics.get_shape_surface_mesh`. For polyline shapes,
+        skinning indices refer to polyline elements.
 
     See Also:
         :class:`~superdex.physics.MeshDataView`,
         :func:`~superdex.physics.get_shape_mesh`,
         :func:`~superdex.physics.get_shape_surface_mesh`,
-        :func:`~superdex.physics.get_shape_visual_mesh`
+        :func:`~superdex.physics.get_shape_visual_mesh`,
+        :meth:`~superdex.physics.Actor.get_surface_mesh`
     """
 
 def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
@@ -8938,7 +8939,7 @@ def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
     Returns a triangle mesh (3 nodes per element) intended for visual rendering.
     Coordinates and connectivity are returned in visual-mesh node-index space,
     including any visual mesh nodes not referenced by the visual connectivity. The
-    mesh may include linear skinning data for deformation. For shapes without a
+    mesh includes the authored skinning data when available. For shapes without a
     visual mesh, returns an empty view.
 
     Args:
@@ -8958,12 +8959,11 @@ def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
         The returned view will be invalid after the shape handle has been released.
 
     Note:
-        When linear visual-mesh skinning data is present, skinning indices refer to
-        the node ordering returned by :func:`~superdex.physics.get_shape_mesh`, not
-        to the compact surface-node ordering returned by
-        :func:`~superdex.physics.get_shape_surface_mesh`. Polyline visual mesh
-        embeddings are nonlinear and are not exposed through this linear skinning
-        field.
+        For tetrahedral and triangular mesh shapes, skinning indices refer to the
+        node ordering returned by :func:`~superdex.physics.get_shape_mesh`, not to
+        the compact surface-node ordering returned by
+        :func:`~superdex.physics.get_shape_surface_mesh`. For polyline shapes,
+        skinning indices refer to polyline elements.
 
     See Also:
         :class:`~superdex.physics.MeshDataView`,
