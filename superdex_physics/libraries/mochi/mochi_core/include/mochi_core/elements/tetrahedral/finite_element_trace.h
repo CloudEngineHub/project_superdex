@@ -52,7 +52,11 @@ class Pk3DElementTrace final {
         quadrature(quad),
         basisEvaluatedParametric(quadrature),
         nodesCrdsPhys(baseElement.nodesCrdsPhys),
-        basisEvaluated(basisEvaluatedParametric.basisEvaluated) {
+        basisEvaluated(basisEvaluatedParametric.basisEvaluated),
+        _nodes{
+            baseElement.Nodes()[TetFaces::kIndices[faceNum][0]],
+            baseElement.Nodes()[TetFaces::kIndices[faceNum][1]],
+            baseElement.Nodes()[TetFaces::kIndices[faceNum][2]]} {
     // Tabulate the isoparametric map and its derivative at the quad points
     QuadratureEvaluateMap();
 
@@ -70,11 +74,7 @@ class Pk3DElementTrace final {
 
   /// @brief Get the node indices of the element.
   Int3 Nodes() const {
-    return {
-        baseElement.connectivity[baseElement.elementIndex][TetFaces::kIndices[faceNum][0]],
-        baseElement.connectivity[baseElement.elementIndex][TetFaces::kIndices[faceNum][1]],
-        baseElement.connectivity[baseElement.elementIndex][TetFaces::kIndices[faceNum][2]],
-    };
+    return _nodes;
   }
 
   inline Int3 LocalNodes() const {
@@ -262,6 +262,10 @@ class Pk3DElementTrace final {
 
   // The face normal
   NdArray<real, kNumQuadPoints, kSpaceDim> normals = {};
+
+ private:
+  // Cached: reading them through baseElement costs two dependent cache misses per face.
+  Int3 const _nodes;
 };
 
 } // namespace mochi::tetrahedral
