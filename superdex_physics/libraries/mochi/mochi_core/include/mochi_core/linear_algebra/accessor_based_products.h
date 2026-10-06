@@ -276,13 +276,16 @@ MOCHI_ANY inline void DirectRowBlockProductSimdAlongK(
   constexpr auto kVecSize = VType::kSize;
   MOCHI_ASSERT_VERBOSE((r0 >= 0) && (r0 + kNumRows <= m), "Out-of-range rows.");
 
+  //--- Each column vector of B is loaded once for all the rows of the batch. For a row-major B it's
+  //--- a gather, which compilers don't reliably hoist out of the row loop.
   for (int c = 0; c < n; ++c) {
     int j = 0;
     VType s[kNumRows] = {};
     if constexpr (kATC == krylov::kDynamic || kATC >= kVecSize) {
       for (; j + kVecSize <= k; j += kVecSize) {
+        VType const b = B.template ColVector<VType>(j, c);
         for (int rr = 0, r = r0; rr < kNumRows; ++rr, ++r) {
-          s[rr] += A.template RowVector<VType>(r, j) * B.template ColVector<VType>(j, c);
+          s[rr] += A.template RowVector<VType>(r, j) * b;
         }
       }
     }
@@ -290,24 +293,26 @@ MOCHI_ANY inline void DirectRowBlockProductSimdAlongK(
     //--- Leftover entries. Note that {Row,Col}Vector<V, N>(r, c) and {Row,Col}Vector<V>(r, c, N)
     //--- return zeros for all entries after the N-th entry.
     constexpr int kLeftoverEntries = kATC % kVecSize;
-    for (int rr = 0, r = r0; rr < kNumRows; ++rr, ++r) {
-      if constexpr (kATC > 0 && kLeftoverEntries > 0) {
-        MOCHI_ASSERT_VERBOSE(
-            kLeftoverEntries == k.iVal() - j, "Inconsistent number of leftover entries.");
-        s[rr] += A.template RowVector<VType, kLeftoverEntries>(r, j) *
-            B.template ColVector<VType, kLeftoverEntries>(j, c);
-      } else if constexpr (kATC == krylov::kDynamic) {
-        int const leftoverEntries = k.iVal() - j;
-        MOCHI_ASSERT_VERBOSE(
-            leftoverEntries >= 0 && leftoverEntries < kVecSize,
-            "Inconsistent number of leftover entries.");
-        if (leftoverEntries > 0) {
-          s[rr] += A.template RowVector<VType>(r, j, leftoverEntries) *
-              B.template ColVector<VType>(j, c, leftoverEntries);
-        }
-      } else {
-        static_assert(kATC >= 0 && kLeftoverEntries == 0, "Unsupported case");
+    if constexpr (kATC > 0 && kLeftoverEntries > 0) {
+      MOCHI_ASSERT_VERBOSE(
+          kLeftoverEntries == k.iVal() - j, "Inconsistent number of leftover entries.");
+      VType const b = B.template ColVector<VType, kLeftoverEntries>(j, c);
+      for (int rr = 0, r = r0; rr < kNumRows; ++rr, ++r) {
+        s[rr] += A.template RowVector<VType, kLeftoverEntries>(r, j) * b;
       }
+    } else if constexpr (kATC == krylov::kDynamic) {
+      int const leftoverEntries = k.iVal() - j;
+      MOCHI_ASSERT_VERBOSE(
+          leftoverEntries >= 0 && leftoverEntries < kVecSize,
+          "Inconsistent number of leftover entries.");
+      if (leftoverEntries > 0) {
+        VType const b = B.template ColVector<VType>(j, c, leftoverEntries);
+        for (int rr = 0, r = r0; rr < kNumRows; ++rr, ++r) {
+          s[rr] += A.template RowVector<VType>(r, j, leftoverEntries) * b;
+        }
+      }
+    } else {
+      static_assert(kATC >= 0 && kLeftoverEntries == 0, "Unsupported case");
     }
 
     for (int rr = 0, r = r0; rr < kNumRows; ++rr, ++r) {
