@@ -23,6 +23,7 @@
 #include "mochi_shape.h"
 
 #include <mochi_core/utils/basic_utils.h>
+#include <mochi_core/utils/dynamic_array.h>
 #include <mochi_physics/mochi_physics_experimental.h>
 
 #include <cstdint>
@@ -77,7 +78,7 @@ void UpdateAuxiliaryMeshNodeNormals(
     bool isRigid,
     TriangularMesh const& mesh,
     Span<real const> positions,
-    std::vector<real>& outNormals);
+    DynamicArray<real>& outNormals);
 
 void UpdateQueryVisualNodePositionsAndNormals(
     ecs::Excluded<CRodVisualMeshEmbedding>,

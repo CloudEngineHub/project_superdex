@@ -233,7 +233,7 @@ static void UpdateAuxiliaryMeshNodePositions(
     TriangularMesh const& mesh,
     MeshEmbedding const* embedding,
     CQueryNodePositions const* posQuery,
-    std::vector<real>& outPositions) {
+    DynamicArray<real>& outPositions) {
   MOCHI_PROFILE_SCOPE();
 
   // Rigid actors don't deform: use reference positions, computed once.
@@ -259,7 +259,7 @@ void mochi::UpdateAuxiliaryMeshNodeNormals(
     bool isRigid,
     TriangularMesh const& mesh,
     Span<real const> positions,
-    std::vector<real>& outNormals) {
+    DynamicArray<real>& outNormals) {
   MOCHI_PROFILE_SCOPE();
 
   // Rigid actors don't deform: compute normals once and cache.

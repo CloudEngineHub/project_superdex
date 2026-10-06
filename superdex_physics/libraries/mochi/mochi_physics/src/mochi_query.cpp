@@ -33,7 +33,6 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
-#include <vector>
 
 using namespace mochi;
 
@@ -467,9 +466,9 @@ void mochi::RecordQueryContactPoints(CQueryContactPoints const& contacts, CRecor
   }
 
   // Create temp containers of contact data for all contacts
-  std::vector<int> actorA, actorB, sampleIndex, elementIndex;
-  std::vector<real> distance, intWeight;
-  std::vector<Real3> posA, posB, normal, force, pointVelocityA, pointVelocityB, parametricCoords;
+  DynamicArray<int> actorA, actorB, sampleIndex, elementIndex;
+  DynamicArray<real> distance, intWeight;
+  DynamicArray<Real3> posA, posB, normal, force, pointVelocityA, pointVelocityB, parametricCoords;
   // clang-format off
   auto containers = std::make_tuple(
       std::ref(actorA), std::ref(actorB), std::ref(distance), std::ref(posA), std::ref(posB), std::ref(normal), std::ref(force), std::ref(pointVelocityA), std::ref(pointVelocityB), std::ref(sampleIndex), std::ref(intWeight), std::ref(elementIndex), std::ref(parametricCoords));
@@ -503,8 +502,8 @@ void mochi::RecordQueryNodeContactForces(
   }
 
   // Create temp containers of contact data for all contacts
-  std::vector<int> nodeIndex;
-  std::vector<Real3> force;
+  DynamicArray<int> nodeIndex;
+  DynamicArray<Real3> force;
   auto containers = std::make_tuple(std::ref(nodeIndex), std::ref(force));
   constexpr size_t kNumContainers = std::tuple_size<decltype(containers)>::value;
   Reserve<kNumContainers>(forces.nodeContactForces.size(), containers);

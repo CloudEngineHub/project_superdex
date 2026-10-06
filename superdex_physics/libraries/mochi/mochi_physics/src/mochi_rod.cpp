@@ -40,6 +40,7 @@
 #include <mochi_core/linear_algebra/sparse_matrix.h>
 #include <mochi_core/linear_algebra/utils/assembly.h>
 #include <mochi_core/utils/array_utils.h>
+#include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/graph_utils.h>
 #include <mochi_core/utils/matrix_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
@@ -48,7 +49,6 @@
 
 #include <algorithm>
 #include <optional>
-#include <vector>
 
 using namespace mochi;
 
@@ -743,8 +743,8 @@ static void UpdateAuxiliaryMeshNodePositionsAndNormals(
     RodSurfaceEmbeddingData const& embedding,
     CPolylineMesh const& polylineMesh,
     RodPose const& rodPose,
-    std::vector<real>& outPositions,
-    std::vector<real>* outNormals) {
+    DynamicArray<real>& outPositions,
+    DynamicArray<real>* outNormals) {
   MOCHI_PROFILE_SCOPE();
 
   outPositions.resize(static_cast<size_t>(kSpaceDim3) * mesh.GetNumNodes());
