@@ -231,7 +231,7 @@ void SetupCollidingJacobiansImpl(
     CDofOffset const& dofOffset,
     CContactSamples<TimeStep::Current> const& samples,
     CCollJacs<CollRole::Colliding>& outJacobians,
-    MatrixView<real const> jacAux = {},
+    ContactJac::AuxView jacAux = {},
     Span<int const> dofsAux = {});
 
 template <TimeStep kTimeStep>
@@ -259,7 +259,7 @@ void SetupColliderJacobiansImpl(
     CDofOffset const& dofOffset,
     CRigidBodyInertia const& rigidInertia,
     CCollJacs<CollRole::Collider>& outJacobians,
-    MatrixView<real const> jacAux = {},
+    ContactJac::AuxView jacAux = {},
     Span<int const> dofsAux = {});
 
 template <TimeStep kTimeStep>

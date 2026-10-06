@@ -185,11 +185,11 @@ struct CArticulatedEntity : public NoCopy {
 // Jacobian of link transform wrt joint dofs. It stores the rows of CArticulatedJacobian
 // corresponding to a link, and only the non-zero columns (as values and dofs).
 struct CArticulatedRigidJacobian : public NoCopy {
-  Matrix<real> value;
+  RowMatrix<real, RigidSize::kDAll> value;
   std::vector<int> dofs;
 
   MOCHI_DECLARE_MOVE(CArticulatedRigidJacobian);
-  CArticulatedRigidJacobian(Matrix<real>&& valueIn, Span<int const> dofsIn)
+  CArticulatedRigidJacobian(RowMatrix<real, RigidSize::kDAll>&& valueIn, Span<int const> dofsIn)
       : value(std::move(valueIn)), dofs(dofsIn.begin(), dofsIn.end()) {}
 };
 

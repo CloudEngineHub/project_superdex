@@ -347,7 +347,7 @@ TEST(MochiContact, MakeContactGraphWithFiveContactJacobians) {
       &colliderSlices[1]};
   std::array<int, 5> const dofIndices{0, 1, 2, 0, 3};
   for (int i = 0; i < isize(slices); ++i) {
-    slices[i]->Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1, 1);
+    slices[i]->Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1);
     slices[i]->Inds(0)[0] = dofIndices[i];
   }
 

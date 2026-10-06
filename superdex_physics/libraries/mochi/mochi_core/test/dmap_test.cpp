@@ -425,12 +425,12 @@ static Matrix<real> CreateArticulatedJacobian(
 
 // Split the articulated Jacobian into the Jacobians of the bones wrt the articulated DoFs they
 // depend on: the free joint (first rigid-size DoFs) for bone 0, and all DoFs for bone 1.
-static std::array<Matrix<real>, kBones> CreateBoneJacobians(
+static std::array<RowMatrix<real, RigidSize::kDAll>, kBones> CreateBoneJacobians(
     Matrix<real> const& articulatedJacobian) {
-  Matrix<real> bone0Jacobian(RigidSize::kDAll, RigidSize::kDAll);
+  RowMatrix<real, RigidSize::kDAll> bone0Jacobian(RigidSize::kDAll, RigidSize::kDAll);
   bone0Jacobian = articulatedJacobian.TopRows<RigidSize::kDAll>(RigidSize::kDAll)
                       .LeftCols<RigidSize::kDAll>(RigidSize::kDAll);
-  Matrix<real> bone1Jacobian(RigidSize::kDAll, kArticulatedSize);
+  RowMatrix<real, RigidSize::kDAll> bone1Jacobian(RigidSize::kDAll, kArticulatedSize);
   bone1Jacobian =
       articulatedJacobian.MiddleRows<RigidSize::kDAll>(RigidSize::kDAll, RigidSize::kDAll);
   return {std::move(bone0Jacobian), std::move(bone1Jacobian)};
@@ -482,7 +482,7 @@ class DMapTest : public testing::Test {
   ColumnVector<real, kArticulatedSize> const kArticulatedState{CreateVectorState(kArticulatedSize)};
   std::vector<int> const kArticulatedDofs{CreateArticulatedDofs(kArticulatedSize)};
   std::array<int, RigidSize::kDAll> const kBone0Dofs{0, 1, 2, 3, 4, 5};
-  std::array<Matrix<real>, kBones> const kBoneJacobians{
+  std::array<RowMatrix<real, RigidSize::kDAll>, kBones> const kBoneJacobians{
       CreateBoneJacobians(CreateArticulatedJacobian(kArticulatedState))};
   SkinningData const kSkinning{CreateSkinning(isize(kPoints))};
   DSkinningTransform const kSkinningTransform{

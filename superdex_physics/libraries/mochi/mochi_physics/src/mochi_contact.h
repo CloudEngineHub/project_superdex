@@ -573,8 +573,7 @@ struct JacData {
   void Invalidate() {
     query = nullptr;
     for (auto& jac : _jacs) {
-      jac.Resize(false, false, 0, 0, 0);
-      jac.SetJacAuxView({});
+      jac.Resize(false, false, 0, 0);
     }
   }
 
@@ -584,8 +583,7 @@ struct JacData {
   void SetZeroDofJacobian() {
     MOCHI_ASSERT_VERBOSE(query != nullptr, "Missing contact query");
     auto& jac = PrepareJacs(1).front();
-    jac.Resize(true, false, 0, 0, isize(query->sampleIndices));
-    jac.SetJacAuxView({});
+    jac.Resize(true, false, 0, isize(query->sampleIndices));
     jac.CompressIndices();
   }
 };

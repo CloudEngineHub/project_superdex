@@ -182,7 +182,7 @@ class DMapRTConst final : public DMapImpl {
 
     // Initialize the output Jacobian
     outJacY.Resize(
-        jacX.hasSharedDoFs, jacX.hasSharedJacs, jacX.nDoFsInternal, jacX.nDoFsState, indsY.size());
+        jacX.hasSharedDoFs, jacX.hasSharedJacs, jacX.nDoFsState, isize(indsY), jacX.JacAux());
 
     // Propagate partial derivatives wrt input. Consider the case where all jacX are the same.
     auto rodrig3x3 = Rodrigues(_transform.GetRotation().VToRotationVector());
@@ -216,7 +216,7 @@ class DMapRTOutput final : public DMapImpl {
       TransformRT const& state,
       int offset,
       Vec4r com,
-      MatrixView<real const> jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
+      ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
       Span<int const> dofsAux = {})
       : _slice(slice),
         _state(state),
@@ -237,7 +237,7 @@ class DMapRTOutput final : public DMapImpl {
     auto& outJacY = outJacsY[_slice];
 
     int stateSize = _dofsAux.empty() ? RigidSize::kDAll : isize(_dofsAux);
-    outJacY.Resize(true, false, RigidSize::kDAll, stateSize, isize(_query->posColliding));
+    outJacY.Resize(true, false, stateSize, isize(_query->posColliding), _jacAux);
 
     // Compute partial derivatives wrt state
     VMatrix3x3r rotT = ToVMatrix3x3Transpose(_state.GetRotation());
@@ -247,11 +247,6 @@ class DMapRTOutput final : public DMapImpl {
       auto radiusVecLocal = ToSimd(_query->posColliding[i]) - _com;
       outJacY.Jac(i).template MiddleCols<3>(3, 3) =
           AsMatrixView(lie::DMultRotTVecDRot(rotT, radiusVecLocal));
-    }
-
-    // Possibly add aux Jacobian
-    if (!_jacAux.empty()) {
-      outJacY.SetJacAuxView(_jacAux);
     }
 
     // Set DoF indices
@@ -269,7 +264,7 @@ class DMapRTOutput final : public DMapImpl {
   TransformRT const& _state; // Ref to the state
   int const _offset; // Offset for the DoFs
   Vec4r const _com; // Local position of the center of mass
-  MatrixView<real const> _jacAux{}; // Jacobian of rigid state wrt actual state (optional)
+  ContactJac::AuxView _jacAux{}; // Jacobian of rigid state wrt actual state (optional)
   Span<int const> _dofsAux{}; // DoF indices of actual state (optional)
   ContactDetectionResult const* _query =
       nullptr; // Contact detection result including contact points
@@ -292,7 +287,7 @@ class DMapRTInput final : public DMapImpl {
       int offset,
       Span<Real3 const> input,
       Span<VMatrix3x3r const> toColliderJacs,
-      MatrixView<real const> jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
+      ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
       Span<int const> dofsAux = {})
       : _slice(slice),
         _state(state),
@@ -316,7 +311,7 @@ class DMapRTInput final : public DMapImpl {
     auto& outJacY = outJacsY[_slice];
 
     int stateSize = _dofsAux.empty() ? RigidSize::kDAll : isize(_dofsAux);
-    outJacY.Resize(true, false, RigidSize::kDAll, stateSize, isize(indsY));
+    outJacY.Resize(true, false, stateSize, isize(indsY), _jacAux);
 
     // Compute partial derivatives wrt state
     auto rotT = ToVMatrix3x3Transpose(_transform.GetRotation());
@@ -327,11 +322,6 @@ class DMapRTInput final : public DMapImpl {
       auto radiusVec = DotVecMat3x3(ToSimd(_input[indsY[i]]), rotT) + delta;
       outJacY.Jac(i).template MiddleCols<3>(3, 3) =
           AsMatrixView(Dot3x3(_toColliderJacs[l], lie::DMultRotVecDRot(radiusVec)));
-    }
-
-    // Possibly add aux Jacobian
-    if (!_jacAux.empty()) {
-      outJacY.SetJacAuxView(_jacAux);
     }
 
     // Set DoF indices
@@ -351,7 +341,7 @@ class DMapRTInput final : public DMapImpl {
   int const _offset;
   Span<Real3 const> _input{};
   Span<VMatrix3x3r const> _toColliderJacs;
-  MatrixView<real const> _jacAux{};
+  ContactJac::AuxView _jacAux{};
   Span<int const> _dofsAux{};
 };
 
@@ -364,7 +354,7 @@ class DMapSyncRigid final : public DMapImpl {
   DMapSyncRigid(
       int slice,
       int offset,
-      MatrixView<real const> jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
+      ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
       Span<int const> dofsAux = {})
       : _slice(slice), _offset(offset), _jacAux(jacAuxPersistentView), _dofsAux(dofsAux) {
     MOCHI_ASSERT(_jacAux.empty() == _dofsAux.empty(), "Inconsistent optional arguments");
@@ -375,12 +365,7 @@ class DMapSyncRigid final : public DMapImpl {
     auto& outJacY = outJacsY[_slice];
 
     int stateSize = _dofsAux.empty() ? RigidSize::kDAll : isize(_dofsAux);
-    outJacY.Resize(true, true, RigidSize::kDAll, stateSize, isize(indsY));
-
-    // Possibly add aux Jacobian
-    if (!_jacAux.empty()) {
-      outJacY.SetJacAuxView(_jacAux);
-    }
+    outJacY.Resize(true, true, stateSize, isize(indsY), _jacAux);
 
     // Set DoF indices
     if (_dofsAux.empty()) {
@@ -395,7 +380,7 @@ class DMapSyncRigid final : public DMapImpl {
  private:
   int const _slice; // State slice
   int const _offset; // Offset for the DoFs
-  MatrixView<real const> _jacAux{}; // Jacobian of rigid state wrt actual state (optional)
+  ContactJac::AuxView _jacAux{}; // Jacobian of rigid state wrt actual state (optional)
   Span<int const> _dofsAux{}; // DoF indices of actual state (optional)
 };
 
@@ -421,7 +406,7 @@ class DMapRom final : public DMapImpl {
     auto& outJacY = outJacsY[_slice];
 
     int ndofs = std::visit([](auto const& mat) { return mat.Cols(); }, _jac);
-    outJacY.Resize(true, false, ndofs, ndofs, indsY.size());
+    outJacY.Resize(true, false, ndofs, isize(indsY));
 
     // Compute derivatives
     std::visit(
@@ -502,17 +487,7 @@ class DMapQuad final : public DMapImpl {
     // Initialize the output Jacobian
     int nDoFMultiplier = jacX.hasSharedDoFs ? 1 : ElementT::kNumNodes;
     outJacY.Resize(
-        jacX.hasSharedDoFs,
-        false,
-        nDoFMultiplier * jacX.nDoFsInternal,
-        nDoFMultiplier * jacX.nDoFsState,
-        indsY.size());
-    MOCHI_ASSERT_VERBOSE(
-        !jacX.JacAux() || jacX.hasSharedDoFs,
-        "Auxiliary Jacobians require shared DoFs through quadrature");
-    if (jacX.JacAux()) {
-      outJacY.SetJacAuxView(jacX.JacAux());
-    }
+        jacX.hasSharedDoFs, false, nDoFMultiplier * jacX.nDoFsState, isize(indsY), jacX.JacAux());
 
     // Propagate partial derivatives wrt input. If the DoFs are shared, add the weighted input of
     // all ElementT::kNumNodes points. If the DoFs are not shared, write the weighted input of
@@ -600,7 +575,7 @@ class DMapSkinningDeprecated final : public DMapImpl {
     }
     auto& outJacY = outJacsY[_slice];
 
-    outJacY.Resize(true, false, _dofs.size(), _dofs.size(), indsY.size());
+    outJacY.Resize(true, false, isize(_dofs), isize(indsY));
 
     // Compute derivatives
     for (int i = 0; i < outJacY.nContacts; i++) {
@@ -627,7 +602,7 @@ class DMapSkinningDeprecated final : public DMapImpl {
       MOCHI_ASSERT(remap.indsX.size() == indsY.size(), "Sizes of indices don't match");
 
       // Initialize the output Jacobian
-      outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsInternal, jacX.nDoFsState, indsY.size());
+      outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY), jacX.JacAux());
 
       // Propagate partial derivatives wrt input
       for (int i = 0; i < outJacY.nContacts; i++) {
@@ -664,7 +639,7 @@ using DMapSkinInput = DMapSkinningDeprecated<true>;
 struct SkinningBoneJacobianData {
   VMatrix3x3r worldFromReferenceRotationTranspose{};
   Vec4r linkOriginToReferenceOrigin{};
-  MatrixView<real const> linkFromArticulationJacobian{}; // The owner must outlive the Jacobians.
+  ContactJac::AuxView linkFromArticulationJacobian{}; // The owner must outlive the Jacobians.
   Span<int const> articulatedDofs{};
 };
 
@@ -712,10 +687,16 @@ class DMapSkinning final : public DMapImpl {
       boneToSlice[boneId] = slice;
 
       auto const& bone = _bones[boneId];
+      MOCHI_ASSERT_VERBOSE(
+          bone.linkFromArticulationJacobian, "Active bones need a nonempty link Jacobian");
       auto& jac = outJacsY[_firstSlice + slice];
-      jac.Resize(true, false, RigidSize::kDAll, isize(bone.articulatedDofs), isize(indsY));
+      jac.Resize(
+          true,
+          false,
+          isize(bone.articulatedDofs),
+          isize(indsY),
+          bone.linkFromArticulationJacobian);
       jac.SetZero();
-      jac.SetJacAuxView(bone.linkFromArticulationJacobian);
       for (int dof = 0; dof < bone.articulatedDofs.size(); ++dof) {
         jac.Inds(0)[dof] = _offset + bone.articulatedDofs[dof];
       }
@@ -748,7 +729,7 @@ class DMapSkinning final : public DMapImpl {
       ContactJac& outJacY) const override {
     MOCHI_ASSERT(remap.indsX.size() == indsY.size(), "Sizes of indices don't match");
 
-    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsInternal, jacX.nDoFsState, isize(indsY));
+    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY), jacX.JacAux());
 
     for (int i = 0; i < outJacY.nContacts; i++) {
       VMatrix3x3r weightedRotationTranspose{};
@@ -804,7 +785,7 @@ class DMapSparseSkinning final : public DMapImpl {
     }
 
     // Each contact has its own set of DoF indices (not shared)
-    outJacY.Resize(false, false, maxDofsPerNode, maxDofsPerNode, isize(indsY));
+    outJacY.Resize(false, false, maxDofsPerNode, isize(indsY));
 
     // Fill Jacobian values and indices for each contact
     for (int i = 0; i < isize(indsY); ++i) {
@@ -863,7 +844,7 @@ class DMapDeformable final : public DMapImpl {
     }
     auto& outJacY = outJacsY[_slice];
 
-    outJacY.Resize(false, true, 3, 3, indsY.size());
+    outJacY.Resize(false, true, 3, isize(indsY));
 
     // Compute derivatives
     outJacY.Jac(0).SetIdentity();
@@ -921,7 +902,7 @@ class DMapBlending final : public DMapImpl {
     MOCHI_ASSERT(indsX.size() == indsY.size(), "Sizes of indices don't match");
 
     // Initialize the output Jacobian
-    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsInternal, jacX.nDoFsState, indsY.size());
+    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY), jacX.JacAux());
 
     // Propagate partial derivatives wrt input, considering if the point is blended or not.
     for (int i = 0, j = 0; i < outJacY.nContacts; i++) {
@@ -969,7 +950,7 @@ class DMapInverse final : public DMapImpl {
     MOCHI_ASSERT(outJacsY.size() > _slice, "Insufficient Jacobian slices");
     auto& outJacY = outJacsY[_slice];
 
-    outJacY.Resize(_sharedDofs, false, _query->ndofs, _query->ndofs, isize(_query->posColliding));
+    outJacY.Resize(_sharedDofs, false, _query->ndofs, isize(_query->posColliding));
 
     // Compute Jacobians dref_ddofs = - dref_ddef * ddef_ddofs
     for (int i = 0, l = 0, dl = (_query->jacColliderFromWorld.size() == 1 ? 0 : 1);

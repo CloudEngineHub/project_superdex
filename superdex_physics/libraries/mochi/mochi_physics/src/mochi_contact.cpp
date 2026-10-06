@@ -1940,6 +1940,19 @@ class ContactDResTransformer {
   std::array<RowMatrix<real, 3>, kMaxBatchSize> _dresTerm;
 };
 
+// View of a block with compile-time rows and cols, each of which may be krylov::kDynamic.
+template <int kRows, int kCols>
+MOCHI_FORCE_INLINE RowMatrixView<real const, kRows, kCols> AsFixedSize(
+    RowMatrixView<real const> block) {
+  if constexpr (kRows != krylov::kDynamic) {
+    MOCHI_ASSERT_VERBOSE(block.Rows() == kRows, "Inconsistent number of rows.");
+  }
+  if constexpr (kCols != krylov::kDynamic) {
+    MOCHI_ASSERT_VERBOSE(block.Cols() == kCols, "Inconsistent number of columns.");
+  }
+  return {block.Data(), block.Rows(), block.Cols(), block.LeadDim()};
+}
+
 class ContactDResDiagAssembler {
  public:
   // Constructor
@@ -1990,7 +2003,9 @@ class ContactDResDiagAssembler {
       if (_jac.JacAux()) {
         // These products may not be optimally efficient, but they should not happen as often as
         // those in ComputeTerm().
-        Matrix<real> temp{_jac.JacAux().Transpose() * _dresTerm, _allocator};
+        Matrix<real, krylov::kDynamic, RigidSize::kDAll> temp{
+            _jac.JacAux().Transpose() * AsFixedSize<RigidSize::kDAll, RigidSize::kDAll>(_dresTerm),
+            _allocator};
         Matrix<real> dres{temp * _jac.JacAux(), _allocator};
         MatAddSubBlocks(outDRes, _jac.IndGroups(0), _jac.IndGroups(0), dres.Transpose());
       } else {
@@ -2067,7 +2082,9 @@ class ContactDResOffAssembler {
         for (int i = 1; i < isize(contactIndices); ++i) {
           _dresab += _jacA.Jac(contactIndices[i]).Transpose() * _dresJb.Get(i);
         }
-        _dresbaFull = _jacB.JacAux().Transpose() * _dresab.Transpose();
+        _dresbaFull.Transpose() =
+            AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(_dresab.Transpose()).Transpose() *
+            _jacB.JacAux();
       } else {
         _dresbaFull = _jacB.Jac(cIndex0).Transpose() * _dresJa.Get(0);
         for (int i = 1; i < isize(contactIndices); ++i) {
@@ -2089,7 +2106,9 @@ class ContactDResOffAssembler {
       std::optional<RowMatrix<real>> dresbaAux;
       if (_jacB.JacAux()) {
         dresbaAux.emplace(RowMatrix<real>(_jacB.nDoFsState, _jacA.nDoFsInternal, _allocator));
-        dresbaAux = _jacB.JacAux().Transpose() * dresbaView;
+        dresbaAux->Transpose() =
+            AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(dresbaView).Transpose() *
+            _jacB.JacAux();
         dresbaView.Reset(dresbaAux.value());
       }
       if (_jacA.JacAux()) {
@@ -2162,19 +2181,15 @@ static void AssembleSyncRigidContactSums(
   }
 
   // Check assumptions on Jacobians.
-  static_assert(
-      (krylov::details::MatTraits<decltype(jacs[0]->JacAux())>::kMajorDir ==
-       krylov::Direction::ColMajor),
-      "Expected column-major storage"); // Assumed when taking views.
 #if MOCHI_ASSERT_VERBOSE_ENABLED
   MOCHI_ASSERT_VERBOSE(jacs.size() == 2 && jacs[0] && jacs[1], "Requires 2 contact Jacobians.");
   MOCHI_ASSERT_VERBOSE(jacs[0]->groupsInitialized && jacs[1]->groupsInitialized);
   MOCHI_ASSERT_VERBOSE(jacs[0]->hasSharedDoFs && jacs[1]->hasSharedDoFs);
   MOCHI_ASSERT_VERBOSE(
-      (jacs[0]->JacAux() && jacs[0]->JacAux().Rows() == 6 && jacs[0]->JacAux().LeadDim() == 6) ||
+      jacs[0]->JacAux() ||
       (jacs[0]->IndGroups(0).size() == 1 && jacs[0]->IndGroups(0)[0].count == 6));
   MOCHI_ASSERT_VERBOSE(
-      (jacs[1]->JacAux() && jacs[1]->JacAux().Rows() == 6 && jacs[1]->JacAux().LeadDim() == 6) ||
+      jacs[1]->JacAux() ||
       (jacs[1]->IndGroups(0).size() == 1 && jacs[1]->IndGroups(0)[0].count == 6));
 #endif
 
@@ -2222,8 +2237,7 @@ static void AssembleSyncRigidContactSums(
     // The contact Jacobians store articulated Jacobians in the case of articulated links, but are
     // not used for rigid actors.
     if (jacA.JacAux()) {
-      MatrixView<real const, 6, krylov::kDynamic> auxJacA(jacA.JacAux().data(), 6, jacA.nDoFsState);
-      ColumnVector<real> auxResA(auxJacA.Transpose() * resA, filoAllocator);
+      ColumnVector<real> auxResA(jacA.JacAux().Transpose() * resA, filoAllocator);
       auto const& inds = jacA.IndGroups(0);
       for (int i = 0; i < isize(inds); ++i) {
         outRes.Slice(inds[i].dst, inds[i].count) += auxResA.Slice(inds[i].src, inds[i].count);
@@ -2232,8 +2246,7 @@ static void AssembleSyncRigidContactSums(
       outRes.Slice<6>(jacA.IndGroups(0)[0].dst, 6) += resA;
     }
     if (jacB.JacAux()) {
-      MatrixView<real const, 6, krylov::kDynamic> auxJacB(jacB.JacAux().data(), 6, jacB.nDoFsState);
-      ColumnVector<real> auxResB(auxJacB.Transpose() * resB, filoAllocator);
+      ColumnVector<real> auxResB(jacB.JacAux().Transpose() * resB, filoAllocator);
       auto const& inds = jacB.IndGroups(0);
       for (int i = 0; i < isize(inds); ++i) {
         outRes.Slice(inds[i].dst, inds[i].count) += auxResB.Slice(inds[i].src, inds[i].count);
@@ -2285,21 +2298,21 @@ static void AssembleSyncRigidContactSums(
     RowMatrixView<real> bbBlockView(bbBlock);
     RowMatrixView<real> abBlockView(abBlock);
 
-    // The auxiliary Jacobians are applied using the following storage directions for performance
-    // reasons:
-    // AA and BB diagonal blocks:
-    // - Product #1: Col-Major = Row-Major x Row-Major
-    // - Product #2: Col-Major = Col-Major x Col-Major -> Requires more FLOPs than #1 if nDoFs > 6
-    // AB off-diagonal block:
-    // - Product #1: Row-Major = Row-Major x Col-Major
-    // - Product #2: Row-Major = Row-Major x Row-Major -> Requires more FLOPs than #1 if nDoFs > 6
+    // The 6x6 blocks are mapped to the DoFs with the auxiliary Jacobians J_A and J_B (6 x n,
+    // row-major), multiplying the 6x6 block first, which requires fewer FLOPs if n > 6:
+    // - AA and BB diagonal blocks: (J^T * block) * J. J^T * block is n x 6 col-major, and the
+    //   result n x n col-major.
+    // - AB off-diagonal block: J_A^T * (block * J_B), computed as its transpose
+    //   (block * J_B)^T * J_A. block * J_B is 6 x n_B row-major, and the result n_A x n_B row-major
+    //   (n_B x n_A col-major).
+    // With these storage directions, all the products vectorize along their output.
     std::optional<RowMatrix<real>> bbBlockAux; // Declared in same order as potentially allocated.
     std::optional<RowMatrix<real>> abBlockAux1;
     std::optional<RowMatrix<real>> aaBlockAux;
     std::optional<RowMatrix<real>> abBlockAux2;
     if (jacB.JacAux()) {
       // BB diagonal block.
-      MatrixView<real const, 6, krylov::kDynamic> auxJacB(jacB.JacAux().data(), 6, jacB.nDoFsState);
+      auto const auxJacB = jacB.JacAux();
       bbBlockAux.emplace(RowMatrix<real>(jacB.nDoFsState, jacB.nDoFsState, filoAllocator));
       bbBlockAux->Transpose() =
           Matrix<real, krylov::kDynamic, 6>(auxJacB.Transpose() * bbBlock, filoAllocator) * auxJacB;
@@ -2313,7 +2326,7 @@ static void AssembleSyncRigidContactSums(
 
     if (jacA.JacAux()) {
       // AA diagonal block.
-      MatrixView<real const, 6, krylov::kDynamic> auxJacA(jacA.JacAux().data(), 6, jacA.nDoFsState);
+      auto const auxJacA = jacA.JacAux();
       aaBlockAux.emplace(RowMatrix<real>(jacA.nDoFsState, jacA.nDoFsState, filoAllocator));
       aaBlockAux->Transpose() =
           Matrix<real, krylov::kDynamic, 6>(auxJacA.Transpose() * aaBlock, filoAllocator) * auxJacA;
@@ -2321,7 +2334,8 @@ static void AssembleSyncRigidContactSums(
 
       // AB off-diagonal block.
       abBlockAux2.emplace(RowMatrix<real>(jacA.nDoFsState, abBlockView.Cols(), filoAllocator));
-      abBlockAux2 = auxJacA.Transpose() * abBlockView;
+      abBlockAux2->Transpose() =
+          AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(abBlockView).Transpose() * auxJacA;
       abBlockView.Reset(abBlockAux2.value());
     }
 

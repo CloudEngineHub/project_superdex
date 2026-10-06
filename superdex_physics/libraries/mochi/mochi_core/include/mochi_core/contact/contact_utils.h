@@ -36,6 +36,7 @@
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/no_copy.h>
 #include <mochi_core/utils/profile.h>
+#include <mochi_core/utils/rigid_body_size.h>
 #include <mochi_core/utils/spmat_utils.h>
 #include <mochi_core/utils/task_scheduler.h>
 
@@ -117,8 +118,12 @@ contacts for efficiency. The dpi/dz only store non-zero values, with the corresp
 stored in 'inds'. If dz/dx is identity (i.e., there's no intermediate state), then it is not stored
 and dpi/dz = dpi/dx. The Jacobians are packed in a single matrix [dp0/dz, dp1/dz, ...].
 *
+If present, dz/dx is the 6 x nDoFsState Jacobian of a rigid transform z wrt the state DoFs x (e.g.,
+the transform of an articulated link wrt the articulation DoFs). It requires shared DoFs, and
+nDoFsInternal is 6. Otherwise, nDoFsInternal equals nDoFsState.
+*
 DoF indices can be accessed in two ways:
-- Inds(i) returns all affected DoF indices of the i-th contact (always nDoFsInternal entries).
+- Inds(i) returns all affected DoF indices of the i-th contact (always nDoFsState entries).
 - IndGroups(i) returns the affected DoF indices of the i-th contact in consecutive groups. This is
 convenient for assembly operations into sparse matrices. Different contacts may produce different
 numbers of groups (e.g. skinned contact where skinning connectivity varies per contact),
@@ -141,13 +146,17 @@ Example (uniform group counts):
 Example (variable group counts; e.g. skinned contact with variable connectivity):
 - Contact 0 acts on DoFs: 15, 16, 17, 21, 22, 23, 33, 34, 35 — 3 disjoint runs.
 - Contact 1 acts on DoFs: 12, 13, 14, 15, 16, 17, 12, 13, 14 — only 2 distinct runs (the 12-14
-  triplet is repeated as padding because every row of _inds has nDoFsInternal entries).
+  triplet is repeated as padding because every row of _inds has nDoFsState entries).
 - _indGroupCounts = {3, 2}.
 - _indGroups storage is rectangular with maxGroups columns; row 1's trailing slot is unused.
 - IndGroups(0) returns 3 groups, IndGroups(1) returns 2 — the trailing slot of row 1 is hidden
   by the per-row count.
 */
 struct ContactJac {
+  /// @brief View of an auxiliary Jacobian dz/dx: the row-major 6 x nDoFsState Jacobian of a rigid
+  /// transform wrt the state DoFs.
+  using AuxView = RowMatrixView<real const, RigidSize::kDAll>;
+
  private:
   // The ContactJac of a pair of actors is recycled across assemblies until the actors are no longer
   // in contact. For performance reasons, a matrix view to a DynamicArray is used for each resizable
@@ -175,9 +184,9 @@ struct ContactJac {
   // store 1 block.
   MatrixView<real, 3> _jac;
 
-  // Auxiliary Jacobian dz/dx (optional), with no ownership. Size nDoFsInternal x nDoFsState if
-  // there is an auxiliary Jacobian and empty otherwise.
-  MatrixView<real const> _jacAux = {};
+  // Auxiliary Jacobian dz/dx (optional), with no ownership. Size 6 x nDoFsState if there is an
+  // auxiliary Jacobian and empty otherwise.
+  AuxView _jacAux = {};
 
  public:
   static constexpr int kDofsPerNode = 3;
@@ -244,24 +253,22 @@ struct ContactJac {
   }
 
   /// @brief Constant view of the auxiliary Jacobian. Empty if there is no auxiliary Jacobian.
-  MatrixView<real const> JacAux() const {
+  AuxView JacAux() const {
     return _jacAux;
   }
 
-  /// @brief Set the auxiliary Jacobian view.
-  void SetJacAuxView(MatrixView<real const> jacAux) {
-    MOCHI_ASSERT_VERBOSE(jacAux.Rows() == nDoFsInternal && jacAux.Cols() == nDoFsState);
-    _jacAux.Reset(jacAux);
-  }
-
-  /// @brief Initialize the sizes of the internal data structures (except for the index groups)
-  void
-  Resize(bool sharedDoFs, bool sharedJacs, int _nDoFsInternal, int _nDoFsState, int _nContacts) {
+  /// @brief Initialize the sizes of the internal data structures (except for the index groups).
+  ///
+  /// @param[in] nDoFs State DoFs per contact (nDoFsState).
+  /// @param[in] jacAux Optional auxiliary Jacobian, of size 6 x nDoFs. Requires shared DoFs.
+  void Resize(bool sharedDoFs, bool sharedJacs, int nDoFs, int _nContacts, AuxView jacAux = {}) {
+    MOCHI_ASSERT_VERBOSE(jacAux.empty() || (sharedDoFs && jacAux.Cols() == nDoFs));
     hasSharedDoFs = sharedDoFs;
     hasSharedJacs = sharedJacs;
-    nDoFsInternal = _nDoFsInternal;
-    nDoFsState = _nDoFsState;
+    nDoFsInternal = jacAux.empty() ? nDoFs : RigidSize::kDAll;
+    nDoFsState = nDoFs;
     nContacts = _nContacts;
+    _jacAux.Reset(jacAux);
     // jac has only 1 block if jacs are shared by all contacts
     _data.jac.resize_noinit(3 * (hasSharedJacs ? 1 : nContacts) * nDoFsInternal);
     _jac.Reset(_data.jac.data(), 3, (hasSharedJacs ? 1 : nContacts) * nDoFsInternal);

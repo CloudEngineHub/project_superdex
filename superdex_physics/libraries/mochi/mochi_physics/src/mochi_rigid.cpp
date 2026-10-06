@@ -415,7 +415,7 @@ void rigid::SetupCollidingJacobiansImpl(
     CDofOffset const& dofOffset,
     CContactSamples<TimeStep::Current> const& samples,
     CCollJacs<CollRole::Colliding>& outJacobians,
-    MatrixView<real const> jacAux,
+    ContactJac::AuxView jacAux,
     Span<int const> dofsAux) {
   MOCHI_PROFILE_SCOPE();
 
@@ -453,7 +453,7 @@ void rigid::SetupColliderJacobiansImpl(
     CDofOffset const& dofOffset,
     CRigidBodyInertia const& rigidInertia,
     CCollJacs<CollRole::Collider>& outJacobians,
-    MatrixView<real const> jacAux,
+    ContactJac::AuxView jacAux,
     Span<int const> dofsAux) {
   MOCHI_PROFILE_SCOPE();
 

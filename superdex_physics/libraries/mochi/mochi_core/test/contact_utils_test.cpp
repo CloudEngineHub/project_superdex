@@ -1302,7 +1302,7 @@ TEST(ContactJac, CoalesceColumnsByCachedMapping) {
   mapping.elementSourceContributionDstColumns = {0, 2, 1, 2, 0, 3, 0, 0, 1, 2, 1};
 
   auto initializeWideJacobian = [&](ContactJac& jac) {
-    jac.Resize(false, false, kOldWidth, kOldWidth, kNumContacts);
+    jac.Resize(false, false, kOldWidth, kNumContacts);
     for (int contact = 0; contact < kNumContacts; ++contact) {
       int const elementIndex = sampleIndices[contact] / mapping.samplesPerElement;
       auto const elementDofs = mapping.ElementDofIndices(elementIndex);
@@ -1375,12 +1375,7 @@ TEST(ContactJac, CoalesceColumnsByCachedMapping) {
   std::array<int, 2> const lowStrideSampleIndices = {0, 1};
   ContactJac lowStrideCached;
   auto initializeLowStrideJacobian = [&](ContactJac& jac) {
-    jac.Resize(
-        false,
-        false,
-        mapping.sourceBlockCount * kLowStride,
-        mapping.sourceBlockCount * kLowStride,
-        isize(lowStrideSampleIndices));
+    jac.Resize(false, false, mapping.sourceBlockCount * kLowStride, isize(lowStrideSampleIndices));
     for (int contact = 0; contact < isize(lowStrideSampleIndices); ++contact) {
       auto indices = jac.Inds(contact);
       auto values = jac.Jac(contact);
@@ -1436,10 +1431,10 @@ TEST(ContactJac, CoalesceColumnsByCachedMappingWithNoContacts) {
   mapping.elementSourceContributionDstColumns = {0, 0, 0};
 
   ContactJac jac;
-  jac.Resize(false, false, 3, 3, 1);
+  jac.Resize(false, false, 3, 1);
   auto const* const indicesData = jac.Inds(0).data();
   auto const* const jacData = jac.Jac(0).data();
-  jac.Resize(false, false, 3, 3, 0);
+  jac.Resize(false, false, 3, 0);
 
   std::array<int, 0> const sampleIndices{};
   jac.CoalesceColumnsByCachedMapping(mapping, sampleIndices, 0);
@@ -1448,27 +1443,31 @@ TEST(ContactJac, CoalesceColumnsByCachedMappingWithNoContacts) {
   EXPECT_EQ(0, jac.nDoFsState);
   EXPECT_EQ(0, jac.nContacts);
   EXPECT_FALSE(jac.groupsInitialized);
-  jac.Resize(false, false, 3, 3, 1);
+  jac.Resize(false, false, 3, 1);
   EXPECT_EQ(indicesData, jac.Inds(0).data());
   EXPECT_EQ(jacData, jac.Jac(0).data());
 }
 
 TEST(ContactJac, Move) {
-  int nDoFsInternal = 3;
-  int nDoFsState = 6;
-  int nContacts = 10;
+  int const nDoFsState = 8;
+  int const nContacts = 10;
+  RowMatrix<real, RigidSize::kDAll> const jacAux(RigidSize::kDAll, nDoFsState);
   for (bool sharedDoFs : {true, false}) {
     for (bool sharedJacs : {true, false}) {
+      // Auxiliary Jacobians require shared DoFs.
+      int const nDoFsInternal = sharedDoFs ? RigidSize::kDAll : nDoFsState;
       ContactJac jac0;
-      jac0.Resize(sharedDoFs, sharedJacs, nDoFsInternal, nDoFsState, nContacts);
+      jac0.Resize(
+          sharedDoFs,
+          sharedJacs,
+          nDoFsState,
+          nContacts,
+          sharedDoFs ? ContactJac::AuxView(jacAux) : ContactJac::AuxView());
       auto const* jacsData = jac0.Jac(0).data();
       auto const* indsData = jac0.Inds(0).data();
 
       jac0.CompressIndices();
       auto const* indGroupsData = jac0.IndGroups(0).data();
-
-      Matrix<real> jacAux(nDoFsInternal, nDoFsState);
-      jac0.SetJacAuxView(jacAux);
       auto const* jacAuxData = jac0.JacAux().data();
 
       auto runChecks = [&](auto const& jac) {

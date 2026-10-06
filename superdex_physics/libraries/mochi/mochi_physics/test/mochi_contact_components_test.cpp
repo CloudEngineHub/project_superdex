@@ -21,6 +21,7 @@
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/nd_array.h>
+#include <mochi_core/utils/rigid_body_size.h>
 #include <mochi_core/utils/simd.h>
 #include <mochi_core/utils/span.h>
 #include <mochi_core/utils/vmatrix.h>
@@ -600,8 +601,8 @@ static JacData MakeJacData(int otherEntity = 1) {
           /*partitionId*/ 0};
 }
 
-static void PopulateJac(ContactJac& jac, int dofIndex) {
-  jac.Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1, 1);
+static void PopulateJac(ContactJac& jac, int dofIndex, ContactJac::AuxView jacAux = {}) {
+  jac.Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1, jacAux);
   jac.Inds(0)[0] = dofIndex;
   jac.CompressIndices();
 }
@@ -631,11 +632,9 @@ TEST(JacData, ZeroDofJacobian) {
   expectZeroDofJacobian();
 
   // Recycled slice with DoFs and an auxiliary Jacobian
-  Matrix<real> jacAux(1, 1);
-  jacAux.SetZero();
+  auto const jacAux = RowMatrix<real, RigidSize::kDAll>::Zero(RigidSize::kDAll, 1);
   auto& jac = jacData.PrepareJacs(1)[0];
-  PopulateJac(jac, 4);
-  jac.SetJacAuxView(jacAux);
+  PopulateJac(jac, 4, jacAux);
   jacData.SetZeroDofJacobian();
   expectZeroDofJacobian();
 }

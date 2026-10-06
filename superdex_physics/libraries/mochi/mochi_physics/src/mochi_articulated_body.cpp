@@ -1668,7 +1668,7 @@ void mochi::articulated::compound::InitArticulatedBodyActor(
     reg.emplace<CArticulatedFullPoseRef>(groupMembers.actors[a], AsConstView(fullPose.value));
     reg.emplace<CArticulatedRigidJacobian>(
         groupMembers.actors[a],
-        CreateJacobianStorage(RigidSize::kDAll, isize(reducedDofsMap.dofs[a])),
+        RowMatrix<real, RigidSize::kDAll>::Zero(RigidSize::kDAll, isize(reducedDofsMap.dofs[a])),
         reducedDofsMap.dofs[a]);
     reg.get<CActorSnle>(groupMembers.actors[a]).useInSolver = false;
 
@@ -2509,7 +2509,6 @@ static void AssembleReducedDResidual(
   MOCHI_FILO_STACK_ALLOCATOR(tempAllocator, 64 * 1024);
   int const numDofs = outJtDJ.Rows();
   Matrix<real, RigidSize::kDAll, RigidSize::kDAll> diagonalBlock;
-  RowMatrix<real, RigidSize::kDAll> rowMajorJi(RigidSize::kDAll, numDofs, &tempAllocator);
   Matrix<real, RigidSize::kDAll> DJ(RigidSize::kDAll, numDofs, &tempAllocator);
   Matrix<real> linkJtDJ(numDofs, numDofs, &tempAllocator);
   RowMatrix<real, RigidSize::kDAll> couplingDJ(RigidSize::kDAll, numDofs, &tempAllocator);
@@ -2556,17 +2555,10 @@ static void AssembleReducedDResidual(
       }
     }
 
-    auto const& dofs = reg.get<CArticulatedRigidJacobian const>(links[i]).dofs;
+    auto const& linkJacobian = reg.get<CArticulatedRigidJacobian const>(links[i]);
+    auto const& dofs = linkJacobian.dofs;
     int const numLinkDofs = isize(dofs);
-    // Gathering J_i's nonzero columns into row-major scratch makes J_i^T column-major, so the
-    // products below vectorize along their output columns instead of reducing over 6 rigid DoFs.
-    auto Ji = rowMajorJi.LeftCols(numLinkDofs);
-    for (int p = 0; p < numLinkDofs; ++p) {
-      int const dof = dofs[p];
-      for (int a = 0; a < RigidSize::kDAll; ++a) {
-        Ji(a, p) = jacobian.value(offset + a, dof);
-      }
-    }
+    RowMatrixView<real const, RigidSize::kDAll> const Ji = linkJacobian.value;
     if (isCoupled) {
       auto couplingJtDJ = linkJtDJ.TopRows(numLinkDofs);
       couplingJtDJ = Ji.Transpose() * couplingDJ;
@@ -3254,9 +3246,14 @@ void articulated::rigid::EntityUpdateJacobian(
   MOCHI_ASSERT_VERBOSE(numDofs.dofsSize == RigidSize::kDAll);
 
   auto const& artJacobian = reg.get<CArticulatedJacobian const>(entArticulated.entity).value;
-  auto artJacobianBlock = artJacobian.MiddleRows(dofOffset.dofsOffset, numDofs.dofsSize);
-  for (int i = 0; i < isize(outJacobian.dofs); i++) {
-    outJacobian.value.Col(i) = artJacobianBlock.Col(outJacobian.dofs[i]);
+  auto const artJacobianBlock =
+      artJacobian.MiddleRows<RigidSize::kDAll>(dofOffset.dofsOffset, numDofs.dofsSize);
+  for (int r = 0; r < RigidSize::kDAll; ++r) {
+    auto const src = artJacobianBlock.Row(r);
+    auto dst = outJacobian.value.Row(r);
+    for (int i = 0; i < isize(outJacobian.dofs); ++i) {
+      dst(i) = src(outJacobian.dofs[i]);
+    }
   }
 }
 
