@@ -699,7 +699,10 @@ struct RowMultiplier {
     //--- Loop over columns in batches of twice the SIMD size.
     int c = 0;
     for (; c + 2 * kVecSize <= nCols; c += 2 * kVecSize) {
-      VType result[2 * kBlockSize] = {}; // Initializes to zero.
+      VType result[2 * kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int r = 0; r < 2 * kBlockSize; ++r) {
+        result[r] = SimdZero<VType>();
+      }
       for (int j = 0; j < isize(rowIndices); ++j) {
         for (int jj = 0; jj < kBlockSize; ++jj) {
           auto const xVec1 = x.template RowVector<VType>(jj + kBlockSize * rowIndices[j], c);
@@ -720,7 +723,10 @@ struct RowMultiplier {
 
     //--- Additional batch of the same number of columns as the SIMD size, if possible.
     if (c + kVecSize <= nCols) {
-      VType result[kBlockSize] = {}; // Initializes to zero.
+      VType result[kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int r = 0; r < kBlockSize; ++r) {
+        result[r] = SimdZero<VType>();
+      }
       for (int j = 0; j < isize(rowIndices); ++j) {
         for (int jj = 0; jj < kBlockSize; ++jj) {
           auto const xVec = x.template RowVector<VType>(jj + kBlockSize * rowIndices[j], c);
@@ -741,7 +747,10 @@ struct RowMultiplier {
     MOCHI_ASSERT_VERBOSE(
         leftoverCols >= 0 && leftoverCols < kVecSize, "Inconsistent number of leftover columns.");
     if (leftoverCols > 0) {
-      VType result[kBlockSize] = {}; // Initializes to zero.
+      VType result[kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int r = 0; r < kBlockSize; ++r) {
+        result[r] = SimdZero<VType>();
+      }
       for (int j = 0; j < isize(rowIndices); ++j) {
         for (int jj = 0; jj < kBlockSize; ++jj) {
           auto const xVec =
@@ -859,7 +868,10 @@ struct RowMultiplier {
 
       //--- Perform the block row multiplication.
       int j = 0;
-      VType entries[kBlockSize] = {};
+      VType entries[kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int k = 0; k < kBlockSize; ++k) {
+        entries[k] = SimdZero<VType>();
+      }
       for (; j + kIncr <= len; j += kIncr) {
         auto const xData = Load<VType>(xTmp.Data() + j);
         for (int k = 0; k < kBlockSize; ++k) {
@@ -918,7 +930,10 @@ struct RowMultiplier {
     static_assert(AccessorIn::RowColCosts().first == 1, "The kernel requires column-major x");
     int j = 0;
     int jb = 0;
-    V8 results[kBlockSize] = {}; // Initializes to zero.
+    V8 results[kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    for (int k = 0; k < kBlockSize; ++k) {
+      results[k] = SimdZero<V8>();
+    }
     V8 matData, vecData;
     V4 v0, v1, v2, v3, v4, v5, v6, v7;
     //--- Batches of 8 blocks.
@@ -1089,12 +1104,19 @@ struct RowMultiplier {
     static_assert(AccessorIn::RowColCosts().first == 1, "ApplyToColVector4x4 requires col-major x");
     int jb = 0;
     int j = 0;
-    V4 results[kBlockSize] = {}; // One accumulator per output row
+    // One accumulator per output row
+    V4 results[kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    for (int k = 0; k < kBlockSize; ++k) {
+      results[k] = SimdZero<V4>();
+    }
 
     if constexpr (!V8::kIsComposite) {
       // If V8 is the native size, compute the product in batches of 2 blocks at a time (8 elements
       // = 2 blocks of 4) for better throughput
-      V8 results8[kBlockSize] = {};
+      V8 results8[kBlockSize] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int k = 0; k < kBlockSize; ++k) {
+        results8[k] = SimdZero<V8>();
+      }
       for (; jb + 2 <= numBlocks; jb += 2, j += 2 * kBlockSize) {
         V8 vecData = {
             x.template ColVector<V4>(kBlockSize * rowIndices[jb + 0], c),

@@ -280,7 +280,10 @@ MOCHI_ANY inline void DirectRowBlockProductSimdAlongK(
   //--- a gather, which compilers don't reliably hoist out of the row loop.
   for (int c = 0; c < n; ++c) {
     int j = 0;
-    VType s[kNumRows] = {};
+    VType s[kNumRows] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    for (int rr = 0; rr < kNumRows; ++rr) {
+      s[rr] = SimdZero<VType>();
+    }
     if constexpr (kATC == krylov::kDynamic || kATC >= kVecSize) {
       for (; j + kVecSize <= k; j += kVecSize) {
         VType const b = B.template ColVector<VType>(j, c);
