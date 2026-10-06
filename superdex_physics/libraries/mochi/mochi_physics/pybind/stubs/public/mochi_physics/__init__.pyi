@@ -2551,8 +2551,8 @@ class ModelData:
     mesh: Optional[MeshData]
     visual_mesh: Optional[MeshData]
     contact_skin_mesh: Optional[MeshData]
-    """Optional triangular mesh used for surface queries and, when selected as a shell
-    or rod actor's contact geometry, for contact quadrature.
+    """Optional triangular mesh exposed through the contact-skin queries and, when
+    selected as a shell or rod actor's contact geometry, for contact quadrature.
 
     For triangular and tetrahedral primary meshes, the skinning data is a node-based
     linear embedding whose indices reference primary-mesh nodes. For polylines, the
@@ -2619,8 +2619,8 @@ class ModelDataView:
     mesh: Optional[MeshDataView]
     visual_mesh: Optional[MeshDataView]
     contact_skin_mesh: Optional[MeshDataView]
-    """Optional triangular mesh used for surface queries and, when selected as a shell
-    or rod actor's contact geometry, for contact quadrature.
+    """Optional triangular mesh exposed through the contact-skin queries and, when
+    selected as a shell or rod actor's contact geometry, for contact quadrature.
 
     For triangular and tetrahedral primary meshes, the skinning data is a node-based
     linear embedding whose indices reference primary-mesh nodes. For polylines, the
@@ -4775,6 +4775,26 @@ class QueryType:
     Note:
         Only supported for actors with a visual mesh. Deformable actors also require
         a visual mesh embedding.
+    """
+    CONTACT_SKIN_NODE_POSITIONS: QueryType
+    """Positions of contact skin mesh nodes. Available via
+    :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`.
+
+    Note:
+        Only supported for shell and rod actors whose shape has a contact skin with
+        skinning data, regardless of
+        :attr:`~superdex.physics.experimental.RodActorParams.use_contact_skin` /
+        :attr:`~superdex.physics.experimental.ShellActorParams.use_contact_skin`.
+    """
+    CONTACT_SKIN_NODE_NORMALS: QueryType
+    """Normals of contact skin mesh nodes. Available via
+    :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`.
+
+    Note:
+        Only supported for shell and rod actors whose shape has a contact skin with
+        skinning data, regardless of
+        :attr:`~superdex.physics.experimental.RodActorParams.use_contact_skin` /
+        :attr:`~superdex.physics.experimental.ShellActorParams.use_contact_skin`.
     """
     CONTACT_POINTS: QueryType
     """Contact points between actors. Available via
@@ -7307,7 +7327,7 @@ class ContactPoint:
         For shell actors, this is the physics mesh returned by
         :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
         enabled, in which case it is the compact contact skin returned by
-        :meth:`~superdex.physics.Actor.get_surface_mesh`.
+        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
 
     Note:
         For rod actors, this field is not populated and is reported as 0. Use
@@ -7375,7 +7395,7 @@ class NodeContactForce:
         For shell actors, this is the physics mesh returned by
         :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
         enabled, in which case it is the compact contact skin returned by
-        :meth:`~superdex.physics.Actor.get_surface_mesh`.
+        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
     """
     @property
     def force(self) -> Real3:
@@ -8895,11 +8915,11 @@ def get_shape_contact_skin_mesh(shape: ShapeHandle) -> MeshDataView:
     available.
 
     Returns a triangle mesh (3 nodes per element). Every contact-skin node is
-    referenced by the contact-skin connectivity, so an actor surface mesh built from
-    the contact skin has the same node ordering. The mesh includes the authored
-    skinning data when available, in the format of
-    :attr:`~superdex.physics.ModelData.contact_skin_mesh`. For shapes without a
-    contact skin, returns an empty view.
+    referenced by the contact-skin connectivity, so
+    :meth:`~superdex.physics.Actor.get_contact_skin_mesh` has the same node
+    ordering. The mesh includes the authored skinning data when available, in the
+    format of :attr:`~superdex.physics.ModelData.contact_skin_mesh`. For shapes
+    without a contact skin, returns an empty view.
 
     Args:
         shape (ShapeHandle): Handle to a valid shape.
@@ -8929,7 +8949,7 @@ def get_shape_contact_skin_mesh(shape: ShapeHandle) -> MeshDataView:
         :func:`~superdex.physics.get_shape_mesh`,
         :func:`~superdex.physics.get_shape_surface_mesh`,
         :func:`~superdex.physics.get_shape_visual_mesh`,
-        :meth:`~superdex.physics.Actor.get_surface_mesh`
+        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`
     """
 
 def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
@@ -9883,11 +9903,10 @@ class Actor:
         simulation meshes, the surface is the boundary triangles. For triangular
         simulation meshes, the surface has the same triangle elements as the simulation
         mesh, but nodes not referenced by any surface triangle are omitted and remaining
-        nodes may be reindexed. For shell and rod actors with an embedded
-        :attr:`~superdex.physics.ModelData.contact_skin_mesh`, returns that contact skin
-        regardless of the actor's selected collision representation. For articulated
-        actors with a skinned simulation surface, returns that surface. Returns an empty
-        view if the actor does not have a surface mesh.
+        nodes may be reindexed. For articulated actors with a skinned simulation
+        surface, returns that surface. Returns an empty view if the actor does not have
+        a surface mesh, e.g. for rod actors. Contact skins are exposed by
+        :meth:`~superdex.physics.Actor.get_contact_skin_mesh` instead.
 
         Returns:
             A non-owning view of the actor's reference surface mesh, or an empty view if
@@ -9913,6 +9932,7 @@ class Actor:
             :class:`~superdex.physics.MeshDataView`,
             :meth:`~superdex.physics.Actor.get_mesh`,
             :meth:`~superdex.physics.Actor.get_visual_mesh`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh`,
             :meth:`~superdex.physics.Actor.get_surface_mesh_node_positions_local`,
             :meth:`~superdex.physics.Actor.get_surface_mesh_node_normals_local`,
             :func:`~superdex.physics.get_shape_surface_mesh`
@@ -9950,9 +9970,50 @@ class Actor:
             :class:`~superdex.physics.MeshDataView`,
             :meth:`~superdex.physics.Actor.get_mesh`,
             :meth:`~superdex.physics.Actor.get_surface_mesh`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh`,
             :meth:`~superdex.physics.Actor.get_visual_mesh_node_positions_local`,
             :meth:`~superdex.physics.Actor.get_visual_mesh_node_normals_local`,
             :func:`~superdex.physics.get_shape_visual_mesh`
+        """
+    def get_contact_skin_mesh(self) -> MeshDataView:
+        """Get a view of the actor's reference contact skin mesh.
+
+        Returns the :attr:`~superdex.physics.ModelData.contact_skin_mesh` of the actor's
+        shape, regardless of whether the actor selected it as its collision
+        representation. Only shell and rod actors whose shape's contact skin has
+        skinning data expose it. Other actors return an empty view. For shell actors,
+        the mesh includes the linear contact-skin skinning data.
+
+        Returns:
+            A non-owning view of the actor's reference contact skin mesh, or an empty
+            view if the actor has no contact skin.
+
+        Note:
+            The returned coordinates are reference contact-skin positions in the actor's
+            local frame. Deformed contact-skin positions are only available through
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`.
+
+        Note:
+            The node ordering matches
+            :func:`~superdex.physics.get_shape_contact_skin_mesh`.
+
+        Note:
+            When linear contact-skin skinning data is present, skinning indices refer to
+            the node ordering returned by :meth:`~superdex.physics.Actor.get_mesh`. Rod
+            contact skin embeddings are nonlinear and are not exposed through this
+            linear skinning field.
+
+        Note:
+            The returned view remains valid until the actor is destroyed.
+
+        See Also:
+            :class:`~superdex.physics.MeshDataView`,
+            :meth:`~superdex.physics.Actor.get_mesh`,
+            :meth:`~superdex.physics.Actor.get_surface_mesh`,
+            :meth:`~superdex.physics.Actor.get_visual_mesh`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`,
+            :func:`~superdex.physics.get_shape_contact_skin_mesh`
         """
     def get_surface_mesh_node_positions_local(self) -> SpanConstReal:
         """Get the current position of the nodes (reference + displacements) of the
@@ -9981,15 +10042,12 @@ class Actor:
             The node ordering corresponds to the mesh connectivity from
             :meth:`~superdex.physics.Actor.get_surface_mesh`.
 
-        Note:
-            Supported for shell and rod actors whose shape has an authored usable
-            contact skin, regardless of whether that skin is selected for collision.
-
         See Also:
             :meth:`~superdex.physics.Actor.register_query`,
             :class:`SURFACE_NODE_POSITIONS <superdex.physics.QueryType>`,
             :meth:`~superdex.physics.Actor.get_surface_mesh`,
-            :meth:`~superdex.physics.Actor.get_surface_mesh_node_normals_local`
+            :meth:`~superdex.physics.Actor.get_surface_mesh_node_normals_local`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`
         """
     def get_surface_mesh_node_normals_local(self) -> SpanConstReal:
         """Get the normal direction for each node of the surface mesh in the actor's
@@ -10019,15 +10077,12 @@ class Actor:
             The node ordering corresponds to the mesh connectivity from
             :meth:`~superdex.physics.Actor.get_surface_mesh`.
 
-        Note:
-            Supported for shell and rod actors whose shape has an authored usable
-            contact skin, regardless of whether that skin is selected for collision.
-
         See Also:
             :meth:`~superdex.physics.Actor.register_query`, :class:`SURFACE_NODE_NORMALS
             <superdex.physics.QueryType>`,
             :meth:`~superdex.physics.Actor.get_surface_mesh`,
-            :meth:`~superdex.physics.Actor.get_surface_mesh_node_positions_local`
+            :meth:`~superdex.physics.Actor.get_surface_mesh_node_positions_local`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`
         """
     def get_reference_shape(self) -> ShapeHandle:
         """Get a new :class:`~superdex.physics.ShapeHandle` referencing the same shape
@@ -10148,9 +10203,8 @@ class Actor:
             When ``boundary_only`` is false, requires registering :class:`NODE_POSITIONS
             <superdex.physics.QueryType>` before the simulation step. When true,
             requires registering :class:`SURFACE_NODE_POSITIONS
-            <superdex.physics.QueryType>` unless the surface mesh is linearly embedded
-            in the simulation mesh. Results are available after the simulation step
-            completes.
+            <superdex.physics.QueryType>`. Results are available after the simulation
+            step completes.
 
         Warning:
             This is a synchronous call and may be expensive.
@@ -10187,9 +10241,8 @@ class Actor:
             When ``boundary_only`` is false, requires registering :class:`NODE_POSITIONS
             <superdex.physics.QueryType>` before the simulation step. When true,
             requires registering :class:`SURFACE_NODE_POSITIONS
-            <superdex.physics.QueryType>` unless the surface mesh is linearly embedded
-            in the simulation mesh. Results are available after the simulation step
-            completes.
+            <superdex.physics.QueryType>`. Results are available after the simulation
+            step completes.
 
         Warning:
             This is a synchronous call and may be expensive.
@@ -10226,9 +10279,8 @@ class Actor:
             When ``boundary_only`` is false, requires registering :class:`NODE_POSITIONS
             <superdex.physics.QueryType>` before the simulation step. When true,
             requires registering :class:`SURFACE_NODE_POSITIONS
-            <superdex.physics.QueryType>` unless the surface mesh is linearly embedded
-            in the simulation mesh. Results are available after the simulation step
-            completes.
+            <superdex.physics.QueryType>`. Results are available after the simulation
+            step completes.
 
         Warning:
             This is a synchronous call and may be expensive.
@@ -10466,6 +10518,65 @@ class Actor:
             <superdex.physics.QueryType>`,
             :meth:`~superdex.physics.Actor.get_visual_mesh`,
             :meth:`~superdex.physics.Actor.get_visual_mesh_node_positions_local`
+        """
+    def get_contact_skin_mesh_node_positions_local(self) -> SpanConstReal:
+        """Get the current positions of the contact skin mesh nodes in the actor's local
+        frame.
+
+        Returns:
+            Current node positions [m] of the contact skin mesh in the actor's local
+            frame (3 values per node: x, y, z). The number of nodes is available via
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh`. The order of the
+            nodes is 1-to-1 with
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        Note:
+            Requires registering :class:`CONTACT_SKIN_NODE_POSITIONS
+            <superdex.physics.QueryType>` before the simulation step. Results are
+            available after the simulation step completes.
+
+        Note:
+            Requires the actor to support :class:`CONTACT_SKIN_NODE_POSITIONS
+            <superdex.physics.QueryType>`.
+
+        See Also:
+            :meth:`~superdex.physics.Actor.register_query`,
+            :class:`CONTACT_SKIN_NODE_POSITIONS <superdex.physics.QueryType>`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`
+        """
+    def get_contact_skin_mesh_node_normals_local(self) -> SpanConstReal:
+        """Get the normal direction to each node of the contact skin mesh in the actor's
+        local frame.
+
+        Returns:
+            Flattened normals (3 values per node: nx, ny, nz) in the actor's local
+            frame, computed by normalizing the area-weighted sum of adjacent triangle
+            normals. The number of nodes is available via
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh`. The order of the
+            nodes is 1-to-1 with
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        Note:
+            Requires registering :class:`CONTACT_SKIN_NODE_NORMALS
+            <superdex.physics.QueryType>` before the simulation step. Results are
+            available after the simulation step completes.
+
+        Note:
+            Requires the actor to support :class:`CONTACT_SKIN_NODE_NORMALS
+            <superdex.physics.QueryType>`.
+
+        See Also:
+            :meth:`~superdex.physics.Actor.register_query`,
+            :class:`CONTACT_SKIN_NODE_NORMALS <superdex.physics.QueryType>`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh`,
+            :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`
         """
     def get_boundary_condition_dof_indices(self) -> SpanConstInt:
         """Get the DoF indices that are constrained by boundary conditions.

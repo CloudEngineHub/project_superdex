@@ -66,19 +66,14 @@ struct CTetrahedralMesh : public NoCopy {
 };
 
 /*
-  Stores the actor-facing surface mesh used by surface queries and visualization. It is normally
-  the boundary of the computational mesh, but may instead be an authored linearly embedded skin.
-  Physics systems that require the computational mesh must use its actor-specific mesh component.
+  Stores the surface of the actor's physics mesh: the tet boundary, the triangle mesh, or the
+  articulated skin surface. Rod actors do not have it.
 */
 struct CSurfaceMesh : public NoCopy {
-  explicit CSurfaceMesh(
-      std::shared_ptr<TriangularMesh const> const& meshIn,
-      std::shared_ptr<LinearMeshEmbedding const> const& embeddingIn = {})
-      : mesh(meshIn), embedding(embeddingIn) {
+  explicit CSurfaceMesh(std::shared_ptr<TriangularMesh const> const& meshIn) : mesh(meshIn) {
     MOCHI_ASSERT(mesh != nullptr);
   }
   std::shared_ptr<TriangularMesh const> mesh;
-  std::shared_ptr<LinearMeshEmbedding const> embedding;
 };
 
 // NOTE: Functionally-equivalent to CSurfaceMesh, but with a different name to make it clear that
@@ -103,6 +98,22 @@ struct CVisualMesh : public NoCopy {
   }
   std::shared_ptr<TriangularMesh const> mesh;
   std::shared_ptr<MeshEmbedding const> embedding;
+};
+
+/*
+  Stores the shape's contact skin whenever it has usable skinning data, regardless of whether the
+  actor uses it for contact. The embedding is null for rods, which store it in
+  CRodContactSkinEmbedding instead.
+*/
+struct CContactSkinMesh : public NoCopy {
+  explicit CContactSkinMesh(
+      std::shared_ptr<TriangularMesh const> const& meshIn,
+      std::shared_ptr<LinearMeshEmbedding const> const& embeddingIn = {})
+      : mesh(meshIn), embedding(embeddingIn) {
+    MOCHI_ASSERT(mesh != nullptr);
+  }
+  std::shared_ptr<TriangularMesh const> mesh;
+  std::shared_ptr<LinearMeshEmbedding const> embedding;
 };
 
 /// @brief ECS component for the local-to-global map of the actor discretization.

@@ -375,7 +375,7 @@ TEST_F(ContactSkinnedRodConstraintTest, ConstraintUsesCenterlineNodeIndices) {
   rodParams.shape = _scene->GetContext()->CreateModelShape(model, ExpectOK{});
   Actor* const rod = CreateRodActor(_scene, rodParams, ExpectOK{});
   ASSERT_EQ(4, rod->GetMesh().GetNumNodes());
-  ASSERT_EQ(3, rod->GetSurfaceMesh().GetNumNodes());
+  ASSERT_EQ(3, rod->GetContactSkinMesh().GetNumNodes());
 
   RigidActorParams rigidParams;
   rigidParams.shape = GetUnitCubeShape(_scene->GetContext());

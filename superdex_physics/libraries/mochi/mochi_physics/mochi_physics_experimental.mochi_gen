@@ -457,6 +457,10 @@ struct experimental::RodActorParams [no_reflection] {
   //
   // @details Actor creation fails if the shape does not have a triangular contact skin with rod
   // embedding data.
+  //
+  // @note A contact skin with rod embedding data is exposed through @ref Actor::GetContactSkinMesh
+  // and @ref QueryType::ContactSkinNodePositions / @ref QueryType::ContactSkinNodeNormals
+  // independently of this flag.
   bool useContactSkin = false;
 
   // @brief Triangle element type for contact-skin quadrature.
@@ -521,6 +525,10 @@ struct experimental::ShellActorParams [no_reflection] {
   // @details Actor creation fails unless the shape has a triangular contact skin with node-based
   // linear skinning data. This changes the shell's colliding contact samples. The point-cloud
   // collider, when enabled, remains discretized on the physics mesh.
+  //
+  // @note A contact skin with linear skinning data is exposed through @ref
+  // Actor::GetContactSkinMesh and @ref QueryType::ContactSkinNodePositions / @ref
+  // QueryType::ContactSkinNodeNormals independently of this flag.
   bool useContactSkin = false;
 }
 

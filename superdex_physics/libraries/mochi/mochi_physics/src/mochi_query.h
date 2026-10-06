@@ -99,6 +99,18 @@ struct CQueryVisualNodeNormals : RefCounted {
   std::vector<real> nodeNormals;
 };
 
+// Indicates that the contact skin node positions should be calculated and stored for
+// Actor::GetContactSkinMeshNodePositionsLocal()
+struct CQueryContactSkinNodePositions : RefCounted {
+  std::vector<real> nodePositions;
+};
+
+// Indicates that the contact skin node normals should be calculated and stored for
+// Actor::GetContactSkinMeshNodeNormalsLocal()
+struct CQueryContactSkinNodeNormals : RefCounted {
+  std::vector<real> nodeNormals;
+};
+
 // Indicates that we should calculate the total elastic energy of a soft actor. Enabling this
 // feature requires significant additional computation.
 struct CQueryElasticEnergy : RefCounted {

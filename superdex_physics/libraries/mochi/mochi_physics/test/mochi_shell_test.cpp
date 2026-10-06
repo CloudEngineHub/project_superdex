@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 #include <mochi_physics/src/mochi_point_cloud_contact.h>
+#include <mochi_physics/src/mochi_rod.h>
 #include <mochi_physics/src/mochi_shell.h>
 #include <mochi_physics/src/mochi_step.h>
 #include "mochi_core/test/mochi_test_helpers.h"
@@ -1016,27 +1017,32 @@ TEST_F(MochiShellContactSkinTest, ContactSkinSelectionRequiresGeometryAndEmbeddi
 }
 
 TEST_F(MochiShellContactSkinTest, AuthoredSkinIsExposedIndependentlyOfContactSelection) {
-  Actor* const actor = CreateActor(CreateShape());
-  auto& reg = GetRegistry();
-  entt::entity const entity = GetEntity(actor);
+  constexpr std::array kExpectedSkinningIndices = {0, 0, 1, 1, 1, 2, 2, 3, 3};
+  for (bool const useContactSkin : {false, true}) {
+    SCOPED_TRACE(useContactSkin);
+    Actor* const actor = CreateActor(CreateShape(), useContactSkin);
+    auto& reg = GetRegistry();
+    entt::entity const entity = GetEntity(actor);
 
-  EXPECT_EQ(isize(kPhysicsNodes), actor->GetMesh().GetNumNodes());
-  EXPECT_EQ(3, actor->GetSurfaceMesh().GetNumNodes());
-  EXPECT_FALSE((reg.all_of<TagUseDeformableContactSkin, CContactSkinningData>(entity)));
-  EXPECT_TRUE((reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
-  EXPECT_EQ(
-      reg.get<CTriangularMesh const>(entity).mesh, reg.get<CSimplicialMesh const>(entity).mesh);
-  EXPECT_NE(reg.get<CTriangularMesh const>(entity).mesh, reg.get<CSurfaceMesh const>(entity).mesh);
-  EXPECT_NE(nullptr, reg.get<CSurfaceMesh const>(entity).embedding);
+    EXPECT_EQ(isize(kPhysicsNodes), actor->GetMesh().GetNumNodes());
+    EXPECT_EQ(isize(kPhysicsNodes), actor->GetSurfaceMesh().GetNumNodes());
+    EXPECT_EQ(
+        reg.get<CTriangularMesh const>(entity).mesh, reg.get<CSurfaceMesh const>(entity).mesh);
+    EXPECT_EQ(
+        useContactSkin, (reg.all_of<TagUseDeformableContactSkin, CContactSkinningData>(entity)));
+    EXPECT_NE(
+        useContactSkin, (reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
+
+    MeshDataView const contactSkin = actor->GetContactSkinMesh();
+    EXPECT_SPAN_EQ(Flatten(MakeConstSpan(kSkinNodes)), contactSkin.coordinates);
+    EXPECT_SPAN_EQ(Flatten(MakeConstSpan(kSkinTriangles)), contactSkin.connectivity);
+    ASSERT_TRUE(contactSkin.skinning.has_value());
+    EXPECT_EQ(3, contactSkin.skinning->weightsPerNode);
+    EXPECT_SPAN_EQ(MakeConstSpan(kExpectedSkinningIndices), contactSkin.skinning->indices);
+  }
 }
 
-TEST_F(MochiShellContactSkinTest, SurfaceQueriesFollowEmbedding) {
-  Actor* const actor = CreateActor(CreateShape());
-  auto& reg = GetRegistry();
-  entt::entity const entity = GetEntity(actor);
-  actor->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, test::ExpectOK{});
-  actor->RegisterQueryAndCompute(QueryType::SurfaceNodeNormals, test::ExpectOK{});
-
+TEST_F(MochiShellContactSkinTest, SurfaceQueriesFollowPhysicsMeshAndSkinQueriesFollowEmbedding) {
   std::array<Real3, 5> const displacements = {
       Real3{1_r, 0_r, 0_r},
       Real3{0_r, 2_r, 0_r},
@@ -1044,30 +1050,57 @@ TEST_F(MochiShellContactSkinTest, SurfaceQueriesFollowEmbedding) {
       Real3{1_r, 1_r, 1_r},
       Real3{2_r, 0_r, 0_r},
   };
-  auto& displacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(entity).value;
-  auto const flatDisplacements = Flatten(MakeConstSpan(displacements));
-  for (int i = 0; i < isize(flatDisplacements); ++i) {
-    displacement(i) = flatDisplacements[i];
-  }
-  ecs::InvokeOnEntity(&UpdateQuerySurfaceNodePositions, reg, entity);
-  ecs::InvokeOnEntity(&UpdateQuerySurfaceNodeNormals, reg, entity);
-
-  std::array<Real3, 3> const expectedPositions = {
+  std::array<Real3, 5> const expectedSurfacePositions = {
+      Real3{1_r, 0_r, 0_r},
+      Real3{1_r, 2_r, 0_r},
+      Real3{1_r, 1_r, 3_r},
+      Real3{1_r, 2_r, 1_r},
+      Real3{2.5_r, 0.5_r, 0_r},
+  };
+  std::array<Real3, 3> const expectedSkinPositions = {
       Real3{1_r, 1_r, 0_r},
       Real3{1_r, 1.75_r, 0.75_r},
       Real3{1_r, 1.5_r, 2_r},
   };
-  auto const positions =
-      Unflatten<Real3 const>(actor->GetSurfaceMeshNodePositionsLocal(test::ExpectOK{}));
-  EXPECT_SPAN_EQ(MakeConstSpan(expectedPositions), positions);
+  Real3 const expectedSkinNormal = Normalize(Cross(
+      expectedSkinPositions[1] - expectedSkinPositions[0],
+      expectedSkinPositions[2] - expectedSkinPositions[0]));
 
-  Real3 const expectedNormal = Normalize(Cross(
-      expectedPositions[1] - expectedPositions[0], expectedPositions[2] - expectedPositions[0]));
-  auto const normals =
-      Unflatten<Real3 const>(actor->GetSurfaceMeshNodeNormalsLocal(test::ExpectOK{}));
-  ASSERT_EQ(expectedPositions.size(), normals.size());
-  for (Real3 const& normal : normals) {
-    EXPECT_NEAR_EQ(expectedNormal, normal);
+  for (bool const useContactSkin : {false, true}) {
+    SCOPED_TRACE(useContactSkin);
+    Actor* const actor = CreateActor(CreateShape(), useContactSkin);
+    auto& reg = GetRegistry();
+    entt::entity const entity = GetEntity(actor);
+    actor->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, test::ExpectOK{});
+    actor->RegisterQueryAndCompute(QueryType::SurfaceNodeNormals, test::ExpectOK{});
+    actor->RegisterQueryAndCompute(QueryType::ContactSkinNodePositions, test::ExpectOK{});
+    actor->RegisterQueryAndCompute(QueryType::ContactSkinNodeNormals, test::ExpectOK{});
+
+    auto& displacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(entity).value;
+    auto const flatDisplacements = Flatten(MakeConstSpan(displacements));
+    for (int i = 0; i < isize(flatDisplacements); ++i) {
+      displacement(i) = flatDisplacements[i];
+    }
+    ecs::InvokeOnEntity(&UpdateQueryNodePositions, reg, entity);
+    ecs::InvokeOnEntity(&UpdateQuerySurfaceNodePositions, reg, entity);
+    ecs::InvokeOnEntity(&UpdateQuerySurfaceNodeNormals, reg, entity);
+    ecs::InvokeOnEntity(&UpdateQueryContactSkinNodePositionsAndNormals, reg, entity);
+
+    EXPECT_SPAN_EQ(
+        MakeConstSpan(expectedSurfacePositions),
+        Unflatten<Real3 const>(actor->GetSurfaceMeshNodePositionsLocal(test::ExpectOK{})));
+    EXPECT_EQ(
+        isize(Flatten(MakeConstSpan(expectedSurfacePositions))),
+        isize(actor->GetSurfaceMeshNodeNormalsLocal(test::ExpectOK{})));
+    EXPECT_SPAN_EQ(
+        MakeConstSpan(expectedSkinPositions),
+        Unflatten<Real3 const>(actor->GetContactSkinMeshNodePositionsLocal(test::ExpectOK{})));
+    auto const skinNormals =
+        Unflatten<Real3 const>(actor->GetContactSkinMeshNodeNormalsLocal(test::ExpectOK{}));
+    ASSERT_EQ(expectedSkinPositions.size(), skinNormals.size());
+    for (Real3 const& normal : skinNormals) {
+      EXPECT_NEAR_EQ(expectedSkinNormal, normal);
+    }
   }
 }
 
@@ -1443,6 +1476,7 @@ TEST_F(MochiShellContactSkinTest, PhysicsNodeConsumersIgnoreAuthoredSkinOrdering
   DynamicArray<int> selectedNodes;
   Real3 const physicsNode = kPhysicsNodes[4];
   Real3 constexpr kHalfExtent{0.01_r, 0.01_r, 0.01_r};
+  actorA->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, test::ExpectOK{});
   actorA->QueryNodesInVolumeLocal(
       Aabb{physicsNode - kHalfExtent, physicsNode + kHalfExtent},
       /*boundaryOnly=*/true,
@@ -1462,14 +1496,22 @@ TEST_F(MochiShellContactSkinTest, PhysicsNodeConsumersIgnoreAuthoredSkinOrdering
 }
 
 TEST_F(MochiShellContactSkinTest, ShellWithoutContactSkinKeepsDefaultRepresentation) {
-  Actor* const actor = CreateActor(CreateShape(/*includeContactSkin=*/false));
-  auto& reg = GetRegistry();
-  entt::entity const entity = GetEntity(actor);
+  for (bool const includeContactSkin : {false, true}) {
+    SCOPED_TRACE(includeContactSkin);
+    Actor* const actor = CreateActor(CreateShape(includeContactSkin, /*includeEmbedding=*/false));
+    auto& reg = GetRegistry();
+    entt::entity const entity = GetEntity(actor);
 
-  EXPECT_EQ(isize(kPhysicsNodes), actor->GetMesh().GetNumNodes());
-  EXPECT_EQ(isize(kPhysicsNodes), actor->GetSurfaceMesh().GetNumNodes());
-  EXPECT_FALSE(
-      (reg.all_of<TagUseDeformableContactSkin, CContactSkinningData, CDeformedContactSkinNodes>(
-          entity)));
-  EXPECT_TRUE((reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
+    EXPECT_EQ(isize(kPhysicsNodes), actor->GetMesh().GetNumNodes());
+    EXPECT_EQ(isize(kPhysicsNodes), actor->GetSurfaceMesh().GetNumNodes());
+    EXPECT_EQ(MeshDataView{}, actor->GetContactSkinMesh());
+    EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodePositions));
+    EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodeNormals));
+    EXPECT_FALSE((reg.any_of<
+                  CContactSkinMesh,
+                  TagUseDeformableContactSkin,
+                  CContactSkinningData,
+                  CDeformedContactSkinNodes>(entity)));
+    EXPECT_TRUE((reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
+  }
 }

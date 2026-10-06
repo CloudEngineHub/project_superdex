@@ -127,17 +127,17 @@ static void EmplaceShellActorDiscretization(
   reg.emplace<CShape>(e, shape);
   reg.emplace<CTriangularMesh>(e, shape->GetMesh());
   reg.emplace<CSimplicialMesh>(e, shape->GetMesh());
-  if (shape->GetContactSkin() && shape->GetContactSkinEmbedding()) {
-    reg.emplace<CSurfaceMesh>(e, shape->GetContactSkin(), shape->GetContactSkinEmbedding());
-  } else {
-    reg.emplace<CSurfaceMesh>(e, shape->GetMesh());
-  }
+  reg.emplace<CSurfaceMesh>(e, shape->GetMesh());
 
   if (shape->GetVisualMesh() && shape->GetVisualEmbedding()) {
     reg.emplace<CVisualMesh>(e, shape->GetVisualMesh(), shape->GetVisualEmbedding());
   } else if (shape->GetVisualMesh()) {
     MOCHI_LOG_WARNING(
         "Shell shape has a visual mesh but no embedding. The visual mesh will be ignored.");
+  }
+
+  if (shape->GetContactSkin() && shape->GetContactSkinEmbedding()) {
+    reg.emplace<CContactSkinMesh>(e, shape->GetContactSkin(), shape->GetContactSkinEmbedding());
   }
 }
 

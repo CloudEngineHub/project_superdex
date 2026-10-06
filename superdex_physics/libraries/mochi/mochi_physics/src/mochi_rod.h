@@ -83,28 +83,15 @@ struct CRodVisualMeshEmbedding : public NoCopy {
   std::shared_ptr<RodSurfaceEmbeddingData const> data;
 };
 
-// ECS component holding the nonlinear embedding for the rod's authored surface mesh.
-struct CRodSurfaceMeshEmbedding : public NoCopy {
-  explicit CRodSurfaceMeshEmbedding(std::shared_ptr<RodSurfaceEmbeddingData const> dataIn)
+// ECS component holding the nonlinear rod embedding of the contact skin stored in CContactSkinMesh.
+// Present whenever the shape has a usable contact skin, regardless of whether it is used for
+// contact.
+struct CRodContactSkinEmbedding : public NoCopy {
+  explicit CRodContactSkinEmbedding(std::shared_ptr<RodSurfaceEmbeddingData const> dataIn)
       : data(std::move(dataIn)) {
     MOCHI_ASSERT(data != nullptr);
   }
   std::shared_ptr<RodSurfaceEmbeddingData const> data;
-};
-
-// Owns the triangular mesh and rod embedding selected for surface contact. These may alias the
-// rod shape's visual data or describe a dedicated contact skin.
-struct CRodContactSkin : public NoCopy {
-  CRodContactSkin(
-      std::shared_ptr<TriangularMesh const> meshIn,
-      std::shared_ptr<RodSurfaceEmbeddingData const> embeddingIn)
-      : mesh(std::move(meshIn)), embedding(std::move(embeddingIn)) {
-    MOCHI_ASSERT(mesh != nullptr);
-    MOCHI_ASSERT(embedding != nullptr);
-  }
-
-  std::shared_ptr<TriangularMesh const> mesh;
-  std::shared_ptr<RodSurfaceEmbeddingData const> embedding;
 };
 
 // This stores const spans of the rod actor's reference mesh. The underlying data is owned by the
@@ -384,27 +371,30 @@ void UpdateQueryVisualNodePositionsAndNormals(
     CQueryVisualNodePositions& outVisPosQuery,
     CQueryVisualNodeNormals* outVisNormQuery);
 
-// Compute deformed authored surface-mesh node positions for a rod actor in compact active-node
-// ordering.
-void UpdateQuerySurfaceNodePositions(
-    CSurfaceMesh const& surfaceMesh,
-    CRodSurfaceMeshEmbedding const& rodEmbedding,
+// Compute deformed contact skin node positions (and optionally normals) for a rod actor.
+void UpdateQueryContactSkinNodePositionsAndNormals(
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
-    CQuerySurfaceNodePositions& outSurfacePosQuery);
+    CQueryContactSkinNodePositions& outPosQuery,
+    CQueryContactSkinNodeNormals* outNormQuery);
 
 // Builds the CSR sparsity pattern of the contact-skin Jacobian ∂x_skin/∂(rod DoFs). The sparsity
 // depends only on topology-invariant embedding data, so this runs once during actor setup. The
 // resulting matrix has the correct structure and zero values.
 void InitializeContactSkinningJacobian(
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CContactSkinningData& outSkinning);
 
 // Computes contact-skin Jacobian values using the current rod frame axes. The sparsity pattern must
 // already be initialized by InitializeContactSkinningJacobian.
 void ResolveContactSkinningJacobian(
-    CRodContactSkin const& contactSkin,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
     CContactSkinningData& outSkinning);
@@ -416,7 +406,8 @@ void UpdateSurfaceContactPositions(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<kTimeStep> const& rodPose,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
     CDeformedContactSkinNodes& deformedNodes,
@@ -429,7 +420,8 @@ template <TimeStep kStep>
 void UpdateSurfaceContactBounds(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<kStep> const& rodPose,
     CDeformedContactSkinNodes& deformedNodes,
@@ -463,7 +455,9 @@ void UpdateMaxGeometrySpeed(
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
     CVelocitySlice<real, TimeStep::Current> const& velocity,
-    CRodContactSkin const* contactSkin,
+    ecs::OptionalTag<TagUseDeformableContactSkin> usesContactSkin,
+    CContactSkinMesh const* contactSkin,
+    CRodContactSkinEmbedding const* rodEmbedding,
     CPointCloudColliderParams const* pointCloudColliderParams,
     CConservativeStepBounds& outStepBounds);
 

@@ -251,8 +251,7 @@ void SceneRecorder::AddCreateActorEvents() {
         _writer->AddDataSet("refPositions", refPos, MakeSpan(posDims), _error);
       }
 
-      auto const* surfMesh = _registry.try_get<CSurfaceMesh>(e);
-      if (surfMesh && !_registry.all_of<TagRodActor>(e)) {
+      if (auto const* surfMesh = _registry.try_get<CSurfaceMesh>(e)) {
         auto const* mesh = surfMesh->mesh.get();
         _writer->AddAttribute("numSurfNodes", mesh->GetNumNodes(), _error);
         _writer->AddAttribute("numSurfEdges", mesh->GetNumEdges(), _error);

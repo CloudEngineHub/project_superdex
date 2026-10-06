@@ -768,8 +768,7 @@ void mochi::model::Validate(ModelDataView const& data, Error& error) {
         "Contact skin mesh must have 3 nodes per element (triangles).");
     MOCHI_ERROR_RETURN(error);
 
-    // Unreferenced nodes would make the contact skin's node ordering differ from the compact
-    // ordering of actor surface meshes built from it, misaligning per-node data such as skinning.
+    // Unreferenced nodes are rejected to build valid surface discretizations of the contact skin.
     DynamicArray<bool> isNodeReferenced(data.contactSkinMesh->GetNumNodes(), false);
     // ValidateMesh above guarantees connectivity indices are in range.
     for (int const node : data.contactSkinMesh->connectivity) {

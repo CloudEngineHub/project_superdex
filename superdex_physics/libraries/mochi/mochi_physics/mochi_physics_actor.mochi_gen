@@ -396,10 +396,10 @@ class Actor [no_init, no_destruct, use_scene] {
   // @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation
   // meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface
   // has the same triangle elements as the simulation mesh, but nodes not referenced by any surface
-  // triangle are omitted and remaining nodes may be reindexed. For shell and rod actors with an
-  // embedded @ref ModelData::contactSkinMesh, returns that contact skin regardless of the actor's
-  // selected collision representation. For articulated actors with a skinned simulation surface,
-  // returns that surface. Returns an empty view if the actor does not have a surface mesh.
+  // triangle are omitted and remaining nodes may be reindexed. For articulated actors with a
+  // skinned simulation surface, returns that surface. Returns an empty view if the actor does not
+  // have a surface mesh, e.g. for rod actors. Contact skins are exposed by @ref
+  // GetContactSkinMesh instead.
   //
   // @return A non-owning view of the actor's reference surface mesh, or an empty view if the actor
   // has no surface mesh.
@@ -413,8 +413,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // ordering.
   // @note The returned view remains valid until the actor is destroyed.
   //
-  // @see MeshDataView, GetMesh, GetVisualMesh, GetSurfaceMeshNodePositionsLocal,
-  // GetSurfaceMeshNodeNormalsLocal, Context::GetShapeSurfaceMesh
+  // @see MeshDataView, GetMesh, GetVisualMesh, GetContactSkinMesh,
+  // GetSurfaceMeshNodePositionsLocal, GetSurfaceMeshNodeNormalsLocal, Context::GetShapeSurfaceMesh
   fn GetSurfaceMesh() -> MeshDataView [pure, virtual, const];
 
   // @brief Get a view of the actor's reference visual mesh.
@@ -436,9 +436,33 @@ class Actor [no_init, no_destruct, use_scene] {
   // skinning field.
   // @note The returned view remains valid until the actor is destroyed.
   //
-  // @see MeshDataView, GetMesh, GetSurfaceMesh, GetVisualMeshNodePositionsLocal,
-  // GetVisualMeshNodeNormalsLocal, Context::GetShapeVisualMesh
+  // @see MeshDataView, GetMesh, GetSurfaceMesh, GetContactSkinMesh,
+  // GetVisualMeshNodePositionsLocal, GetVisualMeshNodeNormalsLocal, Context::GetShapeVisualMesh
   fn GetVisualMesh() -> MeshDataView [pure, virtual, const];
+
+  // @brief Get a view of the actor's reference contact skin mesh.
+  //
+  // @details Returns the @ref ModelData::contactSkinMesh of the actor's shape, regardless of
+  // whether the actor selected it as its collision representation. Only shell and rod actors whose
+  // shape's contact skin has skinning data expose it. Other actors return an empty view. For shell
+  // actors, the mesh includes the linear contact-skin skinning data.
+  //
+  // @return A non-owning view of the actor's reference contact skin mesh, or an empty view if the
+  // actor has no contact skin.
+  //
+  // @note The returned coordinates are reference contact-skin positions in the actor's local
+  // frame. Deformed contact-skin positions are only available through @ref
+  // GetContactSkinMeshNodePositionsLocal.
+  // @note The node ordering matches @ref Context::GetShapeContactSkinMesh.
+  // @note When linear contact-skin skinning data is present, skinning indices refer to the node
+  // ordering returned by @ref GetMesh. Rod contact skin embeddings are nonlinear and are not
+  // exposed through this linear skinning field.
+  // @note The returned view remains valid until the actor is destroyed.
+  //
+  // @see MeshDataView, GetMesh, GetSurfaceMesh, GetVisualMesh,
+  // GetContactSkinMeshNodePositionsLocal, GetContactSkinMeshNodeNormalsLocal,
+  // Context::GetShapeContactSkinMesh
+  fn GetContactSkinMesh() -> MeshDataView [pure, virtual, const];
 
   // @brief Get the current position of the nodes (reference + displacements) of the surface mesh in
   // the actor's local frame.
@@ -451,11 +475,9 @@ class Actor [no_init, no_destruct, use_scene] {
   // are available after the simulation step completes.
   // @note Requires the actor to support @ref QueryType::SurfaceNodePositions.
   // @note The node ordering corresponds to the mesh connectivity from @ref GetSurfaceMesh.
-  // @note Supported for shell and rod actors whose shape has an authored usable contact skin,
-  // regardless of whether that skin is selected for collision.
   //
   // @see RegisterQuery, QueryType::SurfaceNodePositions, GetSurfaceMesh,
-  // GetSurfaceMeshNodeNormalsLocal
+  // GetSurfaceMeshNodeNormalsLocal, GetContactSkinMeshNodePositionsLocal
   fn GetSurfaceMeshNodePositionsLocal() -> Span<real const> [pure, virtual, const, mochi_error, units("m"), batchable];
 
   // @brief Get the normal direction for each node of the surface mesh in the actor's local frame.
@@ -469,11 +491,9 @@ class Actor [no_init, no_destruct, use_scene] {
   // are available after the simulation step completes.
   // @note Requires the actor to support @ref QueryType::SurfaceNodeNormals.
   // @note The node ordering corresponds to the mesh connectivity from @ref GetSurfaceMesh.
-  // @note Supported for shell and rod actors whose shape has an authored usable contact skin,
-  // regardless of whether that skin is selected for collision.
   //
   // @see RegisterQuery, QueryType::SurfaceNodeNormals, GetSurfaceMesh,
-  // GetSurfaceMeshNodePositionsLocal
+  // GetSurfaceMeshNodePositionsLocal, GetContactSkinMeshNodeNormalsLocal
   fn GetSurfaceMeshNodeNormalsLocal() -> Span<real const> [pure, virtual, const, mochi_error, batchable];
 
   // @brief Get a new @ref ShapeHandle referencing the same shape data used to create this actor.
@@ -543,8 +563,7 @@ class Actor [no_init, no_destruct, use_scene] {
   // shapes. Rod actors and actors without a simulation mesh are not supported.
   // @note When @ref boundaryOnly is false, requires registering @ref QueryType::NodePositions
   // before the simulation step. When true, requires registering @ref
-  // QueryType::SurfaceNodePositions unless the surface mesh is linearly embedded in the simulation
-  // mesh. Results are available after the simulation step completes.
+  // QueryType::SurfaceNodePositions. Results are available after the simulation step completes.
   fn QueryNodesInVolumeLocal(Aabb const& volume, bool boundaryOnly, Function<void, int, Real3> const& callback) -> void [pure, virtual, const, mochi_error, overloaded];
 
   // @brief Find the actor's nodes that are inside an oriented bounding box (OBB).
@@ -563,8 +582,7 @@ class Actor [no_init, no_destruct, use_scene] {
   // shapes. Rod actors and actors without a simulation mesh are not supported.
   // @note When @ref boundaryOnly is false, requires registering @ref QueryType::NodePositions
   // before the simulation step. When true, requires registering @ref
-  // QueryType::SurfaceNodePositions unless the surface mesh is linearly embedded in the simulation
-  // mesh. Results are available after the simulation step completes.
+  // QueryType::SurfaceNodePositions. Results are available after the simulation step completes.
   fn QueryNodesInVolumeLocal(Obb const& volume, bool boundaryOnly, Function<void, int, Real3> const& callback) -> void [pure, virtual, const, mochi_error, overloaded];
 
   // @brief Find the actor's nodes that are inside a sphere.
@@ -583,8 +601,7 @@ class Actor [no_init, no_destruct, use_scene] {
   // shapes. Rod actors and actors without a simulation mesh are not supported.
   // @note When @ref boundaryOnly is false, requires registering @ref QueryType::NodePositions
   // before the simulation step. When true, requires registering @ref
-  // QueryType::SurfaceNodePositions unless the surface mesh is linearly embedded in the simulation
-  // mesh. Results are available after the simulation step completes.
+  // QueryType::SurfaceNodePositions. Results are available after the simulation step completes.
   fn QueryNodesInVolumeLocal(Sphere const& volume, bool boundaryOnly, Function<void, int, Real3> const& callback) -> void [pure, virtual, const, mochi_error, overloaded];
 
   // @brief Query the signed distance to the closest point on the actor's surface.
@@ -703,6 +720,36 @@ class Actor [no_init, no_destruct, use_scene] {
   // @see RegisterQuery, QueryType::VisualNodeNormals, GetVisualMesh,
   // GetVisualMeshNodePositionsLocal
   fn GetVisualMeshNodeNormalsLocal() -> Span<real const> [pure, virtual, const, mochi_error, batchable];
+
+  // @brief Get the current positions of the contact skin mesh nodes in the actor's local frame.
+  //
+  // @return Current node positions [m] of the contact skin mesh in the actor's local frame (3 values
+  // per node: x, y, z). The number of nodes is available via @ref GetContactSkinMesh. The order of
+  // the nodes is 1-to-1 with @ref GetContactSkinMeshNodeNormalsLocal.
+  //
+  // @note Requires registering @ref QueryType::ContactSkinNodePositions before the simulation step.
+  // Results are available after the simulation step completes.
+  // @note Requires the actor to support @ref QueryType::ContactSkinNodePositions.
+  //
+  // @see RegisterQuery, QueryType::ContactSkinNodePositions, GetContactSkinMesh,
+  // GetContactSkinMeshNodeNormalsLocal
+  fn GetContactSkinMeshNodePositionsLocal() -> Span<real const> [pure, virtual, const, mochi_error, units("m"), batchable];
+
+  // @brief Get the normal direction to each node of the contact skin mesh in the actor's local
+  // frame.
+  //
+  // @return Flattened normals (3 values per node: nx, ny, nz) in the actor's local frame, computed
+  // by normalizing the area-weighted sum of adjacent triangle normals. The number of nodes is
+  // available via @ref GetContactSkinMesh. The order of the nodes is 1-to-1 with @ref
+  // GetContactSkinMeshNodePositionsLocal.
+  //
+  // @note Requires registering @ref QueryType::ContactSkinNodeNormals before the simulation step.
+  // Results are available after the simulation step completes.
+  // @note Requires the actor to support @ref QueryType::ContactSkinNodeNormals.
+  //
+  // @see RegisterQuery, QueryType::ContactSkinNodeNormals, GetContactSkinMesh,
+  // GetContactSkinMeshNodePositionsLocal
+  fn GetContactSkinMeshNodeNormalsLocal() -> Span<real const> [pure, virtual, const, mochi_error, batchable];
 
   # Boundary Conditions
   // @brief Get the DoF indices that are constrained by boundary conditions.

@@ -441,7 +441,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     .def_rw("collider_type", &mochi::experimental::RodActorParams::colliderType, "Collider type. Set to PointCloud to enable point-cloud contact.")
     .def_rw("point_cloud_collider", &mochi::experimental::RodActorParams::pointCloudCollider, "Geometric and logical properties of the point-cloud collider.")
     .def_rw("has_gravity", &mochi::experimental::RodActorParams::hasGravity, "Enables gravity.")
-    .def_rw("use_contact_skin", &mochi::experimental::RodActorParams::useContactSkin, "Use the rod shape's contact skin for contact instead of its centerline.\n\nActor creation fails if the shape does not have a triangular contact skin with\nrod embedding data.")
+    .def_rw("use_contact_skin", &mochi::experimental::RodActorParams::useContactSkin, "Use the rod shape's contact skin for contact instead of its centerline.\n\nActor creation fails if the shape does not have a triangular contact skin with\nrod embedding data.\n\nNote:\n    A contact skin with rod embedding data is exposed through\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh` and\n    :class:`CONTACT_SKIN_NODE_POSITIONS <superdex.physics.QueryType>` /\n    :class:`CONTACT_SKIN_NODE_NORMALS <superdex.physics.QueryType>`\n    independently of this flag.")
     .def_rw("contact_skin_element_type", &mochi::experimental::RodActorParams::contactSkinElementType, "Triangle element type for contact-skin quadrature.\n\nNote:\n    :attr:`~superdex.physics.experimental.RodActorParams.contact_element_type`\n    controls centerline sampling instead.")
   ;
 
@@ -520,7 +520,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     .def_rw("point_cloud_collider", &mochi::experimental::ShellActorParams::pointCloudCollider, "Geometric and logical properties of the point-cloud collider.")
     .def_rw("has_gravity", &mochi::experimental::ShellActorParams::hasGravity, "Enables gravity.")
     .def_rw("contact_element_type", &mochi::experimental::ShellActorParams::contactElementType, "Element type controlling the number of contact samples per triangle on the\nselected contact mesh.")
-    .def_rw("use_contact_skin", &mochi::experimental::ShellActorParams::useContactSkin, "Use the shape's authored contact skin for colliding contact samples.\n\nActor creation fails unless the shape has a triangular contact skin with\nnode-based linear skinning data. This changes the shell's colliding contact\nsamples. The point-cloud collider, when enabled, remains discretized on the\nphysics mesh.")
+    .def_rw("use_contact_skin", &mochi::experimental::ShellActorParams::useContactSkin, "Use the shape's authored contact skin for colliding contact samples.\n\nActor creation fails unless the shape has a triangular contact skin with\nnode-based linear skinning data. This changes the shell's colliding contact\nsamples. The point-cloud collider, when enabled, remains discretized on the\nphysics mesh.\n\nNote:\n    A contact skin with linear skinning data is exposed through\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh` and\n    :class:`CONTACT_SKIN_NODE_POSITIONS <superdex.physics.QueryType>` /\n    :class:`CONTACT_SKIN_NODE_NORMALS <superdex.physics.QueryType>`\n    independently of this flag.")
   ;
 
   registry.GetClass<mochi::experimental::SleepParams>()

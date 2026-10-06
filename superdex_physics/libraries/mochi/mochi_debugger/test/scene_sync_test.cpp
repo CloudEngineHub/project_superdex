@@ -1118,14 +1118,15 @@ TEST_F(SceneSyncTest, SwitchMeshSourceResendsCompleteMeshesWithoutStepping) {
       shellSurfaceRevision);
 }
 
-TEST_F(SceneSyncTest, ContactSkinOnlyRodSyncsAsSurfaceMesh) {
+TEST_F(SceneSyncTest, ContactSkinOnlyRodSyncsAsContactSkin) {
   Scene* scene = CreateSceneNoGravity();
   SceneHandle const sceneHandle = scene->GetHandle();
   ActorHandle const rodHandle = CreateActorWithContactSkinOnly(scene);
   Actor* const rod = scene->GetActor(rodHandle);
   ASSERT_NE(nullptr, rod);
   ASSERT_TRUE(rod->GetVisualMesh().IsEmpty());
-  ASSERT_FALSE(rod->GetSurfaceMesh().IsEmpty());
+  ASSERT_TRUE(rod->GetSurfaceMesh().IsEmpty());
+  ASSERT_FALSE(rod->GetContactSkinMesh().IsEmpty());
 
   StartServer();
   ConnectClient();
@@ -1135,12 +1136,12 @@ TEST_F(SceneSyncTest, ContactSkinOnlyRodSyncsAsSurfaceMesh) {
   _client->SelectScene(sceneHandle);
   uint64_t const baseCounter = GetSceneSyncData().counter;
   WaitForSync(scene, baseCounter + 1);
-  uint64_t const revision = ExpectActorMeshMatches(rodHandle, rod->GetSurfaceMesh());
+  uint64_t const revision = ExpectActorMeshMatches(rodHandle, rod->GetContactSkinMesh());
   EXPECT_GT(revision, 0);
 
   scene->Step(kTimeStep);
   WaitForSync(scene, baseCounter + 2);
-  EXPECT_EQ(revision, ExpectActorMeshTopologyMatches(rodHandle, rod->GetSurfaceMesh()));
+  EXPECT_EQ(revision, ExpectActorMeshTopologyMatches(rodHandle, rod->GetContactSkinMesh()));
 }
 
 TEST_F(SceneSyncTest, SyncActorMeshes) {

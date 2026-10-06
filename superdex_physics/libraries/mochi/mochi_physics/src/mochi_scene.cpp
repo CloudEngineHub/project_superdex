@@ -3352,15 +3352,16 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
   MOCHI_ASSERT(
       usesContactSkin == hasContactSkinComponents,
       "Contact-skin tag and shared components must be installed together.");
-  if (usesContactSkin) {
-    auto const& surfaceMesh = _registry.get<CSurfaceMesh const>(e);
-    MOCHI_ASSERT(surfaceMesh.embedding != nullptr || _registry.all_of<TagRodActor>(e));
+  if (auto const* contactSkin = _registry.try_get<CContactSkinMesh const>(e)) {
+    MOCHI_ASSERT(
+        contactSkin->embedding != nullptr || _registry.all_of<CRodContactSkinEmbedding>(e),
+        "Contact skin requires an embedding.");
   }
+  MOCHI_ASSERT(
+      !usesContactSkin || _registry.all_of<CContactSkinMesh>(e),
+      "Contact-skin contact requires the contact skin mesh.");
 
   if (_registry.all_of<TagRodActor>(e)) {
-    MOCHI_ASSERT(
-        usesContactSkin == _registry.all_of<CRodContactSkin>(e),
-        "Rod contact skin requires its nonlinear embedding component.");
     MOCHI_ASSERT(
         usesContactSkin != _registry.all_of<CFemSegmentDiscretization>(e),
         "Rod contact must use exactly one of contact-skin or centerline discretization.");

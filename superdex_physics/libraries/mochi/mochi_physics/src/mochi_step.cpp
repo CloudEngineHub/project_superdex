@@ -336,16 +336,12 @@ static void UpdateActorQueriesAsync(TaskSemaphore const& sem, entt::registry& re
   // Writes CQueryNodePositions (must happen before queries that read it)
   ecs::TryInvokeOnEntity(&UpdateQueryNodePositions, reg, e);
 
-  // Contact-skinned rods
-  // Writes CQuerySurfaceNodePositions in compact active-node ordering.
-  ecs::TryInvokeOnEntity(&rod::UpdateQuerySurfaceNodePositions, reg, e);
-
-  // Rigid & Soft
+  // Rigid, Soft, Shell & Articulated
   // Reads CDisplacementSlice, and others
   // Writes CQuerySurfaceNodePositions (must happen before queries that read it)
   ecs::TryInvokeOnEntity(&UpdateQuerySurfaceNodePositions, reg, e);
 
-  // Soft, Rigid & contact-skinned Rod
+  // Rigid, Soft, Shell & Articulated
   // Reads CQuerySurfaceNodePositions
   // Writes CQuerySurfaceNodeNormals
   ecs::TryScheduleInvokeOnEntity(
@@ -362,6 +358,18 @@ static void UpdateActorQueriesAsync(TaskSemaphore const& sem, entt::registry& re
   // Reads CQueryNodePositions (for non-rod deformable actors)
   ecs::TryScheduleInvokeOnEntity(
       sem, "UpdateQueryVisual", &UpdateQueryVisualNodePositionsAndNormals, reg, e);
+
+  // Actors with a contact skin (and embeddings)
+  // Writes CQueryContactSkinNodePositions, and (optionally) CQueryContactSkinNodeNormals
+  ecs::TryScheduleInvokeOnEntity(
+      sem,
+      "rod::UpdateQueryContactSkinNodePositionsAndNormals",
+      &rod::UpdateQueryContactSkinNodePositionsAndNormals,
+      reg,
+      e);
+  // Reads CQueryNodePositions (for non-rod deformable actors)
+  ecs::TryScheduleInvokeOnEntity(
+      sem, "UpdateQueryContactSkin", &UpdateQueryContactSkinNodePositionsAndNormals, reg, e);
 
   // Soft or Rigid
   // Writes CQueryContactSamples

@@ -358,7 +358,7 @@ void UpdateContactSkinPositions(
     ecs::Included<TagShellActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
     CTriangularMesh const& physicsMesh,
-    CSurfaceMesh const& contactSkin,
+    CContactSkinMesh const& contactSkin,
     CFinalDisplacementRef<kTimeStep> const& displacements,
     CFemSurfaceDiscretization const& surfaceDisc,
     CDeformedContactSkinNodes& deformedNodes,
@@ -378,7 +378,7 @@ template <TimeStep kStep>
 void UpdateBounds(
     ecs::Included<TagShellActor>,
     CTriangularMesh const& meshComponent,
-    CSurfaceMesh const& surfaceMesh,
+    CContactSkinMesh const* contactSkin,
     CFinalDisplacementRef<kStep> const& solComponent,
     CPointCloudColliderParams const* pointCloudColliderParams,
     CDeformedContactSkinNodes* deformedContactSkinNodes,
@@ -397,13 +397,14 @@ void UpdateBounds(
 
   if (deformedContactSkinNodes) {
     MOCHI_ASSERT_VERBOSE(
-        surfaceMesh.embedding != nullptr, "Contact skin requires a linear embedding.");
+        contactSkin != nullptr && contactSkin->embedding != nullptr,
+        "Contact skin requires a linear embedding.");
     auto const deformedPositions = Unflatten<Real3>(MakeSpan(deformedContactSkinNodes->positions));
     UpdateLinearEmbeddedNodePositionsFromDisplacements(
-        *surfaceMesh.embedding,
+        *contactSkin->embedding,
         Unflatten<Real3 const>(MakeConstSpan(deformedContactSkinNodes->referencePositions)),
         nodeDisplacements,
-        surfaceMesh.mesh->GetActiveNodes(),
+        contactSkin->mesh->GetActiveNodes(),
         deformedPositions);
     Aabb const contactSkinBounds = CalcAabb(deformedPositions);
     bounds = pointCloudColliderParams

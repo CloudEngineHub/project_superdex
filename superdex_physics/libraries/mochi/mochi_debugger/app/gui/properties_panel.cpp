@@ -68,8 +68,8 @@ static void AddRenderingProperties(UiState& state) {
             "Visual Mesh",
             &settings.sync.useVisualMesh,
             "Some actors have a high resolution visual mesh, which is skinned to the surface of "
-            "the simulation mesh. If disabled, the simulation mesh will be rendered instead. Use "
-            "in combination with \"Show Meshes\".")) {
+            "the simulation mesh. If disabled, the simulation mesh or contact skin will be "
+            "rendered instead. Use in combination with \"Show Meshes\".")) {
       state.client->SetSettings(settings);
     }
     UiCheckbox(

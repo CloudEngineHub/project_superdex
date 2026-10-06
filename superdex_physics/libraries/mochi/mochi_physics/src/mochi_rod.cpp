@@ -48,6 +48,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <vector>
 
 using namespace mochi;
 
@@ -90,8 +91,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CRodPose<TimeStep::StageStart>>(reg);
   ecs::RegisterComponent<CRodPose<TimeStep::Previous>>(reg);
   ecs::RegisterComponent<CRodVisualMeshEmbedding>(reg);
-  ecs::RegisterComponent<CRodSurfaceMeshEmbedding>(reg);
-  ecs::RegisterComponent<CRodContactSkin>(reg);
+  ecs::RegisterComponent<CRodContactSkinEmbedding>(reg);
 }
 
 // Serializes frame axes to the packed pose vector layout [displacement_twist | axes].
@@ -391,10 +391,8 @@ static void ComputeDeformedSurfaceNodePositions(
     RodSurfaceEmbeddingData const& embedding,
     CPolylineMesh const& polylineMesh,
     RodPose const& rodPose,
-    Span<real> outPositions,
-    Span<int const> outputNodeIndices = {}) {
+    Span<real> outPositions) {
   int const numSurfaceNodes = surfaceMesh.GetNumNodes();
-  int const numOutputNodes = outputNodeIndices.empty() ? numSurfaceNodes : isize(outputNodeIndices);
   int const K = embedding.weightsPerNode;
   int const numElements = polylineMesh.NumElements();
   auto const centerlineNodes = polylineMesh.nodes;
@@ -402,7 +400,7 @@ static void ComputeDeformedSurfaceNodePositions(
   auto const& frameAxes = rodPose.frameAxes;
 
   MOCHI_ASSERT_VERBOSE(
-      isize(outPositions) == kSpaceDim3 * numOutputNodes, "outPositions must be pre-sized");
+      isize(outPositions) == kSpaceDim3 * numSurfaceNodes, "outPositions must be pre-sized");
   MOCHI_ASSERT_VERBOSE(
       isize(embedding.invReferenceLengths) == numElements,
       "invReferenceLengths size must match number of elements");
@@ -431,11 +429,10 @@ static void ComputeDeformedSurfaceNodePositions(
 
   // Pass 2: per-surface-node skinning. Evaluate affine · [xi, 1] via DotVecMat4x4 on the
   // transposed transform; lane 3 of the result is meaningless and discarded by Store<3>.
-  for (int i = 0; i < numOutputNodes; ++i) {
-    int const surfaceNodeIndex = outputNodeIndices.empty() ? i : outputNodeIndices[i];
+  for (int i = 0; i < numSurfaceNodes; ++i) {
     Vec4r xSurface{};
     for (int m = 0; m < K; ++m) {
-      int const idx = surfaceNodeIndex * K + m;
+      int const idx = i * K + m;
       int const elemIdx = embedding.elementIndices[idx];
       real const w = embedding.weights[idx];
       Real3 const xi = embedding.localCoordinates[idx];
@@ -453,7 +450,8 @@ void UpdateSurfaceContactPositions(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<kTimeStep> const& rodPose,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
     CDeformedContactSkinNodes& deformedNodes,
@@ -462,7 +460,7 @@ void UpdateSurfaceContactPositions(
 
   ComputeDeformedSurfaceNodePositions(
       *contactSkin.mesh,
-      *contactSkin.embedding,
+      *rodEmbedding.data,
       polylineMesh,
       rodPose.value,
       MakeSpan(deformedNodes.positions));
@@ -483,7 +481,8 @@ template void UpdateSurfaceContactPositions<TimeStep::Current>(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<TimeStep::Current> const& rodPose,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
     CDeformedContactSkinNodes& deformedNodes,
@@ -493,7 +492,8 @@ template void UpdateSurfaceContactPositions<TimeStep::StageStart>(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
     CRodPose<TimeStep::StageStart> const& rodPose,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CFemSurfaceDiscretization const& surfaceDisc,
     CDeformedContactSkinNodes& deformedNodes,
@@ -503,7 +503,8 @@ template <TimeStep kStep>
 void UpdateSurfaceContactBounds(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<kStep> const& rodPose,
     CDeformedContactSkinNodes& deformedNodes,
@@ -518,7 +519,7 @@ void UpdateSurfaceContactBounds(
 
   ComputeDeformedSurfaceNodePositions(
       *contactSkin.mesh,
-      *contactSkin.embedding,
+      *rodEmbedding.data,
       polylineMesh,
       rodPose.value,
       MakeSpan(deformedNodes.positions));
@@ -545,7 +546,8 @@ void UpdateSurfaceContactBounds(
 template void UpdateSurfaceContactBounds<TimeStep::Current>(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
     CDeformedContactSkinNodes& deformedNodes,
@@ -555,7 +557,8 @@ template void UpdateSurfaceContactBounds<TimeStep::Current>(
 template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
     ecs::Included<TagRodActor>,
     ecs::RequiredTag<TagUseDeformableContactSkin>,
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::StageStart> const& rodPose,
     CDeformedContactSkinNodes& deformedNodes,
@@ -565,7 +568,8 @@ template void UpdateSurfaceContactBounds<TimeStep::StageStart>(
 // Compute max speed of skin vertices using finite-step twist velocities, not just instantaneous
 // tangent velocities.
 static real ComputeMaxSkinSpeed(
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     RodPose const& rodPose,
     ColumnVectorView<real const> dofVelocity,
@@ -573,7 +577,7 @@ static real ComputeMaxSkinSpeed(
   static_assert(fem::kNumRodFields == 4);
 
   auto const& surfaceMesh = *contactSkin.mesh;
-  auto const& embedding = *contactSkin.embedding;
+  auto const& embedding = *rodEmbedding.data;
   int const numSurfaceNodes = surfaceMesh.GetNumNodes();
   int const numElements = polylineMesh.NumElements();
   int const K = embedding.weightsPerNode;
@@ -645,24 +649,30 @@ void UpdateMaxGeometrySpeed(
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
     CVelocitySlice<real, TimeStep::Current> const& velocity,
-    CRodContactSkin const* contactSkin,
+    ecs::OptionalTag<TagUseDeformableContactSkin> usesContactSkin,
+    CContactSkinMesh const* contactSkin,
+    CRodContactSkinEmbedding const* rodEmbedding,
     CPointCloudColliderParams const* pointCloudColliderParams,
     CConservativeStepBounds& outStepBounds) {
   ColumnVectorView<real const> dofVelocity = velocity.value;
 
   // Centerline speed bounds, if there's no surface contact or there's a point-cloud collider.
-  auto const centerlineMaxSpeed = (pointCloudColliderParams || !contactSkin)
+  auto const centerlineMaxSpeed = (pointCloudColliderParams || !usesContactSkin)
       ? MaxPackedVector3Norm<fem::kNumRodFields>(dofVelocity.GetConstSpan())
       : 0_r;
 
   // Surface speed bounds.
-  auto const skinMaxSpeed = contactSkin ? ComputeMaxSkinSpeed(
-                                              *contactSkin,
-                                              polylineMesh,
-                                              rodPose.value,
-                                              dofVelocity,
-                                              static_cast<real>(time->DeltaTime()))
-                                        : 0_r;
+  real skinMaxSpeed = 0_r;
+  if (usesContactSkin) {
+    MOCHI_ASSERT_VERBOSE(contactSkin && rodEmbedding, "Contact skin components are missing.");
+    skinMaxSpeed = ComputeMaxSkinSpeed(
+        *contactSkin,
+        *rodEmbedding,
+        polylineMesh,
+        rodPose.value,
+        dofVelocity,
+        static_cast<real>(time->DeltaTime()));
+  }
   outStepBounds.maxGeometrySpeed = Max(centerlineMaxSpeed, skinMaxSpeed);
 }
 
@@ -726,6 +736,26 @@ RodSurfaceEmbeddingData mochi::ComputeRodSurfaceEmbedding(
   return embedding;
 }
 
+// Compute deformed node positions and (optionally) normals of an auxiliary (visual or contact skin)
+// mesh embedded in a rod.
+static void UpdateAuxiliaryMeshNodePositionsAndNormals(
+    TriangularMesh const& mesh,
+    RodSurfaceEmbeddingData const& embedding,
+    CPolylineMesh const& polylineMesh,
+    RodPose const& rodPose,
+    std::vector<real>& outPositions,
+    std::vector<real>* outNormals) {
+  MOCHI_PROFILE_SCOPE();
+
+  outPositions.resize(static_cast<size_t>(kSpaceDim3) * mesh.GetNumNodes());
+  rod::ComputeDeformedSurfaceNodePositions(
+      mesh, embedding, polylineMesh, rodPose, MakeSpan(outPositions));
+
+  if (outNormals) {
+    UpdateAuxiliaryMeshNodeNormals(false, mesh, MakeConstSpan(outPositions), *outNormals);
+  }
+}
+
 void mochi::rod::UpdateQueryVisualNodePositionsAndNormals(
     CVisualMesh const& visualMesh,
     CRodVisualMeshEmbedding const& rodEmbedding,
@@ -733,48 +763,37 @@ void mochi::rod::UpdateQueryVisualNodePositionsAndNormals(
     CRodPose<TimeStep::Current> const& rodPose,
     CQueryVisualNodePositions& outVisPosQuery,
     CQueryVisualNodeNormals* outVisNormQuery) {
-  MOCHI_PROFILE_SCOPE();
-
-  int const numVisualNodes = visualMesh.mesh->GetNumNodes();
-  auto const numValues = static_cast<size_t>(kSpaceDim3) * numVisualNodes;
-  outVisPosQuery.nodePositions.resize(numValues);
-
-  ComputeDeformedSurfaceNodePositions(
+  UpdateAuxiliaryMeshNodePositionsAndNormals(
       *visualMesh.mesh,
       *rodEmbedding.data,
       polylineMesh,
       rodPose.value,
-      MakeSpan(outVisPosQuery.nodePositions));
-
-  if (outVisNormQuery) {
-    UpdateQueryVisualNodeNormals(false, visualMesh, outVisPosQuery, *outVisNormQuery);
-  }
+      outVisPosQuery.nodePositions,
+      outVisNormQuery ? &outVisNormQuery->nodeNormals : nullptr);
 }
 
-void mochi::rod::UpdateQuerySurfaceNodePositions(
-    CSurfaceMesh const& surfaceMesh,
-    CRodSurfaceMeshEmbedding const& rodEmbedding,
+void mochi::rod::UpdateQueryContactSkinNodePositionsAndNormals(
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
-    CQuerySurfaceNodePositions& outSurfacePosQuery) {
-  MOCHI_PROFILE_SCOPE();
-
-  auto const activeNodes = surfaceMesh.mesh->GetActiveNodes();
-  outSurfacePosQuery.nodePositions.resize(static_cast<size_t>(kSpaceDim3) * activeNodes.size());
-  ComputeDeformedSurfaceNodePositions(
-      *surfaceMesh.mesh,
+    CQueryContactSkinNodePositions& outPosQuery,
+    CQueryContactSkinNodeNormals* outNormQuery) {
+  UpdateAuxiliaryMeshNodePositionsAndNormals(
+      *contactSkin.mesh,
       *rodEmbedding.data,
       polylineMesh,
       rodPose.value,
-      MakeSpan(outSurfacePosQuery.nodePositions),
-      activeNodes);
+      outPosQuery.nodePositions,
+      outNormQuery ? &outNormQuery->nodeNormals : nullptr);
 }
 
 void mochi::rod::InitializeContactSkinningJacobian(
-    CRodContactSkin const& contactSkin,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CContactSkinningData& outSkinning) {
-  auto const& embData = *contactSkin.embedding;
+  auto const& embData = *rodEmbedding.data;
   int const numContactSkinNodes = contactSkin.mesh->GetNumNodes();
   int const K = embData.weightsPerNode;
   int const numNodes = isize(polylineMesh.nodes);
@@ -828,13 +847,15 @@ void mochi::rod::InitializeContactSkinningJacobian(
 }
 
 void mochi::rod::ResolveContactSkinningJacobian(
-    CRodContactSkin const& contactSkin,
+    ecs::RequiredTag<TagUseDeformableContactSkin>,
+    CContactSkinMesh const& contactSkin,
+    CRodContactSkinEmbedding const& rodEmbedding,
     CPolylineMesh const& polylineMesh,
     CRodPose<TimeStep::Current> const& rodPose,
     CContactSkinningData& outSkinning) {
   MOCHI_PROFILE_SCOPE();
 
-  auto const& embData = *contactSkin.embedding;
+  auto const& embData = *rodEmbedding.data;
   int const numContactSkinNodes = contactSkin.mesh->GetNumNodes();
   int const K = embData.weightsPerNode;
   int const numElements = polylineMesh.NumElements();
@@ -1358,11 +1379,10 @@ void mochi::InitRodActor(
   // Store the shape
   reg.emplace<CShape>(e, shapePtr);
 
-  // The authored contact skin is exposed as the rod's surface independently of which geometry is
-  // selected for contact.
+  // The contact skin is exposed independently of which geometry is selected for contact.
   if (hasUsableContactSkin) {
-    reg.emplace<CSurfaceMesh>(e, shapeContactSkinMesh);
-    reg.emplace<CRodSurfaceMeshEmbedding>(e, shapeContactSkinEmbedding);
+    reg.emplace<CContactSkinMesh>(e, shapeContactSkinMesh);
+    reg.emplace<CRodContactSkinEmbedding>(e, shapeContactSkinEmbedding);
   }
 
   // Set up DoF information
@@ -1466,10 +1486,12 @@ void mochi::InitRodActor(
         e, CFemSurfaceDiscretization::Create(params.contactSkinElementType, *shapeContactSkinMesh));
     numCollidingSamples = surfaceDisc.GetNumQuadPoints();
 
-    auto& contactSkin =
-        reg.emplace<CRodContactSkin>(e, shapeContactSkinMesh, shapeContactSkinEmbedding);
     auto& skinningData = reg.emplace<CContactSkinningData>(e);
-    rod::InitializeContactSkinningJacobian(contactSkin, mesh, skinningData);
+    rod::InitializeContactSkinningJacobian(
+        reg.get<CContactSkinMesh const>(e),
+        reg.get<CRodContactSkinEmbedding const>(e),
+        mesh,
+        skinningData);
     InitializeContactSkinningColumnCoalescingMap(surfaceDisc, skinningData);
     reg.emplace<TagUseDeformableContactSkin>(e);
     reg.emplace<CSkinnedContactSnle>(e);

@@ -681,8 +681,8 @@ class Context [no_init, no_destruct, singleton] {
   // @brief Get a view of the shape's contact-skin mesh data, including skinning data if available.
   //
   // @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced
-  // by the contact-skin connectivity, so an actor surface mesh built from the contact skin has
-  // the same node ordering. The mesh includes the authored skinning data when available, in the
+  // by the contact-skin connectivity, so @ref Actor::GetContactSkinMesh has the same node
+  // ordering. The mesh includes the authored skinning data when available, in the
   // format of @ref ModelData::contactSkinMesh. For shapes without a contact skin, returns an
   // empty view.
   //
@@ -697,7 +697,8 @@ class Context [no_init, no_destruct, singleton] {
   // returned by @ref GetShapeMesh, not to the compact surface-node ordering returned by
   // @ref GetShapeSurfaceMesh. For polyline shapes, skinning indices refer to polyline elements.
   //
-  // @see MeshDataView, GetShapeMesh, GetShapeSurfaceMesh, GetShapeVisualMesh, Actor::GetSurfaceMesh
+  // @see MeshDataView, GetShapeMesh, GetShapeSurfaceMesh, GetShapeVisualMesh,
+  // Actor::GetContactSkinMesh
   fn GetShapeContactSkinMesh(ShapeHandle shape) -> MeshDataView [pure, virtual, const, mochi_error, no_capi];
 
   // @brief Get a view of the shape's visual mesh data, including skinning data if available.

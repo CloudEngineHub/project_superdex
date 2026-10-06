@@ -807,49 +807,60 @@ static void RegisterDebugDrawSystem_SdfNormals(DebugDrawInternal& debugDraw) {
   debugDraw.RegisterSystem<CSdfCollider>(system);
 }
 
-static void RegisterDebugDrawSystem_VisualMesh(DebugDrawInternal& debugDraw) {
+// Wireframe of an auxiliary (visual or contact skin) mesh at its queried node positions.
+template <typename MeshT, typename PositionsQueryT>
+static void RegisterAuxiliaryMeshWireframeSystem(
+    DebugDrawInternal& debugDraw,
+    char const* name,
+    char const* description,
+    QueryType positionsQuery,
+    Color color) {
   DebugDrawSystem system;
-  system.name = "Actor Visual Mesh";
-  system.description =
-      "Draw wireframe triangles for the actor's visual mesh (high res mesh mapped to the simulation mesh).";
-  system.onEntityEnable = [](entt::registry& reg, entt::entity e, bool enabled) {
+  system.name = name;
+  system.description = description;
+  system.onEntityEnable = [positionsQuery](entt::registry& reg, entt::entity e, bool enabled) {
     // Ref count required components when enabled
-    AddRemoveOrRefComponentsForQuery(reg, e, QueryType::VisualNodePositions, enabled, true);
+    AddRemoveOrRefComponentsForQuery(reg, e, positionsQuery, enabled, true);
   };
   system.onDrawEntityLocalSpace =
-      [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
-        auto const& vis = reg.get<CVisualMesh>(e);
-        auto const* query = reg.try_get<CQueryVisualNodePositions>(e);
-        size_t const numVisualNodes = vis.mesh->GetNumNodes();
-        if (query && (query->nodePositions.size() == (numVisualNodes * kSpaceDim3))) {
+      [color](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
+        TriangularMesh const& mesh = *reg.get<MeshT>(e).mesh;
+        auto const* query = reg.try_get<PositionsQueryT>(e);
+        if (query &&
+            (query->nodePositions.size() == static_cast<size_t>(mesh.GetNumNodes()) * kSpaceDim3)) {
           out.AddWireframeMesh(
-              Unflatten<Real3 const>(MakeSpan(query->nodePositions)),
-              vis.mesh->GetEdges(),
-              colors::kWhite);
+              Unflatten<Real3 const>(MakeSpan(query->nodePositions)), mesh.GetEdges(), color);
         }
       };
-  debugDraw.RegisterSystem<CVisualMesh>(system);
+  debugDraw.RegisterSystem<MeshT>(system);
 }
 
-static void RegisterDebugDrawSystem_VisualNormals(DebugDrawInternal& debugDraw) {
+// Per-node normals of an auxiliary (visual or contact skin) mesh.
+template <typename MeshT, typename PositionsQueryT, typename NormalsQueryT>
+static void RegisterAuxiliaryMeshNormalsSystem(
+    DebugDrawInternal& debugDraw,
+    char const* name,
+    char const* description,
+    QueryType positionsQuery,
+    QueryType normalsQuery) {
   DebugDrawSystem system;
-  system.name = "Actor Visual Normals";
-  system.description = "Draw a line for the normal of each vertex in the actor's visual mesh.";
-  system.onEntityEnable = [](entt::registry& reg, entt::entity e, bool enabled) {
+  system.name = name;
+  system.description = description;
+  system.onEntityEnable = [positionsQuery, normalsQuery](
+                              entt::registry& reg, entt::entity e, bool enabled) {
     // Ref count required components when enabled
-    AddRemoveOrRefComponentsForQuery(reg, e, QueryType::VisualNodePositions, enabled, true);
-    AddRemoveOrRefComponentsForQuery(reg, e, QueryType::VisualNodeNormals, enabled, true);
+    AddRemoveOrRefComponentsForQuery(reg, e, positionsQuery, enabled, true);
+    AddRemoveOrRefComponentsForQuery(reg, e, normalsQuery, enabled, true);
   };
   system.onDrawEntityLocalSpace =
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
-        auto const* posQuery = reg.try_get<CQueryVisualNodePositions>(e);
-        auto const* normQuery = reg.try_get<CQueryVisualNodeNormals>(e);
-        auto const& vis = reg.get<CVisualMesh>(e);
+        auto const* posQuery = reg.try_get<PositionsQueryT>(e);
+        auto const* normQuery = reg.try_get<NormalsQueryT>(e);
         if (posQuery && !posQuery->nodePositions.empty() && normQuery &&
             (posQuery->nodePositions.size() == normQuery->nodeNormals.size())) {
           Span<Real3 const> coords = Unflatten<Real3 const>(MakeSpan(posQuery->nodePositions));
           Span<Real3 const> normals = Unflatten<Real3 const>(MakeSpan(normQuery->nodeNormals));
-          int const numNodes = vis.mesh->GetNumNodes();
+          int const numNodes = reg.get<MeshT>(e).mesh->GetNumNodes();
           std::vector<LineVertex> verts(numNodes * 2);
           Vec4r const scale = 0.01_r;
           size_t vi = 0;
@@ -864,7 +875,49 @@ static void RegisterDebugDrawSystem_VisualNormals(DebugDrawInternal& debugDraw) 
           out.AddLines(verts);
         }
       };
-  debugDraw.RegisterSystem<CVisualMesh>(system);
+  debugDraw.RegisterSystem<MeshT>(system);
+}
+
+static void RegisterDebugDrawSystem_VisualMesh(DebugDrawInternal& debugDraw) {
+  RegisterAuxiliaryMeshWireframeSystem<CVisualMesh, CQueryVisualNodePositions>(
+      debugDraw,
+      "Actor Visual Mesh",
+      "Draw wireframe triangles for the actor's visual mesh (high res mesh mapped to the simulation mesh).",
+      QueryType::VisualNodePositions,
+      colors::kWhite);
+}
+
+static void RegisterDebugDrawSystem_VisualNormals(DebugDrawInternal& debugDraw) {
+  RegisterAuxiliaryMeshNormalsSystem<
+      CVisualMesh,
+      CQueryVisualNodePositions,
+      CQueryVisualNodeNormals>(
+      debugDraw,
+      "Actor Visual Normals",
+      "Draw a line for the normal of each vertex in the actor's visual mesh.",
+      QueryType::VisualNodePositions,
+      QueryType::VisualNodeNormals);
+}
+
+static void RegisterDebugDrawSystem_ContactSkin(DebugDrawInternal& debugDraw) {
+  RegisterAuxiliaryMeshWireframeSystem<CContactSkinMesh, CQueryContactSkinNodePositions>(
+      debugDraw,
+      "Actor Contact Skin",
+      "Draw wireframe triangles for the actor's contact skin (triangle mesh embedded in the simulation mesh).",
+      QueryType::ContactSkinNodePositions,
+      colors::kYellow);
+}
+
+static void RegisterDebugDrawSystem_ContactSkinNormals(DebugDrawInternal& debugDraw) {
+  RegisterAuxiliaryMeshNormalsSystem<
+      CContactSkinMesh,
+      CQueryContactSkinNodePositions,
+      CQueryContactSkinNodeNormals>(
+      debugDraw,
+      "Actor Contact Skin Normals",
+      "Draw a line for the normal of each vertex in the actor's contact skin.",
+      QueryType::ContactSkinNodePositions,
+      QueryType::ContactSkinNodeNormals);
 }
 
 static void RegisterDebugDrawSystem_ContactSamples(DebugDrawInternal& debugDraw) {
@@ -1113,9 +1166,9 @@ static void RegisterDebugDrawSystem_ActiveContactPositions(DebugDrawInternal& de
     }();
     if (!isRodActor && stageEqualsStepEnd) {
       if (reg.all_of<TagUseDeformableContactSkin>(e)) {
-        auto const& surfaceMesh = reg.get<CSurfaceMesh const>(e).mesh;
+        auto const& contactSkinMesh = reg.get<CContactSkinMesh const>(e).mesh;
         coords = Unflatten<Real3 const>(reg.get<CDeformedContactSkinNodes const>(e).positions);
-        faces = Unflatten<Int3 const>(surfaceMesh->GetActiveNodesFlatConnectivity());
+        faces = Unflatten<Int3 const>(contactSkinMesh->GetActiveNodesFlatConnectivity());
       } else if (reg.all_of<TagShellActor>(e)) {
         auto const& physicsMesh = reg.get<CTriangularMesh const>(e).mesh;
         auto const& displacements =
@@ -1211,31 +1264,45 @@ static void RegisterDebugDrawSystem_NodeContactForces(DebugDrawInternal& debugDr
     AddRemoveOrRefComponentsForQuery(reg, e, QueryType::NodeContactForces, enabled);
     AddRemoveOrRefComponentsForQuery(reg, e, QueryType::NodePositions, enabled);
     AddRemoveOrRefComponentsForQuery(reg, e, QueryType::SurfaceNodePositions, enabled);
+    if (reg.all_of<TagUseDeformableContactSkin>(e)) {
+      AddRemoveOrRefComponentsForQuery(reg, e, QueryType::ContactSkinNodePositions, enabled);
+    }
   };
-  system.onDrawEntityWorldSpace =
-      [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
-        auto const& transform = reg.get<CRootTransform const>(e).worldFromLocal;
-        auto const& contacts = reg.get<CQueryNodeContactForces const>(e).nodeContactForces;
-        auto const& volumePositions = reg.get<CQueryNodePositions const>(e);
-        auto const& surfacePositions = reg.get<CQuerySurfaceNodePositions const>(e);
-        bool const useSurfacePositions =
-            volumePositions.nodePositions.empty() || reg.all_of<TagUseDeformableContactSkin>(e);
-        auto positions = Unflatten<Real3 const>(MakeSpan(
-            useSurfacePositions ? surfacePositions.nodePositions : volumePositions.nodePositions));
-        std::vector<LineVertex> verts(contacts.size() * 2);
-        size_t vi = 0;
-        for (auto const& contact : contacts) {
-          auto pos = transform.TransformPoint(positions[contact.index]);
-          verts[vi].position = pos;
-          verts[vi].color = colors::kMagenta;
-          ++vi;
-          static constexpr real kForceScalar = 20_r;
-          verts[vi].position = pos + (contact.force * kForceScalar);
-          verts[vi].color = colors::kMagenta;
-          ++vi;
-        }
-        out.AddLines(verts);
-      };
+  system.onDrawEntityWorldSpace = [](entt::registry const& reg,
+                                     entt::entity e,
+                                     DebugDrawCollector& out) {
+    auto const& transform = reg.get<CRootTransform const>(e).worldFromLocal;
+    auto const& contacts = reg.get<CQueryNodeContactForces const>(e).nodeContactForces;
+    // Contact forces on a contact skin are indexed by its active nodes, while the query holds
+    // all skin nodes.
+    Span<int const> activeSkinNodes;
+    Span<real const> flatPositions;
+    if (reg.all_of<TagUseDeformableContactSkin>(e)) {
+      flatPositions = MakeConstSpan(reg.get<CQueryContactSkinNodePositions const>(e).nodePositions);
+      activeSkinNodes = reg.get<CContactSkinMesh const>(e).mesh->GetActiveNodes();
+    } else {
+      auto const& volumePositions = reg.get<CQueryNodePositions const>(e).nodePositions;
+      flatPositions = MakeConstSpan(
+          volumePositions.empty() ? reg.get<CQuerySurfaceNodePositions const>(e).nodePositions
+                                  : volumePositions);
+    }
+    auto const positions = Unflatten<Real3 const>(flatPositions);
+    std::vector<LineVertex> verts(contacts.size() * 2);
+    size_t vi = 0;
+    for (auto const& contact : contacts) {
+      int const nodeIndex =
+          activeSkinNodes.empty() ? contact.index : activeSkinNodes[contact.index];
+      auto pos = transform.TransformPoint(positions[nodeIndex]);
+      verts[vi].position = pos;
+      verts[vi].color = colors::kMagenta;
+      ++vi;
+      static constexpr real kForceScalar = 20_r;
+      verts[vi].position = pos + (contact.force * kForceScalar);
+      verts[vi].color = colors::kMagenta;
+      ++vi;
+    }
+    out.AddLines(verts);
+  };
   // Rod actors and actors with CRequiresFarSdfEvaluation do not support contact queries
   debugDraw.RegisterSystem<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(
       system, ecs::Excluded<CRequiresFarSdfEvaluation, TagRodActor>{});
@@ -1738,6 +1805,8 @@ void RegisterDebugDrawSystems(DebugDrawInternal& debugDraw) {
   RegisterDebugDrawSystem_MeshSurfaceLocal(debugDraw);
   RegisterDebugDrawSystem_VisualMesh(debugDraw);
   RegisterDebugDrawSystem_VisualNormals(debugDraw);
+  RegisterDebugDrawSystem_ContactSkin(debugDraw);
+  RegisterDebugDrawSystem_ContactSkinNormals(debugDraw);
   RegisterDebugDrawSystem_MeshDeformationLocal(debugDraw);
   RegisterDebugDrawSystem_MeshInterior(debugDraw);
   RegisterDebugDrawSystem_NodeNormals(debugDraw);

@@ -122,6 +122,8 @@ class Actor {
 
   [[nodiscard]] virtual MeshDataView GetVisualMesh() const = 0;
 
+  [[nodiscard]] virtual MeshDataView GetContactSkinMesh() const = 0;
+
   [[nodiscard]] virtual Span<real const> GetSurfaceMeshNodePositionsLocal(Error& error) const = 0;
 
   [[nodiscard]] virtual Span<real const> GetSurfaceMeshNodeNormalsLocal(Error& error) const = 0;
@@ -177,6 +179,11 @@ class Actor {
   [[nodiscard]] virtual Span<real const> GetVisualMeshNodePositionsLocal(Error& error) const = 0;
 
   [[nodiscard]] virtual Span<real const> GetVisualMeshNodeNormalsLocal(Error& error) const = 0;
+
+  [[nodiscard]] virtual Span<real const> GetContactSkinMeshNodePositionsLocal(
+      Error& error) const = 0;
+
+  [[nodiscard]] virtual Span<real const> GetContactSkinMeshNodeNormalsLocal(Error& error) const = 0;
 
   [[nodiscard]] virtual Span<int const> GetBoundaryConditionDofIndices() const = 0;
 

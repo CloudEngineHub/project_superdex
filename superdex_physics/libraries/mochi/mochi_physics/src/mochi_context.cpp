@@ -1175,8 +1175,7 @@ MeshDataView ContextImpl::GetShapeContactSkinMesh(ShapeHandle shape, Error& erro
     skinning = MakeSkinningDataView(polyline->GetRodContactSkinEmbedding().get());
   }
 
-  // Model validation rejects unreferenced contact-skin nodes, so this raw view matches the
-  // compact surface mesh of any actor that uses the contact skin as its surface.
+  // Model validation rejects unreferenced contact-skin nodes.
   MOCHI_ASSERT_VERBOSE(
       !contactSkinPtr || contactSkinPtr->GetNumActiveNodes() == contactSkinPtr->GetNumNodes());
   return MakeAuxiliaryMeshDataView(contactSkinPtr, skinning);

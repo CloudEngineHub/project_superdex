@@ -308,6 +308,22 @@ enum QueryType {
   // mesh embedding.
   VisualNodeNormals,
 
+  // @brief Positions of contact skin mesh nodes. Available via @ref
+  // Actor::GetContactSkinMeshNodePositionsLocal.
+  //
+  // @note Only supported for shell and rod actors whose shape has a contact skin with skinning
+  // data, regardless of @ref experimental::RodActorParams::useContactSkin / @ref
+  // experimental::ShellActorParams::useContactSkin.
+  ContactSkinNodePositions,
+
+  // @brief Normals of contact skin mesh nodes. Available via @ref
+  // Actor::GetContactSkinMeshNodeNormalsLocal.
+  //
+  // @note Only supported for shell and rod actors whose shape has a contact skin with skinning
+  // data, regardless of @ref experimental::RodActorParams::useContactSkin / @ref
+  // experimental::ShellActorParams::useContactSkin.
+  ContactSkinNodeNormals,
+
   // @brief Contact points between actors. Available via @ref Actor::GetContactPointsWorld.
   //
   // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.

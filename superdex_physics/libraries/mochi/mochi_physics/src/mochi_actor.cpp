@@ -102,6 +102,22 @@ static MeshDataView MakeActorSurfaceMeshDataView(TriangularMesh const& mesh) {
   return view;
 }
 
+// Full-node view of an auxiliary (visual or contact skin) mesh, including linear skinning data.
+// Rod embeddings are nonlinear and incompatible with SkinningDataView, so they are omitted.
+static MeshDataView MakeActorAuxiliaryMeshDataView(
+    TriangularMesh const& mesh,
+    MeshEmbedding const* embedding) {
+  MeshDataView view = MakeActorMeshDataView(mesh);
+  if (auto const* linearEmbedding = dynamic_cast<LinearMeshEmbedding const*>(embedding)) {
+    view.skinning.emplace();
+    view.skinning->weightsPerNode =
+        static_cast<int>(linearEmbedding->GetNumSkinningWeightsPerEntry());
+    view.skinning->indices = linearEmbedding->GetIndices();
+    view.skinning->weights = linearEmbedding->GetWeights();
+  }
+  return view;
+}
+
 namespace {
 // Mesh representation exposed by Actor::GetMesh().
 enum class ActorMeshSource {
@@ -145,30 +161,11 @@ static void QueryNodesInVolumeLocalImpl(
     auto const* surfaceMeshComponent = MOCHI_TRY_GET(CSurfaceMesh, reg, e, error);
     MOCHI_ERROR_RETURN(error);
 
-    ActorMeshSource const actorMeshSource = GetActorMeshSource(reg, e);
-    bool const hasEmbeddedSurfaceMesh = surfaceMeshComponent->embedding != nullptr;
-    if (hasEmbeddedSurfaceMesh && actorMeshSource == ActorMeshSource::Simplicial) {
-      auto const& physicsMesh = reg.get<CSimplicialMesh const>(e).mesh;
-      auto const& displacements = reg.get<CFinalDisplacementRef<TimeStep::Current> const>(e).value;
-      auto const referencePositions = physicsMesh->GetNodeCoordinates();
-      auto const displacementVectors = Unflatten<Real3 const>(displacements.GetConstSpan());
-      // All active triangular-mesh nodes are surface nodes; tetrahedral meshes use only boundary
-      // nodes.
-      auto const nodeIndices = physicsMesh->GetNumVolumes() == 0 ? physicsMesh->GetActiveNodes()
-                                                                 : physicsMesh->GetBoundaryNodes();
-      for (int nodeIndex : nodeIndices) {
-        Real3 const position = referencePositions[nodeIndex] + displacementVectors[nodeIndex];
-        if (ContainsPoint(volumeLocal, position)) {
-          callback(nodeIndex, position);
-        }
-      }
-      return;
-    }
-
     auto const* queryPos = MOCHI_TRY_GET(CQuerySurfaceNodePositions, reg, e, error);
     MOCHI_ERROR_RETURN(error);
     Span<Real3 const> positions = Unflatten<Real3 const>(queryPos->nodePositions);
 
+    ActorMeshSource const actorMeshSource = GetActorMeshSource(reg, e);
     MOCHI_ERROR_IF(
         actorMeshSource != ActorMeshSource::Simplicial &&
             actorMeshSource != ActorMeshSource::Surface,
@@ -1100,24 +1097,14 @@ class ActorInterfaceImpl : public ActorInterface {
 
   MeshDataView GetVisualMesh() const override {
     auto const* component = reg.try_get<CVisualMesh>(e);
-    if (!component) {
-      return {};
-    }
+    return component ? MakeActorAuxiliaryMeshDataView(*component->mesh, component->embedding.get())
+                     : MeshDataView{};
+  }
 
-    MeshDataView view = MakeActorMeshDataView(*component->mesh);
-
-    // Skinning data.
-    // Note: Rod visual mesh embedding is nonlinear and incompatible with SkinningDataView.
-    if (auto const* linearEmbedding =
-            dynamic_cast<LinearMeshEmbedding const*>(component->embedding.get())) {
-      view.skinning.emplace();
-      view.skinning->weightsPerNode =
-          static_cast<int>(linearEmbedding->GetNumSkinningWeightsPerEntry());
-      view.skinning->indices = linearEmbedding->GetIndices();
-      view.skinning->weights = linearEmbedding->GetWeights();
-    }
-
-    return view;
+  MeshDataView GetContactSkinMesh() const override {
+    auto const* component = reg.try_get<CContactSkinMesh>(e);
+    return component ? MakeActorAuxiliaryMeshDataView(*component->mesh, component->embedding.get())
+                     : MeshDataView{};
   }
 
   Span<real const> GetSurfaceMeshNodePositionsLocal(Error& error) const override {
@@ -2003,6 +1990,14 @@ class ActorInterfaceImpl : public ActorInterface {
 
   Span<real const> GetVisualMeshNodeNormalsLocal(Error& error) const override {
     return GetQueryResultSpan(&CQueryVisualNodeNormals::nodeNormals, error);
+  }
+
+  Span<real const> GetContactSkinMeshNodePositionsLocal(Error& error) const override {
+    return GetQueryResultSpan(&CQueryContactSkinNodePositions::nodePositions, error);
+  }
+
+  Span<real const> GetContactSkinMeshNodeNormalsLocal(Error& error) const override {
+    return GetQueryResultSpan(&CQueryContactSkinNodeNormals::nodeNormals, error);
   }
 
   Span<int const> GetBoundaryConditionDofIndices() const override {

@@ -106,10 +106,13 @@ class SceneDebuggerImpl final : public SceneDebugger {
   // Runs on the scene's thread.
   void UpdateMeshQueries(SceneImpl* scene, bool meshesEnabled, bool useVisualMesh);
 
+  // Actor mesh synced to the client.
+  enum class MeshSource { Surface, Visual, ContactSkin };
+
   // Per-actor mesh-tracking state (scene-thread only).
   struct ActorInfo {
-    QueryHandle query; // Valid only for non-rigid actors (live SurfaceNodePositions query).
-    bool useVisualMesh = false; // Should this actor sync the visual mesh?
+    QueryHandle query; // Valid only for non-rigid actors (live node-positions query).
+    MeshSource meshSource = MeshSource::Surface;
     bool meshSent = false; // Whether this actor's connectivity was already sent.
     bool marked = false; // Transient; used by UpdateMeshQueries mark-and-sweep only.
   };
@@ -685,19 +688,29 @@ void SceneDebuggerImpl::UpdateMeshQueries(
     // Non-rigid actors need a live node-positions query; rigid meshes are static.
     if (actor->GetType() == ActorType::Rigid) {
       MeshDataView const visualMesh = actor->GetVisualMesh();
-      info.useVisualMesh =
-          useVisualMesh && !visualMesh.coordinates.empty() && !visualMesh.connectivity.empty();
+      if (useVisualMesh && !visualMesh.coordinates.empty() && !visualMesh.connectivity.empty()) {
+        info.meshSource = MeshSource::Visual;
+      }
     } else {
-      info.useVisualMesh = false;
       Error error;
       QueryHandle query;
       // Attempt to use the visual mesh, if requested.
       if (useVisualMesh) {
         query = actor->RegisterQueryAndCompute(QueryType::VisualNodePositions, error);
-        info.useVisualMesh = error.IsOK();
+        if (error.IsOK()) {
+          info.meshSource = MeshSource::Visual;
+        }
+      }
+      // Then the contact skin
+      if (info.meshSource == MeshSource::Surface) {
+        error = {}; // Clear previous error
+        query = actor->RegisterQueryAndCompute(QueryType::ContactSkinNodePositions, error);
+        if (error.IsOK()) {
+          info.meshSource = MeshSource::ContactSkin;
+        }
       }
       // Fall back on the normal surface mesh
-      if (!info.useVisualMesh) {
+      if (info.meshSource == MeshSource::Surface) {
         error = {}; // Clear previous error
         query = actor->RegisterQueryAndCompute(QueryType::SurfaceNodePositions, error);
       }
@@ -736,7 +749,9 @@ void SceneDebuggerImpl::AppendActorMesh(
     return;
   }
 
-  MeshDataView const mesh = info.useVisualMesh ? actor.GetVisualMesh() : actor.GetSurfaceMesh();
+  MeshDataView const mesh = info.meshSource == MeshSource::Visual ? actor.GetVisualMesh()
+      : info.meshSource == MeshSource::ContactSkin                ? actor.GetContactSkinMesh()
+                                                                  : actor.GetSurfaceMesh();
   Span<int const> const connectivity = mesh.connectivity;
   if (connectivity.empty()) {
     return; // This actor has no surface mesh.
@@ -748,11 +763,11 @@ void SceneDebuggerImpl::AppendActorMesh(
     coordinates = mesh.coordinates;
   } else {
     Error error;
-    if (info.useVisualMesh) {
-      coordinates = actor.GetVisualMeshNodePositionsLocal(error);
-    } else {
-      coordinates = actor.GetSurfaceMeshNodePositionsLocal(error);
-    }
+    coordinates = info.meshSource == MeshSource::Visual
+        ? actor.GetVisualMeshNodePositionsLocal(error)
+        : info.meshSource == MeshSource::ContactSkin
+        ? actor.GetContactSkinMeshNodePositionsLocal(error)
+        : actor.GetSurfaceMeshNodePositionsLocal(error);
     if (!error.IsOK() || coordinates.empty()) {
       return; // Positions query unavailable (e.g. a one-off request without registration).
     }

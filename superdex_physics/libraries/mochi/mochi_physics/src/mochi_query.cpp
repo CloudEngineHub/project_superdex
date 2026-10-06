@@ -41,6 +41,30 @@ QueryHandle CQueryHandleAllocator::NewHandleThreadSafe(QueryType type) {
   return CreateQueryHandle(type, ++(*nextId));
 }
 
+namespace {
+// Adds, removes or refs an auxiliary (visual or contact skin) mesh query, whose positions and
+// normals are computed together.
+template <typename PositionsT, typename NormalsT, typename RodSystemT, typename SystemT>
+void AddRemoveOrRefAuxiliaryMeshQuery(
+    entt::registry& reg,
+    entt::entity e,
+    bool add,
+    bool computeImmediately,
+    RodSystemT rodSystem,
+    SystemT system) {
+  if (!reg.any_of<TagRigidActor, TagRodActor>(e)) {
+    // Prerequisite for deformable actors (rods don't have CSimplicialMesh).
+    AddRemoveOrRefComponentsForQuery(reg, e, QueryType::NodePositions, add, computeImmediately);
+  }
+  auto* component = AddRemoveOrRefComponent<PositionsT>(reg, e, add);
+  AddRemoveOrRefComponent<NormalsT>(reg, e, add);
+  if (computeImmediately && component && component->nodePositions.empty()) {
+    ecs::TryInvokeOnEntity(rodSystem, reg, e);
+    ecs::TryInvokeOnEntity(system, reg, e);
+  }
+}
+} // namespace
+
 void mochi::AddRemoveOrRefComponentsForQuery(
     entt::registry& reg,
     entt::entity e,
@@ -66,7 +90,6 @@ void mochi::AddRemoveOrRefComponentsForQuery(
     case QueryType::SurfaceNodePositions: {
       auto* component = AddRemoveOrRefComponent<CQuerySurfaceNodePositions>(reg, e, add);
       if (computeImmediately && component && component->nodePositions.empty()) {
-        ecs::TryInvokeOnEntity(&rod::UpdateQuerySurfaceNodePositions, reg, e);
         ecs::TryInvokeOnEntity(
             &UpdateQuerySurfaceNodePositions, reg, e); // compute results for new query
       }
@@ -93,16 +116,27 @@ void mochi::AddRemoveOrRefComponentsForQuery(
     // These two are computed together
     case QueryType::VisualNodePositions:
     case QueryType::VisualNodeNormals: {
-      if (!reg.any_of<TagRigidActor>(e) && !reg.any_of<TagRodActor>(e)) {
-        // Prerequisite for deformable actors (rods don't have CSimplicialMesh).
-        AddRemoveOrRefComponentsForQuery(reg, e, QueryType::NodePositions, add, computeImmediately);
-      }
-      auto* component = AddRemoveOrRefComponent<CQueryVisualNodePositions>(reg, e, add);
-      AddRemoveOrRefComponent<CQueryVisualNodeNormals>(reg, e, add);
-      if (computeImmediately && component && component->nodePositions.empty()) {
-        ecs::TryInvokeOnEntity(&rod::UpdateQueryVisualNodePositionsAndNormals, reg, e);
-        ecs::TryInvokeOnEntity(&UpdateQueryVisualNodePositionsAndNormals, reg, e);
-      }
+      AddRemoveOrRefAuxiliaryMeshQuery<CQueryVisualNodePositions, CQueryVisualNodeNormals>(
+          reg,
+          e,
+          add,
+          computeImmediately,
+          &rod::UpdateQueryVisualNodePositionsAndNormals,
+          &UpdateQueryVisualNodePositionsAndNormals);
+    } break;
+
+    // These two are computed together
+    case QueryType::ContactSkinNodePositions:
+    case QueryType::ContactSkinNodeNormals: {
+      AddRemoveOrRefAuxiliaryMeshQuery<
+          CQueryContactSkinNodePositions,
+          CQueryContactSkinNodeNormals>(
+          reg,
+          e,
+          add,
+          computeImmediately,
+          &rod::UpdateQueryContactSkinNodePositionsAndNormals,
+          &UpdateQueryContactSkinNodePositionsAndNormals);
     } break;
 
     case QueryType::ContactPoints: {
@@ -177,7 +211,7 @@ void mochi::SetErrorIfQueryNotSupported(
     QueryType type,
     Error& error) {
   static_assert(
-      static_cast<int>(QueryType::Count) == 13,
+      static_cast<int>(QueryType::Count) == 15,
       "Please update the switch statement below if QueryType enum changes");
   switch (type) {
     case QueryType::NodePositions:
@@ -202,6 +236,14 @@ void mochi::SetErrorIfQueryNotSupported(
           error,
           "Visual node queries are only supported for actors with a visual mesh. "
           "Deformable actors also require a visual mesh embedding.");
+      break;
+    case QueryType::ContactSkinNodePositions:
+    case QueryType::ContactSkinNodeNormals:
+      MOCHI_ERROR_IF_NOT(
+          reg.all_of<CContactSkinMesh const>(e),
+          error,
+          "Contact skin node queries are only supported for actors with a contact skin and its "
+          "embedding.");
       break;
     case QueryType::ArticulatedControllerForce:
       MOCHI_ERROR_IF_NOT(
@@ -349,6 +391,8 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CQuerySurfaceNodePositions>(reg);
   ecs::RegisterComponent<CQueryVisualNodeNormals>(reg);
   ecs::RegisterComponent<CQueryVisualNodePositions>(reg);
+  ecs::RegisterComponent<CQueryContactSkinNodeNormals>(reg);
+  ecs::RegisterComponent<CQueryContactSkinNodePositions>(reg);
   ecs::RegisterComponent<CQueryQuadraturePointsPosition>(reg);
   ecs::RegisterComponent<CQueryElementsDeformationGradient>(reg);
   ecs::RegisterComponent<TagQueryActiveContacts>(reg);

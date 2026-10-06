@@ -1983,6 +1983,20 @@
 /// @note Only supported for actors with a visual mesh. Deformable actors also require a visual mesh embedding.
 ///
 
+/// @var mochi::QueryType::ContactSkinNodePositions
+///
+/// @brief Positions of contact skin mesh nodes. Available via @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "Actor::GetContactSkinMeshNodePositionsLocal".
+///
+/// @note Only supported for shell and rod actors whose shape has a contact skin with skinning data, regardless of `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
+///
+
+/// @var mochi::QueryType::ContactSkinNodeNormals
+///
+/// @brief Normals of contact skin mesh nodes. Available via @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "Actor::GetContactSkinMeshNodeNormalsLocal".
+///
+/// @note Only supported for shell and rod actors whose shape has a contact skin with skinning data, regardless of `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
+///
+
 /// @var mochi::QueryType::ContactPoints
 ///
 /// @brief Contact points between actors. Available via @ref mochi::Actor::GetContactPointsWorld "Actor::GetContactPointsWorld".
@@ -3584,7 +3598,7 @@
 ///
 /// @brief Element index in the mesh used for colliding samples on @ref mochi::ContactPoint::actorA "actorA".
 ///
-/// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh".
+/// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
 /// @note For rod actors, this field is not populated and is reported as 0. Use @ref mochi::ContactPoint::sampleIndex "sampleIndex" to identify the contact location.
 ///
 
@@ -3611,7 +3625,7 @@
 ///
 /// @brief Node index in the volumetric mesh or the mesh used for colliding samples.
 ///
-/// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh".
+/// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
 ///
 
 /// @var mochi::NodeContactForce::force
@@ -4530,7 +4544,7 @@
 ///
 /// @brief Get a view of the shape's contact-skin mesh data, including skinning data if available.
 ///
-/// @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced by the contact-skin connectivity, so an actor surface mesh built from the contact skin has the same node ordering. The mesh includes the authored skinning data when available, in the format of @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh". For shapes without a contact skin, returns an empty view.
+/// @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced by the contact-skin connectivity, so @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" has the same node ordering. The mesh includes the authored skinning data when available, in the format of @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh". For shapes without a contact skin, returns an empty view.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -4540,7 +4554,7 @@
 /// @note The returned view will be invalid after the shape handle has been released.
 /// @note For tetrahedral and triangular mesh shapes, skinning indices refer to the node ordering returned by @ref mochi::Context::GetShapeMesh "GetShapeMesh", not to the compact surface-node ordering returned by @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh". For polyline shapes, skinning indices refer to polyline elements.
 ///
-/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Context::GetShapeMesh "GetShapeMesh", @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh", @ref mochi::Context::GetShapeVisualMesh "GetShapeVisualMesh", @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh"
+/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Context::GetShapeMesh "GetShapeMesh", @ref mochi::Context::GetShapeSurfaceMesh "GetShapeSurfaceMesh", @ref mochi::Context::GetShapeVisualMesh "GetShapeVisualMesh", @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh"
 ///
 
 /// @fn MeshDataView mochi::Context::GetShapeVisualMesh(ShapeHandle shape, Error& error) const
@@ -5247,7 +5261,7 @@
 ///
 /// @brief Get a view of the actor's reference surface mesh.
 ///
-/// @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface has the same triangle elements as the simulation mesh, but nodes not referenced by any surface triangle are omitted and remaining nodes may be reindexed. For shell and rod actors with an embedded @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh", returns that contact skin regardless of the actor's selected collision representation. For articulated actors with a skinned simulation surface, returns that surface. Returns an empty view if the actor does not have a surface mesh.
+/// @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface has the same triangle elements as the simulation mesh, but nodes not referenced by any surface triangle are omitted and remaining nodes may be reindexed. For articulated actors with a skinned simulation surface, returns that surface. Returns an empty view if the actor does not have a surface mesh, e.g. for rod actors. Contact skins are exposed by @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh" instead.
 ///
 /// @return A non-owning view of the actor's reference surface mesh, or an empty view if the actor has no surface mesh.
 ///
@@ -5255,7 +5269,7 @@
 /// @note The returned mesh uses compact surface-node ordering. Connectivity indices refer to this ordering, which may differ from the node ordering returned by @ref mochi::Actor::GetMesh "GetMesh". Interior nodes and nodes not referenced by any surface triangle are excluded. Results from @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal" and @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal" use this same surface ordering.
 /// @note The returned view remains valid until the actor is destroyed.
 ///
-/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetMesh "GetMesh", @ref mochi::Actor::GetVisualMesh "GetVisualMesh", @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal", @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal", @ref mochi::Context::GetShapeSurfaceMesh "Context::GetShapeSurfaceMesh"
+/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetMesh "GetMesh", @ref mochi::Actor::GetVisualMesh "GetVisualMesh", @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh", @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal", @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal", @ref mochi::Context::GetShapeSurfaceMesh "Context::GetShapeSurfaceMesh"
 ///
 
 /// @fn MeshDataView mochi::Actor::GetVisualMesh() const
@@ -5271,7 +5285,23 @@
 /// @note When linear visual-mesh skinning data is present, skinning indices refer to the node ordering returned by @ref mochi::Actor::GetMesh "GetMesh", not to the compact surface-node ordering returned by @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh". Rod visual mesh embeddings are nonlinear and are not exposed through this linear skinning field.
 /// @note The returned view remains valid until the actor is destroyed.
 ///
-/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetMesh "GetMesh", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetVisualMeshNodePositionsLocal "GetVisualMeshNodePositionsLocal", @ref mochi::Actor::GetVisualMeshNodeNormalsLocal "GetVisualMeshNodeNormalsLocal", @ref mochi::Context::GetShapeVisualMesh "Context::GetShapeVisualMesh"
+/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetMesh "GetMesh", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh", @ref mochi::Actor::GetVisualMeshNodePositionsLocal "GetVisualMeshNodePositionsLocal", @ref mochi::Actor::GetVisualMeshNodeNormalsLocal "GetVisualMeshNodeNormalsLocal", @ref mochi::Context::GetShapeVisualMesh "Context::GetShapeVisualMesh"
+///
+
+/// @fn MeshDataView mochi::Actor::GetContactSkinMesh() const
+///
+/// @brief Get a view of the actor's reference contact skin mesh.
+///
+/// @details Returns the @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh" of the actor's shape, regardless of whether the actor selected it as its collision representation. Only shell and rod actors whose shape's contact skin has skinning data expose it. Other actors return an empty view. For shell actors, the mesh includes the linear contact-skin skinning data.
+///
+/// @return A non-owning view of the actor's reference contact skin mesh, or an empty view if the actor has no contact skin.
+///
+/// @note The returned coordinates are reference contact-skin positions in the actor's local frame. Deformed contact-skin positions are only available through @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "GetContactSkinMeshNodePositionsLocal".
+/// @note The node ordering matches @ref mochi::Context::GetShapeContactSkinMesh "Context::GetShapeContactSkinMesh".
+/// @note When linear contact-skin skinning data is present, skinning indices refer to the node ordering returned by @ref mochi::Actor::GetMesh "GetMesh". Rod contact skin embeddings are nonlinear and are not exposed through this linear skinning field.
+/// @note The returned view remains valid until the actor is destroyed.
+///
+/// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetMesh "GetMesh", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetVisualMesh "GetVisualMesh", @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "GetContactSkinMeshNodePositionsLocal", @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "GetContactSkinMeshNodeNormalsLocal", @ref mochi::Context::GetShapeContactSkinMesh "Context::GetShapeContactSkinMesh"
 ///
 
 /// @fn Span<real const> mochi::Actor::GetSurfaceMeshNodePositionsLocal(Error& error) const
@@ -5284,9 +5314,8 @@
 /// @note Requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions" before the simulation step. Results are available after the simulation step completes.
 /// @note Requires the actor to support @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions".
 /// @note The node ordering corresponds to the mesh connectivity from @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh".
-/// @note Supported for shell and rod actors whose shape has an authored usable contact skin, regardless of whether that skin is selected for collision.
 ///
-/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal"
+/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal", @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "GetContactSkinMeshNodePositionsLocal"
 ///
 
 /// @fn Span<real const> mochi::Actor::GetSurfaceMeshNodeNormalsLocal(Error& error) const
@@ -5299,9 +5328,8 @@
 /// @note Requires registering @ref mochi::QueryType::SurfaceNodeNormals "QueryType::SurfaceNodeNormals" before the simulation step. Results are available after the simulation step completes.
 /// @note Requires the actor to support @ref mochi::QueryType::SurfaceNodeNormals "QueryType::SurfaceNodeNormals".
 /// @note The node ordering corresponds to the mesh connectivity from @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh".
-/// @note Supported for shell and rod actors whose shape has an authored usable contact skin, regardless of whether that skin is selected for collision.
 ///
-/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::SurfaceNodeNormals "QueryType::SurfaceNodeNormals", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal"
+/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::SurfaceNodeNormals "QueryType::SurfaceNodeNormals", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal", @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "GetContactSkinMeshNodeNormalsLocal"
 ///
 
 /// @fn ShapeHandle mochi::Actor::GetReferenceShape(Error& error) const
@@ -5368,7 +5396,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note When @p boundaryOnly is false, this function supports only soft and shell actors. When true, it also supports articulated actors with a skin mesh, soft-skinned actors with a blended skin mesh, and rigid actors (dynamic or static) with tetrahedral or triangular mesh shapes. Rod actors and actors without a simulation mesh are not supported.
-/// @note When @p boundaryOnly is false, requires registering @ref mochi::QueryType::NodePositions "QueryType::NodePositions" before the simulation step. When true, requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions" unless the surface mesh is linearly embedded in the simulation mesh. Results are available after the simulation step completes.
+/// @note When @p boundaryOnly is false, requires registering @ref mochi::QueryType::NodePositions "QueryType::NodePositions" before the simulation step. When true, requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions". Results are available after the simulation step completes.
 ///
 /// @warning This is a synchronous call and may be expensive.
 ///
@@ -5383,7 +5411,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note When @p boundaryOnly is false, this function supports only soft and shell actors. When true, it also supports articulated actors with a skin mesh, soft-skinned actors with a blended skin mesh, and rigid actors (dynamic or static) with tetrahedral or triangular mesh shapes. Rod actors and actors without a simulation mesh are not supported.
-/// @note When @p boundaryOnly is false, requires registering @ref mochi::QueryType::NodePositions "QueryType::NodePositions" before the simulation step. When true, requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions" unless the surface mesh is linearly embedded in the simulation mesh. Results are available after the simulation step completes.
+/// @note When @p boundaryOnly is false, requires registering @ref mochi::QueryType::NodePositions "QueryType::NodePositions" before the simulation step. When true, requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions". Results are available after the simulation step completes.
 ///
 /// @warning This is a synchronous call and may be expensive.
 ///
@@ -5398,7 +5426,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note When @p boundaryOnly is false, this function supports only soft and shell actors. When true, it also supports articulated actors with a skin mesh, soft-skinned actors with a blended skin mesh, and rigid actors (dynamic or static) with tetrahedral or triangular mesh shapes. Rod actors and actors without a simulation mesh are not supported.
-/// @note When @p boundaryOnly is false, requires registering @ref mochi::QueryType::NodePositions "QueryType::NodePositions" before the simulation step. When true, requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions" unless the surface mesh is linearly embedded in the simulation mesh. Results are available after the simulation step completes.
+/// @note When @p boundaryOnly is false, requires registering @ref mochi::QueryType::NodePositions "QueryType::NodePositions" before the simulation step. When true, requires registering @ref mochi::QueryType::SurfaceNodePositions "QueryType::SurfaceNodePositions". Results are available after the simulation step completes.
 ///
 /// @warning This is a synchronous call and may be expensive.
 ///
@@ -5521,6 +5549,32 @@
 /// @note Requires the actor to support @ref mochi::QueryType::VisualNodeNormals "QueryType::VisualNodeNormals".
 ///
 /// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::VisualNodeNormals "QueryType::VisualNodeNormals", @ref mochi::Actor::GetVisualMesh "GetVisualMesh", @ref mochi::Actor::GetVisualMeshNodePositionsLocal "GetVisualMeshNodePositionsLocal"
+///
+
+/// @fn Span<real const> mochi::Actor::GetContactSkinMeshNodePositionsLocal(Error& error) const
+///
+/// @brief Get the current positions of the contact skin mesh nodes in the actor's local frame.
+///
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+/// @return Current node positions [m] of the contact skin mesh in the actor's local frame (3 values per node: x, y, z). The number of nodes is available via @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh". The order of the nodes is 1-to-1 with @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "GetContactSkinMeshNodeNormalsLocal".
+///
+/// @note Requires registering @ref mochi::QueryType::ContactSkinNodePositions "QueryType::ContactSkinNodePositions" before the simulation step. Results are available after the simulation step completes.
+/// @note Requires the actor to support @ref mochi::QueryType::ContactSkinNodePositions "QueryType::ContactSkinNodePositions".
+///
+/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::ContactSkinNodePositions "QueryType::ContactSkinNodePositions", @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh", @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "GetContactSkinMeshNodeNormalsLocal"
+///
+
+/// @fn Span<real const> mochi::Actor::GetContactSkinMeshNodeNormalsLocal(Error& error) const
+///
+/// @brief Get the normal direction to each node of the contact skin mesh in the actor's local frame.
+///
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+/// @return Flattened normals (3 values per node: nx, ny, nz) in the actor's local frame, computed by normalizing the area-weighted sum of adjacent triangle normals. The number of nodes is available via @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh". The order of the nodes is 1-to-1 with @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "GetContactSkinMeshNodePositionsLocal".
+///
+/// @note Requires registering @ref mochi::QueryType::ContactSkinNodeNormals "QueryType::ContactSkinNodeNormals" before the simulation step. Results are available after the simulation step completes.
+/// @note Requires the actor to support @ref mochi::QueryType::ContactSkinNodeNormals "QueryType::ContactSkinNodeNormals".
+///
+/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::ContactSkinNodeNormals "QueryType::ContactSkinNodeNormals", @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh", @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "GetContactSkinMeshNodePositionsLocal"
 ///
 
 /// @fn Span<int const> mochi::Actor::GetBoundaryConditionDofIndices() const
