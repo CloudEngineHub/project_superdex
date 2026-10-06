@@ -1155,8 +1155,10 @@ TEST_F(ArticulatedBodyDynamicsTest, TransmissionForces) {
 }
 
 // The links and full-DoF constraints contribute J^T * D * J to the reduced dresidual, with D their
-// full-DoF dresidual. The tree has a zero-DoF root link, links with non-contiguous ancestor DoFs,
-// and a cycle constraint that couples two links and leaves the last link unconstrained.
+// full-DoF dresidual. The tree has a zero-DoF root link and links with non-contiguous ancestor
+// DoFs. A cycle and a prismatic joint couple link 3 with two links, the constraints act on all 6
+// DoFs of some links but only on the rotation (link 1) or the position (link 4) of others, and
+// they leave the last link unconstrained.
 TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
   TransformRT const jointOffset{Real3{0.5_r, 0.2_r, 0.1_r}};
   ArticulatedActorParams params;
@@ -1171,12 +1173,28 @@ TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
        .axis = kReal3XAxis},
       {.type = ArticulatedJointType::Revolute,
        .parentLinkFromJoint = jointOffset,
-       .axis = kReal3YAxis}};
-  for (int parent : {-1, 0, 1, 1, 0}) {
+       .axis = kReal3YAxis},
+      {.type = ArticulatedJointType::Revolute,
+       .parentLinkFromJoint = jointOffset,
+       .axis = kReal3XAxis}};
+
+  for (int parent : {-1, 0, 1, 1, 0, 4}) {
     params.links.push_back({.parentLink = parent, .shape = _cubeShape, .layer = "Articulated"});
   }
   params.cycles = {{.parentLink = 2, .childLink = 3, .stiffness = 1e7_r}};
   Actor* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+
+  auto const links = actor->GetNestedLinkActors(test::ExpectOK{});
+  RigidPivotRotationConstraintParams rotation;
+  rotation.actor = links[1];
+  _scene->CreateRigidPivotRotationConstraint(rotation, test::ExpectOK{});
+  // Acts on all of link 3's DoFs but only on link 4's position.
+  RigidPrismaticJointConstraintParams prismatic;
+  prismatic.freeAxis = kReal3XAxis;
+  prismatic.actorA = links[3];
+  prismatic.actorB = links[4];
+  _scene->CreateRigidPrismaticJointConstraint(prismatic, test::ExpectOK{});
+
   auto& reg = GetRegistry();
   auto const entity = GetEntity(actor->GetHandle());
 

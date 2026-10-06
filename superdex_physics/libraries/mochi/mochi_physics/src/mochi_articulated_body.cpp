@@ -2530,28 +2530,31 @@ static void AssembleReducedDResidual(
         "Expected a 6x6 link dresidual.");
 
     // D_ii is the link's own dresidual, copied only if constraints add to it (e.g. link-based pose
-    // control).
+    // control). Constraints act on aligned triples of DoFs (see CConstraintInfo), so the 3 rows of
+    // each triple share their columns, and their values form a row-major row of 3x3 blocks.
     bool isConstrained = false;
     bool isCoupled = false;
     int const rowEnd = Min(offset + RigidSize::kDAll, constraintFullDRes.Rows());
-    for (int row = offset; row < rowEnd; ++row) {
+    for (int row = offset; row < rowEnd; row += 3) {
       auto const cols = constraintFullDRes.Indices(row);
-      auto const values = constraintFullDRes.Values(row);
-      for (int nz = 0; nz < isize(cols); ++nz) {
+      RowMatrixView<real const, 3> const blockRow(
+          constraintFullDRes.Values(row).data(), 3, isize(cols));
+      for (int nz = 0; nz < isize(cols); nz += 3) {
         int const col = cols[nz];
+        auto const block = blockRow.MiddleCols<3>(nz, 3);
         if (col / RigidSize::kDAll == i) {
           if (!isConstrained) {
             diagonalBlock = linkDRes;
             isConstrained = true;
           }
-          diagonalBlock(row - offset, col - offset) += values[nz];
+          diagonalBlock.Block<3, 3>(row - offset, col - offset, 3, 3) += block;
           continue;
         }
         if (!isCoupled) {
           couplingDJ.SetZero();
           isCoupled = true;
         }
-        couplingDJ.Row(row - offset) += values[nz] * jacobian.value.Row(col);
+        couplingDJ.MiddleRows<3>(row - offset, 3) += block * jacobian.value.MiddleRows<3>(col, 3);
       }
     }
 

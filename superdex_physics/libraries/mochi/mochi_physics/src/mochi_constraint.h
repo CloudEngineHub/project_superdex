@@ -183,6 +183,19 @@ struct CConstraintInfo : NoCopy {
       numDofs += isize(perActorDofs);
     }
     MOCHI_ASSERT_VERBOSE(numDofs == GetNumConstrainedDofs(type), "Inconsistent constraint info");
+    // AssembleReducedDResidual reads the dresidual of constraints on links in 3x3 blocks.
+    for (int o = 0; o < isize(actors); ++o) {
+      if (TryGetParentArticulatedActor(reg, actors[o]) == entt::null) {
+        continue;
+      }
+      auto const& dofs = actorDofs[o];
+      for (int d = 0; d < isize(dofs); d += 3) {
+        MOCHI_ASSERT_VERBOSE(
+            d + 2 < isize(dofs) && dofs[d] % 3 == 0 && dofs[d + 1] == dofs[d] + 1 &&
+                dofs[d + 2] == dofs[d] + 2,
+            "Constraints on links must act on aligned triples of DoFs.");
+      }
+    }
     // Warning: if numTargets != GetNumConstrainedTargets(type), this constraint cannot be used for
     // differentiability of targets.
     int numTargets = GetNumTargets();
