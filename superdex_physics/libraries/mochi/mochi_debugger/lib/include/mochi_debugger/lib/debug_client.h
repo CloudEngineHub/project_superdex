@@ -29,6 +29,7 @@
 
 #include <cinttypes>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -309,6 +310,27 @@ class DebugClient {
   void EnableDebugDraw(bool enable);
 
   /**
+   * @brief Get the selected scene's @ref experimental::SleepParams.
+   *
+   * @return The client's copy, or nullopt if no scene is selected or the server has not yet
+   * reported the value.
+   *
+   * @details The server's value is requested when a scene is selected, including on connect.
+   * After that, the client's copy is only changed by @ref SetSleepParams. Changes made on the
+   * server by other means are not observed until the next selection.
+   */
+  [[nodiscard]] std::optional<experimental::SleepParams> GetSleepParams() const;
+
+  /**
+   * @brief Store @p params and send them to the selected scene. No-op if the value has not been
+   * received from the server yet (see @ref GetSleepParams).
+   *
+   * @note If the server rejects the params, a warning is printed and the client's copy is not
+   * reverted.
+   */
+  void SetSleepParams(experimental::SleepParams const& params);
+
+  /**
    * @brief Execute a console command
    *
    * @param str A command string. First token is the command. Additional tokens are arguments.
@@ -363,6 +385,9 @@ class DebugClient {
     uint64_t syncCounter = 0; // Incremented when sync data changes.
     std::unordered_map<ActorHandle, MeshInfo> meshCache; // Per-actor mesh cache.
     DebugClientSettings settings;
+
+    // Selected scene's sleep params. Cleared when the selection changes, then read from the server.
+    std::optional<experimental::SleepParams> sleepParams;
   };
 
   void InitProtocol();
@@ -382,7 +407,8 @@ class DebugClient {
       State& state,
       SceneHandle handle,
       DynamicArray<protocol::SceneSyncRequest>& outSyncRequests,
-      DynamicArray<protocol::DebugDrawRequest>& outDebugDrawRequests);
+      DynamicArray<protocol::DebugDrawRequest>& outDebugDrawRequests,
+      DynamicArray<protocol::SleepParamsRequest>& outSleepRequests);
   static void UpdateActorMeshes(
       protocol::SceneSyncReply const& reply,
       std::unordered_map<ActorHandle, MeshInfo>& meshCache,
@@ -407,6 +433,7 @@ class DebugClient {
   void OnSceneAddRemove(protocol::SceneAddRemove&& msg);
   void OnSceneStepReply(protocol::SceneStepReply&& reply);
   void OnSceneSyncReply(protocol::SceneSyncReply&& reply);
+  void OnSleepParamsReply(protocol::SleepParamsReply&& reply);
 
   // Console command handlers
   void CmdConnect(Span<std::string const> args);

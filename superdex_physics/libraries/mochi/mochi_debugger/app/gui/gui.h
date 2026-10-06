@@ -19,6 +19,7 @@
 #include "../viewport/render_scene.h"
 #include "connect_dialog.h"
 #include "log_view.h"
+#include "properties_panel.h"
 #include "scene_panel.h"
 #include "terminal_panel.h"
 #include "viewport_panel.h"
@@ -96,6 +97,7 @@ struct UiState : NoCopy {
   ConnectDialogState connectDialog;
   TerminalPanelState terminal;
   ScenePanelState scene;
+  IslandsPropertiesState islands;
 };
 
 void InitializeUi(UiState& state);

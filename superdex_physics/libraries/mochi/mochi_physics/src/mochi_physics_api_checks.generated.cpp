@@ -464,7 +464,7 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::us
 
 // struct mochi::experimental::SleepParams
 static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::canSleep), bool mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::canSleep is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
-static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::sleepThreshold), mochi::real mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::sleepThreshold is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::sleepThreshold), double mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::sleepThreshold is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::experimental::SleepParams::minStepsBeforeSleep), int mochi::experimental::SleepParams::*>, "\n  ERROR: Field mochi::experimental::SleepParams::minStepsBeforeSleep is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
 // struct mochi::experimental::DebugStats
@@ -1571,7 +1571,7 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
   {
     mochi::experimental::SleepParams params{};
     MOCHI_ASSERT((params.canSleep == bool(false)), "DSL default value for SleepParams::canSleep doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
-    MOCHI_ASSERT_EQ(params.sleepThreshold, 0.5_r, "DSL default value for SleepParams::sleepThreshold doesn't match C++ default. DSL says 0.5, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.sleepThreshold, 0.5, "DSL default value for SleepParams::sleepThreshold doesn't match C++ default. DSL says 0.5, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.minStepsBeforeSleep == int(20)), "DSL default value for SleepParams::minStepsBeforeSleep doesn't match C++ default. DSL says 20, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
 #if MOCHI_INTERNAL

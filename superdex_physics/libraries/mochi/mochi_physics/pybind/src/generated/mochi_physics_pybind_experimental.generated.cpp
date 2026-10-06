@@ -527,7 +527,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     .def("__init__", [](mochi::experimental::SleepParams* self, nb::object can_sleep, nb::object sleep_threshold, nb::object min_steps_before_sleep) {
       mochi::experimental::SleepParams result{};
       result.canSleep = nb::cast<bool>(can_sleep);
-      result.sleepThreshold = nb::cast<mochi::real>(sleep_threshold);
+      result.sleepThreshold = nb::cast<double>(sleep_threshold);
       result.minStepsBeforeSleep = nb::cast<int>(min_steps_before_sleep);
       new (self) mochi::experimental::SleepParams(std::move(result));
     }

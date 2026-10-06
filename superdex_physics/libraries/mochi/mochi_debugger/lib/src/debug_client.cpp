@@ -141,6 +141,7 @@ void DebugClient::ResetConnectionState() {
       state.syncData = {};
       state.syncData.counter = ++state.syncCounter; // Indicates it was changed
     }
+    state.sleepParams.reset();
 
     // Keep settings: it is a user preference that persists across connections.
   });
@@ -296,6 +297,9 @@ void DebugClient::InitProtocol() {
   _socket.Register<protocol::SceneSyncReply>(
       [this](auto&& msg) { OnSceneSyncReply(std::forward<decltype(msg)>(msg)); });
   _socket.Register<protocol::SceneSyncRequest>();
+  _socket.Register<protocol::SleepParamsReply>(
+      [this](auto&& msg) { OnSleepParamsReply(std::forward<decltype(msg)>(msg)); });
+  _socket.Register<protocol::SleepParamsRequest>();
   _socket.Register<protocol::WelcomeMessage>(
       [this](auto&& msg) { OnWelcomeMessage(std::forward<decltype(msg)>(msg)); });
 
@@ -315,6 +319,7 @@ void DebugClient::OnWelcomeMessage(protocol::WelcomeMessage&& msg) {
   DynamicArray<protocol::SceneStepRequest> stepRequestsToSend;
   DynamicArray<protocol::SceneSyncRequest> syncRequestsToSend;
   DynamicArray<protocol::DebugDrawRequest> debugDrawRequestsToSend;
+  DynamicArray<protocol::SleepParamsRequest> sleepRequestsToSend;
   bool const isFirstWelcome = _state.Mutate([&](auto& state) {
     // The server sends exactly one WelcomeMessage per connection. It includes information about
     // current scenes, so the client can join in progress. After this point, scenes are tracked
@@ -350,7 +355,11 @@ void DebugClient::OnWelcomeMessage(protocol::WelcomeMessage&& msg) {
 
     // Maybe auto-select a scene.
     SetSelectedScene(
-        state, FindAutoSelectableScene(state.scenes), syncRequestsToSend, debugDrawRequestsToSend);
+        state,
+        FindAutoSelectableScene(state.scenes),
+        syncRequestsToSend,
+        debugDrawRequestsToSend,
+        sleepRequestsToSend);
 
     return true;
   });
@@ -380,6 +389,9 @@ void DebugClient::OnWelcomeMessage(protocol::WelcomeMessage&& msg) {
   for (auto const& req : syncRequestsToSend) {
     Send(req);
   }
+  for (auto const& req : sleepRequestsToSend) {
+    Send(req);
+  }
 
   _isFullyConnected = true;
 }
@@ -388,6 +400,7 @@ void DebugClient::OnSceneAddRemove(protocol::SceneAddRemove&& msg) {
   std::optional<protocol::SceneStepRequest> stepRequestToSend;
   DynamicArray<protocol::SceneSyncRequest> syncRequestsToSend;
   DynamicArray<protocol::DebugDrawRequest> debugDrawRequestsToSend;
+  DynamicArray<protocol::SleepParamsRequest> sleepRequestsToSend;
   _state.Mutate([&](auto& state) {
     // Ignore deltas until the WelcomeMessage arrives. Pre-welcome deltas are already
     // reflected in the snapshot (which the server takes, in lock order, after them).
@@ -421,7 +434,8 @@ void DebugClient::OnSceneAddRemove(protocol::SceneAddRemove&& msg) {
       // then select it now.
       if (!state.selectedScene.IsValid() && !hadSelectableScene &&
           IsAutoSelectableScene(state.scenes.back())) {
-        SetSelectedScene(state, msg.scene, syncRequestsToSend, debugDrawRequestsToSend);
+        SetSelectedScene(
+            state, msg.scene, syncRequestsToSend, debugDrawRequestsToSend, sleepRequestsToSend);
       }
     } else {
       if (sceneIndex >= 0) {
@@ -437,7 +451,8 @@ void DebugClient::OnSceneAddRemove(protocol::SceneAddRemove&& msg) {
             state,
             FindAutoSelectableScene(state.scenes),
             syncRequestsToSend,
-            debugDrawRequestsToSend);
+            debugDrawRequestsToSend,
+            sleepRequestsToSend);
       }
     }
   });
@@ -448,6 +463,9 @@ void DebugClient::OnSceneAddRemove(protocol::SceneAddRemove&& msg) {
     Send(req);
   }
   for (auto const& req : syncRequestsToSend) {
+    Send(req);
+  }
+  for (auto const& req : sleepRequestsToSend) {
     Send(req);
   }
 }
@@ -585,13 +603,19 @@ void DebugClient::OnSceneSyncReply(protocol::SceneSyncReply&& reply) {
 void DebugClient::SelectScene(SceneHandle handle) {
   DynamicArray<protocol::SceneSyncRequest> syncToSend;
   DynamicArray<protocol::DebugDrawRequest> debugDrawToSend;
-  _state.Mutate([&](auto& state) { SetSelectedScene(state, handle, syncToSend, debugDrawToSend); });
+  DynamicArray<protocol::SleepParamsRequest> sleepToSend;
+  _state.Mutate([&](auto& state) {
+    SetSelectedScene(state, handle, syncToSend, debugDrawToSend, sleepToSend);
+  });
 
   // Send requests after releasing the _state lock.
   for (auto const& req : debugDrawToSend) {
     Send(req);
   }
   for (auto const& req : syncToSend) {
+    Send(req);
+  }
+  for (auto const& req : sleepToSend) {
     Send(req);
   }
 }
@@ -710,7 +734,8 @@ void DebugClient::SetSelectedScene(
     State& state,
     SceneHandle handle,
     DynamicArray<protocol::SceneSyncRequest>& outSyncRequests,
-    DynamicArray<protocol::DebugDrawRequest>& outDebugDrawRequests) {
+    DynamicArray<protocol::DebugDrawRequest>& outDebugDrawRequests,
+    DynamicArray<protocol::SleepParamsRequest>& outSleepRequests) {
   SceneHandle newSelection;
   if (FindSceneIndex(state.scenes, handle) >= 0) {
     newSelection = handle;
@@ -755,6 +780,14 @@ void DebugClient::SetSelectedScene(
   state.syncData = {};
   state.syncData.scene = newSelection;
   state.syncData.counter = ++state.syncCounter;
+
+  // Read the sleep params of the new scene. They may differ between scenes.
+  state.sleepParams.reset();
+  if (newSelection.IsValid()) {
+    protocol::SleepParamsRequest req;
+    req.scene = newSelection;
+    outSleepRequests.emplace_back(std::move(req));
+  }
 }
 
 void DebugClient::GetSceneSyncData(std::function<void(SceneSyncData const& data)> const& fn) const {
@@ -892,6 +925,44 @@ void DebugClient::OnDebugDrawReply(protocol::DebugDrawReply&& reply) {
   if (!reply.error.empty()) {
     Print(Format("Debug draw request failed: %s", reply.error.c_str()), LogChannel::Warning);
   }
+}
+
+std::optional<experimental::SleepParams> DebugClient::GetSleepParams() const {
+  return _state.Read(&State::sleepParams);
+}
+
+void DebugClient::SetSleepParams(experimental::SleepParams const& params) {
+  std::optional<protocol::SleepParamsRequest> toSend;
+  _state.Mutate([&](auto& state) {
+    if (!state.sleepParams) {
+      return; // Not received from the server yet
+    }
+    if (*state.sleepParams == params) {
+      return; // No change
+    }
+    state.sleepParams = params;
+    toSend.emplace();
+    toSend->scene = state.selectedScene;
+    toSend->params = params;
+  });
+
+  // Send after releasing the _state lock
+  if (toSend) {
+    Send(*toSend);
+  }
+}
+
+void DebugClient::OnSleepParamsReply(protocol::SleepParamsReply&& reply) {
+  if (!reply.error.empty()) {
+    Print(Format("Sleep params request failed: %s", reply.error.c_str()), LogChannel::Warning);
+  }
+  _state.Mutate([&](auto& state) {
+    // Only the first reply after selecting a scene is used. After that, the client's copy is
+    // authoritative, so later replies cannot make the UI jump back to an older value.
+    if (reply.scene == state.selectedScene && !state.sleepParams) {
+      state.sleepParams = reply.params;
+    }
+  });
 }
 
 void DebugClient::OnLogMessage(protocol::LogMessage&& msg) {

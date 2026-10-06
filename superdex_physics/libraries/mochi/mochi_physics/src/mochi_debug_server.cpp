@@ -378,6 +378,8 @@ void DebugServerImpl::RegisterProtocol() {
   RegisterSceneRequest<protocol::SceneStepRequest>();
   _server.Register<protocol::SceneSyncReply>();
   RegisterSceneRequest<protocol::SceneSyncRequest>();
+  _server.Register<protocol::SleepParamsReply>();
+  RegisterSceneRequest<protocol::SleepParamsRequest>();
   _server.Register<protocol::WelcomeMessage>();
 
   // Set version so connection will be refused if the client does not register exactly the

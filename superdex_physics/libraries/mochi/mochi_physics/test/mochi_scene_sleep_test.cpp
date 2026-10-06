@@ -47,8 +47,8 @@ TEST_F(SceneSleepParams, DefaultsDisableSleep) {
 
 TEST_F(SceneSleepParams, SetThenGet) {
   for (SleepParams const& params :
-       {SleepParams{.canSleep = true, .sleepThreshold = 1_r, .minStepsBeforeSleep = 2},
-        SleepParams{.canSleep = false, .sleepThreshold = 0.1_r, .minStepsBeforeSleep = 3}}) {
+       {SleepParams{.canSleep = true, .sleepThreshold = 1.0, .minStepsBeforeSleep = 2},
+        SleepParams{.canSleep = false, .sleepThreshold = 0.1, .minStepsBeforeSleep = 3}}) {
     experimental::SetSleepParams(_scene, params, test::ExpectOK{});
     EXPECT_EQ(params, experimental::GetSleepParams(_scene, test::ExpectOK{}));
   }
@@ -60,10 +60,10 @@ TEST_F(SceneSleepParams, RejectsInvalidParams) {
     EXPECT_EQ(SleepParams{}, experimental::GetSleepParams(_scene, test::ExpectOK{}))
         << "Invalid params must not be stored.";
   };
-  expectRejected({.sleepThreshold = 0_r});
-  expectRejected({.sleepThreshold = -0.5_r});
-  expectRejected({.sleepThreshold = 1.001_r});
-  expectRejected({.sleepThreshold = std::numeric_limits<real>::quiet_NaN()});
+  expectRejected({.sleepThreshold = 0.0});
+  expectRejected({.sleepThreshold = -0.5});
+  expectRejected({.sleepThreshold = 1.001});
+  expectRejected({.sleepThreshold = std::numeric_limits<double>::quiet_NaN()});
   expectRejected({.minStepsBeforeSleep = 0});
   expectRejected({.minStepsBeforeSleep = 1});
   expectRejected({.minStepsBeforeSleep = -1});
@@ -435,7 +435,7 @@ TEST_P(SceneSleepPerType, SleepingActorHasNoConvergenceStatus) {
 
   // Changing the sleep parameters wakes all islands.
   experimental::SetSleepParams(
-      _scene, {.canSleep = true, .sleepThreshold = 0.25_r}, test::ExpectOK{});
+      _scene, {.canSleep = true, .sleepThreshold = 0.25}, test::ExpectOK{});
   Step();
   ASSERT_TRUE(IsAwake(actor));
   EXPECT_NE(ConvergenceStatus::None, actor->GetConvergenceStatus());
@@ -639,7 +639,7 @@ TEST_F(SceneSleep, ManyIslandsSleepInTheSameStep) {
 TEST_F(SceneSleep, SleepsAfterMinStepsAtMaxThreshold) {
   experimental::SetSleepParams(
       _scene,
-      {.canSleep = true, .sleepThreshold = 1_r, .minStepsBeforeSleep = 5},
+      {.canSleep = true, .sleepThreshold = 1.0, .minStepsBeforeSleep = 5},
       test::ExpectOK{});
   _scene->SetGravity(Real3{});
   Actor const* actor = CreateTestActor(ActorType::Rigid, /*bottomHeight=*/1_r);
@@ -1120,7 +1120,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        OnRepeat::NoWake,
        [](WakeContext& c) {
          auto params = experimental::GetSleepParams(c.scene, test::ExpectOK{});
-         params.sleepThreshold = 0.25_r;
+         params.sleepThreshold = 0.25;
          experimental::SetSleepParams(c.scene, params, test::ExpectOK{});
        }},
       {"EnableLayerContact",

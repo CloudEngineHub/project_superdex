@@ -1574,13 +1574,19 @@ IsValidNewtonEulerTerms(NewtonEulerTerms const* newtonEulerTerms, Context* conte
 struct SleepParams {
   bool canSleep = false;
 
-  real sleepThreshold = 0.5_r;
+  double sleepThreshold = 0.5;
 
   int minStepsBeforeSleep = 20;
 
 #if MOCHI_LANGUAGE_CPP20
   bool operator==(SleepParams const&) const = default;
 #endif
+
+  MOCHI_STRUCT_BEGIN(mochi::experimental::SleepParams)
+  MOCHI_FIELD(canSleep)
+  MOCHI_FIELD(sleepThreshold)
+  MOCHI_FIELD(minStepsBeforeSleep)
+  MOCHI_STRUCT_END()
 };
 
 [[nodiscard]] MOCHI_API SleepParams GetSleepParams(Scene const* scene, Error& error);

@@ -133,6 +133,7 @@ class SceneDebuggerImpl final : public SceneDebugger {
   void OnDebugDrawRequest(SceneImpl* scene, protocol::DebugDrawRequest&& request);
   void OnSceneStepRequest(SceneImpl* scene, protocol::SceneStepRequest&& request);
   void OnSceneSyncRequest(SceneImpl* scene, protocol::SceneSyncRequest&& request);
+  void OnSleepParamsRequest(SceneImpl* scene, protocol::SleepParamsRequest&& request);
 
   net::ClientId const _client;
   SceneHandle const _sceneHandle;
@@ -216,6 +217,9 @@ void SceneDebuggerImpl::Init(SceneImpl* scene) {
   });
   _dispatcher.Register<protocol::SceneSyncRequest>([this](auto* scene, auto&& msg) {
     OnSceneSyncRequest(scene, std::forward<decltype(msg)>(msg));
+  });
+  _dispatcher.Register<protocol::SleepParamsRequest>([this](auto* scene, auto&& msg) {
+    OnSleepParamsRequest(scene, std::forward<decltype(msg)>(msg));
   });
 
   // This priority causes the debugger to update before other pre-step callbacks.
@@ -545,6 +549,26 @@ void SceneDebuggerImpl::OnSceneSyncRequest(SceneImpl* scene, protocol::SceneSync
         request.syncMeshes,
         request.useVisualMesh,
         request.requestId);
+  }
+}
+
+void SceneDebuggerImpl::OnSleepParamsRequest(
+    SceneImpl* scene,
+    protocol::SleepParamsRequest&& request) {
+  MOCHI_ASSERT_VERBOSE(request.scene == _sceneHandle, "Received by the wrong scene");
+  protocol::SleepParamsReply reply(request);
+
+  if (request.params.has_value()) {
+    Error error;
+    scene->SetSleepParams(*request.params, error);
+    if (!error.IsOK()) {
+      reply.error = Format("Failed to set sleep params. Reason: %s", error.GetDescription());
+    }
+  }
+  reply.params = scene->GetSleepParams();
+
+  if (request.sendReply) {
+    SendToClient(reply);
   }
 }
 

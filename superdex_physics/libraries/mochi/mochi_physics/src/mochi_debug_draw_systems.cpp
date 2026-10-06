@@ -227,7 +227,7 @@ static void RegisterDebugDrawSystem_IslandAabbWorld(DebugDrawInternal& debugDraw
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
         auto const& members = reg.get<CIslandMembers const>(e);
         if (auto worldAabb = GetGroupWorldBounds(reg, members)) {
-          auto const color = sleep::IsIslandAwake(reg, e) ? MakeColor(0x8080FFFF) : colors::kSilver;
+          auto const color = sleep::IsIslandAwake(reg, e) ? MakeColor(0xFF33FFFF) : colors::kSilver;
           out.AddWireframeAabb(*worldAabb, color);
         }
       };

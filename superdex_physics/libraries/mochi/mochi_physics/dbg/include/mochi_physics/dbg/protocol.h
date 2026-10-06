@@ -23,6 +23,7 @@
 #include <mochi_core/utils/log.h>
 #include <mochi_core/utils/reflection.h>
 #include <mochi_physics/mochi_physics.h>
+#include <mochi_physics/mochi_physics_experimental.h>
 
 #include <cstdint>
 #include <optional>
@@ -63,6 +64,7 @@ struct DebugDrawReply;
 struct PingReply;
 struct SceneStepReply;
 struct SceneSyncReply;
+struct SleepParamsReply;
 
 //------------------------------------------------------------------------------
 // Base Classes
@@ -405,6 +407,30 @@ struct SceneSyncReply : SceneReply {
   MOCHI_FIELD(actorMeshRanges)
   MOCHI_FIELD(meshVersionCounter)
   MOCHI_FIELD(debugDraw)
+  MOCHI_STRUCT_END()
+};
+
+/// @brief [S<--C] Query, and optionally modify, the scene's @ref experimental::SleepParams.
+struct SleepParamsRequest : SceneRequest {
+  using Reply = SleepParamsReply;
+
+  std::optional<experimental::SleepParams> params; // If nullopt, only query the current value.
+
+  MOCHI_STRUCT_BEGIN(mochi::dbg::protocol::SleepParamsRequest)
+  MOCHI_BASE_CLASS(SceneRequest)
+  MOCHI_FIELD(params)
+  MOCHI_STRUCT_END()
+};
+
+/// @brief [S-->C] Reply to @ref SleepParamsRequest.
+struct SleepParamsReply : SceneReply {
+  using SceneReply::SceneReply;
+
+  experimental::SleepParams params; // The scene's value after applying the request.
+
+  MOCHI_STRUCT_BEGIN(mochi::dbg::protocol::SleepParamsReply)
+  MOCHI_BASE_CLASS(SceneReply)
+  MOCHI_FIELD(params)
   MOCHI_STRUCT_END()
 };
 

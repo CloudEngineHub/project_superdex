@@ -610,7 +610,7 @@ struct experimental::SleepParams [equality, no_reflection] {
   // risk of putting slowly moving actors to sleep before they have settled.
   //
   // @note Must be in (0, 1].
-  real sleepThreshold = 0.5;
+  double sleepThreshold = 0.5;
 
   // @brief Number of consecutive rest steps required before an island goes to sleep.
   //

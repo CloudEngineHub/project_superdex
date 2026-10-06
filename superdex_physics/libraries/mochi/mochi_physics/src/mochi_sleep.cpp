@@ -36,7 +36,7 @@ void sleep::ValidateParams(
     Error& error) {
   MOCHI_ERROR_RETURN(error);
   MOCHI_ERROR_IF_NOT(
-      params.sleepThreshold > 0_r && params.sleepThreshold <= 1_r,
+      params.sleepThreshold > 0.0 && params.sleepThreshold <= 1.0,
       error,
       "Sleep threshold (SleepParams::sleepThreshold) must be in (0, 1].");
   MOCHI_ERROR_IF_NOT(
