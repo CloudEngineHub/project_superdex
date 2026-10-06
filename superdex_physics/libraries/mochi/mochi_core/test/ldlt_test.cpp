@@ -223,6 +223,9 @@ TEST(LDLt, BlockedTriangularSolves) {
 }
 
 TEST(LDLt, BlockFactor) {
+#if !MOCHI_USE_SIMD || MOCHI_USE_DOUBLE_PRECISION // Float SIMD on x86 can't use a block size of 6.
+  TestBlockFactor<6>(); // In no-SIMD float builds, this runs the non-SIMD path of FactorBlock.
+#endif
   TestBlockFactor<8>();
   TestBlockFactor<48>();
 }

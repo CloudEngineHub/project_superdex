@@ -475,7 +475,7 @@ void LDLt<InputScalar, kRowsAtCT, kColsAtCT, kEquilibration, kBlockSize, kTrSize
   using namespace blocking;
   PartDown<kBlockSize, kSizeAtCT>(
       _size,
-      [](auto&& X, auto&& L) {
+      [](auto&& X, auto&& L) MOCHI_FORCE_INLINE_LAMBDA {
         auto currentX = X(DiagRows);
         auto prevX = X(Above);
         if (prevX.Rows() > 0) {
@@ -494,7 +494,7 @@ void LDLt<InputScalar, kRowsAtCT, kColsAtCT, kEquilibration, kBlockSize, kTrSize
   // Apply L^-T in blocks.
   PartUp<kBlockSize, kSizeAtCT>(
       _size,
-      [](auto&& X, auto&& L) {
+      [](auto&& X, auto&& L) MOCHI_FORCE_INLINE_LAMBDA {
         auto currentX = X(DiagRows);
         auto prevX = X(Below);
         if (prevX.Rows() > 0) {
