@@ -25,21 +25,26 @@
 #include "rendering/measure_tool.h"
 #include "ui/imgui_widgets.h"
 
+#include <superdex_robotics/utils/archive_utils.h>
 #include <superdex_robotics/utils/bot_utils.h>
+#include <superdex_robotics/utils/file_utils.h>
 
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/path.h>
 #include <mochi_core/utils/reflection.h>
 #include <mochi_core/utils/span.h>
+#include <mochi_physics/utils/mochi_prefab.h>
 
 #include <imguios/fonts/icons_font_awesome5.h>
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace superdex::studio {
 
@@ -66,6 +71,85 @@ std::string MakeUniqueName(std::string_view base, std::set<std::string> const& e
       return candidate;
     }
   }
+}
+
+bool ResolveTaskSpawns(
+    superdex::robotics::BotTaskPrefab const& task,
+    superdex::robotics::BotScenePrefab const& scene,
+    std::vector<ResolvedTaskSpawn>& out,
+    std::string& error) {
+  std::unordered_map<std::string, mochi::Path> prefabPaths;
+  for (auto const& prefab : scene.scene.spawnablePrefabs) {
+    if (!prefabPaths.emplace(std::string(prefab.name), mochi::Path{std::string(prefab.path)})
+             .second) {
+      error = "Bot scene declares more than one spawnable prefab named '" +
+          std::string(prefab.name) + "'";
+      return false;
+    }
+  }
+
+  std::unordered_map<std::string, int> spawnIndices;
+  for (int i = 0; i < mochi::isize(task.spawns); ++i) {
+    if (!spawnIndices.emplace(std::string(task.spawns[i].name), i).second) {
+      error =
+          "Bot task declares more than one spawn named '" + std::string(task.spawns[i].name) + "'";
+      return false;
+    }
+  }
+
+  out.clear();
+  out.resize(task.spawns.size());
+  std::vector<int> resolveState(task.spawns.size());
+  std::function<bool(int)> resolve = [&](int index) {
+    if (resolveState[index] == 2) {
+      return true;
+    }
+    if (resolveState[index] == 1) {
+      error = "Bot task contains a cyclic spawn parent chain";
+      return false;
+    }
+    resolveState[index] = 1;
+
+    auto const& spawn = task.spawns[index];
+    auto const prefab = prefabPaths.find(std::string(spawn.prefabName));
+    if (prefab == prefabPaths.end()) {
+      error = "Task spawn '" + std::string(spawn.name) + "' references '" +
+          std::string(spawn.prefabName) + "', which is not declared by this bot scene";
+      return false;
+    }
+
+    mochi::TransformRT worldFromParent;
+    std::string const parent{spawn.parent};
+    if (!parent.empty() && parent != superdex::robotics::kTaskRootParentName) {
+      auto const parentIt = spawnIndices.find(parent);
+      if (parentIt == spawnIndices.end()) {
+        error = "Task spawn '" + std::string(spawn.name) + "' references unknown parent '" +
+            parent + "'";
+        return false;
+      }
+      if (!resolve(parentIt->second)) {
+        return false;
+      }
+      worldFromParent = out[parentIt->second].worldFromSpawn;
+    }
+
+    out[index] = {
+        .name = std::string(spawn.name),
+        .prefabName = std::string(spawn.prefabName),
+        .prefabPath = prefab->second,
+        .worldFromSpawn = worldFromParent * spawn.parentFromSpawn,
+    };
+    resolveState[index] = 2;
+    return true;
+  };
+
+  for (int i = 0; i < mochi::isize(task.spawns); ++i) {
+    if (!resolve(i)) {
+      out.clear();
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace
@@ -225,6 +309,7 @@ std::vector<AssetEditor::WindowDeclaration> BotSceneEditor::GetDefaultWindows() 
   using Dock = AssetEditor::DockRegion;
   return {
       {"Bot Scene Info", true, Dock::SidePanelTop},
+      {"Task Preview", true, Dock::SidePanelBottom},
       {"Physics Settings", false, Dock::SidePanelBottom},
       MeasureWindowDeclaration(),
       {"Scene Stage Debug", false, Dock::SidePanelTop, true}};
@@ -249,6 +334,9 @@ void BotSceneEditor::ShowAuxiliaryWindows() {
     _mochiScene.ShowPhysicsSettingsWindow("Physics Settings", &open, GetAssetSceneOverrides());
   }
   ShowMeasureWindow();
+  if (bool& open = _studio->GetWindowVisible("Task Preview")) {
+    ShowTaskWindow(&open);
+  }
   if (bool& open = _studio->GetWindowVisible("Scene Stage Debug")) {
     auto* simNames = _mochiScene.IsSimulating() ? &_simData.GetConsumerData().actorNames : nullptr;
     _stage.ShowSceneStageWindow("Scene Stage Debug", &open, simNames);
@@ -305,11 +393,89 @@ void BotSceneEditor::RestoreUndoSnapshot(std::string const& json, int /*selectio
 //--------------------------------------------------------------------------------------------------
 
 void BotSceneEditor::RestageBotScene() {
-  _stage.StageBotScene(_sceneAsset->GetPrefab(), _stageType);
+  // Scene edits, undo/redo, and renames can change the prefab each task spawn binds to. The physics
+  // thread reads _taskSpawns, so bindings stay fixed for the duration of a simulation.
+  if (_taskPrefab.has_value() && !_mochiScene.IsSimulating()) {
+    _taskBindError.clear();
+    BindTaskSpawns(*_taskPrefab, _taskSpawns, _taskBindError);
+  }
+  if (_taskPrefab.has_value()) {
+    _stage.StageBotTask(_sceneAsset->GetPrefab(), mochi::MakeConstSpan(_taskSpawns), _stageType);
+  } else {
+    _stage.StageBotScene(_sceneAsset->GetPrefab(), _stageType);
+  }
   // Position the drop-shadow ground plane at the scene's lowest point (rest pose staged above; not
   // called mid-sim). The same height positions the studio physics ground plane, when the settings
   // ask for one.
   _mochiScene.SetGroundPlaneHeight(_viewport->UpdateGroundPlane());
+}
+
+bool BotSceneEditor::BindTaskSpawns(
+    superdex::robotics::BotTaskPrefab const& task,
+    std::vector<ResolvedTaskSpawn>& spawns,
+    std::string& error) {
+  if (!ResolveTaskSpawns(task, _sceneAsset->GetPrefab(), spawns, error)) {
+    return false;
+  }
+  // SceneStage only finds already-loaded assets.
+  auto& assetManager = _studio->GetAssetManager();
+  for (auto const& spawn : spawns) {
+    bool loaded = false;
+    if (superdex::robotics::IsBotArchivePath(spawn.prefabPath.ToString()) ||
+        superdex::robotics::IsBotPath(spawn.prefabPath.ToString())) {
+      loaded = assetManager.LoadBotAsset(spawn.prefabPath) != nullptr;
+    } else {
+      loaded = assetManager.LoadMochiPrefabAsset(spawn.prefabPath) != nullptr;
+    }
+    if (!loaded) {
+      error = "Failed to load prefab '" + spawn.prefabPath.ToString() + "' for task spawn '" +
+          spawn.name + "'";
+      spawns.clear();
+      return false;
+    }
+  }
+  return true;
+}
+
+bool BotSceneEditor::LoadTask(mochi::Path const& path) {
+  mochi::Error error;
+  auto task = superdex::robotics::LoadBotTaskPrefabFromFile(path.ToString(), error);
+  if (!error.IsOK()) {
+    MOCHI_LOG_ERROR(
+        "Failed to load bot task '%s': %s", path.ToString().c_str(), error.GetDescription());
+    _taskLoadError = "Failed to load '" + path.ToString() + "': " + error.GetDescription();
+    return false;
+  }
+
+  std::vector<ResolvedTaskSpawn> spawns;
+  std::string bindError;
+  if (!BindTaskSpawns(task, spawns, bindError)) {
+    MOCHI_LOG_ERROR(
+        "Failed to bind bot task '%s' to the current scene: %s",
+        path.ToString().c_str(),
+        bindError.c_str());
+    _taskLoadError = "Failed to bind '" + path.ToString() + "' to this scene: " + bindError;
+    return false;
+  }
+
+  _taskLoadError.clear();
+  _taskPath = path;
+  _taskPrefab = std::move(task);
+  _taskSpawns = std::move(spawns);
+  _showCurrentTaskTransforms = false;
+  RestageBotScene();
+  _viewport->FocusCameraOnScene();
+  return true;
+}
+
+void BotSceneEditor::ClearTask() {
+  _taskPath = {};
+  _taskPrefab.reset();
+  _taskSpawns.clear();
+  _taskBindError.clear();
+  _taskLoadError.clear();
+  _showCurrentTaskTransforms = false;
+  RestageBotScene();
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -340,22 +506,81 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
 
   auto const& prefab = _sceneAsset->GetPrefab();
 
-  // Load all spawnable prefabs by default so they are simulated alongside the base scene and bots.
-  for (auto const& prefabEntry : prefab.scene.spawnablePrefabs) {
-    mochi::ErrorLog spawnError;
-    _botScene->LoadSpawnablePrefab(std::string(prefabEntry.name), spawnError);
-  }
-
-  // Physics actor order must match SceneStage::StageBotScene: base-scene actors first (in
-  // LoadBotScene / prefab::AddToScene order), then spawnable prefabs in declaration order, then
-  // each bot's articulated actor in declaration order.
+  // Physics actor order must match SceneStage: base actors, spawnables/task instances, then bots.
   _physicsActors.clear();
+  _taskRuntimeSpawns.clear();
+  _taskBots.clear();
+  _taskPrefabActors.clear();
+  _taskPrefabConstraints.clear();
   for (auto const& handle : _botScene->GetBaseSceneActorHandles()) {
     _physicsActors.push_back(handle);
   }
-  for (auto const& prefabEntry : prefab.scene.spawnablePrefabs) {
-    for (auto const& handle : _botScene->GetSpawnedPrefabActors(std::string(prefabEntry.name))) {
-      _physicsActors.push_back(handle);
+
+  if (_taskPrefab.has_value()) {
+    // A spawn that fails here is still staged, and SceneStage drops every simulated transform when
+    // the actor counts disagree, so any failure disables physics as a whole.
+    _taskRuntimeSpawns.resize(_taskSpawns.size());
+    for (int i = 0; i < mochi::isize(_taskSpawns); ++i) {
+      auto const& spawn = _taskSpawns[i];
+      mochi::ErrorLog spawnError;
+      if (superdex::robotics::IsBotArchivePath(spawn.prefabPath.ToString()) ||
+          superdex::robotics::IsBotPath(spawn.prefabPath.ToString())) {
+        auto botPrefab =
+            superdex::robotics::LoadBotPrefabFromFile(spawn.prefabPath.ToString(), spawnError);
+        if (!spawnError.IsOK()) {
+          MOCHI_LOG_ERROR("Failed to load task bot '%s'", spawn.name.c_str());
+          DestroyPhysicsActors(scene);
+          return;
+        }
+        botPrefab.name = spawn.name;
+        botPrefab.worldFromRoot = spawn.worldFromSpawn;
+        auto* bot = superdex::robotics::CreateBot(scene, botPrefab, botsContext, spawnError);
+        if (bot != nullptr) {
+          _taskBots.push_back(bot);
+        }
+        if (!spawnError.IsOK() || bot == nullptr || bot->GetArticulatedActor() == nullptr) {
+          MOCHI_LOG_ERROR("Failed to create task bot '%s'", spawn.name.c_str());
+          DestroyPhysicsActors(scene);
+          return;
+        }
+        auto* primary = bot->GetArticulatedActor();
+        auto const handle = primary->GetHandle();
+        _physicsActors.push_back(handle);
+        _taskRuntimeSpawns[i].primaryActor = handle;
+        _taskRuntimeSpawns[i].spawnFromPrimary =
+            mochi::Invert(spawn.worldFromSpawn) * primary->GetRootTransform();
+        continue;
+      }
+
+      mochi::prefab::PrefabParams params;
+      params.name = spawn.name;
+      params.rotation = spawn.worldFromSpawn.GetRotation();
+      params.translation = spawn.worldFromSpawn.GetTranslation();
+      params.applySceneSettings = false;
+      auto const result = mochi::prefab::AddToScene(
+          spawn.prefabPath.ToString(),
+          spawn.prefabPath.GetParentPath().ToString(),
+          scene,
+          params,
+          spawnError);
+      for (auto* constraint : result.constraints) {
+        _taskPrefabConstraints.push_back(constraint->GetHandle());
+      }
+      for (auto* actor : result.actors) {
+        _taskPrefabActors.push_back(actor->GetHandle());
+      }
+      if (!spawnError.IsOK() || result.actors.empty()) {
+        MOCHI_LOG_ERROR("Failed to create task object '%s'", spawn.name.c_str());
+        DestroyPhysicsActors(scene);
+        return;
+      }
+      for (auto* actor : result.actors) {
+        _physicsActors.push_back(actor->GetHandle());
+      }
+      auto* primary = result.actors.front();
+      _taskRuntimeSpawns[i].primaryActor = primary->GetHandle();
+      _taskRuntimeSpawns[i].spawnFromPrimary =
+          mochi::Invert(spawn.worldFromSpawn) * primary->GetRootTransform();
     }
   }
   for (auto const& botEntry : prefab.bots) {
@@ -366,9 +591,22 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
   }
 }
 
-void BotSceneEditor::DestroyPhysicsActors(mochi::Scene*) {
+void BotSceneEditor::DestroyPhysicsActors(mochi::Scene* scene) {
   // Destroy bots/controllers before the async scene destroys the scene. The BotScene is non-owning,
   // so the scene itself is left intact for MochiAsyncScene to destroy.
+  for (auto* bot : _taskBots) {
+    superdex::robotics::DestroyBot(scene, bot);
+  }
+  _taskBots.clear();
+  for (auto const handle : _taskPrefabConstraints) {
+    scene->DestroyConstraint(handle);
+  }
+  _taskPrefabConstraints.clear();
+  for (auto const handle : _taskPrefabActors) {
+    scene->DestroyActor(handle);
+  }
+  _taskPrefabActors.clear();
+  _taskRuntimeSpawns.clear();
   _botScene.reset();
   _physicsActors.clear();
 }
@@ -380,6 +618,7 @@ mochi::CallbackHandle BotSceneEditor::RegisterPostStepCallback(mochi::AsyncScene
         auto& data = _simData.GetProducerData();
         data.actorTransforms.clear();
         data.actorNames.clear();
+        data.taskTransforms.clear();
         // Build the ordered transform list
         // actors expand to their nested link transforms, rigid actors push their root transform,
         // and everything else (e.g. soft) is skipped.
@@ -403,6 +642,17 @@ mochi::CallbackHandle BotSceneEditor::RegisterPostStepCallback(mochi::AsyncScene
             data.actorNames.emplace_back(rigidName ? rigidName : "");
           }
         }
+        // Empty when CreatePhysicsActors failed, even with a task loaded.
+        data.taskTransforms.reserve(_taskRuntimeSpawns.size());
+        for (int i = 0; i < mochi::isize(_taskRuntimeSpawns); ++i) {
+          auto const& runtime = _taskRuntimeSpawns[i];
+          auto* primary = runtime.primaryActor.has_value()
+              ? info.scene->GetActor(*runtime.primaryActor)
+              : nullptr;
+          data.taskTransforms.push_back(
+              primary ? primary->GetRootTransform() * mochi::Invert(runtime.spawnFromPrimary)
+                      : _taskSpawns[i].worldFromSpawn);
+        }
         _simData.Produce();
       });
 }
@@ -413,6 +663,7 @@ void BotSceneEditor::OnStopPhysics() {
   _stage.ResetWorldTransforms(_studio->GetEditorToRendererSpaceConverter());
   _simData.Consume();
   _physicsActors.clear();
+  _showCurrentTaskTransforms = false;
 }
 
 void BotSceneEditor::SyncFromPhysics() {
@@ -426,6 +677,117 @@ void BotSceneEditor::SyncFromPhysics() {
 //--------------------------------------------------------------------------------------------------
 // ImGui
 //--------------------------------------------------------------------------------------------------
+
+void BotSceneEditor::ShowTaskWindow(bool* open) {
+  ImGui::Begin("Task Preview", open);
+
+  bool const simulating = _mochiScene.IsSimulating();
+  ImGui::BeginDisabled(simulating);
+  if (ImGui::Button(_taskPrefab.has_value() ? "Replace Task..." : "Load Task...")) {
+    std::array<char const*, 1> const filters{{"*.mochi_bot_task"}};
+    int const numFilters = MOCHI_PLATFORM_MACOS ? 0 : static_cast<int>(filters.size());
+    mochi::Path const initialPath =
+        _taskPath.IsEmpty() ? _sceneAsset->GetPath().GetParentPath() : _taskPath;
+    auto const selectedPath = SuperDexStudio::GetFileDialogPath(
+        "Select Bot Task",
+        filters.data(),
+        numFilters,
+        "Mochi Bot Task (*.mochi_bot_task)",
+        false,
+        initialPath);
+    if (!selectedPath.IsEmpty()) {
+      LoadTask(selectedPath);
+    }
+  }
+  if (_taskPrefab.has_value()) {
+    ImGui::SameLine();
+    if (ImGui::Button("Clear Task")) {
+      ClearTask();
+    }
+  }
+  ImGui::EndDisabled();
+
+  if (!_taskLoadError.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
+    ImGui::TextWrapped("%s %s", ICON_FA_EXCLAMATION_TRIANGLE, _taskLoadError.c_str());
+    ImGui::PopStyleColor();
+  }
+
+  if (!_taskPrefab.has_value()) {
+    ImGui::TextWrapped("Load a .mochi_bot_task to place its spawnable objects into this scene.");
+    ImGui::End();
+    return;
+  }
+
+  ImGui::TextDisabled("%s", _taskPath.ToString().c_str());
+  if (!_taskPrefab->metadata.name.empty()) {
+    ImGui::TextUnformatted(_taskPrefab->metadata.name.c_str());
+  }
+  ImGui::Separator();
+
+  if (!_taskBindError.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
+    ImGui::TextWrapped(
+        "%s Task objects are hidden: %s", ICON_FA_EXCLAMATION_TRIANGLE, _taskBindError.c_str());
+    ImGui::PopStyleColor();
+    ImGui::End();
+    return;
+  }
+
+  bool const currentSelected = simulating && _showCurrentTaskTransforms;
+  if (ImGui::RadioButton("Initial", !currentSelected)) {
+    _showCurrentTaskTransforms = false;
+  }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!simulating);
+  if (ImGui::RadioButton("Current", currentSelected)) {
+    _showCurrentTaskTransforms = true;
+  }
+  ImGui::EndDisabled();
+
+  auto const& current = _simData.GetConsumerData().taskTransforms;
+  bool const showCurrent = currentSelected && current.size() == _taskSpawns.size();
+  if (currentSelected && !showCurrent) {
+    ImGui::TextDisabled("Simulated transforms are unavailable; showing initial transforms.");
+  }
+  constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+      ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+  if (ImGui::BeginTable("##TaskObjects", 4, kTableFlags)) {
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+    ImGui::TableSetupColumn("Prefab", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+    ImGui::TableSetupColumn("Position", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+    ImGui::TableSetupColumn("Rotation (xyzw)", ImGuiTableColumnFlags_WidthStretch, 2.5f);
+    ImGui::TableHeadersRow();
+    for (int i = 0; i < mochi::isize(_taskSpawns); ++i) {
+      auto const& spawn = _taskSpawns[i];
+      auto const& transform = showCurrent ? current[i] : spawn.worldFromSpawn;
+      auto const translation = transform.GetTranslation();
+      auto const rotation = transform.GetRotation();
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(spawn.name.c_str());
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(spawn.prefabName.c_str());
+      ImGui::TableNextColumn();
+      ImGui::Text(
+          "%.3f, %.3f, %.3f",
+          static_cast<double>(translation[0]),
+          static_cast<double>(translation[1]),
+          static_cast<double>(translation[2]));
+      ImGui::TableNextColumn();
+      ImGui::Text(
+          "%.3f, %.3f, %.3f, %.3f",
+          static_cast<double>(rotation.data[0]),
+          static_cast<double>(rotation.data[1]),
+          static_cast<double>(rotation.data[2]),
+          static_cast<double>(rotation.data[3]));
+    }
+    ImGui::EndTable();
+  }
+
+  ImGui::End();
+}
 
 void BotSceneEditor::ShowInfoWindow(bool* open) {
   auto const windowFlags =

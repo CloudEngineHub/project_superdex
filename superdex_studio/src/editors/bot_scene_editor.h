@@ -24,6 +24,7 @@
 #include "simulation/physics_drag_controller.h"
 
 #include <superdex_robotics/internal/bot_scene.h>
+#include <superdex_robotics/internal/bot_task.h>
 
 #include <optional>
 #include <string>
@@ -75,6 +76,14 @@ class BotSceneEditor : public AssetEditor {
   //------------------------------------------------------------------------------------------------
 
   void RestageBotScene();
+  // Resolves @p task against the current scene and loads its prefabs. On failure, @p spawns is
+  // empty and @p error says why.
+  bool BindTaskSpawns(
+      superdex::robotics::BotTaskPrefab const& task,
+      std::vector<ResolvedTaskSpawn>& spawns,
+      std::string& error);
+  bool LoadTask(mochi::Path const& path);
+  void ClearTask();
 
   //------------------------------------------------------------------------------------------------
   // Mochi Scene
@@ -93,6 +102,7 @@ class BotSceneEditor : public AssetEditor {
   //------------------------------------------------------------------------------------------------
 
   void ShowInfoWindow(bool* open);
+  void ShowTaskWindow(bool* open);
 
  private:
   // target asset
@@ -105,12 +115,29 @@ class BotSceneEditor : public AssetEditor {
   MochiAsyncScene _mochiScene;
   std::optional<superdex::robotics::BotScene> _botScene;
   std::vector<mochi::ActorHandle> _physicsActors;
+  struct TaskRuntimeSpawn {
+    std::optional<mochi::ActorHandle> primaryActor;
+    mochi::TransformRT spawnFromPrimary = {};
+  };
+  std::vector<TaskRuntimeSpawn> _taskRuntimeSpawns;
+  std::vector<superdex::robotics::Bot*> _taskBots;
+  std::vector<mochi::ActorHandle> _taskPrefabActors;
+  std::vector<mochi::ConstraintHandle> _taskPrefabConstraints;
   std::unique_ptr<PhysicsDragController> _dragController;
   struct SimData {
     std::vector<std::string> actorNames;
     std::vector<mochi::TransformRT> actorTransforms;
+    std::vector<mochi::TransformRT> taskTransforms;
   };
   mochi_renderer::ProducerConsumerBuffer<SimData> _simData;
+  mochi::Path _taskPath;
+  std::optional<superdex::robotics::BotTaskPrefab> _taskPrefab;
+  std::vector<ResolvedTaskSpawn> _taskSpawns;
+  // Why _taskPrefab no longer binds to the edited scene; its spawns are not staged meanwhile.
+  std::string _taskBindError;
+  // Why the most recent Load/Replace Task attempt failed; the previous task, if any, stays loaded.
+  std::string _taskLoadError;
+  bool _showCurrentTaskTransforms = false;
 };
 
 } // namespace superdex::studio

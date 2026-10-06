@@ -32,6 +32,9 @@
 #include "assets/mochi_prefab_asset.h"
 #include "ui/imgui_widgets.h" // HashStringToColor
 
+#include <superdex_robotics/utils/archive_utils.h>
+#include <superdex_robotics/utils/file_utils.h>
+
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/matrix_utils.h>
@@ -217,9 +220,10 @@ static void BuildPrefabRequests(
 
   // 2) Articulated actors of this level, expanded to nested link actors (the actor itself has no
   // transform to stage). FK link transforms are already fully composed (computed on a scratch scene
-  // rooted at identity), so they are used directly as world transforms. They come in internal
-  // nested-link-actor order, which may differ from the prefab's link declaration order, so each
-  // link is paired with its declaration entry by name to fetch the right model/offset/scale.
+  // with the prefab placed at its world transform), so they are used directly as world transforms.
+  // They come in internal nested-link-actor order, which may differ from the prefab's link
+  // declaration order, so each link is paired with its declaration entry by name to fetch the right
+  // model/offset/scale.
   for (int a = 0; a < isize(prefab.actors.articulated); ++a) {
     auto const& art = prefab.actors.articulated[a];
     ArticulatedData const& fk = artFk[artCursor++];
@@ -451,13 +455,15 @@ static void BuildPrefabRequests(
 }
 
 // Compute per-articulated-actor nested-link world transforms (and link actor names) via a stripped
-// copy of the prefab added to `scene` (a scratch scene). Output is ordered to match the depth-first
-// articulated-actor traversal (nested prefabs first, then each level's articulated actors). No-op
-// (leaves `out` empty) when the prefab contains no articulated actors.
+// copy of the prefab added to `scene` (a scratch scene) with `params`; the transforms are in the
+// world frame `params` places the prefab in (identity by default). Output is ordered to match the
+// depth-first articulated-actor traversal (nested prefabs first, then each level's articulated
+// actors). No-op (leaves `out` empty) when the prefab contains no articulated actors.
 static void ComputeArticulatedLinkTransforms(
     mochi::Scene* scene,
     mochi::prefab::ScenePrefab const& prefab,
-    std::vector<ArticulatedData>& out) {
+    std::vector<ArticulatedData>& out,
+    mochi::prefab::PrefabParams const& params = {}) {
   using namespace mochi;
   out.clear();
   if (!PrefabHasArticulated(prefab)) {
@@ -465,7 +471,7 @@ static void ComputeArticulatedLinkTransforms(
   }
   mochi::prefab::ScenePrefab const stripped = StripArticulated(prefab);
   ErrorLog e;
-  auto const result = mochi::prefab::AddToScene(stripped, scene, {}, e);
+  auto const result = mochi::prefab::AddToScene(stripped, scene, params, e);
   if (!e.IsOK()) {
     MOCHI_LOG_ERROR("StagePrefab: failed to compute articulated forward kinematics.");
     return;
@@ -905,6 +911,20 @@ bool SceneStage::StagePrefab(
 bool SceneStage::StageBotScene(
     superdex::robotics::BotScenePrefab const& scene,
     StageType stageType) {
+  return StageBotSceneImpl(scene, nullptr, stageType);
+}
+
+bool SceneStage::StageBotTask(
+    superdex::robotics::BotScenePrefab const& scene,
+    mochi::Span<ResolvedTaskSpawn const> taskSpawns,
+    StageType stageType) {
+  return StageBotSceneImpl(scene, &taskSpawns, stageType);
+}
+
+bool SceneStage::StageBotSceneImpl(
+    superdex::robotics::BotScenePrefab const& scene,
+    mochi::Span<ResolvedTaskSpawn const> const* taskSpawns,
+    StageType stageType) {
   using namespace mochi;
   if (!_studio || !_scene || !_renderScene) {
     return false;
@@ -939,37 +959,69 @@ bool SceneStage::StageBotScene(
         requests);
   }
 
-  // 2. Spawnable prefabs, in declaration order. Loaded into the simulation by default (see
-  // BotSceneEditor::CreatePhysicsActors); stage them under their entry name so the staged actor
-  // names/order align with the physics actors that prefab::AddToScene creates.
-  for (auto const& prefabEntry : scene.scene.spawnablePrefabs) {
-    if (prefabEntry.path.empty()) {
-      continue;
+  auto appendSpawnable =
+      [&](std::string const& name, mochi::Path const& path, TransformRT const& worldFromSpawn) {
+        if (path.IsEmpty()) {
+          return;
+        }
+
+        if (superdex::robotics::IsBotArchivePath(path.ToString()) ||
+            superdex::robotics::IsBotPath(path.ToString())) {
+          auto* botAsset = manager.FindAssetByPath<BotAsset>(path);
+          if (!botAsset) {
+            MOCHI_LOG_ERROR(
+                "SceneStage: bot '%s' for spawn '%s' is not loaded; not staged",
+                path.ToString().c_str(),
+                name.c_str());
+            return;
+          }
+          superdex::robotics::BotPrefab botPrefab = botAsset->GetBotPrefab();
+          botPrefab.name = name;
+          botPrefab.worldFromRoot = worldFromSpawn;
+          BuildBotRequests(_scene, _studio, botPrefab, stageType, /*stageSkin=*/false, requests);
+          return;
+        }
+
+        auto* prefabAsset = manager.FindAssetByPath<MochiPrefabAsset>(path);
+        if (!prefabAsset) {
+          MOCHI_LOG_ERROR(
+              "SceneStage: prefab '%s' for spawn '%s' is not loaded; not staged",
+              path.ToString().c_str(),
+              name.c_str());
+          return;
+        }
+        auto const& spawnPrefab = prefabAsset->GetPrefab();
+        mochi::prefab::PrefabParams params;
+        params.name = name;
+        params.rotation = worldFromSpawn.GetRotation();
+        params.translation = worldFromSpawn.GetTranslation();
+        params.applySceneSettings = false;
+        std::vector<ArticulatedData> articulatedFk;
+        ComputeArticulatedLinkTransforms(_scene, spawnPrefab, articulatedFk, params);
+        std::string_view const source = spawnPrefab.sourceFilePath.has_value()
+            ? std::string_view(*spawnPrefab.sourceFilePath)
+            : std::string_view();
+        int artCursor = 0;
+        BuildPrefabRequests(
+            _studio,
+            spawnPrefab,
+            prefabAsset->GetAssetsRoot(),
+            source,
+            TransformSRT{1_r, worldFromSpawn.GetRotation(), worldFromSpawn.GetTranslation()},
+            stageType,
+            articulatedFk,
+            artCursor,
+            name,
+            -1,
+            requests);
+      };
+
+  // 2. Spawnable declarations are templates, not scene instances. Only a loaded task contributes
+  // concrete spawnable objects to the preview.
+  if (taskSpawns != nullptr) {
+    for (auto const& spawn : *taskSpawns) {
+      appendSpawnable(spawn.name, spawn.prefabPath, spawn.worldFromSpawn);
     }
-    auto* prefabAsset =
-        manager.FindAssetByPath<MochiPrefabAsset>(Path{std::string(prefabEntry.path)});
-    if (!prefabAsset) {
-      continue;
-    }
-    auto const& spawnPrefab = prefabAsset->GetPrefab();
-    std::vector<ArticulatedData> articulatedFk;
-    ComputeArticulatedLinkTransforms(_scene, spawnPrefab, articulatedFk);
-    std::string_view const source = spawnPrefab.sourceFilePath.has_value()
-        ? std::string_view(*spawnPrefab.sourceFilePath)
-        : std::string_view();
-    int artCursor = 0;
-    BuildPrefabRequests(
-        _studio,
-        spawnPrefab,
-        prefabAsset->GetAssetsRoot(),
-        source,
-        TransformSRT::Identity(),
-        stageType,
-        articulatedFk,
-        artCursor,
-        std::string(prefabEntry.name),
-        -1,
-        requests);
   }
 
   // 3. Each placed bot, in declaration order (matching LoadBotScene's bot creation order).

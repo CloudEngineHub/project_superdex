@@ -181,6 +181,17 @@ struct StagedActor {
 
 using StagedActors = std::vector<StagedActor>;
 
+#if MOCHI_INTERNAL
+// One task-file spawn resolved against a bot scene and into world space. The scene editor owns the
+// loaded task; SceneStage only needs this render-staging view of it.
+struct ResolvedTaskSpawn {
+  std::string name;
+  std::string prefabName;
+  mochi::Path prefabPath;
+  mochi::TransformRT worldFromSpawn = {};
+};
+#endif
+
 // A per-frame deformation update for one soft actor's dynamic mesh: produced by the simulation
 // post-step callback and consumed by SceneStage::ApplySoftMeshUpdates. Position/normal buffers are
 // flat (3 floats per vertex) in renderer space; `worldTransform` is the soft actor's root transform
@@ -292,12 +303,20 @@ struct SceneStage {
 
 #if MOCHI_INTERNAL
   // Stage (or re-stage) a complete bot scene (base ScenePrefab + all placed bots) into the bound
-  // render scene at rest pose. The base scene and each bot are resolved internally via the
+  // render scene at rest pose. Spawnable-prefab declarations are not instances and are omitted
+  // until StageBotTask is called. The base scene and each bot are resolved internally via the
   // AssetManager. The staged-actor order is the base scene (prefab::AddToScene order) followed by
   // each bot's links in declaration order — matching superdex::robotics::LoadBotScene so that
   // index-based ApplyWorldTransforms aligns with the simulated actors. No-op if no scene is bound.
   // Returns true if the staged objects were rebuilt (pointers invalidated), false if reused.
   bool StageBotScene(superdex::robotics::BotScenePrefab const& scene, StageType stageType);
+
+  // Stage a bot scene with the declared spawnable-prefab previews replaced by the concrete object
+  // instances from a loaded task. An empty task intentionally stages no spawnables.
+  bool StageBotTask(
+      superdex::robotics::BotScenePrefab const& scene,
+      mochi::Span<ResolvedTaskSpawn const> taskSpawns,
+      StageType stageType);
 #endif
 
   // Apply per-actor world transforms (e.g. from simulation), in staged-actor order. Warns and does
@@ -396,6 +415,13 @@ struct SceneStage {
   // Returns true if the staged objects were rebuilt (existing SceneObjects destroyed and recreated,
   // invalidating external pointers); false if existing objects were reused.
   bool ApplyStageRequests(std::vector<StageRequest> const& requests);
+
+#if MOCHI_INTERNAL
+  bool StageBotSceneImpl(
+      superdex::robotics::BotScenePrefab const& scene,
+      mochi::Span<ResolvedTaskSpawn const> const* taskSpawns,
+      StageType stageType);
+#endif
 
   // Create the opaque, tinted, shadowless stand-in clone of `base` (parented to it, tagged into the
   // highlight overlay pass). Returns nullptr if no instance could be allocated.
