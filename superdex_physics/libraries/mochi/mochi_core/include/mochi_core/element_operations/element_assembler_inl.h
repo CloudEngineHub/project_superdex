@@ -263,6 +263,10 @@ MOCHI_FORCE_INLINE void ScatterBatchElementResults(
   // as scalar lane storage instead of using repeated SIMD lane extraction. We keep the explicit
   // BatchReal::operator[] access here because that optimization relies on
   // reinterpret_cast<real const*> and unsupported SIMD storage-layout/aliasing assumptions.
+  //
+  // TODO: Consider reading the scattered values with loads that match Store's partial stores, so
+  // that they forward from an earlier element's store to a shared node, mostly with
+  // locality-friendly element orders. See D123691790.
   for (int b = 0; b < actualBatchSize; ++b) {
     int const cur = b & 1;
     int const nxt = 1 - cur;
