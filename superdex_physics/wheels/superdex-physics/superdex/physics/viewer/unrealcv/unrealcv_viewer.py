@@ -43,7 +43,7 @@ from superdex.physics.utils.profiling import Profiler
 from superdex.physics.viewer.utils.aabb import AABB
 
 from .unrealcv_client import UnrealCVClient
-from .unrealcv_image import bgr_to_rgb
+from .unrealcv_image import bgr_to_rgb, npy_view
 from .unrealcv_viewer_cfg import CaptureFormat, CaptureMode, UnrealCVViewerCfg
 from .unrealcv_viewer_state import UnrealCVActorState, UnrealCVViewerState
 from .updaters.unrealcv_actor_updater import UnrealCVActorUpdater
@@ -432,10 +432,10 @@ class UnrealCVViewer:
                 img = Image.open(BytesIO(response)).convert("RGB")
                 return np.array(img)
             else:
-                arr = np.load(BytesIO(response))
+                arr = npy_view(response)
                 if arr.ndim == 3 and arr.shape[2] in (3, 4):
                     return bgr_to_rgb(arr)
-                return arr
+                return arr.copy()
         except Exception as e:
             logger.error(f"Failed to decode captured image: {e}")
             return None

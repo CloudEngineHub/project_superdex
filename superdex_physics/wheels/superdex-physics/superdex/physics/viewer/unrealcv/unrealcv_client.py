@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, TypeVar
 import numpy as np
 import numpy.typing as npt
 
+from .unrealcv_image import npy_view
+
 if TYPE_CHECKING:
     import unrealcv
 
@@ -1503,14 +1505,14 @@ class UnrealCVClient:
                 return np.array(img)
             else:
                 # Response is raw npy binary data (BGRA uint8)
-                arr = np.load(BytesIO(response))
+                arr = npy_view(response)
                 if arr.ndim == 3 and arr.shape[2] == 4:
                     # BGRA -> RGB
                     return arr[:, :, 2::-1].copy()
                 elif arr.ndim == 3 and arr.shape[2] == 3:
                     # BGR -> RGB
                     return arr[:, :, ::-1].copy()
-                return arr
+                return arr.copy()
         except Exception as e:
             logger.error(f"Failed to decode captured image: {e}")
             return None

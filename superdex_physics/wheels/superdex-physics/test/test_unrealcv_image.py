@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import io
 import unittest
 
 import numpy as np
@@ -44,3 +45,32 @@ class BgrToRgbTest(unittest.TestCase):
                         self.assertTrue(converted.flags.c_contiguous)
                         self.assertTrue(converted.flags.owndata)
                         self.assertTrue(converted.flags["WRITEABLE"])
+
+
+class NpyViewTest(unittest.TestCase):
+    def test_matches_np_load_without_copying(self) -> None:
+        sources = {
+            "bgra frame": np.arange(2 * 3 * 4, dtype=np.uint8).reshape(2, 3, 4),
+            "float16 depth": np.linspace(0, 1, 12, dtype=np.float16).reshape(3, 4),
+            "fortran order": np.asfortranarray(np.arange(6.0).reshape(2, 3)),
+            "empty": np.zeros((0, 4), dtype=np.uint8),
+        }
+        for name, source in sources.items():
+            for version in ((1, 0), (2, 0)):
+                with self.subTest(name=name, version=version):
+                    stream = io.BytesIO()
+                    np.lib.format.write_array(stream, source, version=version)
+                    payload = stream.getvalue()
+
+                    view = unrealcv_image.npy_view(payload)
+
+                    np.testing.assert_array_equal(view, np.load(io.BytesIO(payload)))
+                    self.assertEqual(view.dtype, source.dtype)
+                    self.assertFalse(view.flags["WRITEABLE"])
+
+    def test_rejects_unsupported_format_versions(self) -> None:
+        stream = io.BytesIO()
+        np.lib.format.write_array(stream, np.zeros(3), version=(3, 0))
+
+        with self.assertRaisesRegex(ValueError, "format version"):
+            unrealcv_image.npy_view(stream.getvalue())
