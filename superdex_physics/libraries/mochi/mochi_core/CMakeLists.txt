@@ -21,6 +21,11 @@ endif ()
 target_compile_definitions(mochi_core PUBLIC "MOCHI_CORE_STATIC_LINKING=1")
 target_compile_definitions(mochi_core PUBLIC "MOCHI_INTERNAL=0")
 
+# jemalloc could cause an allocation issue, for which a workaround is in
+# <mochi_core/memory/allocator_inl.h>. This enables the workaround without
+# side effects.
+target_compile_definitions(mochi_core PUBLIC "MOCHI_PMR_ENABLE_JEMALLOC_COMPATIBILITY=1")
+
 if (MOCHI_WARN_IF_NOT_OPTIMIZED)
     target_compile_definitions(mochi_core PRIVATE "MOCHI_WARN_IF_NOT_OPTIMIZED=1")
 endif ()

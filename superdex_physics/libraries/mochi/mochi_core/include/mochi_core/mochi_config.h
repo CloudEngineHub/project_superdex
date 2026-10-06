@@ -241,10 +241,10 @@ inline constexpr size_t operator""_uz(unsigned long long int val) {
 #define MOCHI_INCLUDE_PYBIND_SUPPORT 0
 #endif
 
-// Define MOCHI_PMR_USES_JEMALLOC to 1 if jemalloc is used to implement
-// std::pmr::new_delete_resource. A work-around is required in this case.
-#ifndef MOCHI_PMR_USES_JEMALLOC
-#define MOCHI_PMR_USES_JEMALLOC 0
+// Define MOCHI_PMR_ENABLE_JEMALLOC_COMPATIBILITY to 1 when jemalloc is used to implement
+// std::pmr::new_delete_resource. A workaround is required in this case.
+#ifndef MOCHI_PMR_ENABLE_JEMALLOC_COMPATIBILITY
+#define MOCHI_PMR_ENABLE_JEMALLOC_COMPATIBILITY 0
 #endif
 
 #endif // MOCHI_CONFIG_H
