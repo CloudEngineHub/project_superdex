@@ -288,6 +288,9 @@ class CoordinateTransform:
         self._target_system = target_system
         self._source_to_target = np.eye(4, dtype=np.float32)
         self._source_to_target[:3, :3] = target_axes @ source_axes.T
+        self._encodes_reflection = bool(
+            np.linalg.det(self._source_to_target[:3, :3]) < 0.0
+        )
 
     @property
     def source_system(self) -> CoordinateSystem:
@@ -312,7 +315,7 @@ class CoordinateTransform:
     @property
     def encodes_reflection(self) -> bool:
         """Determines if the coordinate transform encodes a reflection."""
-        return np.linalg.det(self._source_to_target[:3, :3]) < 0.0
+        return self._encodes_reflection
 
     def direction_to_target(
         self, direction: npt.NDArray[np.floating]
@@ -323,12 +326,13 @@ class CoordinateTransform:
         the rotation/reflection component of the transformation.
 
         Args:
-            direction: A 3D direction vector in source coordinates.
+            direction: A 3D direction vector, or an (N, 3) array of them, in
+                source coordinates.
 
         Returns:
-            The direction vector transformed to target coordinates.
+            The direction vector(s) transformed to target coordinates.
         """
-        return self._source_to_target[:3, :3] @ direction
+        return direction @ self._source_to_target[:3, :3].T
 
     def position_to_target(
         self,
@@ -341,13 +345,14 @@ class CoordinateTransform:
         (e.g., for meters to centimeters conversion).
 
         Args:
-            position: A 3D position in source coordinates.
+            position: A 3D position, or an (N, 3) array of them, in source
+                coordinates.
             scale: Optional scale factor to apply (default 1.0).
 
         Returns:
-            The position transformed to target coordinates.
+            The position(s) transformed to target coordinates.
         """
-        return self._source_to_target[:3, :3] @ position * scale
+        return position @ self._source_to_target[:3, :3].T * scale
 
     def rotation_to_target(
         self, quaternion: npt.NDArray[np.floating]
@@ -366,23 +371,20 @@ class CoordinateTransform:
         3. Keep the scalar component (w) unchanged.
 
         Args:
-            quaternion: A rotation quaternion in [x, y, z, w] format (scipy convention).
+            quaternion: A rotation quaternion in [x, y, z, w] format (scipy
+                convention), or an (N, 4) array of them.
 
         Returns:
-            The quaternion transformed to target coordinates in [x, y, z, w] format.
+            The quaternion(s) transformed to target coordinates in [x, y, z, w]
+            format.
         """
-        x, y, z, w = quaternion
-
-        # If handedness flips, negate the quaternion axis
-        if self.encodes_reflection:
-            axis = np.array([-x, -y, -z])
-        else:
-            axis = np.array([x, y, z])
-
-        # Transform the axis using the direction transformation
-        axis_out = self.direction_to_target(axis)
-
-        return np.array([axis_out[0], axis_out[1], axis_out[2], w])
+        quaternion = np.asarray(quaternion)
+        axis = quaternion[..., :3]
+        if self._encodes_reflection:
+            axis = -axis
+        return np.concatenate(
+            [self.direction_to_target(axis), quaternion[..., 3:]], axis=-1
+        )
 
 
 ########################################################################################

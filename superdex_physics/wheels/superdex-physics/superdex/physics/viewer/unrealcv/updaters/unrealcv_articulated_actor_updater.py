@@ -140,12 +140,19 @@ class UnrealCVArticulatedActorUpdater(UnrealCVUpdater):
         # Build set of UE bone names for hierarchy mismatch handling.
         # If ue_bone_names was provided (e.g. queried from UE), use it.
         # Otherwise fall back to the set of all mapped mochi link names.
+        self._bone_names = [
+            self._link_to_bone_mapping.get(name, name) for name in self._link_names
+        ]
         if ue_bone_names is not None:
             self._ue_bone_names = ue_bone_names
         else:
-            self._ue_bone_names = {
-                self._link_to_bone_mapping.get(name, name) for name in self._link_names
-            }
+            self._ue_bone_names = set(self._bone_names)
+        # The hierarchy is static, so each bone's effective UE parent is resolved
+        # once rather than walked on every update.
+        self._ue_parents = [
+            self._closest_ue_ancestor(link_idx)
+            for link_idx in range(len(self._link_names))
+        ]
 
         self._hack_fixup_root_xform = hack_fixup_root_xform
 
@@ -193,17 +200,11 @@ class UnrealCVArticulatedActorUpdater(UnrealCVUpdater):
         actor_root_pos, actor_root_quat = actor_root_transform
 
         # Build list of transform data (all bones are now local transforms)
-        bone_list = []
-        for link_idx, transform_data in enumerate(bone_transforms):
-            if transform_data is None:
-                continue
-
-            position_ue, quat_ue = transform_data
-            link_name = self._link_names[link_idx]
-            bone_name = self._link_to_bone_mapping.get(link_name, link_name)
-            bone_list.append(
-                (self._ue_skeletal_mesh_actor_name, bone_name, position_ue, quat_ue)
-            )
+        bone_list = [
+            (self._ue_skeletal_mesh_actor_name, bone_name, *transform)
+            for bone_name, transform in zip(self._bone_names, bone_transforms)
+            if transform is not None
+        ]
 
         return (
             (self._ue_skeletal_mesh_actor_name, actor_root_pos, actor_root_quat),
@@ -228,20 +229,14 @@ class UnrealCVArticulatedActorUpdater(UnrealCVUpdater):
         Compute bone transforms relative to their parent bones.
 
         Uses get_articulated_link_transforms to efficiently get all link world transforms
-        in a single call, then computes parent-relative transforms by finding each
-        bone's world transform and its effective UE parent's world transform.
-
-        When the mochi prefab has bones that don't exist in the UE skeleton (e.g.
-        extra intermediate bones), we walk up the mochi parent chain to find the
-        closest ancestor whose UE bone name is in the set of known UE bones.
-        This ensures the relative transform is computed against the correct UE
-        parent, not a mochi-only intermediate bone.
+        in a single call, then computes each bone's transform relative to its
+        effective UE parent (see ``_closest_ue_ancestor``) and converts all of
+        them to UE coordinates in one batch.
 
         Returns:
             Tuple of:
             - (actor_position_ue, actor_rotation_ue): The root transform for the UE actor
-            - List of (position, quaternion) tuples for each link relative to parent,
-              or None for invalid links.
+            - List of (position, quaternion) tuples for each link relative to parent.
         """
         # Get all link world transforms in a single call
         self._actor.get_articulated_link_transforms(self._link_transforms)
@@ -257,130 +252,56 @@ class UnrealCVArticulatedActorUpdater(UnrealCVUpdater):
         )
         actor_root_quat_ue = self._convert_rotation_to_ue(np.array(actor_root.rotation))
 
-        # First pass: collect all link world transforms
-        world_transforms: list[sdp.TransformRT | None] = []
-
-        for link_idx in range(len(self._link_transforms)):
+        world_transforms = self._link_transforms.tolist()
+        relative_transforms: list[sdp.TransformRT | None] = []
+        for bone_name, parent, child in zip(
+            self._bone_names, self._ue_parents, world_transforms
+        ):
+            # An out-of-range parent is a structural bug, so only the transform math is guarded.
+            parent_transform = world_transforms[parent] if parent >= 0 else actor_root
             try:
-                transform = self._link_transforms[link_idx]
-                world_transforms.append(transform)
-            except Exception as e:
-                logger.warning(
-                    f"Failed to get world transform for link {link_idx}: {e}"
-                )
-                world_transforms.append(None)
-
-        # Second pass: compute parent-relative transforms.
-        # For each bone, walk up the mochi parent chain to find the closest
-        # ancestor that exists in the UE skeleton (i.e. is in _ue_bone_names).
-        # This handles mismatches where mochi has extra intermediate bones that
-        # don't exist in UE.
-        bone_transforms: list[
-            tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]] | None
-        ] = []
-
-        for link_idx, child_tf in enumerate(world_transforms):
-            if child_tf is None:
-                bone_transforms.append(None)
-                continue
-
-            # Find the effective UE parent by walking up the mochi parent chain
-            parent_tf = self._find_effective_ue_parent_transform(
-                link_idx, world_transforms, actor_root
+                relative_transforms.append(parent_transform.inverse() * child)
+            except Exception as e:  # noqa: BLE001 - one bad bone must not drop the actor
+                logger.warning(f"Skipping bone {bone_name}: {e}")
+                relative_transforms.append(None)
+        valid = [tf for tf in relative_transforms if tf is not None]
+        if not valid:
+            return (actor_root_pos_ue, actor_root_quat_ue), [None] * len(
+                relative_transforms
             )
+        positions = self._bone_coordinate_transform.position_to_target(
+            np.array([tf.translation for tf in valid]),
+            scale=self._meters_to_cm,
+        ).astype(np.float64)
+        rotations = self._bone_coordinate_transform.rotation_to_target(
+            np.array([tf.rotation for tf in valid])
+        )
+        converted = iter(zip(positions, rotations))
+        return (actor_root_pos_ue, actor_root_quat_ue), [
+            None if tf is None else next(converted) for tf in relative_transforms
+        ]
 
-            # Compute relative transform: parent.inverse() * child
-            relative_tf = parent_tf.inverse() * child_tf
-
-            # Decompose and convert to UE coordinates
-            # Note: relative_tf.translation is Real3 and relative_tf.rotation is Quaternion,
-            # so we convert them to numpy arrays for the coordinate transform functions
-            relative_pos = self._convert_bone_position_to_ue(
-                np.array(relative_tf.translation)
-            )
-            relative_quat = self._convert_bone_rotation_to_ue(
-                np.array(relative_tf.rotation)
-            )
-
-            bone_transforms.append((relative_pos, relative_quat))
-
-        return (actor_root_pos_ue, actor_root_quat_ue), bone_transforms
-
-    def _find_effective_ue_parent_transform(
-        self,
-        link_idx: int,
-        world_transforms: list["sdp.TransformRT | None"],
-        actor_root: "sdp.TransformRT",
-    ) -> "sdp.TransformRT":
+    def _closest_ue_ancestor(self, link_idx: int) -> int:
         """
-        Walk up the mochi parent chain from link_idx to find the closest ancestor
+        Walk up the mochi parent chain from link_idx to the closest ancestor
         whose UE bone name exists in the UE skeleton.
 
         If the mochi hierarchy has extra bones that don't exist in UE, this skips
-        them and returns the world transform of the first ancestor that IS in the
-        UE skeleton. If no such ancestor exists, returns the actor root transform.
+        them, so each bone's relative transform is computed against the parent
+        UE actually uses.
 
         Args:
             link_idx: The index of the link whose parent we're looking for.
-            world_transforms: List of world transforms for all mochi links.
-            actor_root: The actor's root transform (fallback for root-level links).
 
         Returns:
-            The world-space TransformRT of the effective UE parent.
+            The ancestor's link index, or -1 when the actor root is the parent.
         """
         current_idx = self._parents[link_idx]
-
-        while current_idx >= 0 and current_idx < len(world_transforms):
-            parent_bone_name = self._link_to_bone_mapping.get(
-                self._link_names[current_idx], self._link_names[current_idx]
-            )
-
-            if parent_bone_name in self._ue_bone_names:
-                # This ancestor exists in UE - use its world transform
-                parent_tf = world_transforms[current_idx]
-                if parent_tf is not None:
-                    return parent_tf
-
-            # This ancestor doesn't exist in UE (or has no transform),
-            # keep walking up
+        while 0 <= current_idx < len(self._link_names):
+            if self._bone_names[current_idx] in self._ue_bone_names:
+                return current_idx
             current_idx = self._parents[current_idx]
-
-        # Reached the root of the chain - use actor root
-        return actor_root
-
-    def _convert_bone_position_to_ue(
-        self, position: npt.NDArray[np.floating]
-    ) -> npt.NDArray[np.floating]:
-        """
-        Convert a position from mochi coordinates to UE coordinates.
-
-        Args:
-            position: Position in mochi coordinates (meters).
-
-        Returns:
-            Position in UE coordinates (centimeters).
-        """
-        position_ue = self._bone_coordinate_transform.position_to_target(
-            position, scale=self._meters_to_cm
-        )
-        return position_ue.astype(np.float64)
-
-    def _convert_bone_rotation_to_ue(
-        self, quat_mochi: npt.NDArray[np.floating]
-    ) -> npt.NDArray[np.floating]:
-        """
-        Convert a quaternion from mochi coordinates to UE coordinates.
-
-        Args:
-            quat_mochi: Quaternion in mochi coordinates (x, y, z, w).
-
-        Returns:
-            Quaternion in UE coordinates (x, y, z, w).
-        """
-
-        quat_ue = self._bone_coordinate_transform.rotation_to_target(quat_mochi)
-
-        return quat_ue
+        return -1
 
     def _convert_position_to_ue(
         self, position: npt.NDArray[np.floating]

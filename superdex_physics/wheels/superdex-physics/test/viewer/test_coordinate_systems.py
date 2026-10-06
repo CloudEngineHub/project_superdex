@@ -17,6 +17,7 @@ import unittest
 import numpy as np
 from superdex.physics.utils.coordinate_systems import (
     Axis,
+    COORDINATE_SYSTEMS,
     CoordinateSystem,
     CoordinateTransform,
     Handedness,
@@ -363,6 +364,35 @@ class TestCoordinateTransform(unittest.TestCase):
         quat = np.array([0.1, 0.2, 0.3, 0.9])
         result = transform.rotation_to_target(quat)
         assert np.isclose(result[3], 0.9)
+
+    def test_batched_conversions_match_single_vector_formulas(self):
+        """(N, 3) positions and (N, 4) quaternions convert row by row, bit for bit."""
+        rng = np.random.default_rng(0)
+        positions = rng.normal(size=(5, 3)).astype(np.float32)
+        quats = rng.normal(size=(5, 4)).astype(np.float32)
+        for source, target in [
+            ("ros", "unreal"),
+            ("mochi", "unreal"),
+            ("unity", "unity"),
+        ]:
+            transform = CoordinateTransform(
+                COORDINATE_SYSTEMS[source], COORDINATE_SYSTEMS[target]
+            )
+            basis = transform.source_to_target[:3, :3]
+            sign = -1 if transform.encodes_reflection else 1
+
+            batched_positions = transform.position_to_target(positions, scale=100.0)
+            batched_quats = transform.rotation_to_target(quats)
+
+            for row in range(len(positions)):
+                with self.subTest(source=source, target=target, row=row):
+                    np.testing.assert_array_equal(
+                        batched_positions[row], basis @ positions[row] * 100.0
+                    )
+                    np.testing.assert_array_equal(
+                        batched_quats[row],
+                        np.append(basis @ (sign * quats[row][:3]), quats[row][3]),
+                    )
 
 
 ########################################################################################
