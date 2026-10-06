@@ -123,6 +123,18 @@ class Simd<int64_t, 4> {
     }
   }
 
+  [[nodiscard]] static MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b, Simd c, Simd d) {
+    // ac = {a[0] + a[2], a[1] + a[3], c[0] + c[2], c[1] + c[3]}, and bd likewise.
+    auto const ac = _mm256_add_epi64(
+        _mm256_blend_epi32(a.raw, c.raw, 0xF0),
+        _mm256_permute2x128_si256(a.raw, c.raw, 0x21)); // AVX2
+    auto const bd = _mm256_add_epi64(
+        _mm256_blend_epi32(b.raw, d.raw, 0xF0),
+        _mm256_permute2x128_si256(b.raw, d.raw, 0x21)); // AVX2
+    // {ac[0], bd[0], ac[2], bd[2]} + {ac[1], bd[1], ac[3], bd[3]}.
+    return _mm256_add_epi64(_mm256_unpacklo_epi64(ac, bd), _mm256_unpackhi_epi64(ac, bd)); // AVX2
+  }
+
   template <int N = kSize>
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Load([[maybe_unused]] Scalar const* ptr) {
     static_assert(N >= 0 && N <= kSize);

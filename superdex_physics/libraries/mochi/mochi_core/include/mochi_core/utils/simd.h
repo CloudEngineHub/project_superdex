@@ -249,6 +249,7 @@ using Vec16r = Simd<real, 16>;
                 HMin | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
                HProd | x     |       | x     | x     |       |       | x     |       |       |       |       |        |        |        |        |
                 HSum | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
+            HSumEach | x     | x     | x     | x     | x     | x     |       |       |       |       |       |        |        |        |        |
          (V)IsFinite | x     |       | x     | x     |       |       | x     | x     |       |       |       | x      |        |        |        |
               IsTrue | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
                 Lerp | x     |       | x     | x     |       |       | x     | x     |       |       |       | x      |        |        |        |
@@ -508,6 +509,17 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, N> FastRound(Simd<T, N> a);
 // NOT FAST: Horizontal sum of first COUNT elements of a vector. COUNT of -1 means "all".
 template <int COUNT = -1, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T HSum(Simd<T, N> a);
+
+/// @brief Returns {HSum(a), HSum(b)}. Native SIMD backends compute both sums together, in fewer
+/// instructions than two @ref HSum calls.
+template <class T>
+MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 2> HSumEach(Simd<T, 2> a, Simd<T, 2> b);
+
+/// @brief Returns {HSum(a), HSum(b), HSum(c), HSum(d)}. Native SIMD backends compute the four sums
+/// together, in fewer instructions than four @ref HSum calls.
+template <class T>
+MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 4>
+HSumEach(Simd<T, 4> a, Simd<T, 4> b, Simd<T, 4> c, Simd<T, 4> d);
 
 // NOT FAST: Horizontal product of first COUNT elements of a vector. COUNT of -1 means "all".
 template <int COUNT = -1, class T, int N>

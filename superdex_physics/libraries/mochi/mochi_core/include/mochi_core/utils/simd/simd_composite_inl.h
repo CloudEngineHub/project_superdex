@@ -586,6 +586,14 @@ class Simd<T, N, std::enable_if_t<(details::kCompositeFirstSize<T, N> > 0), Simd
     }
   }
 
+  [[nodiscard]] static MOCHI_ANY MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b, Simd c, Simd d) {
+    static_assert(kSize == 4 && kSizeFirst == kSizeSecond, "Unsupported size");
+    // Like HSum, adds the halves of each vector first.
+    return {
+        First::HSumEach(a.first + a.second, b.first + b.second),
+        First::HSumEach(c.first + c.second, d.first + d.second)};
+  }
+
   template <int SZ = kSize>
   [[nodiscard]] static MOCHI_ANY MOCHI_FORCE_INLINE Scalar HProd(Simd a) {
     if constexpr (SZ <= kSizeFirst) {

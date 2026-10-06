@@ -352,6 +352,10 @@ class Simd<double, 2> {
     return Get<0>(a) + Get<1>(a);
   }
 
+  [[nodiscard]] static MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b) {
+    return _mm_add_pd(_mm_unpacklo_pd(a.raw, b.raw), _mm_unpackhi_pd(a.raw, b.raw)); // SSE2
+  }
+
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE Scalar HProd(Simd a) {
     static_assert(N == 2, "Unsupported N");

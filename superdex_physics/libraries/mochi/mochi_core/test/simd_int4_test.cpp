@@ -339,6 +339,11 @@ TEST(Vec4i, HSum) {
   EXPECT_EQ(10, HSum(a));
 }
 
+TEST(Vec4i, HSumEach) {
+  auto const a = Vec4i{1, 2, 3, 4};
+  EXPECT_VEC4I(10, 100, 1000, 10000, HSumEach(a, 10 * a, 100 * a, 1000 * a));
+}
+
 TEST(Vec4i, Less) {
   auto a = Vec4i{1, 4, 5, 8};
   auto b = Vec4i{2, 3, 6, 7};

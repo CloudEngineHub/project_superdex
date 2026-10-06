@@ -98,6 +98,11 @@ class Simd<int64_t, 2> {
     return Get<0>(a) + Get<1>(a);
   }
 
+  [[nodiscard]] static MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b) {
+    return _mm_add_epi64(
+        _mm_unpacklo_epi64(a.raw, b.raw), _mm_unpackhi_epi64(a.raw, b.raw)); // SSE2
+  }
+
   template <int N = kSize>
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Load([[maybe_unused]] Scalar const* ptr) {
     static_assert(N >= 0 && N <= kSize);

@@ -458,6 +458,11 @@ TEST(Vec2d, HSum) {
   EXPECT_NEAR_EQ(3.0, HSum(a));
 }
 
+TEST(Vec2d, HSumEach) {
+  auto const a = Vec2d{1.0, 2.0};
+  EXPECT_VEC2D(3.0, 30.0, HSumEach(a, 10.0 * a));
+}
+
 TEST(Vec2d, Lerp) {
   // Note: Lerp does not clamp the 't' parameter
   auto const a = Vec2d{10.0, 100.0};

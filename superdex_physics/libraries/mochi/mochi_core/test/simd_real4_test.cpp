@@ -702,6 +702,11 @@ TEST(Vec4r, HSum) {
   EXPECT_NEAR_EQ(10_r, HSum(a));
 }
 
+TEST(Vec4r, HSumEach) {
+  auto const a = Vec4r{1_r, 2_r, 3_r, 4_r};
+  EXPECT_VEC4R(10_r, 100_r, 1000_r, 10000_r, HSumEach(a, 10_r * a, 100_r * a, 1000_r * a));
+}
+
 TEST(Vec4r, Less) {
   auto a = Vec4r{1_r, 4_r, 5_r, 8_r};
   auto b = Vec4r{2_r, 3_r, 6_r, 7_r};

@@ -169,6 +169,17 @@ class Simd<int, 4> {
     }
   }
 
+  [[nodiscard]] static MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b, Simd c, Simd d) {
+    // ab = {a[0] + a[2], b[0] + b[2], a[1] + a[3], b[1] + b[3]}, and cd likewise.
+    auto const ab =
+        _mm_add_epi32(_mm_unpacklo_epi32(a.raw, b.raw), _mm_unpackhi_epi32(a.raw, b.raw)); // SSE2
+    auto const cd =
+        _mm_add_epi32(_mm_unpacklo_epi32(c.raw, d.raw), _mm_unpackhi_epi32(c.raw, d.raw)); // SSE2
+    // {ab[0], ab[1], cd[2], cd[3]} + {ab[2], ab[3], cd[0], cd[1]}.
+    return _mm_add_epi32(
+        _mm_blend_epi16(ab, cd, 0xF0), _mm_alignr_epi8(cd, ab, 8)); // SSE4.1, SSSE3
+  }
+
   template <int N = kSize>
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Load([[maybe_unused]] Scalar const* ptr) {
     static_assert(N >= 0 && N <= 4);

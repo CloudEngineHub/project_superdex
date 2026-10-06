@@ -111,6 +111,10 @@ class Simd<int64_t, 2> {
     return vaddvq_s64(a.raw);
   }
 
+  [[nodiscard]] MOCHI_FORCE_INLINE static Simd HSumEach(Simd a, Simd b) {
+    return vpaddq_s64(a.raw, b.raw);
+  }
+
   template <int N = kSize>
   [[nodiscard]] MOCHI_FORCE_INLINE static Simd Load([[maybe_unused]] Scalar const* ptr) {
     static_assert(N >= 0 && N <= kSize);

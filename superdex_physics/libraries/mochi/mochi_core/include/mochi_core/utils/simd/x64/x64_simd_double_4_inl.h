@@ -463,6 +463,16 @@ class Simd<double, 4> {
     }
   }
 
+  [[nodiscard]] static MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b, Simd c, Simd d) {
+    // ac = {a[0] + a[2], a[1] + a[3], c[0] + c[2], c[1] + c[3]}, and bd likewise.
+    auto const ac = _mm256_add_pd(
+        _mm256_blend_pd(a.raw, c.raw, 0b1100), _mm256_permute2f128_pd(a.raw, c.raw, 0x21)); // AVX
+    auto const bd = _mm256_add_pd(
+        _mm256_blend_pd(b.raw, d.raw, 0b1100), _mm256_permute2f128_pd(b.raw, d.raw, 0x21)); // AVX
+    // {ac[0], bd[0], ac[2], bd[2]} + {ac[1], bd[1], ac[3], bd[3]}.
+    return _mm256_add_pd(_mm256_unpacklo_pd(ac, bd), _mm256_unpackhi_pd(ac, bd)); // AVX
+  }
+
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE Scalar HProd(Simd a) {
     static_assert(N >= 2 && N <= 4, "Unsupported N");

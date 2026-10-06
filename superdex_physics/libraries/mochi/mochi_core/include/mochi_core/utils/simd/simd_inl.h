@@ -384,6 +384,17 @@ MOCHI_ANY MOCHI_FORCE_INLINE T HSum(Simd<T, N> a) {
   }
 }
 
+template <class T>
+MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 2> HSumEach(Simd<T, 2> a, Simd<T, 2> b) {
+  return Simd<T, 2>::HSumEach(a, b);
+}
+
+template <class T>
+MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 4>
+HSumEach(Simd<T, 4> a, Simd<T, 4> b, Simd<T, 4> c, Simd<T, 4> d) {
+  return Simd<T, 4>::HSumEach(a, b, c, d);
+}
+
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T HProd(Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT;

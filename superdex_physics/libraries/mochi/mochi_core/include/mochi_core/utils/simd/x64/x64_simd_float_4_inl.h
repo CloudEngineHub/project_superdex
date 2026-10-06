@@ -417,6 +417,16 @@ class Simd<float, 4> {
     }
   }
 
+  [[nodiscard]] static MOCHI_FORCE_INLINE Simd HSumEach(Simd a, Simd b, Simd c, Simd d) {
+    // ab = {a[0] + a[2], b[0] + b[2], a[1] + a[3], b[1] + b[3]}, and cd likewise.
+    auto const ab = _mm_add_ps(_mm_unpacklo_ps(a.raw, b.raw), _mm_unpackhi_ps(a.raw, b.raw)); // SSE
+    auto const cd = _mm_add_ps(_mm_unpacklo_ps(c.raw, d.raw), _mm_unpackhi_ps(c.raw, d.raw)); // SSE
+    // {ab[0], ab[1], cd[2], cd[3]} + {ab[2], ab[3], cd[0], cd[1]}.
+    return _mm_add_ps(
+        _mm_blend_ps(ab, cd, 0b1100), // SSE4.1
+        _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(1, 0, 3, 2))); // SSE
+  }
+
   template <int N>
   [[nodiscard]] static MOCHI_FORCE_INLINE Scalar HProd(Simd a) {
     static_assert(N >= 2 && N <= 4, "Unsupported N");

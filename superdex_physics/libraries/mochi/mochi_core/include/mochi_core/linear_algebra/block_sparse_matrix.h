@@ -1121,9 +1121,7 @@ struct RowMultiplier {
     }
 
     // Store result
-    for (int k = 0; k < kBlockSize; ++k) {
-      Ax.Store(k + br * kBlockSize, c, HSum(results[k]));
-    }
+    Ax.StoreColVector(br * kBlockSize, c, HSumEach(results[0], results[1], results[2], results[3]));
   }
 };
 

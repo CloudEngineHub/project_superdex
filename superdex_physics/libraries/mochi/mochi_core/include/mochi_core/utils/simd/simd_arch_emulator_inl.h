@@ -392,6 +392,19 @@ class Simd<T, N> {
     return FoldApply<M, [](auto... v) { return (v + ...); }>(a);
   }
 
+  [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE static constexpr Simd HSumEach(Simd a, Simd b)
+    requires(N == 2)
+  {
+    return {HSum(a), HSum(b)};
+  }
+
+  [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE static constexpr Simd
+  HSumEach(Simd a, Simd b, Simd c, Simd d)
+    requires(N == 4)
+  {
+    return {HSum(a), HSum(b), HSum(c), HSum(d)};
+  }
+
   template <int M = kSize>
   [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE static constexpr Scalar HProd(Simd a) {
     static_assert(M >= 1 && M <= kSize, "Unsupported M");

@@ -254,6 +254,11 @@ TEST(Vec2l, HSum) {
   EXPECT_EQ(3, HSum(a));
 }
 
+TEST(Vec2l, HSumEach) {
+  auto const a = Vec2l{1, 2};
+  EXPECT_VEC2L(3, 30, HSumEach(a, int64_t(10) * a));
+}
+
 TEST(Vec2l, Less) {
   auto a = Vec2l{1, 4};
   auto b = Vec2l{2, 3};

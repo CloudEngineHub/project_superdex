@@ -285,6 +285,10 @@ class Simd<double, 2> {
     return vaddvq_f64(a.raw);
   }
 
+  [[nodiscard]] MOCHI_FORCE_INLINE static Simd HSumEach(Simd a, Simd b) {
+    return vpaddq_f64(a.raw, b.raw);
+  }
+
   template <int N>
   [[nodiscard]] MOCHI_FORCE_INLINE static Scalar HProd(Simd a) {
     static_assert(N == 2, "Unsupported N");
