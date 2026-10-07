@@ -17,6 +17,7 @@
 #pragma once
 
 #include <mochi_renderer/material.h>
+#include <mochi_renderer/model_geometry.h>
 #include <mochi_renderer/resource.h>
 #include <mochi_renderer/scene_object.h>
 
@@ -73,24 +74,6 @@ MeshBuffers CreateModelMeshBuffers(
     mochi::Span<float const> positions,
     mochi::Span<float const> normals,
     mochi::Span<int const> indices);
-
-// Extracts renderable triangle geometry from a @ref mochi::ModelData, converting it
-// from Mochi space into the renderer's space (@ref RenderSpace).
-//
-// For a tetrahedral mesh the boundary surface is extracted; a triangle surface mesh is
-// used directly; otherwise a procedural box/plane/sphere is generated from the model's
-// analytic shape. Per-vertex normals are angle-weighted (mesh) or supplied by the
-// generator (procedural). Positions/normals are transformed by `converter`; when
-// `converter` is null a default Mochi-to-@ref RenderSpace
-// @ref mochi::CoordinateSpaceConverter is used. Triangle winding is left unchanged.
-//
-// @return false (leaving the outputs unspecified) if the model has no usable geometry.
-bool BuildMochiModelGeometry(
-    mochi::ModelData const& modelData,
-    mochi::CoordinateSpaceConverter const* converter,
-    std::vector<float>& positions,
-    std::vector<float>& normals,
-    std::vector<int>& indices);
 
 //------------------------------------------------------------------------------------------------
 // MESH
