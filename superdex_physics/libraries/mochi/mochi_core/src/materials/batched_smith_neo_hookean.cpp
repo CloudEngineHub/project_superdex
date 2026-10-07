@@ -25,6 +25,51 @@
 
 namespace mochi::materials {
 
+// Lanes where shift·I − weight·G has a negative eigenvalue, for G = FᵀF, i.e. weight·max σᵢ² >
+// shift, decided to rounding accuracy. A symmetric matrix M is positive semidefinite iff its
+// largest diagonal entry d is positive and the Schur complement of d is positive semidefinite, or
+// M = 0, which counts as indefinite here. Eliminating the largest diagonal entry first, as pivoted
+// Cholesky does, keeps the decision accurate when M has two eigenvalues near zero, as when the two
+// largest singular values of F are close, where det(M) cancels to rounding noise.
+template <int kBatchSize>
+[[nodiscard]] static MOCHI_FORCE_INLINE BatchReal<kBatchSize> IsShiftedGramIndefinite(
+    BatchReal<kBatchSize> const& shift,
+    BatchReal<kBatchSize> const& weight,
+    BatchSymMatrix3x3<kBatchSize> const& G) {
+  using V = BatchReal<kBatchSize>;
+  V const m00 = shift - weight * G[0];
+  V const m11 = shift - weight * G[1];
+  V const m22 = shift - weight * G[2];
+  V const m01 = -weight * G[3];
+  V const m02 = -weight * G[4];
+  V const m12 = -weight * G[5];
+
+  // Order the indices as (p, i, j) = (0, 1, 2), (1, 0, 2) or (2, 0, 1), with d = m_pp the largest.
+  auto const p1 = m11 > m00;
+  V const d01 = Select(p1, m11, m00);
+  auto const p2 = m22 > d01;
+  auto const p12 = p1 | p2;
+  V const d = Select(p2, m22, d01);
+  V const mpi = Select(p2, m02, m01);
+  V const mpj = Select(p12, m12, m02);
+  V const mii = Select(p12, m00, m11);
+  V const mjj = Select(p2, m11, m22);
+  V const mij = Select(p2, m01, Select(p1, m02, m12));
+
+  // The Schur complement of d, divided by d, which bounds its entries by 1 when M is positive
+  // semidefinite, whatever M's scale.
+  V const zero = V{0_r};
+  V const one = V{1_r};
+  auto const positiveD = d > zero;
+  V const invD = one / Select(positiveD, d, one);
+  V const ri = mpi * invD;
+  V const rj = mpj * invD;
+  V const sii = mii * invD - ri * ri;
+  V const sjj = mjj * invD - rj * rj;
+  V const sij = mij * invD - ri * rj;
+  return ~(positiveD & (sii >= zero) & (sjj >= zero) & (sii * sjj >= sij * sij));
+}
+
 template <int kBatchSize>
 void BatchedSmithNeoHookeanConstitutiveResponse(
     BatchLameParams<kBatchSize> const& params,
@@ -37,7 +82,6 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
   using V = BatchReal<kBatchSize>;
   using Vd = BatchDouble<kBatchSize>;
   using V3 = BatchReal3<kBatchSize>;
-  using V6 = BatchReal6<kBatchSize>;
   using V9 = BatchReal9<kBatchSize>;
   using V3x3 = BatchReal3x3<kBatchSize>;
   MOCHI_ASSERT_VERBOSE(
@@ -52,7 +96,8 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
   V const one = V{1_r};
   V const muHat = params.mu * V{4_r / 3_r};
   V const lambdaHat = params.lambda + params.mu * V{5_r / 6_r};
-  V const alpha = one + V{3_r / 4_r} * muHat / lambdaHat;
+  V const alphaMinusOne = V{3_r / 4_r} * muHat / lambdaHat;
+  V const alpha = one + alphaMinusOne;
 
   // Invariants.
   V const Ic = NormSqr(F);
@@ -67,9 +112,6 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
         V{0.5_r} * muHat * Ln(IcPlus1));
   }
 
-  V3 sigma MOCHI_NO_INIT;
-  BatchedRotationVariantSvdNormalEigensystem3x3<kBatchSize> svdNormalEigensystem MOCHI_NO_INIT;
-  bool svdValsDone = false;
   bool projectingPsd = projectPsd && (psdStrategy != MaterialPsdStrategy::None);
   V isIndefiniteMask = ~SimdZero<V>(); // All lanes indefinite unless oracle proves otherwise.
 
@@ -87,26 +129,51 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
     //
     //   lambdaHat * abs(J - alpha) * abs(sigma_i) > muHatK.
     //
-    // Squaring and taking the largest singular value gives the exact condition:
+    // Squaring and taking the largest singular value gives the exact condition
     //
-    //   lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2) > muHatK^2.
+    //   lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2) > muHatK^2,
     //
-    // Equivalently, Ic > K * C where K = Ic / max_i(sigma_i^2) and
-    // C = muHatK^2 / (lambdaHat^2 * (J - alpha)^2). K lies in [1, 3]. Correct computes
-    // max_i(sigma_i^2) from the SVD values, which is equivalent to the exact K. Conservative avoids
-    // the SVD by using K = 1, i.e. Ic as an upper bound on max_i(sigma_i^2), so it can project more
-    // often than necessary but does not miss required projections.
-    V const muHatKSqr = Sqr(muHat * (one - IcPlus1Inv));
-    V const lhsBase = Sqr(lambdaHat * Jma);
+    // evaluated divided by (4/3 * lambdaHat)^2, which keeps its terms O(1) whatever the stiffness:
+    // lhsBase * max_i(sigma_i^2) > rhs, with lhsBase = (3/4 * (J - alpha))^2 and
+    // rhs = ((alpha - 1) * (1 - 1 / (Ic + 1)))^2, since alpha - 1 = 3/4 * muHat / lambdaHat.
+    //
+    // max_i(sigma_i^2) is the largest eigenvalue of F^T * F, so Correct decides this without an
+    // SVD: the condition holds iff rhs * I - lhsBase * F^T * F is not positive semidefinite.
+    // Conservative uses Ic, an upper bound on max_i(sigma_i^2), so it can project more often than
+    // necessary but does not miss required projections.
+    V const rhs = Sqr(alphaMinusOne * (one - IcPlus1Inv));
+    V const lhsBase = Sqr(V{3_r / 4_r} * Jma);
 
     if (oracle == MaterialPsdOracle::Correct) {
-      BatchedRotationVariantSvdVals3x3<kBatchSize>(F, sigma, svdNormalEigensystem);
-      svdValsDone = true;
-      V const maxSigmaSq = Max(Sqr(sigma[0]), Sqr(sigma[1]), Sqr(sigma[2]));
-      isIndefiniteMask = (lhsBase * maxSigmaSq > muHatKSqr) | (J < V{0_r});
+      // max_i(sigma_i^2) lies between the largest diagonal entry of F^T * F and the smaller of its
+      // trace and largest absolute row sum. Lanes these bounds leave open count as indefinite
+      // unless the exact test settles them. The Projection strategies project the whole batch once
+      // any lane is indefinite, so they skip the test once a lane is proven indefinite; Fast drops
+      // the term per lane, so it always settles the open lanes.
+      BatchSymMatrix3x3<kBatchSize> const G = {
+          F[0][0] * F[0][0] + F[1][0] * F[1][0] + F[2][0] * F[2][0],
+          F[0][1] * F[0][1] + F[1][1] * F[1][1] + F[2][1] * F[2][1],
+          F[0][2] * F[0][2] + F[1][2] * F[1][2] + F[2][2] * F[2][2],
+          F[0][0] * F[0][1] + F[1][0] * F[1][1] + F[2][0] * F[2][1],
+          F[0][0] * F[0][2] + F[1][0] * F[1][2] + F[2][0] * F[2][2],
+          F[0][1] * F[0][2] + F[1][1] * F[1][2] + F[2][1] * F[2][2]};
+      V const lowerBound = Max(G[0], G[1], G[2]);
+      V const upperBound =
+          Min(Ic,
+              Max(G[0] + Abs(G[3]) + Abs(G[4]),
+                  G[1] + Abs(G[3]) + Abs(G[5]),
+                  G[2] + Abs(G[4]) + Abs(G[5])));
+      V const provenIndefinite = (lhsBase * lowerBound > rhs) | (J < V{0_r});
+      V const undecided = ~provenIndefinite & (lhsBase * upperBound > rhs);
+      isIndefiniteMask = provenIndefinite | undecided;
+      if (AnyTrue<kBatchSize>(undecided) &&
+          (psdStrategy == MaterialPsdStrategy::Fast || !AnyTrue<kBatchSize>(provenIndefinite))) {
+        isIndefiniteMask =
+            provenIndefinite | (undecided & IsShiftedGramIndefinite<kBatchSize>(rhs, lhsBase, G));
+      }
     } else {
       MOCHI_ASSERT_VERBOSE(oracle == MaterialPsdOracle::Conservative, "Unexpected PSD oracle.");
-      isIndefiniteMask = (lhsBase * Ic > muHatKSqr) | (J < V{0_r});
+      isIndefiniteMask = (lhsBase * Ic > rhs) | (J < V{0_r});
     }
 
     projectingPsd = AnyTrue<kBatchSize>(isIndefiniteMask);
@@ -141,13 +208,10 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
     if (useEigensystemPath) {
       // Eigensystem decomposition path (Smith et al. 2018).
       // Note: BatchedRotationVariantSvd3x3 returns U, V^T and sigma such that det(U) >= 0, det(V^T)
-      // >= 0, and sigma[2] < 0 iff det(F) < 0. Likewise for BatchedRotationVariantSvdVecs3x3.
+      // >= 0, and sigma[2] < 0 iff det(F) < 0.
       V3x3 U MOCHI_NO_INIT, VT MOCHI_NO_INIT;
-      if (svdValsDone) {
-        BatchedRotationVariantSvdVecs3x3<kBatchSize>(F, svdNormalEigensystem, U, sigma, VT);
-      } else {
-        BatchedRotationVariantSvd3x3<kBatchSize>(F, U, sigma, VT);
-      }
+      V3 sigma MOCHI_NO_INIT;
+      BatchedRotationVariantSvd3x3<kBatchSize>(F, U, sigma, VT);
 
       V const coeff0 = muHat - muHat * IcPlus1Inv;
       V const coeff1 = lambdaHat * Jma;
@@ -172,7 +236,7 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
 
       V3 const sigmaSqr = Sqr(sigma);
       // clang-format off
-      V6 const Asym = {
+      BatchSymMatrix3x3<kBatchSize> const Asym = {
           (mu2 * sigmaSqr[0] - muHat * IcPlus1) * IcPlus1SqrInv + lambdaHat * sigmaSqr[1] * sigmaSqr[2] + muHat,
           (mu2 * sigmaSqr[1] - muHat * IcPlus1) * IcPlus1SqrInv + lambdaHat * sigmaSqr[0] * sigmaSqr[2] + muHat,
           (mu2 * sigmaSqr[2] - muHat * IcPlus1) * IcPlus1SqrInv + lambdaHat * sigmaSqr[0] * sigmaSqr[1] + muHat,

@@ -27,6 +27,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
+#include <limits>
 
 using namespace mochi;
 using namespace mochi::materials;
@@ -301,6 +303,81 @@ static void VerifySmithNeoHookeanGoldenData(MaterialPsdOracle oracle) {
   }
 }
 
+// The Correct oracle where values-only singular values lose up to half their digits: lanes of F
+// with the two largest singular values nearly equal, off the oracle's threshold
+//
+//   lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2) = muHatK^2
+//
+// by relative margins of 512 eps to sqrt(eps), of either sign. F is formed in double, so that
+// rounding it moves the margins by a few eps. With the Fast strategy, the oracle drops the d^2J
+// term in exactly the lanes it finds indefinite.
+template <int kBS>
+static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus) {
+  SmithNeoHookeanMaterialParams params;
+  params.youngsModulus = youngsModulus;
+  params.poissonRatio = 0.3_r;
+  params.psdStrategy = MaterialPsdStrategy::Fast;
+  auto const batchedParams = BuildBatchParams<kBS>(params);
+  auto const [lambda, mu] = utils::ComputeLameConstants(params.youngsModulus, params.poissonRatio);
+  double const muHat = 4.0 / 3.0 * mu;
+  double const lambdaHat = lambda + 5.0 / 6.0 * mu;
+  double const alpha = 1.0 + 0.75 * muHat / lambdaHat;
+  double const eps = std::numeric_limits<real>::epsilon();
+  auto generator = RandomGenerator(42);
+  for (int batch = 0; batch < 64; ++batch) {
+    std::array<Matrix3x3r, kBS> Fs{};
+    std::array<bool, kBS> indefinite{};
+    for (int lane = 0; lane < kBS; ++lane) {
+      // sigma = t (1, 1 - eta, beta), with t bisected for the target margin, which falls from +inf
+      // at t = 0 to -1 at J = alpha.
+      double const eta = std::pow(10.0, RandomUniformValue(generator, -7.0, -2.0));
+      double const beta = RandomUniformValue(generator, 0.3, 0.7);
+      indefinite[lane] = RandomUniformValue(generator, 0, 1) == 1;
+      double const target = (indefinite[lane] ? 512.0 : -512.0) * eps *
+          std::pow(1.0 / (512.0 * std::sqrt(eps)), RandomUniformValue(generator, 0.0, 1.0));
+      auto const margin = [&](double t) {
+        double const J = t * t * t * (1.0 - eta) * beta;
+        double const Ic = t * t * (1.0 + (1.0 - eta) * (1.0 - eta) + beta * beta);
+        return Sqr(lambdaHat * (J - alpha) * t * (Ic + 1.0) / (muHat * Ic)) - 1.0;
+      };
+      double hi = std::cbrt(alpha / ((1.0 - eta) * beta));
+      double lo = 1e-3 * hi;
+      for (int i = 0; i < 100; ++i) {
+        double const mid = 0.5 * (lo + hi);
+        (margin(mid) > target ? lo : hi) = mid;
+      }
+      NdArray<double, 3> const sigma{lo, lo * (1.0 - eta), lo * beta};
+      auto const U = GetRandomRotationMatrix(generator);
+      auto const V = GetRandomRotationMatrix(generator);
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          double entry = 0.0;
+          for (int k = 0; k < 3; ++k) {
+            entry += static_cast<double>(U(i, k)) * sigma[k] * static_cast<double>(V(j, k));
+          }
+          Fs[lane][i][j] = static_cast<real>(entry);
+        }
+      }
+    }
+    auto const batchedF = mochi::test::LoadBatchMatrix3x3<kBS>(Fs);
+    NdArray<BatchReal3x3<kBS>, 3, 3> correct MOCHI_NO_INIT;
+    NdArray<BatchReal3x3<kBS>, 3, 3> dropped MOCHI_NO_INIT;
+    NdArray<BatchReal3x3<kBS>, 3, 3> kept MOCHI_NO_INIT;
+    BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+        batchedParams, batchedF, nullptr, nullptr, &correct, true, MaterialPsdOracle::Correct);
+    BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+        batchedParams, batchedF, nullptr, nullptr, &dropped, true, MaterialPsdOracle::None);
+    BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+        batchedParams, batchedF, nullptr, nullptr, &kept, false);
+    for (int lane = 0; lane < kBS; ++lane) {
+      ExpectTensorNear(
+          GetTangentLane(indefinite[lane] ? dropped : kept, lane),
+          GetTangentLane(correct, lane),
+          0_r);
+    }
+  }
+}
+
 template <int kBS>
 static void VerifyActiveNeoHookeanComposite() {
   for (int testIdx = 0; testIdx < kBatchedMaterialTestCases; ++testIdx) {
@@ -371,6 +448,17 @@ TEST(BatchedMaterials, SmithNeoHookean) {
   RunMaterialTests<SmithNeoHookeanSpec>();
   for (int i = 0; i < static_cast<int>(MaterialPsdOracle::Count); ++i) {
     RunSmithNeoHookeanOracleMaterialTests(static_cast<MaterialPsdOracle>(i));
+  }
+}
+
+// Checks the Smith neo-Hookean Correct oracle's decisions near its threshold, for a material so
+// soft that the squares of its Lamé parameters are subnormal and one so stiff that their fourth
+// powers overflow float.
+TEST(BatchedMaterials, SmithNeoHookeanCorrectOracleNearThreshold) {
+  for (real const youngsModulus : {Sqrt(std::numeric_limits<real>::min()), 1e11_r}) {
+    VerifySmithNeoHookeanCorrectOracleNearThreshold<1>(youngsModulus);
+    VerifySmithNeoHookeanCorrectOracleNearThreshold<4>(youngsModulus);
+    VerifySmithNeoHookeanCorrectOracleNearThreshold<8>(youngsModulus);
   }
 }
 
