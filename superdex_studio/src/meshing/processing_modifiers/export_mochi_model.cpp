@@ -109,10 +109,11 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     }
   }
 
-  void DeserializeProps(picojson::value const& in) override {
-    ReflectedMethod::DeserializeProps(in);
+  int DeserializeProps(picojson::value const& in) override {
+    int const issues = ReflectedMethod::DeserializeProps(in);
     // A stored path means the user chose it, even if it happens to equal the current suggestion.
     _autoExportPath = _props.exportPath.empty();
+    return issues;
   }
   // Show the input surface (the "Mochi Model") next to the reconstructed SDF surface, matching the
   // Model Viewer's Mochi Model section so the two reads are consistent. The input block is a copy

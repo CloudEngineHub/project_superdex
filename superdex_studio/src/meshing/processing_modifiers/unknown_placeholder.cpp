@@ -57,8 +57,9 @@ class UnknownMethod : public MeshProcessingMethod {
       out = picojson::value(picojson::object()); // captured text unparsable: emit an empty object
     }
   }
-  void DeserializeProps(picojson::value const& in) override {
+  int DeserializeProps(picojson::value const& in) override {
     _propertiesJson = in.serialize(/*prettify=*/false);
+    return 0;
   }
   std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
     return _propertiesJson;

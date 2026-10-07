@@ -103,11 +103,12 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
     }
   }
 
-  void DeserializeProps(picojson::value const& in) override {
-    ReflectedMethod::DeserializeProps(in);
+  int DeserializeProps(picojson::value const& in) override {
+    int const issues = ReflectedMethod::DeserializeProps(in);
     _colorInitialized = true; // a loaded modifier's saved color is authoritative
     // A stored path means the user chose it, even if it happens to equal the current suggestion.
     _autoExportPath = _props.path.empty();
+    return issues;
   }
 
   void ShowParams(ModifierGuiContext const& gui) override {

@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 using namespace superdex::studio;
 namespace fs = std::filesystem;
@@ -37,17 +38,21 @@ namespace {
 
 class ProcessingSerializationTest : public ::testing::Test {
  protected:
-  // Writes @p document as a pipeline file, loads it and saves it again. Returns the saved document.
-  picojson::object LoadAndSave(std::string const& document) {
-    fs::path const path = _root / "intermediates" / "part.StudioProcessing.json";
-    fs::create_directories(path.parent_path());
-    std::ofstream(path) << document;
+  // Writes @p document as a pipeline file and loads it.
+  LoadedPipeline Load(std::string const& document) {
+    fs::create_directories(_path.parent_path());
+    std::ofstream(_path) << document;
     LoadedPipeline loaded;
     mochi::Error error;
-    EXPECT_TRUE(LoadProcessingPipeline(path.string(), path, loaded, error))
+    EXPECT_TRUE(LoadProcessingPipeline(_path.string(), _path, loaded, error))
         << error.GetDescription();
+    return loaded;
+  }
+
+  // The document Studio saves for @p loaded.
+  [[nodiscard]] picojson::object Save(LoadedPipeline const& loaded) const {
     std::string const text =
-        SerializeProcessingPipeline(loaded.modifiers, loaded.editorState, {}, path);
+        SerializeProcessingPipeline(loaded.modifiers, loaded.editorState, {}, _path);
     picojson::value saved;
     std::string parseError;
     picojson::parse(saved, text.begin(), text.end(), &parseError);
@@ -66,18 +71,15 @@ class ProcessingSerializationTest : public ::testing::Test {
 
   mochi::TempDirCleanup _rootCleanup =
       mochi::CreateTempDirectory("processing_serialization_test", mochi::test::ExpectOK{});
-  fs::path _root = _rootCleanup.Path();
+  fs::path _path = _rootCleanup.Path() / "intermediates" / "part.StudioProcessing.json";
 };
 
 } // namespace
 
 // Before the STEP mesher's rewrite the Isotropic backend was called CadMesher, and bodySelection
 // chose the bodies to mesh, 0 for all of them, which is what combineTouchingSolids now defaults to.
-// Isotropic is also the backend's default, so only the reader's silence shows that CadMesher was
-// recognized rather than replaced.
 TEST_F(ProcessingSerializationTest, ReadsCadSourcesSavedBeforeTheStepMesherRewrite) {
-  testing::internal::CaptureStdout();
-  picojson::object const saved = LoadAndSave(R"({
+  LoadedPipeline const loaded = Load(R"({
   "version": 1,
   "modifiers": [
     {"modifier": "Source from CAD Model", "method": "From Model Viewer", "enabled": true,
@@ -89,9 +91,9 @@ TEST_F(ProcessingSerializationTest, ReadsCadSourcesSavedBeforeTheStepMesherRewri
                     "step": {"backend": "CadMesher", "bodySelection": 0}}}
   ]
 })");
-  std::string const log = testing::internal::GetCapturedStdout();
+  picojson::object const saved = Save(loaded);
 
-  EXPECT_EQ(log.find("[Simple Reflection]"), std::string::npos) << log;
+  EXPECT_EQ(loaded.issues, std::vector<std::string>{});
   picojson::object const& viewer = Properties(saved, 0);
   EXPECT_EQ(viewer.at("backend").get<std::string>(), "Isotropic");
   EXPECT_TRUE(viewer.at("combineTouchingSolids").get<bool>());
@@ -101,4 +103,47 @@ TEST_F(ProcessingSerializationTest, ReadsCadSourcesSavedBeforeTheStepMesherRewri
   EXPECT_EQ(step.at("backend").get<std::string>(), "Isotropic");
   EXPECT_TRUE(step.at("combineTouchingSolids").get<bool>());
   EXPECT_EQ(step.count("bodySelection"), 0u);
+}
+
+TEST_F(ProcessingSerializationTest, ListsWhatItCannotReadAndLoadsTheRest) {
+  LoadedPipeline const loaded = Load(R"({
+  "version": 1,
+  "colour": "red",
+  "editorState": {"cadScale": [1, 1, 1], "cadTilt": 0},
+  "modifiers": [
+    {"modifier": "Source from CAD Model", "method": "From Model Viewer", "enabeld": true,
+     "properties": {"backend": "Quadric", "linearDeflexion": 0.02}},
+    {"modifier": "Refine Mesh", "method": "Make It Nice", "enabled": true, "properties": {}},
+    {"modifier": "Sharpen Mesh", "method": "Unsharp", "enabled": true, "properties": {}}
+  ]
+})");
+
+  std::vector<std::string> const expected{
+      "unknown field 'colour'",
+      "editorState: 1 unreadable field",
+      "modifiers[0] (Source from CAD Model: From Model Viewer): unknown field 'enabeld'",
+      "modifiers[0] (Source from CAD Model: From Model Viewer): 2 unreadable properties",
+      "modifiers[1] (Refine Mesh: Make It Nice): unknown method 'Make It Nice'",
+      "modifiers[2] (Sharpen Mesh: Unsharp): unknown modifier 'Sharpen Mesh'",
+  };
+  EXPECT_EQ(loaded.issues, expected);
+  EXPECT_EQ(loaded.modifiers.size(), 3u);
+}
+
+TEST_F(ProcessingSerializationTest, ListsValuesOfTheWrongType) {
+  LoadedPipeline const loaded = Load(R"({
+  "version": 1,
+  "editorState": {"cadScale": "big"},
+  "modifiers": [
+    {"modifier": "Source from CAD Model", "method": "From Model Viewer", "enabled": "yes",
+     "collapsed": 3, "properties": {"linearDeflection": "fine"}}
+  ]
+})");
+
+  std::vector<std::string> const expected{
+      "editorState: 1 unreadable field",
+      "modifiers[0] (Source from CAD Model: From Model Viewer): 2 unreadable fields",
+      "modifiers[0] (Source from CAD Model: From Model Viewer): 1 unreadable property",
+  };
+  EXPECT_EQ(loaded.issues, expected);
 }

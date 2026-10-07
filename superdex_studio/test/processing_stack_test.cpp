@@ -66,7 +66,9 @@ class TestMethod : public MeshProcessingMethod {
     return _spec.run ? _spec.run(input, ctx, error) : input;
   }
   void SerializeProps(picojson::value& /*out*/) const override {}
-  void DeserializeProps(picojson::value const& /*in*/) override {}
+  int DeserializeProps(picojson::value const& /*in*/) override {
+    return 0;
+  }
   [[nodiscard]] std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
     return {};
   }

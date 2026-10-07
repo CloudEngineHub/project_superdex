@@ -238,10 +238,10 @@ class CadFromViewerMethod : public ReflectedMethod<CadStepToMeshProps> {
     }
     return sig;
   }
-  void DeserializeProps(picojson::value const& in) override {
+  int DeserializeProps(picojson::value const& in) override {
     picojson::value props = in;
     DropRetiredStepFields(props);
-    ReflectedMethod::DeserializeProps(props);
+    return ReflectedMethod::DeserializeProps(props);
   }
 
   void ShowParams(ModifierGuiContext const& gui) override {
@@ -292,7 +292,7 @@ class CadFromFileMethod : public ReflectedMethod<CadFileSourceProps> {
   std::vector<std::string_view> PathPropKeys() const override {
     return {"path"};
   }
-  void DeserializeProps(picojson::value const& in) override {
+  int DeserializeProps(picojson::value const& in) override {
     picojson::value props = in;
     if (props.is<picojson::object>()) {
       auto const step = props.get<picojson::object>().find("step");
@@ -300,7 +300,7 @@ class CadFromFileMethod : public ReflectedMethod<CadFileSourceProps> {
         DropRetiredStepFields(step->second);
       }
     }
-    ReflectedMethod::DeserializeProps(props);
+    return ReflectedMethod::DeserializeProps(props);
   }
   void ShowParams(ModifierGuiContext const& gui) override {
     if (!gui.modelSlot) {

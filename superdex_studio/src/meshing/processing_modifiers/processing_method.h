@@ -162,9 +162,10 @@ class MeshProcessingMethod {
 
   // JSON (de)serialization of this method's parameters. ReflectedMethod implements these from a
   // reflected Props struct; the unknown-placeholder method implements them by hand to round-trip
-  // raw captured data.
+  // raw captured data. DeserializeProps returns how many fields and values of @p in it could not
+  // read (unknown fields and enum values, values of the wrong type), which keep their defaults.
   virtual void SerializeProps(picojson::value& out) const = 0;
-  virtual void DeserializeProps(picojson::value const& in) = 0;
+  virtual int DeserializeProps(picojson::value const& in) = 0;
   // A compact string encoding every parameter that affects this method's output, used by the
   // editor's generation cascade to detect changes. @p ctx lets source methods fold in their
   // external inputs (slotted file path / CAD transform).
@@ -262,9 +263,10 @@ class ReflectedMethod : public MeshProcessingMethod {
   void SerializeProps(picojson::value& out) const override {
     SReflect::ToJsonValue(_props, out);
   }
-  void DeserializeProps(picojson::value const& in) override {
+  int DeserializeProps(picojson::value const& in) override {
     int numIssues = 0;
     SReflect::FromJsonValue(_props, in, SReflect::DeserializeFlags::Default, numIssues);
+    return numIssues;
   }
   std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
     return SReflect::ToJsonString(_props, /*pretty=*/false);
