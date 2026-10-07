@@ -188,9 +188,6 @@ MOCHI_STRUCT_BEGIN_EX(mochi::ArticulatedShapeInfo)
 // MOCHI_FIELD(jointNames) // TODO: Span not supported
 MOCHI_STRUCT_END_EX()
 
-MOCHI_STRUCT_BEGIN_EX(mochi::Scene)
-MOCHI_STRUCT_END_EX()
-
 MOCHI_STRUCT_BEGIN_EX(mochi::StepInfo)
 // MOCHI_FIELD(scene) // TODO: Pointer types not supported
 MOCHI_FIELD(timeStepSec) MOCHI_ATTRIBUTE(Units("s"))
@@ -528,6 +525,9 @@ MOCHI_STRUCT_BEGIN_EX(mochi::Actor)
 MOCHI_STRUCT_END_EX()
 
 MOCHI_STRUCT_BEGIN_EX(mochi::Constraint)
+MOCHI_STRUCT_END_EX()
+
+MOCHI_STRUCT_BEGIN_EX(mochi::Scene)
 MOCHI_STRUCT_END_EX()
 
 MOCHI_STRUCT_BEGIN_EX(mochi::AsyncScene)
