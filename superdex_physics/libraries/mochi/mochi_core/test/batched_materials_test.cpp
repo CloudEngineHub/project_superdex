@@ -308,14 +308,16 @@ static void VerifySmithNeoHookeanGoldenData(MaterialPsdOracle oracle) {
 //
 //   lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2) = muHatK^2
 //
-// by relative margins of 512 eps to sqrt(eps), of either sign. F is formed in double, so that
-// rounding it moves the margins by a few eps. With the Fast strategy, the oracle drops the d^2J
-// term in exactly the lanes it finds indefinite.
+// by relative margins of 512 eps to sqrt(eps), of either sign, times (alpha + 1) / (alpha - 1)
+// over its value 17/3 at nu = 0.3, since rounding errors scale with it. F is formed in double, so
+// that rounding it moves the margins by a few eps times that factor. A quarter of the lanes are at
+// rest, F = I or a rotation, on the threshold, which must not count as indefinite. With the Fast
+// strategy, the oracle drops the d^2J term in exactly the lanes it finds indefinite.
 template <int kBS>
-static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus) {
+static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, real poissonRatio) {
   SmithNeoHookeanMaterialParams params;
   params.youngsModulus = youngsModulus;
-  params.poissonRatio = 0.3_r;
+  params.poissonRatio = poissonRatio;
   params.psdStrategy = MaterialPsdStrategy::Fast;
   auto const batchedParams = BuildBatchParams<kBS>(params);
   auto const [lambda, mu] = utils::ComputeLameConstants(params.youngsModulus, params.poissonRatio);
@@ -323,17 +325,24 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus) 
   double const lambdaHat = lambda + 5.0 / 6.0 * mu;
   double const alpha = 1.0 + 0.75 * muHat / lambdaHat;
   double const eps = std::numeric_limits<real>::epsilon();
+  double const minMargin = 512.0 * eps * 3.0 / 17.0 * (alpha + 1.0) / (alpha - 1.0);
   auto generator = RandomGenerator(42);
   for (int batch = 0; batch < 64; ++batch) {
     std::array<Matrix3x3r, kBS> Fs{};
     std::array<bool, kBS> indefinite{};
     for (int lane = 0; lane < kBS; ++lane) {
+      if (RandomUniformValue(generator, 0, 3) == 0) {
+        Fs[lane] = RandomUniformValue(generator, 0, 1) == 0
+            ? Eye<3, real>()
+            : ToNdArray3x3(ToSimdMatrix(GetRandomRotationMatrix(generator)));
+        continue;
+      }
       // sigma = t (1, 1 - eta, beta), with t bisected for the target margin, which falls from +inf
       // at t = 0 to -1 at J = alpha.
       double const eta = std::pow(10.0, RandomUniformValue(generator, -7.0, -2.0));
       double const beta = RandomUniformValue(generator, 0.3, 0.7);
       indefinite[lane] = RandomUniformValue(generator, 0, 1) == 1;
-      double const target = (indefinite[lane] ? 512.0 : -512.0) * eps *
+      double const target = (indefinite[lane] ? minMargin : -minMargin) *
           std::pow(1.0 / (512.0 * std::sqrt(eps)), RandomUniformValue(generator, 0.0, 1.0));
       auto const margin = [&](double t) {
         double const J = t * t * t * (1.0 - eta) * beta;
@@ -370,10 +379,14 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus) 
     BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
         batchedParams, batchedF, nullptr, nullptr, &kept, false);
     for (int lane = 0; lane < kBS; ++lane) {
-      ExpectTensorNear(
-          GetTangentLane(indefinite[lane] ? dropped : kept, lane),
-          GetTangentLane(correct, lane),
-          0_r);
+      // The alternatives differ by the d^2J term, only about 1% of the tangent at nu = 0.49.
+      auto const flat = [lane](NdArray<BatchReal3x3<kBS>, 3, 3> const& tangent) {
+        Tensor3x3x3x3r const laneTangent = GetTangentLane(tangent, lane);
+        return reinterpret_cast<NdArray<real, 81> const&>(laneTangent);
+      };
+      EXPECT_LE(
+          Norm(flat(correct) - flat(indefinite[lane] ? dropped : kept)),
+          0.25_r * Norm(flat(dropped) - flat(kept)));
     }
   }
 }
@@ -451,15 +464,45 @@ TEST(BatchedMaterials, SmithNeoHookean) {
   }
 }
 
-// Checks the Smith neo-Hookean Correct oracle's decisions near its threshold, for a material so
-// soft that the squares of its Lamé parameters are subnormal and one so stiff that their fourth
-// powers overflow float.
+// At the largest Poisson's ratio below 0.5, F = nextafter(1, 0) * I compresses enough to make the
+// twist eigenvalues about -3 * mu, far beyond rounding: the oracle must count every lane as
+// indefinite, so Fast drops the d^2J term.
+template <int kBS>
+static void VerifySmithNeoHookeanCorrectOracleNearIncompressible() {
+  SmithNeoHookeanMaterialParams params;
+  params.youngsModulus = 1_r;
+  params.poissonRatio = std::nextafter(0.5_r, 0_r);
+  params.psdStrategy = MaterialPsdStrategy::Fast;
+  auto const batchedParams = BuildBatchParams<kBS>(params);
+  std::array<Matrix3x3r, kBS> Fs{};
+  Fs.fill(std::nextafter(1_r, 0_r) * Eye<3, real>());
+  auto const batchedF = mochi::test::LoadBatchMatrix3x3<kBS>(Fs);
+  NdArray<BatchReal3x3<kBS>, 3, 3> correct MOCHI_NO_INIT;
+  NdArray<BatchReal3x3<kBS>, 3, 3> dropped MOCHI_NO_INIT;
+  BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+      batchedParams, batchedF, nullptr, nullptr, &correct, true, MaterialPsdOracle::Correct);
+  BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+      batchedParams, batchedF, nullptr, nullptr, &dropped, true, MaterialPsdOracle::None);
+  for (int lane = 0; lane < kBS; ++lane) {
+    EXPECT_EQ(GetTangentLane(dropped, lane), GetTangentLane(correct, lane));
+  }
+}
+
+// Checks the Smith neo-Hookean Correct oracle's decisions at rest and near its threshold, for
+// auxetic to nearly incompressible materials, so soft that their squared shear moduli are at most
+// the smallest normal number or so stiff that their fourth powers overflow float, and slightly
+// compressed at the largest Poisson's ratio below 0.5.
 TEST(BatchedMaterials, SmithNeoHookeanCorrectOracleNearThreshold) {
   for (real const youngsModulus : {Sqrt(std::numeric_limits<real>::min()), 1e11_r}) {
-    VerifySmithNeoHookeanCorrectOracleNearThreshold<1>(youngsModulus);
-    VerifySmithNeoHookeanCorrectOracleNearThreshold<4>(youngsModulus);
-    VerifySmithNeoHookeanCorrectOracleNearThreshold<8>(youngsModulus);
+    for (real const poissonRatio : {-0.5_r, 0_r, 0.3_r, 0.45_r, 0.49_r, 0.499_r}) {
+      VerifySmithNeoHookeanCorrectOracleNearThreshold<1>(youngsModulus, poissonRatio);
+      VerifySmithNeoHookeanCorrectOracleNearThreshold<4>(youngsModulus, poissonRatio);
+      VerifySmithNeoHookeanCorrectOracleNearThreshold<8>(youngsModulus, poissonRatio);
+    }
   }
+  VerifySmithNeoHookeanCorrectOracleNearIncompressible<1>();
+  VerifySmithNeoHookeanCorrectOracleNearIncompressible<4>();
+  VerifySmithNeoHookeanCorrectOracleNearIncompressible<8>();
 }
 
 // Runs generic batched checks for Kim neo-Hookean, including rest, rigid-motion, and linear-limit

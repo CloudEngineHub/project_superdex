@@ -61,7 +61,9 @@ enum struct MaterialPsdOracle {
   None,
 
   /**
-   * @brief Evaluate the true indefiniteness condition. Always produces the correct answer.
+   * @brief Evaluate the true indefiniteness condition. Hessians indefinite only by rounding error,
+   * such as those at rest or under rotations, count as positive semidefinite for Poisson's ratios
+   * up to about 0.499.
    */
   Correct,
 
