@@ -144,7 +144,7 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
       // >= 0, and sigma[2] < 0 iff det(F) < 0. Likewise for BatchedRotationVariantSvdVecs3x3.
       V3x3 U MOCHI_NO_INIT, VT MOCHI_NO_INIT;
       if (svdValsDone) {
-        BatchedRotationVariantSvdVecs3x3<kBatchSize>(F, svdNormalEigensystem, U, VT);
+        BatchedRotationVariantSvdVecs3x3<kBatchSize>(F, svdNormalEigensystem, U, sigma, VT);
       } else {
         BatchedRotationVariantSvd3x3<kBatchSize>(F, U, sigma, VT);
       }

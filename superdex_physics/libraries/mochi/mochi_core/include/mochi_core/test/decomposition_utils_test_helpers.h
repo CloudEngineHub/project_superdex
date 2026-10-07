@@ -62,7 +62,7 @@ inline void BatchedRotationVariantSvdValsVecs3x3(
   BatchedRotationVariantSvdVals3x3<kBatchSize>(fm, sigma, normalEigensystem);
 
   BatchReal3x3<kBatchSize> uBatch MOCHI_NO_INIT, vtBatch MOCHI_NO_INIT;
-  BatchedRotationVariantSvdVecs3x3<kBatchSize>(fm, normalEigensystem, uBatch, vtBatch);
+  BatchedRotationVariantSvdVecs3x3<kBatchSize>(fm, normalEigensystem, uBatch, sigma, vtBatch);
 
   StoreBatchReal3<kBatchSize>(sigma, Sg);
   StoreBatchMatrix3x3<kBatchSize>(uBatch, U);
