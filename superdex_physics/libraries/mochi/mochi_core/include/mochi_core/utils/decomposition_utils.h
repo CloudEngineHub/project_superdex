@@ -179,19 +179,6 @@ inline void BatchedAnalyticalEigendecompSym3x3(
     BatchReal3<kBatchSize>& eigvalues,
     BatchReal3x3<kBatchSize>* eigvecs);
 
-/// @brief Cached normalized eigensystem of F^T * F for split batched rotation-variant SVD.
-///
-/// Treat this as an opaque cache. It is only valid for the same F used to populate it with @ref
-/// BatchedRotationVariantSvdVals3x3.
-///
-/// @see BatchedRotationVariantSvdVals3x3
-template <int kBatchSize>
-struct BatchedRotationVariantSvdNormalEigensystem3x3 {
-  BatchSymMatrix3x3<kBatchSize> normalizedGsym;
-  BatchReal3<kBatchSize> normalizedEigvals;
-  BatchReal<kBatchSize> scale;
-};
-
 /// @brief Computes the rotation-variant singular values Sg of F, ordered by descending magnitude
 /// (|Sg[0]| >= |Sg[1]| >= |Sg[2]|). The smallest entry Sg[2] is negated iff det(F) < 0.
 ///
@@ -202,32 +189,6 @@ template <int kBatchSize>
 inline void BatchedRotationVariantSvdVals3x3(
     BatchReal3x3<kBatchSize> const& F,
     BatchReal3<kBatchSize>& Sg);
-
-/// @brief Computes the rotation-variant singular values Sg of F and stores the normalized normal
-/// eigensystem needed by @ref BatchedRotationVariantSvdVecs3x3.
-///
-/// This overload normalizes F^T * F before eigendecomposition and rescales Sg back to F units.
-/// The singular values follow the same ordering, sign convention and accuracy as the 2-argument
-/// overload. Pass normalEigensystem unchanged to @ref BatchedRotationVariantSvdVecs3x3 with the
-/// same F to compute the corresponding singular vectors and refine the singular values.
-template <int kBatchSize>
-inline void BatchedRotationVariantSvdVals3x3(
-    BatchReal3x3<kBatchSize> const& F,
-    BatchReal3<kBatchSize>& Sg,
-    BatchedRotationVariantSvdNormalEigensystem3x3<kBatchSize>& normalEigensystem);
-
-/// @brief Computes rotation-variant singular vectors from a cached normalized normal eigensystem,
-/// and outputs the singular values Sg to the accuracy of @ref BatchedRotationVariantSvd3x3.
-///
-/// @warning normalEigensystem must be produced by the matching @ref
-/// BatchedRotationVariantSvdVals3x3 call for the same F.
-template <int kBatchSize>
-inline void BatchedRotationVariantSvdVecs3x3(
-    BatchReal3x3<kBatchSize> const& F,
-    BatchedRotationVariantSvdNormalEigensystem3x3<kBatchSize> const& normalEigensystem,
-    BatchReal3x3<kBatchSize>& U,
-    BatchReal3<kBatchSize>& Sg,
-    BatchReal3x3<kBatchSize>& VT);
 
 template <int kBatchSize>
 inline void BatchedRotationVariantSvdValsAndVT3x3(

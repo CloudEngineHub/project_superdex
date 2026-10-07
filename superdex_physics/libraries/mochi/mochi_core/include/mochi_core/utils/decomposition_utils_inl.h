@@ -1014,35 +1014,10 @@ template <int kBatchSize>
 inline void BatchedRotationVariantSvdVals3x3(
     BatchReal3x3<kBatchSize> const& F,
     BatchReal3<kBatchSize>& Sg) {
-  BatchedRotationVariantSvdNormalEigensystem3x3<kBatchSize> normalEigensystem MOCHI_NO_INIT;
-  BatchedRotationVariantSvdVals3x3<kBatchSize>(F, Sg, normalEigensystem);
-}
-
-template <int kBatchSize>
-inline void BatchedRotationVariantSvdVals3x3(
-    BatchReal3x3<kBatchSize> const& F,
-    BatchReal3<kBatchSize>& Sg,
-    BatchedRotationVariantSvdNormalEigensystem3x3<kBatchSize>& normalEigensystem) {
   // Form normal matrix 𝐆 = 𝐅ᵀ𝐅, normalize it to improve conditioning, then eigendecompose.
-  normalEigensystem.normalizedGsym = detail::BatchedComputeGsym<kBatchSize>(F);
-  normalEigensystem.scale = detail::NormalizeSym(normalEigensystem.normalizedGsym);
-  normalEigensystem.normalizedEigvals = detail::EigenvalsSym3x3(normalEigensystem.normalizedGsym);
-  Sg = detail::BatchedSingularValues<kBatchSize>(
-      F, normalEigensystem.normalizedEigvals, normalEigensystem.scale);
-}
-
-// WARNING: The left singular vectors U may be inaccurate when the largest singular value is small.
-template <int kBatchSize>
-inline void BatchedRotationVariantSvdVecs3x3(
-    BatchReal3x3<kBatchSize> const& F,
-    BatchedRotationVariantSvdNormalEigensystem3x3<kBatchSize> const& normalEigensystem,
-    BatchReal3x3<kBatchSize>& U,
-    BatchReal3<kBatchSize>& Sg,
-    BatchReal3x3<kBatchSize>& VT) {
-  BatchReal3<kBatchSize> eigvals = normalEigensystem.normalizedEigvals;
-  detail::EigendecompSym3x3FromEigenvals(normalEigensystem.normalizedGsym, eigvals, VT);
-  Sg = detail::BatchedSingularValues<kBatchSize>(F, eigvals, normalEigensystem.scale);
-  detail::BatchedComputeU<kBatchSize>(F, VT, U);
+  BatchSymMatrix3x3<kBatchSize> Gsym = detail::BatchedComputeGsym<kBatchSize>(F);
+  auto const scale = detail::NormalizeSym(Gsym);
+  Sg = detail::BatchedSingularValues<kBatchSize>(F, detail::EigenvalsSym3x3(Gsym), scale);
 }
 
 template <int kBatchSize>

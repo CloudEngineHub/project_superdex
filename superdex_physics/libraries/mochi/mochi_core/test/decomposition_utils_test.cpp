@@ -1089,45 +1089,17 @@ static void TestBatchedSvd3x3() {
     std::array<Real3, kBatchSize> sigma{};
     BatchedRotationVariantSvd3x3<kBatchSize>(
         MakeConstSpan(mats), MakeSpan(U), MakeSpan(sigma), MakeSpan(VT));
-
-    for (int i = 0; i < kBatchSize; ++i) {
-      VerifySvd3x3(mats[i], U[i], sigma[i], VT[i]);
-    }
-  }
-}
-
-MOCHI_BATCH_TEST(DecompositionUtils, BatchedSvd3x3, TestBatchedSvd3x3)
-
-template <int kBatchSize>
-static void TestBatchedSvd3x3ValsVecs() {
-  // TODO: Consider Gram-Schmidt on U's rows and a scale-relative rank threshold in the SVDs, then
-  // enable the kScalings loop.
-  for (int batch = 0; batch < kNumMats3x3; batch += kBatchSize) {
-    std::array<Matrix3x3r, kBatchSize> mats{};
-    for (int i = 0; i < kBatchSize; ++i) {
-      mats[i] = kTestMatrices3x3[(batch + i) % kNumMats3x3];
-    }
-
-    std::array<Matrix3x3r, kBatchSize> U{}, VT{};
-    std::array<Real3, kBatchSize> sigma{};
-    BatchedRotationVariantSvdValsVecs3x3<kBatchSize>(
-        MakeConstSpan(mats), MakeSpan(U), MakeSpan(sigma), MakeSpan(VT));
-
-    for (int i = 0; i < kBatchSize; ++i) {
-      VerifySvd3x3(mats[i], U[i], sigma[i], VT[i]);
-    }
-
-    // Check the 2-argument overload of BatchedRotationVariantSvdVals3x3.
     std::array<Real3, kBatchSize> valsOnly{};
     BatchedRotationVariantSvdVals3x3<kBatchSize>(MakeConstSpan(mats), MakeSpan(valsOnly));
 
     for (int i = 0; i < kBatchSize; ++i) {
+      VerifySvd3x3(mats[i], U[i], sigma[i], VT[i]);
       VerifySvdValsOnly(mats[i], valsOnly[i], sigma[i]);
     }
   }
 }
 
-MOCHI_BATCH_TEST(DecompositionUtils, BatchedSvd3x3_ValsVecs, TestBatchedSvd3x3ValsVecs);
+MOCHI_BATCH_TEST(DecompositionUtils, BatchedSvd3x3, TestBatchedSvd3x3)
 
 template <int kBatchSize>
 static void TestBatchedSvd3x3MixedLane() {
@@ -1136,7 +1108,6 @@ static void TestBatchedSvd3x3MixedLane() {
     mats[i] = kMixedLaneMats3x3[i % kNumMixedLaneMats3x3];
   }
 
-  // Fused path.
   std::array<Matrix3x3r, kBatchSize> U{}, VT{};
   std::array<Real3, kBatchSize> sigma{};
   BatchedRotationVariantSvd3x3<kBatchSize>(
@@ -1144,23 +1115,6 @@ static void TestBatchedSvd3x3MixedLane() {
 
   for (int i = 0; i < kBatchSize; ++i) {
     VerifySvd3x3(mats[i], U[i], sigma[i], VT[i]);
-  }
-
-  // Split vals/vecs path.
-  std::array<Matrix3x3r, kBatchSize> USplit{}, VTSplit{};
-  std::array<Real3, kBatchSize> sigmaSplit{};
-  BatchedRotationVariantSvdValsVecs3x3<kBatchSize>(
-      MakeConstSpan(mats), MakeSpan(USplit), MakeSpan(sigmaSplit), MakeSpan(VTSplit));
-
-  for (int i = 0; i < kBatchSize; ++i) {
-    VerifySvd3x3(mats[i], USplit[i], sigmaSplit[i], VTSplit[i]);
-  }
-
-  // Cross-validate: fused and split paths must produce the same singular values.
-  for (int i = 0; i < kBatchSize; ++i) {
-    for (int k = 0; k < 3; ++k) {
-      EXPECT_NEAR(sigma[i][k], sigmaSplit[i][k], svdRelTol * Abs(sigma[i][k]) + svdRelTol);
-    }
   }
 }
 
