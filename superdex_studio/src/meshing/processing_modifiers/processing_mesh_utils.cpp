@@ -19,7 +19,7 @@
 #include <mochi_core/geometry/model_data.h>
 #include <mochi_core/utils/coordinate_space_converter.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
-#include <mochi_renderer/mesh.h> // BuildMochiModelGeometry
+#include <mochi_renderer/model_geometry.h> // BuildMochiModelGeometry
 #include <mochi_renderer/render_space.h> // RenderSpace
 #include <mochi_renderer/utils.h> // Read*FromFile, Write*ToFile, ConvertMeshSectionsSpace, normals
 

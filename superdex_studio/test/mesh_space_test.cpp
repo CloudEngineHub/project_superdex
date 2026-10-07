@@ -31,6 +31,8 @@
 
 #include "meshing/processing_modifiers/processing_mesh_utils.h"
 
+#include <mochi_core/utils/file_utils.h>
+
 #include <mochi_mesh/step_tessellation.h>
 
 #include <mochi_renderer/utils.h>
@@ -179,14 +181,13 @@ TEST(MeshFileSpace, ObjExportRoundTripsThroughRenderSpace) {
   mochi::MeshData const loaded = LoadRenderMesh(AssetPath("axis_gizmo.obj"), error);
   ASSERT_GT(loaded.GetNumElements(), 0);
 
-  std::filesystem::path const out =
-      std::filesystem::temp_directory_path() / "superdex_axis_gizmo_roundtrip.obj";
+  mochi::TempDirCleanup const folder = mochi::CreateTempDirectory("mesh_space_test", error);
+  std::filesystem::path const out = folder.Path() / "axis_gizmo_roundtrip.obj";
   WriteObjFile(out.string(), loaded, error);
 
   std::vector<MeshSection> const reread = ReadSectionsInRenderSpace(out.string());
   ASSERT_FALSE(reread.empty());
   ExpectBoundsNear(SectionBounds(reread), kGizmoInRenderSpace);
-  std::filesystem::remove(out);
 }
 
 } // namespace
