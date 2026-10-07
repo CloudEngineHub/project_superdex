@@ -1676,7 +1676,8 @@ void ModelEditor::ShowMeshModifierStack() {
   // processing_presets/ next to the studio exe). Selecting a preset loads it (confirmed first when
   // the stack is non-empty). Saving still targets this model's own _intermediates JSON.
   if (ImGui::BeginCombo("##populatepreset", "Select Preset", ImGuiComboFlags_HeightLarge)) {
-    for (ProcessingPreset const& preset : DiscoverProcessingPresets()) {
+    for (ProcessingPreset const& preset :
+         DiscoverProcessingPresets(SuperDexStudio::GetExecutableDir())) {
       if (ImGui::Selectable(preset.name.c_str())) {
         PopulateFromPreset(preset.path);
       }
