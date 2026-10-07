@@ -24,6 +24,7 @@
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/dynamic_string.h>
 #include <mochi_core/utils/span.h>
+
 #include <mochi_physics/mochi_physics.h>
 
 #include <optional>
@@ -410,3 +411,7 @@ MOCHI_API void ExportActor(
 } // namespace mochi::prefab
 
 #include <mochi_physics/utils/mochi_prefab_inl.h>
+
+#if MOCHI_USE_REFLECTION
+#include <mochi_physics/utils/mochi_prefab_reflection.generated.h>
+#endif

@@ -113,8 +113,6 @@ MOCHI_ENUM_ITEM(Yes)
 MOCHI_ENUM_COUNT(Count)
 MOCHI_ENUM_END()
 
-#include <mochi_physics/mochi_physics_experimental.h>
-
 MOCHI_STRUCT_BEGIN_EX(mochi::Handle)
 MOCHI_FIELD(value)
 MOCHI_STRUCT_END_EX()

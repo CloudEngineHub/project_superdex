@@ -810,8 +810,6 @@ MOCHI_API void DestroyBot(Scene* scene, Bot* bot);
 
 } // namespace superdex::robotics
 
-#ifdef MOCHI_USE_REFLECTION
 #if MOCHI_USE_REFLECTION
 #include "utils/superdex_robotics_reflection.generated.h"
-#endif
 #endif

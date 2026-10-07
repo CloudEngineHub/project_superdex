@@ -21,9 +21,9 @@ namespace prefab;
 //
 // @note If prefabs are nested, then only the top-level prefab will use these
 // parameters.
-struct prefab::SceneParams [no_reflection] {
+struct prefab::SceneParams {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Human-readable description of the scene.
   String description;
@@ -54,12 +54,12 @@ struct prefab::SceneParams [no_reflection] {
 //
 // @note The inherited @ref RigidActorParams::name field need not be unique, but a name
 // shared by more than one actor cannot be used by name-based prefab references.
-struct prefab::RigidActorPrefab(RigidActorParams) [no_reflection] {
+struct prefab::RigidActorPrefab(RigidActorParams) [remove_reflection_fields("worldFromLocal")] {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Path to a model file that will be loaded and referenced via @ref ShapeHandle.
-  String shapeFile;
+  String shapeFile [reflection_name("shape")];
 
   // @brief Scale [x, y, z] to bake into the shape file.
   //
@@ -97,7 +97,7 @@ struct prefab::RigidActorPrefab(RigidActorParams) [no_reflection] {
   //
   // @note SuperDex Physics does not use this field for simulation. It provides additional
   // metadata for visualization in supported tools. Ignored if empty.
-  DynamicString renderModelFile;
+  DynamicString renderModelFile [reflection_name("renderModel")];
 
   // @brief Scale [x, y, z] to apply to the render model.
   //
@@ -125,12 +125,12 @@ struct prefab::RigidActorPrefab(RigidActorParams) [no_reflection] {
 // @note When used as a standalone soft actor prefab, the inherited @ref SoftActorParams::name
 // field need not be unique, but a name shared by more than one actor cannot be used by name-based
 // prefab references.
-struct prefab::SoftActorPrefab(SoftActorParams) [no_reflection] {
+struct prefab::SoftActorPrefab(SoftActorParams) [remove_reflection_fields("worldFromLocal")] {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Path to a model file that will be loaded and referenced via @ref ShapeHandle.
-  String shapeFile;
+  String shapeFile [reflection_name("shape")];
 
   // @brief [Experimental] Collision detection geometry.
   //
@@ -155,13 +155,13 @@ struct prefab::SoftActorPrefab(SoftActorParams) [no_reflection] {
   //
   // @warning This is an experimental feature. It may be changed or removed in the future. Use at
   // your own risk.
-  String flowFile;
+  String flowFile [reflection_name("flow")];
 
   // @brief [Experimental] Optional deep flow shape handle loaded from @ref flowFile.
   //
   // @warning This is an experimental feature. It may be changed or removed in the future. Use at
   // your own risk.
-  ShapeHandle flow;
+  ShapeHandle flow [no_reflection];
 
   // @brief [Experimental] Enable automatic recentering of the local coordinate system.
   //
@@ -210,7 +210,7 @@ struct prefab::SoftActorPrefab(SoftActorParams) [no_reflection] {
   //
   // @note SuperDex Physics does not use this field for simulation. It provides additional
   // metadata for visualization in supported tools. Ignored if empty.
-  DynamicString renderModelFile;
+  DynamicString renderModelFile [reflection_name("renderModel")];
 
   // @brief Scale [x, y, z] to apply to the render model.
   //
@@ -229,7 +229,7 @@ struct prefab::SoftActorPrefab(SoftActorParams) [no_reflection] {
 }
 
 // @brief Joint parameters for an articulated actor prefab.
-struct prefab::ArticulatedJointPrefab(ArticulatedJointParams) [equality, no_reflection] {}
+struct prefab::ArticulatedJointPrefab(ArticulatedJointParams) [equality] {}
 
 // @brief Link parameters for an articulated actor prefab.
 //
@@ -238,11 +238,11 @@ struct prefab::ArticulatedJointPrefab(ArticulatedJointParams) [equality, no_refl
 // The shape is loaded at instantiation time). Inherited link local-name requirements apply: names
 // must not contain forward slash, backslash, or embedded NUL characters, and must be unique within
 // the parent articulated actor's nested actor namespace after default-name assignment.
-struct prefab::ArticulatedLinkPrefab(ArticulatedLinkParams) [equality, no_reflection] {
+struct prefab::ArticulatedLinkPrefab(ArticulatedLinkParams) [equality] {
   // @brief Path to a simulation model file defining the geometry of the rigid link actor.
   //
   // @note Leave empty for dummy links.
-  DynamicString shapeFile;
+  DynamicString shapeFile [reflection_name("shape")];
 
   // @brief Scale [x, y, z] to bake into the shape file.
   //
@@ -270,7 +270,7 @@ struct prefab::ArticulatedLinkPrefab(ArticulatedLinkParams) [equality, no_reflec
   //
   // @note SuperDex Physics does not use this field for simulation. It provides additional
   // metadata for visualization in supported tools. Ignored if empty.
-  DynamicString renderModelFile;
+  DynamicString renderModelFile [reflection_name("renderModel")];
 
   // @brief Scale [x, y, z] to apply to the render model.
   //
@@ -293,15 +293,15 @@ struct prefab::ArticulatedLinkPrefab(ArticulatedLinkParams) [equality, no_reflec
 // @details Extends @ref ArticulatedSkinParams. The inherited @ref ArticulatedSkinParams::shape
 // (a runtime @ref ShapeHandle) is replaced by @ref shapeFile (a path serialized to JSON.
 // The shape is loaded at instantiation time).
-struct prefab::ArticulatedSkinPrefab(ArticulatedSkinParams) [equality, no_reflection] {
+struct prefab::ArticulatedSkinPrefab(ArticulatedSkinParams) [equality] {
   // @brief Path to the model file containing a skinned mesh.
-  DynamicString shapeFile;
+  DynamicString shapeFile [reflection_name("shape")];
 
   // @brief Optional path to a render model file (e.g. .glb) for visualization.
   //
   // @note SuperDex Physics does not use this field for simulation. It provides additional
   // metadata for visualization in supported tools. Ignored if empty.
-  DynamicString renderModelFile;
+  DynamicString renderModelFile [reflection_name("renderModel")];
 
   // @brief Scale [x, y, z] to apply to the render model.
   //
@@ -320,9 +320,9 @@ struct prefab::ArticulatedSkinPrefab(ArticulatedSkinParams) [equality, no_reflec
 }
 
 // @brief Prefab parameters for an articulated actor.
-struct prefab::ArticulatedActorPrefab [equality, no_reflection] {
+struct prefab::ArticulatedActorPrefab [equality] {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Optional actor name. Uniqueness is not enforced.
   //
@@ -383,9 +383,9 @@ struct prefab::ArticulatedActorPrefab [equality, no_reflection] {
 //
 // @details A soft-skinned actor consists of an articulated skeleton with one
 // or more attached soft bodies.
-struct prefab::SoftSkinnedActorPrefab [no_reflection] {
+struct prefab::SoftSkinnedActorPrefab {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Articulated actor parameters for the skeleton.
   prefab::ArticulatedActorPrefab skeletonParams;
@@ -429,9 +429,9 @@ struct prefab::SoftSkinnedActorPrefab [no_reflection] {
 }
 
 // @brief Lists of actors grouped by type.
-struct prefab::ActorLists [no_reflection] {
+struct prefab::ActorLists {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Articulated actors.
   DynamicArray<prefab::ArticulatedActorPrefab> articulated;
@@ -454,12 +454,12 @@ struct prefab::ActorLists [no_reflection] {
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::RigidSphericalJointConstraintPrefab(RigidSphericalJointConstraintParams) [no_reflection] {
+struct prefab::RigidSphericalJointConstraintPrefab(RigidSphericalJointConstraintParams) {
   // @brief Name or hierarchy path identifying rigid actor A.
-  String actorNameA;
+  String actorNameA [reflection_name("actorA")];
 
   // @brief Name or hierarchy path identifying rigid actor B.
-  String actorNameB;
+  String actorNameB [reflection_name("actorB")];
 }
 
 // @brief Prefab parameters for a @ref RigidPrismaticJointConstraintParams.
@@ -470,12 +470,12 @@ struct prefab::RigidSphericalJointConstraintPrefab(RigidSphericalJointConstraint
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::RigidPrismaticJointConstraintPrefab(RigidPrismaticJointConstraintParams) [no_reflection] {
+struct prefab::RigidPrismaticJointConstraintPrefab(RigidPrismaticJointConstraintParams) {
   // @brief Name or hierarchy path identifying rigid actor A.
-  String actorNameA;
+  String actorNameA [reflection_name("actorA")];
 
   // @brief Name or hierarchy path identifying rigid actor B.
-  String actorNameB;
+  String actorNameB [reflection_name("actorB")];
 }
 
 // @brief Prefab parameters for a @ref DeformableNodeToDeformableNodeConstraintParams.
@@ -486,12 +486,12 @@ struct prefab::RigidPrismaticJointConstraintPrefab(RigidPrismaticJointConstraint
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::DeformableNodeToDeformableNodeConstraintPrefab(DeformableNodeToDeformableNodeConstraintParams) [no_reflection] {
+struct prefab::DeformableNodeToDeformableNodeConstraintPrefab(DeformableNodeToDeformableNodeConstraintParams) {
   // @brief Name or hierarchy path identifying deformable actor A.
-  String actorNameA;
+  String actorNameA [reflection_name("actorA")];
 
   // @brief Name or hierarchy path identifying deformable actor B.
-  String actorNameB;
+  String actorNameB [reflection_name("actorB")];
 }
 
 // @brief Prefab parameters for a @ref DeformableNodeToRigidConstraintParams.
@@ -502,12 +502,12 @@ struct prefab::DeformableNodeToDeformableNodeConstraintPrefab(DeformableNodeToDe
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::DeformableNodeToRigidConstraintPrefab(DeformableNodeToRigidConstraintParams) [no_reflection] {
+struct prefab::DeformableNodeToRigidConstraintPrefab(DeformableNodeToRigidConstraintParams) {
   // @brief Name or hierarchy path identifying the rigid actor.
-  String rigidActorName;
+  String rigidActorName [reflection_name("rigidActor")];
 
   // @brief Name or hierarchy path identifying the deformable actor.
-  String deformableActorName;
+  String deformableActorName [reflection_name("deformableActor")];
 }
 
 // @brief Prefab parameters for a @ref JointRotationRangeConstraintParams.
@@ -518,12 +518,12 @@ struct prefab::DeformableNodeToRigidConstraintPrefab(DeformableNodeToRigidConstr
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::JointRotationRangeConstraintPrefab(JointRotationRangeConstraintParams) [no_reflection] {
+struct prefab::JointRotationRangeConstraintPrefab(JointRotationRangeConstraintParams) {
   // @brief Name or hierarchy path identifying rigid actor A.
-  String actorNameA;
+  String actorNameA [reflection_name("actorA")];
 
   // @brief Name or hierarchy path identifying rigid actor B.
-  String actorNameB;
+  String actorNameB [reflection_name("actorB")];
 }
 
 // @brief Prefab parameters for a @ref RigidPivotPositionConstraintParams.
@@ -534,9 +534,9 @@ struct prefab::JointRotationRangeConstraintPrefab(JointRotationRangeConstraintPa
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::RigidPivotPositionConstraintPrefab(RigidPivotPositionConstraintParams) [no_reflection] {
+struct prefab::RigidPivotPositionConstraintPrefab(RigidPivotPositionConstraintParams) {
   // @brief Name or hierarchy path identifying the rigid actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref RigidPivotToRigidTargetConstraintParams.
@@ -547,9 +547,9 @@ struct prefab::RigidPivotPositionConstraintPrefab(RigidPivotPositionConstraintPa
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::RigidPivotToRigidTargetConstraintPrefab(RigidPivotToRigidTargetConstraintParams) [no_reflection]{
+struct prefab::RigidPivotToRigidTargetConstraintPrefab(RigidPivotToRigidTargetConstraintParams) {
   // @brief Name or hierarchy path identifying the rigid actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref RigidPivotRotationConstraintParams.
@@ -560,9 +560,9 @@ struct prefab::RigidPivotToRigidTargetConstraintPrefab(RigidPivotToRigidTargetCo
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::RigidPivotRotationConstraintPrefab(RigidPivotRotationConstraintParams) [no_reflection] {
+struct prefab::RigidPivotRotationConstraintPrefab(RigidPivotRotationConstraintParams) {
   // @brief Name or hierarchy path identifying the rigid actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref DeformableNodePositionConstraintParams.
@@ -573,9 +573,9 @@ struct prefab::RigidPivotRotationConstraintPrefab(RigidPivotRotationConstraintPa
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::DeformableNodePositionConstraintPrefab(DeformableNodePositionConstraintParams) [no_reflection] {
+struct prefab::DeformableNodePositionConstraintPrefab(DeformableNodePositionConstraintParams) {
   // @brief Name or hierarchy path identifying the deformable actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref JointRotationTrackingConstraintParams.
@@ -586,12 +586,12 @@ struct prefab::DeformableNodePositionConstraintPrefab(DeformableNodePositionCons
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::JointRotationTrackingConstraintPrefab(JointRotationTrackingConstraintParams) [no_reflection] {
+struct prefab::JointRotationTrackingConstraintPrefab(JointRotationTrackingConstraintParams) {
   // @brief Name or hierarchy path identifying rigid actor A.
-  String actorNameA;
+  String actorNameA [reflection_name("actorA")];
 
   // @brief Name or hierarchy path identifying rigid actor B.
-  String actorNameB;
+  String actorNameB [reflection_name("actorB")];
 }
 
 // @brief Prefab parameters for a @ref ArticulatedSingleDofTargetConstraintParams.
@@ -602,9 +602,9 @@ struct prefab::JointRotationTrackingConstraintPrefab(JointRotationTrackingConstr
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::ArticulatedSingleDofTargetConstraintPrefab(ArticulatedSingleDofTargetConstraintParams) [no_reflection] {
+struct prefab::ArticulatedSingleDofTargetConstraintPrefab(ArticulatedSingleDofTargetConstraintParams) {
   // @brief Name or hierarchy path identifying the articulated actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref Articulated3dRotationTargetConstraintParams.
@@ -615,9 +615,9 @@ struct prefab::ArticulatedSingleDofTargetConstraintPrefab(ArticulatedSingleDofTa
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::Articulated3dRotationTargetConstraintPrefab(Articulated3dRotationTargetConstraintParams) [no_reflection] {
+struct prefab::Articulated3dRotationTargetConstraintPrefab(Articulated3dRotationTargetConstraintParams) {
   // @brief Name or hierarchy path identifying the articulated actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref ArticulatedSingleDofRangeConstraintParams.
@@ -628,9 +628,9 @@ struct prefab::Articulated3dRotationTargetConstraintPrefab(Articulated3dRotation
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::ArticulatedSingleDofRangeConstraintPrefab(ArticulatedSingleDofRangeConstraintParams) [no_reflection] {
+struct prefab::ArticulatedSingleDofRangeConstraintPrefab(ArticulatedSingleDofRangeConstraintParams) {
   // @brief Name or hierarchy path identifying the articulated actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Prefab parameters for a @ref Articulated3dRotationRangeConstraintParams.
@@ -641,15 +641,15 @@ struct prefab::ArticulatedSingleDofRangeConstraintPrefab(ArticulatedSingleDofRan
 // @note A referenced actor name must identify exactly one existing actor. Actor names need not be
 // unique, but referencing a name shared by more than one actor, or a name that matches no actor,
 // is invalid and rejected at @ref AddToScene.
-struct prefab::Articulated3dRotationRangeConstraintPrefab(Articulated3dRotationRangeConstraintParams) [no_reflection] {
+struct prefab::Articulated3dRotationRangeConstraintPrefab(Articulated3dRotationRangeConstraintParams) {
   // @brief Name or hierarchy path identifying the articulated actor.
-  String actorName;
+  String actorName [reflection_name("actor")];
 }
 
 // @brief Lists of constraints grouped by type.
-struct prefab::ConstraintLists [no_reflection] {
+struct prefab::ConstraintLists {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief 3D rotation range constraints on articulated actors.
   DynamicArray<prefab::Articulated3dRotationRangeConstraintPrefab> articulated3dRotationRange;
@@ -695,9 +695,9 @@ struct prefab::ConstraintLists [no_reflection] {
 }
 
 // @brief Prefab parameters for an articulated pose controller.
-struct prefab::PoseControllerPrefab [no_reflection] {
+struct prefab::PoseControllerPrefab {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Name or hierarchy path of the articulated actor to control.
   //
@@ -719,9 +719,9 @@ struct prefab::PoseControllerPrefab [no_reflection] {
 }
 
 // @brief Reference to another prefab (scene or actor) for prefab nesting.
-struct prefab::PrefabReference [no_reflection] {
+struct prefab::PrefabReference {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Name of the nested prefab instance. Used to format the names of nested actors
   // in the form "prefabName/actorName".
@@ -778,13 +778,13 @@ struct prefab::PrefabReference [no_reflection] {
   // @note C++ callers may set this handle and leave @ref PrefabReference::path empty. @ref
   // LoadNestedPrefabs and @ref EnsureFullyLoaded then keep this prefab and load all prefabs nested
   // within it instead of loading this reference from a file.
-  PrefabHandle prefab [no_python];
+  PrefabHandle prefab [no_python, no_reflection];
 }
 
 // @brief Used by @ref ContactFilter to enable or disable contact for a pair of actors.
 //
 // @see Scene::EnableActorContactAsymmetric, Scene::EnableActorContactSymmetric
-struct prefab::ActorContactEntry [equality, no_reflection] {
+struct prefab::ActorContactEntry [equality] {
   // @brief Enable (true) or disable (false) contact for the specified pair of actors.
   //
   // @note Contact is enabled for all actor pairs by default, except that automatic contact
@@ -834,7 +834,7 @@ struct prefab::ActorContactEntry [equality, no_reflection] {
 // @brief Overrides selected contact parameters for an unordered actor pair.
 //
 // @see Scene::SetContactPairParamsOverride, ContactPairParamsOverride
-struct prefab::ContactPairParamsOverrideEntry [equality, no_reflection] {
+struct prefab::ContactPairParamsOverrideEntry [equality] {
   // @brief Identifies two actors by name or hierarchy path.
   //
   // @details If the actor is in this prefab, reference it by name, e.g., "myActor". If the actor
@@ -860,7 +860,7 @@ struct prefab::ContactPairParamsOverrideEntry [equality, no_reflection] {
 // @brief Used by @ref ContactFilter to enable or disable contact for a pair of layers.
 //
 // @see Scene::EnableLayerContactAsymmetric, Scene::EnableLayerContactSymmetric
-struct prefab::LayerContactEntry [equality, no_reflection] {
+struct prefab::LayerContactEntry [equality] {
   // @brief Enable (true) or disable (false) contact for the specified pair of contact layer names.
   //
   // @note Contact is enabled for any pair of layers by default. Therefore, you should usually
@@ -917,9 +917,9 @@ struct prefab::LayerContactEntry [equality, no_reflection] {
 //
 // @see ActorContactEntry, Scene::EnableActorContactAsymmetric, Scene::EnableActorContactSymmetric,
 // LayerContactEntry, Scene::EnableLayerContactAsymmetric, Scene::EnableLayerContactSymmetric
-struct prefab::ContactFilter [equality, no_reflection] {
+struct prefab::ContactFilter [equality] {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Enables or disables contact asymmetrically for each ordered pair of actors.
   //
@@ -943,9 +943,9 @@ struct prefab::ContactFilter [equality, no_reflection] {
 }
 
 // @brief Top-level prefab describing a complete or partial physics scene (possibly just one actor).
-struct prefab::ScenePrefab [no_reflection] {
+struct prefab::ScenePrefab {
   // @brief Optional serialized comment.
-  Optional<String> comment;
+  Optional<String> comment [reflection_name("_comment")];
 
   // @brief Lists of actors by type.
   prefab::ActorLists actors [no_serialize_defaults];
@@ -971,8 +971,9 @@ struct prefab::ScenePrefab [no_reflection] {
   // In that case, "./"-prefixed paths fall back to resolution against the root path supplied when
   // the paths are resolved.
   // @note Runtime state, never serialized.
-  Optional<String> sourceFilePath [no_python];
+  Optional<String> sourceFilePath [no_python, no_reflection];
 
+  # No [no_serialize_defaults]: the entries' enable flags are always serialized.
   // @brief Contact filter settings for selective contact filtering.
   Optional<prefab::ContactFilter> contactFilter;
 

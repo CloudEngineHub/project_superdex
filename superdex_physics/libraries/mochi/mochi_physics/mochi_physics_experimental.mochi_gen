@@ -114,7 +114,7 @@ struct experimental::SpatialTendonParams [no_reflection] {
   DynamicArray<RoutingElement> routingElements;
 }
 
-struct experimental::DisplacementControlActuatorParams [no_reflection] {
+struct experimental::DisplacementControlActuatorParams {
   real targetDisplacement [no_serialize_defaults] = 0;
   real stiffness [no_serialize_defaults] = 1e9;
   real damping [no_serialize_defaults] = 0;
@@ -389,7 +389,7 @@ struct experimental::ExperimentalSoftSkinnedActorParams [no_reflection] {
   DynamicArray<experimental::ExperimentalSoftActorParams> softParams;
 }
 
-struct experimental::RodMaterialParams [no_reflection] {
+struct experimental::RodMaterialParams {
   real linearDensity [units("kg/m")] = 1e-1;
   real linearRotationalInertia [units("kg*m")] = 1e-6;
   real axialStiffness [units("N")] = 1e2;
@@ -399,7 +399,7 @@ struct experimental::RodMaterialParams [no_reflection] {
   real stiffnessDampingCoefficient [units("s")] = 0;
 }
 
-struct experimental::PointCloudColliderParams [no_reflection] {
+struct experimental::PointCloudColliderParams {
   real radius [units("m")] = 0.01;
   real selfContactExclusionRatio = 1.5;
   real spatialHashLoadFactor = 0.0625;
@@ -409,7 +409,7 @@ struct experimental::PointCloudColliderParams [no_reflection] {
 }
 
 // @brief Parameters for creating an experimental rod actor.
-struct experimental::RodActorParams [no_reflection] {
+struct experimental::RodActorParams {
 
   // @brief Actor name.
   String name;
@@ -433,7 +433,7 @@ struct experimental::RodActorParams [no_reflection] {
   // unsupported.
   // @note Setting @ref useContactSkin to true requires @ref ModelData::contactSkinMesh and its
   // skinning data.
-  ShapeHandle shape;
+  ShapeHandle shape [no_reflection];  # REFLECTION TODO: shape handles do not serialize yet.
 
   // @brief Contact properties for interactions with volume actors.
   ContactParams contact;
@@ -473,7 +473,7 @@ fn experimental::CreateRodActor(Scene* scene, experimental::RodActorParams const
 
 fn experimental::GenerateTubularRodModelData(Span<Real3 const> nodes [units("m")], Span<Real3 const> elementFrameAxes, real radius [units("m")], int numCrossSectionSegments, bool isClosedLoop) -> ModelData [mochi_error, no_capi];
 
-struct experimental::ShellMaterialParams [no_reflection] {
+struct experimental::ShellMaterialParams {
   real membraneLambda [units("Pa*m")] = 300;
   real membraneMu [units("Pa*m")] = 400;
   real bendingAlpha [units("Pa*m^3")] = 0.00002;
@@ -484,7 +484,7 @@ struct experimental::ShellMaterialParams [no_reflection] {
 }
 
 // @brief Parameters for creating an experimental shell actor.
-struct experimental::ShellActorParams [no_reflection] {
+struct experimental::ShellActorParams {
 
   // @brief Actor name.
   String name;
@@ -496,7 +496,7 @@ struct experimental::ShellActorParams [no_reflection] {
   TransformRT worldFromLocal;
 
   // @brief Shape handle defining the shell geometry.
-  ShapeHandle shape;
+  ShapeHandle shape [no_reflection];  # REFLECTION TODO: shape handles do not serialize yet.
 
   // @brief Shell material properties.
   experimental::ShellMaterialParams material;

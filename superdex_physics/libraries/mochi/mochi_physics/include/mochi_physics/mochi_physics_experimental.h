@@ -482,18 +482,6 @@ struct ShellMaterialParams {
   real massDampingCoefficient = 0_r; // [1/s]
   // Stiffness-proportional damping coefficient.
   real stiffnessDampingCoefficient = 0_r; // [s]
-
-  // clang-format off
-  MOCHI_STRUCT_BEGIN(mochi::experimental::ShellMaterialParams)
-  MOCHI_FIELD(membraneLambda) MOCHI_ATTRIBUTE(Units("Pa*m"))
-  MOCHI_FIELD(membraneMu) MOCHI_ATTRIBUTE(Units("Pa*m"))
-  MOCHI_FIELD(bendingAlpha) MOCHI_ATTRIBUTE(Units("Pa*m^3"))
-  MOCHI_FIELD(bendingBeta) MOCHI_ATTRIBUTE(Units("Pa*m^3"))
-  MOCHI_FIELD(density) MOCHI_ATTRIBUTE(Units("kg/m^2"))
-  MOCHI_FIELD(massDampingCoefficient) MOCHI_ATTRIBUTE(Units("1/s"))
-  MOCHI_FIELD(stiffnessDampingCoefficient) MOCHI_ATTRIBUTE(Units("s"))
-  MOCHI_STRUCT_END()
-  // clang-format on
 };
 
 struct PointCloudColliderParams {
@@ -565,17 +553,6 @@ struct PointCloudColliderParams {
 #if MOCHI_LANGUAGE_CPP20
   bool operator==(PointCloudColliderParams const&) const = default;
 #endif
-
-  // clang-format off
-  MOCHI_STRUCT_BEGIN(mochi::experimental::PointCloudColliderParams)
-  MOCHI_FIELD(radius) MOCHI_ATTRIBUTE(Units("m"))
-  MOCHI_FIELD(selfContactExclusionRatio)
-  MOCHI_FIELD(spatialHashLoadFactor)
-  MOCHI_FIELD(selfContact)
-  MOCHI_FIELD(colliderTriangleElementType)
-  MOCHI_FIELD(colliderSegmentElementType)
-  MOCHI_STRUCT_END()
-  // clang-format on
 };
 
 // Parameters for creating a shell actor.
@@ -591,20 +568,6 @@ struct ShellActorParams {
   bool hasGravity = true;
   ActorBoundaryElementType contactElementType = ActorBoundaryElementType::Default;
   bool useContactSkin = false;
-
-  MOCHI_STRUCT_BEGIN(mochi::experimental::ShellActorParams)
-  MOCHI_FIELD(name)
-  MOCHI_FIELD(layer)
-  MOCHI_FIELD(worldFromLocal)
-  // MOCHI_FIELD(shape) // REFLECTION TODO
-  MOCHI_FIELD(material)
-  MOCHI_FIELD(colliderType)
-  MOCHI_FIELD(contact)
-  MOCHI_FIELD(pointCloudCollider)
-  MOCHI_FIELD(hasGravity)
-  MOCHI_FIELD(contactElementType)
-  MOCHI_FIELD(useContactSkin)
-  MOCHI_STRUCT_END()
 };
 
 struct RodMaterialParams {
@@ -640,18 +603,6 @@ struct RodMaterialParams {
 #if MOCHI_LANGUAGE_CPP20
   bool operator==(RodMaterialParams const&) const = default;
 #endif
-
-  // clang-format off
-  MOCHI_STRUCT_BEGIN(mochi::experimental::RodMaterialParams)
-  MOCHI_FIELD(linearDensity) MOCHI_ATTRIBUTE(Units("kg/m"))
-  MOCHI_FIELD(linearRotationalInertia) MOCHI_ATTRIBUTE(Units("kg*m"))
-  MOCHI_FIELD(axialStiffness) MOCHI_ATTRIBUTE(Units("N"))
-  MOCHI_FIELD(torsionalStiffness) MOCHI_ATTRIBUTE(Units("N*m^2"))
-  MOCHI_FIELD(flexuralStiffness) MOCHI_ATTRIBUTE(Units("N*m^2"))
-  MOCHI_FIELD(massDampingCoefficient) MOCHI_ATTRIBUTE(Units("1/s"))
-  MOCHI_FIELD(stiffnessDampingCoefficient) MOCHI_ATTRIBUTE(Units("s"))
-  MOCHI_STRUCT_END()
-  // clang-format on
 };
 
 struct RodActorParams {
@@ -667,21 +618,6 @@ struct RodActorParams {
   bool hasGravity = true;
   bool useContactSkin = false;
   ActorBoundaryElementType contactSkinElementType = ActorBoundaryElementType::Default;
-
-  MOCHI_STRUCT_BEGIN(mochi::experimental::RodActorParams)
-  MOCHI_FIELD(name)
-  MOCHI_FIELD(layer)
-  MOCHI_FIELD(worldFromLocal)
-  // MOCHI_FIELD(shape) // REFLECTION TODO
-  MOCHI_FIELD(contact)
-  MOCHI_FIELD(contactElementType)
-  MOCHI_FIELD(material)
-  MOCHI_FIELD(colliderType)
-  MOCHI_FIELD(pointCloudCollider)
-  MOCHI_FIELD(hasGravity)
-  MOCHI_FIELD(useContactSkin)
-  MOCHI_FIELD(contactSkinElementType)
-  MOCHI_STRUCT_END()
 };
 
 enum class ControlType {
@@ -748,13 +684,6 @@ struct DisplacementControlActuatorParams {
 #if MOCHI_LANGUAGE_CPP20
   bool operator==(DisplacementControlActuatorParams const&) const = default;
 #endif
-
-  MOCHI_STRUCT_BEGIN(mochi::experimental::DisplacementControlActuatorParams)
-  MOCHI_FIELD(targetDisplacement) MOCHI_ATTRIBUTE(NoSerializeDefaults);
-  MOCHI_FIELD(stiffness) MOCHI_ATTRIBUTE(NoSerializeDefaults);
-  MOCHI_FIELD(damping) MOCHI_ATTRIBUTE(NoSerializeDefaults);
-  MOCHI_FIELD(allowCompressiveForce) MOCHI_ATTRIBUTE(NoSerializeDefaults);
-  MOCHI_STRUCT_END()
 };
 struct ForceControlActuatorParams {
   // Initial value of the applied generalized force (state variable)
@@ -1604,3 +1533,7 @@ struct DebugStats {
 [[nodiscard]] MOCHI_API DebugStats GetDebugStats(Scene const* scene, Error& error);
 
 } // namespace mochi::experimental
+
+#if MOCHI_USE_REFLECTION
+#include <mochi_physics/utils/mochi_physics_experimental_reflection.generated.h>
+#endif
