@@ -21,7 +21,11 @@
 
 #include "meshing/processing_modifiers/processing_modifier.h"
 
+#include <mochi_core/geometry/mesh_data.h>
+#include <mochi_core/utils/error.h>
+
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,5 +68,46 @@ void RefreshAutoExportPaths(ModifierStack& stack, std::string const& sourceFileP
 // so the fix is to turn Auto off on one of them. Compares resolved paths, so hand-picked duplicates
 // are caught as well.
 [[nodiscard]] std::vector<bool> FindCollidingExportPaths(ModifierStack const& stack);
+
+// One pass down a generation chain (see BuildGenerationChain), stage by stage: each stage runs on
+// the output of the position before it, and an export stage writes that same input to its file.
+// Positions that are not regenerated keep the output they started with. The steps must run in chain
+// order, one at a time; the stack must outlive this object and stay unchanged while it runs.
+class StackRun {
+ public:
+  // @p currentOutput returns a modifier's current output by stack index. It seeds every chain
+  // position and serves the edge-flip references that are not part of @p chain.
+  StackRun(
+      ModifierStack const& stack,
+      std::vector<std::size_t> chain,
+      ModifierRunContext ctx,
+      std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentOutput);
+
+  // Regenerates chain position @p p. A failure (an error, or no triangles) clears the position's
+  // output, so the next stage receives no input and fails as well, and returns false.
+  bool Generate(std::size_t p, mochi::Error& error);
+  // Writes the input of the export stage at chain position @p p to its file. Returns false on
+  // error.
+  bool Export(std::size_t p, mochi::Error& error) const;
+
+  [[nodiscard]] mochi::MeshData const& Output(std::size_t p) const {
+    return _outputs[p];
+  }
+
+ private:
+  // Where an edge-flip stage's reference comes from: a position in the chain, else a mesh captured
+  // up front because the referenced modifier is not in the chain.
+  struct Reference {
+    int chainPos = -1;
+    mochi::MeshData currentMesh;
+  };
+
+  [[nodiscard]] mochi::MeshData const& Input(std::size_t p) const;
+
+  std::vector<MeshProcessingModifier const*> _modifiers; // by chain position
+  std::vector<mochi::MeshData> _outputs; // by chain position
+  std::vector<Reference> _references; // by chain position
+  ModifierRunContext _ctx;
+};
 
 } // namespace superdex::studio

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <string_view>
+#include <utility>
 
 namespace superdex::studio {
 
@@ -137,6 +138,65 @@ std::vector<bool> FindCollidingExportPaths(ModifierStack const& stack) {
     }
   }
   return collides;
+}
+
+StackRun::StackRun(
+    ModifierStack const& stack,
+    std::vector<std::size_t> chain,
+    ModifierRunContext ctx,
+    std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentOutput)
+    : _ctx(std::move(ctx)) {
+  std::size_t const n = chain.size();
+  _modifiers.reserve(n);
+  _outputs.reserve(n);
+  _references.resize(n);
+  for (std::size_t p = 0; p < n; ++p) {
+    _modifiers.push_back(stack[chain[p]].get());
+    _outputs.push_back(currentOutput(chain[p]));
+    if (!_modifiers[p]->NeedsReferenceMesh()) {
+      continue;
+    }
+    int const refModIdx = ReferenceModifierIndex(stack, chain[p]);
+    Reference& ref = _references[p];
+    for (std::size_t q = 0; q < n; ++q) {
+      if (static_cast<int>(chain[q]) == refModIdx) {
+        ref.chainPos = static_cast<int>(q);
+        break;
+      }
+    }
+    if (ref.chainPos < 0 && refModIdx >= 0) {
+      ref.currentMesh = currentOutput(static_cast<std::size_t>(refModIdx));
+    }
+  }
+}
+
+bool StackRun::Generate(std::size_t p, mochi::Error& error) {
+  MeshProcessingModifier const& modifier = *_modifiers[p];
+  ModifierRunContext runCtx = _ctx;
+  if (modifier.NeedsReferenceMesh()) {
+    Reference const& ref = _references[p];
+    runCtx.referenceMesh =
+        ref.chainPos >= 0 ? _outputs[static_cast<std::size_t>(ref.chainPos)] : ref.currentMesh;
+  }
+  mochi::MeshData out = modifier.Run(Input(p), runCtx, error);
+  if (!error.IsOK() || out.GetNumElements() == 0) {
+    // Leave no output, so the next stage receives an empty input and stops too (see
+    // MeshProcessingModifier::Run) instead of running on this stage's stale mesh.
+    _outputs[p] = mochi::MeshData{};
+    return false;
+  }
+  _outputs[p] = std::move(out);
+  return true;
+}
+
+bool StackRun::Export(std::size_t p, mochi::Error& error) const {
+  _modifiers[p]->SaveToFile(Input(p), error);
+  return error.IsOK();
+}
+
+mochi::MeshData const& StackRun::Input(std::size_t p) const {
+  static mochi::MeshData const kNoInput;
+  return p > 0 ? _outputs[p - 1] : kNoInput;
 }
 
 } // namespace superdex::studio

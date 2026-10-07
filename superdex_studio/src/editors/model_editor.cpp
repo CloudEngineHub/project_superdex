@@ -2170,44 +2170,11 @@ void ModelEditor::RunGenerationCascade(
     std::vector<std::size_t> const& exportChainPositions) {
   std::size_t const n = chain.size();
 
-  // Per-chain-position output mesh, shared with the serial tasks + onComplete. Pre-fill with each
-  // stage's cached output so skipped stages (and off-chain references) resolve immediately; a regen
-  // task overwrites its own slot before the next (serial) stage reads it as input.
-  auto results = std::make_shared<std::vector<mochi::MeshData>>(n);
-  for (std::size_t p = 0; p < n; ++p) {
-    (*results)[p] = SectionsToMeshData(_modifiers[chain[p]]->output.sections);
-  }
-  auto mods = std::make_shared<std::vector<MeshProcessingModifier const*>>();
-  mods->reserve(n);
-  for (std::size_t p = 0; p < n; ++p) {
-    mods->push_back(_modifiers[chain[p]].get());
-  }
-
-  // Reference resolution for edge-swap stages: the reference's position in this chain, or a
-  // captured cached mesh when the reference is not part of the chain.
-  struct RefInfo {
-    int chainPos = -1;
-    mochi::MeshData cachedMesh;
-  };
-  auto refInfos = std::make_shared<std::vector<RefInfo>>(n);
-  for (std::size_t p = 0; p < n; ++p) {
-    if (!_modifiers[chain[p]]->NeedsReferenceMesh()) {
-      continue;
-    }
-    int const refModIdx = ReferenceModifierIndex(_modifiers, chain[p]);
-    RefInfo info;
-    for (std::size_t q = 0; q < n; ++q) {
-      if (static_cast<int>(chain[q]) == refModIdx) {
-        info.chainPos = static_cast<int>(q);
-        break;
-      }
-    }
-    if (info.chainPos < 0 && refModIdx >= 0) {
-      info.cachedMesh =
-          SectionsToMeshData(_modifiers[static_cast<std::size_t>(refModIdx)]->output.sections);
-    }
-    (*refInfos)[p] = std::move(info);
-  }
+  // Shared with the serial tasks and onComplete. Stages that are not regenerated, and edge-flip
+  // references outside the chain, resolve to the modifiers' current output.
+  auto run = std::make_shared<StackRun>(_modifiers, chain, ctx, [this](std::size_t index) {
+    return SectionsToMeshData(_modifiers[index]->output.sections);
+  });
 
   // One pass in chain order, each stage's export queued directly after the stage itself rather than
   // in a block at the end. Two things need that: a later source reads back the file an earlier
@@ -2215,60 +2182,28 @@ void ModelEditor::RunGenerationCascade(
   // down still leaves the exports above it written.
   std::vector<AsyncTask> tasks;
   for (std::size_t p = 0; p < n; ++p) {
-    MeshProcessingModifier const* const modifier = (*mods)[p];
-    // regen[p] false: up to date, its cached output is already in results[p].
+    char const* const name = _modifiers[chain[p]]->DisplayName();
+    // regen[p] false: up to date, its current output is already in the run.
     if (regen[p]) {
       tasks.push_back(
-          AsyncTask{
-              std::string("Generate ") + modifier->DisplayName(),
-              [modifier, p, ctx, results, refInfos](AsyncCancelToken const& cancel) {
-                if (cancel.IsCancelRequested()) {
-                  return false;
-                }
-                ModifierRunContext runCtx = ctx;
-                if (modifier->NeedsReferenceMesh()) {
-                  RefInfo const& ref = (*refInfos)[p];
-                  runCtx.referenceMesh = ref.chainPos >= 0
-                      ? (*results)[static_cast<std::size_t>(ref.chainPos)]
-                      : ref.cachedMesh;
-                }
-                mochi::MeshData input;
-                if (p > 0) {
-                  input = (*results)[p - 1];
-                }
-                mochi::ErrorLog error;
-                mochi::MeshData out = modifier->Run(input, runCtx, error);
-                if (!error.IsOK() || out.GetNumElements() == 0) {
-                  // Invalidate this stage's output so the next (serial) stage receives an empty
-                  // input and stops too (see MeshProcessingModifier::Run), propagating the failure
-                  // instead of running downstream stages on this stage's stale cached mesh. The
-                  // committed display buffer is left untouched by onComplete (empty result -> keep
-                  // prior buffer).
-                  (*results)[p] = mochi::MeshData{};
-                  return false;
-                }
-                (*results)[p] = std::move(out);
-                return true;
-              }});
+          AsyncTask{std::string("Generate ") + name, [run, p](AsyncCancelToken const& cancel) {
+                      if (cancel.IsCancelRequested()) {
+                        return false;
+                      }
+                      // A failed stage leaves no output; onComplete then keeps its prior buffer.
+                      mochi::ErrorLog error;
+                      return run->Generate(p, error);
+                    }});
     }
-    // Each export modifier writes its INPUT mesh -- the upstream chain output, results[p-1] -- to
-    // its configured file.
     if (mochi::Contains(exportChainPositions, p)) {
       tasks.push_back(
-          AsyncTask{
-              std::string("Export ") + modifier->DisplayName(),
-              [modifier, p, results](AsyncCancelToken const& cancel) {
-                if (cancel.IsCancelRequested()) {
-                  return false;
-                }
-                mochi::MeshData input;
-                if (p > 0) {
-                  input = (*results)[p - 1];
-                }
-                mochi::ErrorLog error;
-                modifier->SaveToFile(input, error);
-                return error.IsOK();
-              }});
+          AsyncTask{std::string("Export ") + name, [run, p](AsyncCancelToken const& cancel) {
+                      if (cancel.IsCancelRequested()) {
+                        return false;
+                      }
+                      mochi::ErrorLog error;
+                      return run->Export(p, error);
+                    }});
     }
   }
 
@@ -2280,13 +2215,13 @@ void ModelEditor::RunGenerationCascade(
   bool const started = _studio->BeginAsyncTasks(
       "Generating",
       std::move(tasks),
-      [this, results, chain, regen, ctx, hadExports](bool allSucceeded) {
+      [this, run, chain, regen, ctx, hadExports](bool allSucceeded) {
         std::size_t const m = chain.size();
         for (std::size_t p = 0; p < m; ++p) {
           if (!regen[p]) {
             continue;
           }
-          if ((*results)[p].GetNumElements() == 0) {
+          if (run->Output(p).GetNumElements() == 0) {
             continue; // failed/cancelled: keep the prior buffer + generation id
           }
           std::size_t const s = chain[p];
@@ -2294,7 +2229,7 @@ void ModelEditor::RunGenerationCascade(
           // A source built from a file, not from the stage above it (which a mid-chain source has),
           // so it has no input mesh to record or measure against.
           bool const isSource = mod.Kind() == ModifierKind::Source;
-          mod.output.sections = {MeshDataToSection((*results)[p])};
+          mod.output.sections = {MeshDataToSection(run->Output(p))};
           mod.outputGenId = _nextGenerationId++;
           mod.inputGenIdAtLastGen =
               (!isSource && p > 0) ? _modifiers[chain[p - 1]]->outputGenId : 0;
@@ -2311,8 +2246,8 @@ void ModelEditor::RunGenerationCascade(
             mochi::Real3 const outColor = StageRoleColor(mod, kOutputSdfColorRole);
             RebuildStageMeshes(mod.output, outColor);
             mod.inputView.sections.clear();
-            if (p > 0 && (*results)[p - 1].GetNumElements() > 0) {
-              mod.inputView.sections = {MeshDataToSection((*results)[p - 1])};
+            if (p > 0 && run->Output(p - 1).GetNumElements() > 0) {
+              mod.inputView.sections = {MeshDataToSection(run->Output(p - 1))};
             }
             mochi::Real3 const inColor = StageRoleColor(mod, kInputMeshColorRole);
             RebuildStageMeshes(mod.inputView, inColor);
@@ -2322,7 +2257,7 @@ void ModelEditor::RunGenerationCascade(
           }
           // Default a method stage's file-size line to a GLB estimate of its output mesh; an export
           // modifier's AnnotateStats overrides this with its real export-format estimate below.
-          mod.output.stats.fileSizeBytes = processing::EstimateGlbSizeBytes((*results)[p]);
+          mod.output.stats.fileSizeBytes = processing::EstimateGlbSizeBytes(run->Output(p));
           mod.output.stats.fileSizeLabel = "Est. File Size";
           // Let the modifier contribute output-specific stats (e.g. the baked SDF grid), then
           // recomposite the display string around the base summary RebuildStageMeshes set.
@@ -2338,8 +2273,8 @@ void ModelEditor::RunGenerationCascade(
           }
           // Kick off the hidden input<->output Hausdorff for this stage (a source has no input);
           // it updates the stats and recomposites when it returns.
-          if (p > 0 && !isSource && (*results)[p - 1].GetNumElements() > 0) {
-            KickoffModifierHausdorff(mod, (*results)[p - 1], (*results)[p]);
+          if (p > 0 && !isSource && run->Output(p - 1).GetNumElements() > 0) {
+            KickoffModifierHausdorff(mod, run->Output(p - 1), run->Output(p));
           }
         }
         if (!allSucceeded) {

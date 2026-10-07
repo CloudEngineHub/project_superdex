@@ -22,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -31,14 +32,27 @@ using namespace superdex::studio;
 
 namespace {
 
-// A method that passes its input through and reports whatever reference and export path it was
-// given. Its Auto export path is the source path plus ".out".
+using RunFunction = std::function<mochi::MeshData(
+    mochi::MeshData const& input,
+    ModifierRunContext const& ctx,
+    mochi::Error& error)>;
+
+struct ModifierSpec {
+  ModifierKind kind = ModifierKind::Transform;
+  bool enabled = true;
+  int referenceIndex = MeshProcessingMethod::kReferencePrecedingSource;
+  bool needsReference = false;
+  std::string exportPath;
+  bool autoExportPath = false;
+  std::string sourcePath; // the file a source reads; the context's CAD model when empty
+  RunFunction run; // passes the input through when empty
+  std::vector<mochi::MeshData>* saved = nullptr; // receives each SaveToFile input
+};
+
+// A method that does whatever its spec says. Its Auto export path is the source path plus ".out".
 class TestMethod : public MeshProcessingMethod {
  public:
-  TestMethod(int referenceIndex, std::string exportPath, bool autoExportPath)
-      : _referenceIndex(referenceIndex),
-        _exportPath(std::move(exportPath)),
-        _autoExportPath(autoExportPath) {}
+  explicit TestMethod(ModifierSpec spec) : _spec(std::move(spec)) {}
 
   [[nodiscard]] char const* Name() const override {
     return "Test";
@@ -46,58 +60,100 @@ class TestMethod : public MeshProcessingMethod {
   void ShowParams(ModifierGuiContext const& /*gui*/) override {}
   mochi::MeshData Run(
       mochi::MeshData const& input,
-      ModifierRunContext const& /*ctx*/,
-      mochi::Error& /*error*/) const override {
-    return input;
+      ModifierRunContext const& ctx,
+      mochi::Error& error) const override {
+    return _spec.run ? _spec.run(input, ctx, error) : input;
   }
   void SerializeProps(picojson::value& /*out*/) const override {}
   void DeserializeProps(picojson::value const& /*in*/) override {}
   [[nodiscard]] std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
     return {};
   }
+  [[nodiscard]] bool NeedsReferenceMesh() const override {
+    return _spec.needsReference;
+  }
   [[nodiscard]] int ReferenceIndex() const override {
-    return _referenceIndex;
+    return _spec.referenceIndex;
   }
   [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& ctx) const override {
-    return ctx.cadFilePath;
+    return _spec.sourcePath.empty() ? ctx.cadFilePath : _spec.sourcePath;
   }
   [[nodiscard]] bool ProvidesFileExport() const override {
-    return _autoExportPath || !_exportPath.empty();
+    return _spec.autoExportPath || !_spec.exportPath.empty();
   }
   [[nodiscard]] std::string ExportPath() const override {
-    return _exportPath;
+    return _spec.exportPath;
+  }
+  void SaveToFile(mochi::MeshData const& input, mochi::Error& /*error*/) const override {
+    _spec.saved->push_back(input);
   }
   void RefreshAutoExportPath(std::string const& sourceFilePath) override {
-    if (_autoExportPath) {
-      _exportPath = sourceFilePath + ".out";
+    if (_spec.autoExportPath) {
+      _spec.exportPath = sourceFilePath + ".out";
     }
   }
 
  private:
-  int _referenceIndex;
-  std::string _exportPath;
-  bool _autoExportPath;
-};
-
-struct ModifierSpec {
-  ModifierKind kind = ModifierKind::Transform;
-  bool enabled = true;
-  int referenceIndex = MeshProcessingMethod::kReferencePrecedingSource;
-  std::string exportPath;
-  bool autoExportPath = false;
+  ModifierSpec _spec;
 };
 
 ModifierStack MakeStack(std::vector<ModifierSpec> const& specs) {
   ModifierStack stack;
   for (ModifierSpec const& spec : specs) {
     std::vector<std::unique_ptr<MeshProcessingMethod>> methods;
-    methods.push_back(
-        std::make_unique<TestMethod>(spec.referenceIndex, spec.exportPath, spec.autoExportPath));
+    methods.push_back(std::make_unique<TestMethod>(spec));
     auto modifier = std::make_unique<MeshProcessingModifier>("Test", spec.kind, std::move(methods));
     modifier->enabled = spec.enabled;
     stack.push_back(std::move(modifier));
   }
   return stack;
+}
+
+// A single triangle whose coordinates all equal @p value, so a mesh's history can be read back
+// from its first coordinate.
+mochi::MeshData Triangle(mochi::real value) {
+  mochi::MeshData mesh;
+  mesh.nodesPerElement = 3;
+  for (int i = 0; i < 9; ++i) {
+    mesh.coordinates.push_back(value);
+  }
+  for (int i = 0; i < 3; ++i) {
+    mesh.connectivity.push_back(i);
+  }
+  return mesh;
+}
+
+RunFunction ProduceTriangle(mochi::real value) {
+  return [value](
+             mochi::MeshData const& /*input*/,
+             ModifierRunContext const& /*ctx*/,
+             mochi::Error& /*error*/) { return Triangle(value); };
+}
+
+mochi::MeshData
+AddOne(mochi::MeshData const& input, ModifierRunContext const& /*ctx*/, mochi::Error& /*error*/) {
+  mochi::MeshData out = input;
+  for (mochi::real& coordinate : out.coordinates) {
+    coordinate += 1;
+  }
+  return out;
+}
+
+mochi::MeshData
+Fail(mochi::MeshData const& /*input*/, ModifierRunContext const& /*ctx*/, mochi::Error& error) {
+  MOCHI_ERROR_SET(error, "test failure");
+  return {};
+}
+
+mochi::MeshData ReturnReference(
+    mochi::MeshData const& /*input*/,
+    ModifierRunContext const& ctx,
+    mochi::Error& /*error*/) {
+  return ctx.referenceMesh;
+}
+
+mochi::MeshData NoCurrentOutput(std::size_t /*modifierIndex*/) {
+  return {};
 }
 
 constexpr ModifierKind kSource = ModifierKind::Source;
@@ -161,6 +217,13 @@ TEST(ProcessingStackTest, SourceFilePathComesFromTheFirstModifier) {
   EXPECT_EQ(StackSourceFilePath(MakeStack({}), ctx), "");
   EXPECT_EQ(
       StackSourceFilePath(MakeStack({{.kind = kSource}, {.kind = kExport}}), ctx), ctx.cadFilePath);
+  EXPECT_EQ(
+      StackSourceFilePath(
+          MakeStack(
+              {{.kind = kSource, .sourcePath = "first.step"},
+               {.kind = kSource, .sourcePath = "second.step"}}),
+          ctx),
+      "first.step");
 }
 
 TEST(ProcessingStackTest, RefreshAutoExportPathsUpdatesOnlyAutoExports) {
@@ -185,4 +248,81 @@ TEST(ProcessingStackTest, CollidingExportPathsCompareNormalizedPathsOfEnabledExp
 
   std::vector<bool> const expected{false, true, true, false, false};
   EXPECT_EQ(FindCollidingExportPaths(stack), expected);
+}
+
+TEST(ProcessingStackTest, StackRunFeedsEachStageThePreviousOutput) {
+  std::vector<mochi::MeshData> saved;
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTriangle(1)},
+       {.kind = kTransform, .run = AddOne},
+       {.kind = kExport, .exportPath = "out.glb", .saved = &saved}});
+  StackRun run(stack, {0, 1, 2}, {}, NoCurrentOutput);
+
+  mochi::Error error;
+  EXPECT_TRUE(run.Generate(0, error));
+  EXPECT_TRUE(run.Generate(1, error));
+  EXPECT_TRUE(run.Generate(2, error));
+  EXPECT_TRUE(run.Export(2, error));
+
+  EXPECT_EQ(run.Output(2).coordinates[0], 2);
+  ASSERT_EQ(saved.size(), 1u);
+  EXPECT_EQ(saved[0].coordinates[0], 2);
+}
+
+TEST(ProcessingStackTest, StackRunFailureLeavesNothingForTheStagesBelow) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTriangle(1)},
+       {.kind = kTransform, .run = Fail},
+       {.kind = kTransform, .run = AddOne}});
+  StackRun run(stack, {0, 1, 2}, {}, [](std::size_t index) {
+    return Triangle(static_cast<mochi::real>(10 * index));
+  });
+
+  mochi::Error sourceError;
+  mochi::Error failError;
+  mochi::Error belowError;
+  EXPECT_TRUE(run.Generate(0, sourceError));
+  EXPECT_FALSE(run.Generate(1, failError));
+  EXPECT_FALSE(run.Generate(2, belowError));
+
+  EXPECT_FALSE(failError.IsOK());
+  EXPECT_FALSE(belowError.IsOK());
+  EXPECT_EQ(run.Output(1).GetNumElements(), 0);
+  EXPECT_EQ(run.Output(2).GetNumElements(), 0);
+}
+
+TEST(ProcessingStackTest, StackRunPassesOnTheCurrentOutputOfStagesItSkips) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTriangle(1)},
+       {.kind = kTransform, .run = AddOne},
+       {.kind = kTransform, .run = AddOne}});
+  StackRun run(stack, {0, 1, 2}, {}, [](std::size_t index) {
+    return Triangle(static_cast<mochi::real>(10 * index));
+  });
+
+  mochi::Error error;
+  EXPECT_TRUE(run.Generate(2, error));
+
+  EXPECT_EQ(run.Output(2).coordinates[0], 11);
+}
+
+TEST(ProcessingStackTest, StackRunResolvesReferencesInsideAndOutsideTheChain) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTriangle(1)},
+       {.kind = kSource, .run = ProduceTriangle(2)},
+       {.kind = kTransform, .referenceIndex = 0, .needsReference = true, .run = ReturnReference},
+       {.kind = kTransform, .needsReference = true, .run = ReturnReference}});
+  // The chain starts at the nearest source, index 1, so the explicit reference to index 0 is
+  // outside it while the preceding-source reference of index 3 is inside it.
+  StackRun run(stack, BuildGenerationChain(stack, 3), {}, [](std::size_t index) {
+    return Triangle(static_cast<mochi::real>(10 * index));
+  });
+
+  mochi::Error error;
+  EXPECT_TRUE(run.Generate(0, error));
+  EXPECT_TRUE(run.Generate(1, error));
+  EXPECT_TRUE(run.Generate(2, error));
+
+  EXPECT_EQ(run.Output(1).coordinates[0], 0); // modifier 0's current output
+  EXPECT_EQ(run.Output(2).coordinates[0], 2); // the chain's own source output
 }
