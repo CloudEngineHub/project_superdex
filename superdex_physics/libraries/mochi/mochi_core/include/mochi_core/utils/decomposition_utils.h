@@ -81,18 +81,9 @@ inline void AnalyticalEigendecompSym3x3(
 
 inline void RotationVariantSvdVals(Matrix3x3r const& F, Real3& Sg);
 
-// Computes U and VT from the Sg that RotationVariantSvdVals returned for the same F, and refines Sg
-// to the accuracy of RotationVariantSvd.
-inline void RotationVariantSvdVecs(Matrix3x3r const& F, Real3& Sg, Matrix3x3r& U, Matrix3x3r& VT);
-
 inline void RotationVariantSvd(Matrix3x3r const& F, Matrix3x3r& U, Real3& Sg, Matrix3x3r& VT);
 
 inline void RotationVariantSvdVals3x3(VMatrix3x3r const& F, Vec4r& Sg);
-
-// Computes U and VT from the Sg that RotationVariantSvdVals3x3 returned for the same F, and refines
-// Sg to the accuracy of RotationVariantSvd3x3.
-inline void
-RotationVariantSvdVecs3x3(VMatrix3x3r const& F, Vec4r& Sg, VMatrix3x3r& U, VMatrix3x3r& VT);
 
 inline void RotationVariantSvd3x3(
     NdArray<Vec4r, 3> const& F,

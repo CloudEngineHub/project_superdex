@@ -470,8 +470,8 @@ VerifySvd3x3(Matrix3x3r const& mat, Matrix3x3r const& U, Real3 const& sigma, Mat
   }
 }
 
-// Verify values-only singular values against the refined ones, sigma. Without singular vectors,
-// their squares, the eigenvalues of FᵀF, are accurate only to O(√ε‖F‖²).
+// Verify values-only singular values against the SVD's sigma. Without singular vectors, their
+// squares, the eigenvalues of FᵀF, are accurate only to O(√ε‖F‖²).
 static void VerifySvdValsOnly(Matrix3x3r const& mat, Real3 const& valsOnly, Real3 const& sigma) {
   EXPECT_NEAR_TOL(
       valsOnly * Abs(valsOnly), sigma * Abs(sigma), clusteredValsOnlyRelTol * NormSqr(mat));
@@ -592,17 +592,19 @@ TEST(DecompositionUtils, EigendecompSym_TransposeFlag) {
 }
 
 /**************************************************************************************************
-  SVD: Fused
+  SVD
 */
 
 TEST(DecompositionUtils, RotationVariantSvd3x3_Scalar) {
   // TODO: Consider a scale-relative rank threshold in the scalar SVD, then enable the kScalings
   // loop.
   for (auto const& mat : kTestMatrices3x3) {
-    Real3 sigma;
+    Real3 sigma, valsOnly;
     Matrix3x3r U, VT;
     RotationVariantSvd(mat, U, sigma, VT);
+    RotationVariantSvdVals(mat, valsOnly);
     VerifySvd3x3(mat, U, sigma, VT);
+    VerifySvdValsOnly(mat, valsOnly, sigma);
   }
 }
 
@@ -610,45 +612,11 @@ TEST(DecompositionUtils, RotationVariantSvd3x3_SIMD) {
   // TODO: Consider Gram-Schmidt on U's rows and a scale-relative rank threshold in the SVDs, then
   // enable the kScalings loop.
   for (auto const& mat : kTestMatrices3x3) {
-    Vec4r sigma;
-    VMatrix3x3r U, VT;
-    RotationVariantSvd3x3(ToSimdMatrix(mat), U, sigma, VT);
-    VerifySvd3x3(mat, ToNdArray3x3(U), ToReal3(sigma), ToNdArray3x3(VT));
-  }
-}
-
-/**************************************************************************************************
-  SVD: Split Vals/Vecs
-*/
-
-TEST(DecompositionUtils, RotationVariantSvd3x3_SplitValsVecs_Scalar) {
-  // TODO: Consider a scale-relative rank threshold in the scalar SVD, then enable the kScalings
-  // loop.
-  for (auto const& mat : kTestMatrices3x3) {
-    Real3 valsOnly;
-    RotationVariantSvdVals(mat, valsOnly);
-
-    Real3 sigma = valsOnly;
-    Matrix3x3r U, VT;
-    RotationVariantSvdVecs(mat, sigma, U, VT);
-
-    VerifySvd3x3(mat, U, sigma, VT);
-    VerifySvdValsOnly(mat, valsOnly, sigma);
-  }
-}
-
-TEST(DecompositionUtils, RotationVariantSvd3x3_SplitValsVecs_SIMD) {
-  // TODO: Consider Gram-Schmidt on U's rows and a scale-relative rank threshold in the SVDs, then
-  // enable the kScalings loop.
-  for (auto const& mat : kTestMatrices3x3) {
     VMatrix3x3r const F = ToSimdMatrix(mat);
-    Vec4r valsOnly;
-    RotationVariantSvdVals3x3(F, valsOnly);
-
-    Vec4r sigma = valsOnly;
+    Vec4r sigma, valsOnly;
     VMatrix3x3r U, VT;
-    RotationVariantSvdVecs3x3(F, sigma, U, VT);
-
+    RotationVariantSvd3x3(F, U, sigma, VT);
+    RotationVariantSvdVals3x3(F, valsOnly);
     VerifySvd3x3(mat, ToNdArray3x3(U), ToReal3(sigma), ToNdArray3x3(VT));
     VerifySvdValsOnly(mat, ToReal3(valsOnly), ToReal3(sigma));
   }

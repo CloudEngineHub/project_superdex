@@ -327,18 +327,6 @@ EigendecompSym3x3(NdArray<V, 6> const& sym, NdArray<V, 3>& eigvals, NdArray<V, 3
   EigendecompSym3x3(sym, q + signedTwoP * cosSep, signedTwoP < V{0_r}, eigvals, eigvecs);
 }
 
-// EigendecompSym3x3 from eigenvalues of `sym` in descending order, such as EigenvalsSym3x3's, of
-// which it only uses the one farthest from the other two. Overwrites them with refined eigenvalues.
-template <typename V>
-MOCHI_FORCE_INLINE void EigendecompSym3x3FromEigenvals(
-    NdArray<V, 6> const& sym,
-    NdArray<V, 3>& eigvals,
-    NdArray<V, 3, 3>& eigvecs) {
-  auto const sepIsSmallest = (eigvals[0] - eigvals[1]) < (eigvals[1] - eigvals[2]);
-  EigendecompSym3x3(
-      sym, Select(sepIsSmallest, eigvals[2], eigvals[0]), sepIsSmallest, eigvals, eigvecs);
-}
-
 // The scalar and SIMD solvers' conversion and diagonal fast path, on matrices that need not be
 // normalized.
 [[nodiscard]] MOCHI_FORCE_INLINE Real6 ToSym6(Matrix3x3r const& mat) {
@@ -526,53 +514,6 @@ inline void RotationVariantSvdVals(Matrix3x3r const& F, Real3& Sg) {
 
 // WARNING: Results may be inaccurate if the matrix entries are several orders of magnitude above or
 // below 1.
-inline void RotationVariantSvdVecs(Matrix3x3r const& F, Real3& Sg, Matrix3x3r& U, Matrix3x3r& VT) {
-  Real6 Gsym = detail::ToSym6(Dot(Transpose(F), F));
-  real const scale = detail::NormalizeSym(Gsym);
-  Real3 eigvals = Sg * Sg / scale;
-  detail::EigendecompSym3x3FromEigenvals(Gsym, eigvals, VT);
-  for (int i = 0; i < 3; ++i) {
-    Sg[i] = std::sqrt(std::max(0.0_r, eigvals[i] * scale));
-  }
-  if (Det(F) < 0.0_r) {
-    Sg[2] = -Sg[2];
-  }
-
-  // Compute singular vectors 𝐔=𝐅𝐕𝚺⁻¹
-
-  // Compute first row of UT
-  U[0] = DotMatVec(F, VT[0]);
-  real u0norm = Norm(U[0]);
-  if (u0norm < std::numeric_limits<real>::epsilon())
-    MOCHI_UNLIKELY {
-      U[0] = Real3{1.0_r, 0.0_r, 0.0_r};
-    }
-  else {
-    U[0] /= u0norm;
-  }
-
-  // Compute second row of UT. For a rank-deficient F, rounding in VT[1] leaves a component along
-  // U[0] that the test below would mistake for a nonzero singular value.
-  U[1] = DotMatVec(F, VT[1]);
-  U[1] -= Dot(U[0], U[1]) * U[0];
-  real u1norm = Norm(U[1]);
-  if (u1norm < std::numeric_limits<real>::epsilon())
-    MOCHI_UNLIKELY {
-      U[1] = Normalize(OrthogonalVector(U[0]));
-    }
-  else {
-    U[1] /= u1norm;
-  }
-
-  // Compute third row of UT
-  U[2] = Cross(U[0], U[1]);
-
-  // Transpose to return U
-  U = Transpose(U);
-}
-
-// WARNING: Results may be inaccurate if the matrix entries are several orders of magnitude above or
-// below 1.
 inline void RotationVariantSvd(Matrix3x3r const& F, Matrix3x3r& U, Real3& Sg, Matrix3x3r& VT) {
   // Form normal matrix 𝐆 = 𝐅ᵀ𝐅. Perform eigendecomposition of 𝐆.
   Real3 eigvalues;
@@ -648,57 +589,6 @@ inline void RotationVariantSvdVals3x3(VMatrix3x3r const& F, Vec4r& Sg) {
   if (Det3x3(F) < 0_r) {
     Sg = Neg<0, 0, 1, 0>(Sg); // Negate flagged entries
   }
-}
-
-// WARNING: Results may be inaccurate if the matrix entries are several orders of magnitude above or
-// below 1.
-inline void
-RotationVariantSvdVecs3x3(VMatrix3x3r const& F, Vec4r& Sg, VMatrix3x3r& U, VMatrix3x3r& VT) {
-  // Compute F^T * F
-  VMatrix3x3r FT = Transpose3x3(F);
-  Real6 Gsym = detail::ToSym6(SimdFullToSym(Dot3x3(FT, F)));
-  real const scale = detail::NormalizeSym(Gsym);
-  Real3 eigvals = ToReal3(Sg * Sg) / scale;
-  Matrix3x3r vt MOCHI_NO_INIT;
-  detail::EigendecompSym3x3FromEigenvals(Gsym, eigvals, vt);
-  Sg = Sqrt(Max(ToSimd(eigvals * scale), Vec4r{0_r}));
-  if (Det3x3(F) < 0_r) {
-    Sg = Neg<0, 0, 1, 0>(Sg);
-  }
-  VT = ToSimdMatrix(vt);
-
-  // Compute singular vectors 𝐔=𝐅𝐕𝚺⁻¹.
-  real constexpr kEpsilon = std::numeric_limits<real>::epsilon();
-
-  // Compute first row of UT
-  U[0] = DotVecMat3x3(VT[0], FT); // Faster than DotMatVec3x3
-  real const u0normSqr = NormSqr<3>(U[0]);
-  if (u0normSqr > kEpsilon)
-    MOCHI_LIKELY {
-      U[0] = Normalize(U[0], u0normSqr);
-    }
-  else
-    MOCHI_UNLIKELY {
-      U[0] = SimdBasisVector<0>();
-    }
-
-  // Compute second row of UT
-  U[1] = DotVecMat3x3(VT[1], FT); // Faster than DotMatVec3x3
-  real const u1normSqr = NormSqr<3>(U[1]);
-  if (u1normSqr > kEpsilon)
-    MOCHI_LIKELY {
-      U[1] = Normalize(U[1], u1normSqr);
-    }
-  else
-    MOCHI_UNLIKELY {
-      U[1] = Normalize<3>(OrthogonalVector3(U[0]));
-    }
-
-  // Compute third row of UT
-  U[2] = Cross3(U[0], U[1]);
-
-  // Transpose to return U
-  U = Transpose3x3(U);
 }
 
 // WARNING: Results may be inaccurate if the matrix entries are several orders of magnitude above or
