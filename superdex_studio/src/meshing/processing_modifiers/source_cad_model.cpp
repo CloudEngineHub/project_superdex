@@ -20,6 +20,8 @@
 
 #include <imgui.h>
 
+#include <picojson/picojson.h>
+
 #include <mochi_core/utils/dynamic_string.h>
 
 #include <mochi_mesh/step_mesh_body.h> // MeshStepBody (CAD Mesher path)
@@ -41,10 +43,10 @@ enum class CadEdgeSampling { Uniform, Adaptive };
 
 // Enum reflection specializes the global SReflectTypeTraits template, so it must be declared at
 // global scope (the fully-qualified names refer back into superdex::studio).
-MOCHI_ENUM_BEGIN(superdex::studio::CadTessellationBackend)
-MOCHI_ENUM_ITEM(Isotropic)
-MOCHI_ENUM_ITEM(Delabella)
-MOCHI_ENUM_END()
+MOCHI_ENUM_BEGIN(superdex::studio::CadTessellationBackend);
+MOCHI_ENUM_ITEM(Isotropic) MOCHI_ATTRIBUTE(PreviouslyKnownAs("CadMesher"));
+MOCHI_ENUM_ITEM(Delabella);
+MOCHI_ENUM_END();
 
 MOCHI_ENUM_BEGIN(superdex::studio::CadEdgeSampling)
 MOCHI_ENUM_ITEM(Uniform)
@@ -93,6 +95,15 @@ struct CadFileSourceProps {
 
 bool IsStlPath(std::string const& path) {
   return processing::EndsWithNoCase(path, ".stl");
+}
+
+// Pipelines saved before combineTouchingSolids replaced `bodySelection` still carry it. Its only
+// value, 0 for all bodies, combined touching solids as combineTouchingSolids does by default, so
+// it is dropped rather than read as an unknown field.
+void DropRetiredStepFields(picojson::value& step) {
+  if (step.is<picojson::object>()) {
+    step.get<picojson::object>().erase("bodySelection");
+  }
 }
 
 // Produces the source mesh from a CAD file: an STL is read directly as a triangle mesh; a STEP is
@@ -227,6 +238,11 @@ class CadFromViewerMethod : public ReflectedMethod<CadStepToMeshProps> {
     }
     return sig;
   }
+  void DeserializeProps(picojson::value const& in) override {
+    picojson::value props = in;
+    DropRetiredStepFields(props);
+    ReflectedMethod::DeserializeProps(props);
+  }
 
   void ShowParams(ModifierGuiContext const& gui) override {
     ImGui::TextUnformatted("Uses the editor's current CAD Model as the source.");
@@ -275,6 +291,16 @@ class CadFromFileMethod : public ReflectedMethod<CadFileSourceProps> {
   }
   std::vector<std::string_view> PathPropKeys() const override {
     return {"path"};
+  }
+  void DeserializeProps(picojson::value const& in) override {
+    picojson::value props = in;
+    if (props.is<picojson::object>()) {
+      auto const step = props.get<picojson::object>().find("step");
+      if (step != props.get<picojson::object>().end()) {
+        DropRetiredStepFields(step->second);
+      }
+    }
+    ReflectedMethod::DeserializeProps(props);
   }
   void ShowParams(ModifierGuiContext const& gui) override {
     if (!gui.modelSlot) {
