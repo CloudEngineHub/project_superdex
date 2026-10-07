@@ -26,6 +26,7 @@
 #include "mochi_discretization_functions.h"
 #include "mochi_group.h"
 #include "mochi_island.h"
+#include "mochi_linear_contact_skin.h"
 #include "mochi_pose_controller.h"
 #include "mochi_query.h"
 #include "mochi_rigid.h"
@@ -46,6 +47,7 @@ using namespace mochi;
 // Update CBoundingVolume for actor types whose local bounds can change.
 template <typename Invoke>
 static void ForEachCurrentBoundsUpdateSystem(Invoke&& invoke) {
+  invoke(&linear_contact_skin::UpdateBounds<TimeStep::Current>);
   invoke(&soft::UpdateBounds<TimeStep::Current>);
   invoke(&articulated::compound::UpdateBounds<TimeStep::Current>);
   invoke(&shell::UpdateBounds<TimeStep::Current>);

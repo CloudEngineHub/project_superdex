@@ -309,7 +309,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
   ;
 
   registry.GetClass<mochi::SoftActorParams>()
-    .def("__init__", [](mochi::SoftActorParams* self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object contact, nb::object has_gravity, nb::object has_inertia, nb::object has_stress, nb::object boundary_element_type) {
+    .def("__init__", [](mochi::SoftActorParams* self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object contact, nb::object has_gravity, nb::object has_inertia, nb::object has_stress, nb::object use_contact_skin, nb::object boundary_element_type) {
       mochi::SoftActorParams result{};
       result.name = nb::cast<mochi::DynamicString>(name);
       result.layer = nb::cast<mochi::DynamicString>(layer);
@@ -320,6 +320,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       result.hasGravity = nb::cast<bool>(has_gravity);
       result.hasInertia = nb::cast<bool>(has_inertia);
       result.hasStress = nb::cast<bool>(has_stress);
+      result.useContactSkin = nb::cast<bool>(use_contact_skin);
       result.boundaryElementType = nb::cast<mochi::ActorBoundaryElementType>(boundary_element_type);
       new (self) mochi::SoftActorParams(std::move(result));
     }
@@ -333,6 +334,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("has_gravity") = mochi::SoftActorParams{}.hasGravity
       , nb::arg("has_inertia") = mochi::SoftActorParams{}.hasInertia
       , nb::arg("has_stress") = mochi::SoftActorParams{}.hasStress
+      , nb::arg("use_contact_skin") = mochi::SoftActorParams{}.useContactSkin
       , nb::arg("boundary_element_type") = mochi::SoftActorParams{}.boundaryElementType
     )
     .def(nb::init<>())
@@ -349,7 +351,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def_rw("has_gravity", &mochi::SoftActorParams::hasGravity, "If true, actor is affected by gravity.\n\nNote:\n    Unless the soft actor is part of a soft-skinned actor\n    (:attr:`~superdex.physics.SoftSkinnedActorParams.soft_params`), at least one\n    of :attr:`~superdex.physics.SoftActorParams.has_gravity`,\n    :attr:`~superdex.physics.SoftActorParams.has_inertia` or\n    :attr:`~superdex.physics.SoftActorParams.has_stress` must be enabled.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.set_gravity`")
     .def_rw("has_inertia", &mochi::SoftActorParams::hasInertia, "If true, actor is affected by inertial forces.\n\nNote:\n    Disable for quasi-static simulations.\n\nNote:\n    Unless the soft actor is part of a soft-skinned actor\n    (:attr:`~superdex.physics.SoftSkinnedActorParams.soft_params`), at least one\n    of :attr:`~superdex.physics.SoftActorParams.has_gravity`,\n    :attr:`~superdex.physics.SoftActorParams.has_inertia` or\n    :attr:`~superdex.physics.SoftActorParams.has_stress` must be enabled.")
     .def_rw("has_stress", &mochi::SoftActorParams::hasStress, "If true, actor is affected by internal stress/strain forces.\n\nNote:\n    Unless the soft actor is part of a soft-skinned actor\n    (:attr:`~superdex.physics.SoftSkinnedActorParams.soft_params`), at least one\n    of :attr:`~superdex.physics.SoftActorParams.has_gravity`,\n    :attr:`~superdex.physics.SoftActorParams.has_inertia` or\n    :attr:`~superdex.physics.SoftActorParams.has_stress` must be enabled.")
-    .def_rw("boundary_element_type", &mochi::SoftActorParams::boundaryElementType, "Finite element type for boundary discretization.\n\nNote:\n    Affects accuracy and performance of contact and boundary integrals.\n\nSee Also:\n    :class:`~superdex.physics.ActorBoundaryElementType`")
+    .def_rw("use_contact_skin", &mochi::SoftActorParams::useContactSkin, "[Experimental] Use the shape's authored contact skin for colliding contact\nsamples.\n\nThe contact skin must be triangular and have node-based linear skinning data.\nThe tetrahedral boundary remains the collider geometry when an SDF or Deep Flow\ncollider is enabled. This option is not supported for ROM or nested soft actors.\n\nNote:\n    A contact skin with linear skinning data is exposed through\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh` and\n    :class:`CONTACT_SKIN_NODE_POSITIONS <superdex.physics.QueryType>` /\n    :class:`CONTACT_SKIN_NODE_NORMALS <superdex.physics.QueryType>`\n    independently of this flag.\n\nWarning:\n    This is an experimental feature. It may be changed or removed in the future.\n    Use at your own risk.")
+    .def_rw("boundary_element_type", &mochi::SoftActorParams::boundaryElementType, "Finite element type for contact discretization.\n\nNote:\n    Selects quadrature on the tetrahedral boundary, or on the authored contact\n    skin when :attr:`~superdex.physics.SoftActorParams.use_contact_skin` is\n    true.\n\nSee Also:\n    :class:`~superdex.physics.ActorBoundaryElementType`")
   ;
 
   registry.GetClass<mochi::ArticulatedJointParams>()
@@ -1106,7 +1109,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def_prop_rw("point_velocity_b", [](mochi::ContactPoint& self) -> mochi::Real3& { return self.pointVelocityB; }, [](mochi::ContactPoint& self, nb::object val) { self.pointVelocityB = nb::cast<mochi::Real3>(val); }, "Velocity [m/s] of the contact point on\n:attr:`~superdex.physics.ContactPoint.actor_b` in world frame.")
     .def_rw("sample_index", &mochi::ContactPoint::sampleIndex, "Sample point index of :attr:`~superdex.physics.ContactPoint.actor_a`.")
     .def_rw("int_weight", &mochi::ContactPoint::intWeight, "Quadrature integration weight of the sample point on the colliding manifold of\n:attr:`~superdex.physics.ContactPoint.actor_a`.\n\nNote:\n    Units depend on the dimensionality of the colliding manifold of\n    :attr:`~superdex.physics.ContactPoint.actor_a`: [m²] for surface contact\n    (e.g., rigid, articulated, soft, shell, and rod actors using contact-skin\n    contact), or [m] for rod actors using centerline contact.\n\nNote:\n    For surface contact, represents the surface area corresponding to the sample\n    point. For rod centerline contact, represents the arc length.\n\nNote:\n    Useful for contact area/length estimation and other post-processing.\n\nNote:\n    :attr:`~superdex.physics.ContactPoint.force` is already weighted by this\n    value.")
-    .def_rw("element_index", &mochi::ContactPoint::elementIndex, "Element index in the mesh used for colliding samples on\n:attr:`~superdex.physics.ContactPoint.actor_a`.\n\nNote:\n    For shell actors, this is the physics mesh returned by\n    :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is\n    enabled, in which case it is the compact contact skin returned by\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.\n\nNote:\n    For rod actors, this field is not populated and is reported as 0. Use\n    :attr:`~superdex.physics.ContactPoint.sample_index` to identify the contact\n    location.")
+    .def_rw("element_index", &mochi::ContactPoint::elementIndex, "Element index in the mesh used for colliding samples on\n:attr:`~superdex.physics.ContactPoint.actor_a`.\n\nNote:\n    For shell actors, this is the physics mesh returned by\n    :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is\n    enabled, in which case it is the compact contact skin returned by\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.\n\nNote:\n    For soft actors, this indexes the triangles of\n    :meth:`~superdex.physics.Actor.get_surface_mesh` unless contact-skin contact\n    is enabled, in which case it is the compact contact skin returned by\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.\n\nNote:\n    For rod actors, this field is not populated and is reported as 0. Use\n    :attr:`~superdex.physics.ContactPoint.sample_index` to identify the contact\n    location.")
     .def_prop_rw("parametric_coords", [](mochi::ContactPoint& self) -> mochi::Real3& { return self.parametricCoords; }, [](mochi::ContactPoint& self, nb::object val) { self.parametricCoords = nb::cast<mochi::Real3>(val); }, "Parametric coordinates within the surface element of\n:attr:`~superdex.physics.ContactPoint.actor_a`.\n\nNote:\n    Corresponds to finite-element basis function values at the contact sample\n    quadrature point.\n\nNote:\n    For linear finite elements, these match barycentric coordinates.\n\nNote:\n    Allows interpolation of functions defined on triangle vertices.\n\nNote:\n    For rod actors, this field is not populated and is reported as {0, 0, 0}.\n    Use :attr:`~superdex.physics.ContactPoint.sample_index` to identify the\n    contact location.")
   ;
 
@@ -1124,7 +1127,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def(nb::init<>())
     .def("__copy__", [](mochi::NodeContactForce const& self) { return mochi::NodeContactForce(self); })
     .def("__deepcopy__", [](mochi::NodeContactForce const& self, nb::dict) { return mochi::NodeContactForce(self); })
-    .def_rw("index", &mochi::NodeContactForce::index, "Node index in the volumetric mesh or the mesh used for colliding samples.\n\nNote:\n    For shell actors, this is the physics mesh returned by\n    :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is\n    enabled, in which case it is the compact contact skin returned by\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.")
+    .def_rw("index", &mochi::NodeContactForce::index, "Node index in the volumetric mesh or the mesh used for colliding samples.\n\nNote:\n    For soft and shell actors, this is the physics mesh returned by\n    :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is\n    enabled, in which case it is the compact contact skin returned by\n    :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.")
     .def_prop_rw("force", [](mochi::NodeContactForce& self) -> mochi::Real3& { return self.force; }, [](mochi::NodeContactForce& self, nb::object val) { self.force = nb::cast<mochi::Real3>(val); }, "Contact force [N] applied to the node.")
   ;
 

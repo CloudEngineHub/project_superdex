@@ -1097,6 +1097,7 @@ class SoftActorPrefab(mochi_physics.SoftActorParams):
         has_gravity: bool = ...,
         has_inertia: bool = ...,
         has_stress: bool = ...,
+        use_contact_skin: bool = ...,
         boundary_element_type: mochi_physics.ActorBoundaryElementType | int = ...,
         comment: Optional[str] = ...,
         shape_file: str = ...,

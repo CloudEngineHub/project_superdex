@@ -443,9 +443,9 @@ class Actor [no_init, no_destruct, use_scene] {
   // @brief Get a view of the actor's reference contact skin mesh.
   //
   // @details Returns the @ref ModelData::contactSkinMesh of the actor's shape, regardless of
-  // whether the actor selected it as its collision representation. Only shell and rod actors whose
-  // shape's contact skin has skinning data expose it. Other actors return an empty view. For shell
-  // actors, the mesh includes the linear contact-skin skinning data.
+  // whether the actor selected it as its collision representation. Only deformable actors whose
+  // shape's contact skin has skinning data expose it. Other actors return an empty view. For
+  // soft and shell actors, the mesh includes the linear contact-skin skinning data.
   //
   // @return A non-owning view of the actor's reference contact skin mesh, or an empty view if the
   // actor has no contact skin.

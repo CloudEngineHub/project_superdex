@@ -1987,14 +1987,14 @@
 ///
 /// @brief Positions of contact skin mesh nodes. Available via @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "Actor::GetContactSkinMeshNodePositionsLocal".
 ///
-/// @note Only supported for shell and rod actors whose shape has a contact skin with skinning data, regardless of `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
+/// @note Only supported for deformable actors whose shape has a contact skin with skinning data, regardless of @ref mochi::SoftActorParams::useContactSkin "SoftActorParams::useContactSkin" / `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
 ///
 
 /// @var mochi::QueryType::ContactSkinNodeNormals
 ///
 /// @brief Normals of contact skin mesh nodes. Available via @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "Actor::GetContactSkinMeshNodeNormalsLocal".
 ///
-/// @note Only supported for shell and rod actors whose shape has a contact skin with skinning data, regardless of `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
+/// @note Only supported for deformable actors whose shape has a contact skin with skinning data, regardless of @ref mochi::SoftActorParams::useContactSkin "SoftActorParams::useContactSkin" / `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
 ///
 
 /// @var mochi::QueryType::ContactPoints
@@ -2564,11 +2564,22 @@
 /// @note Unless the soft actor is part of a soft-skinned actor (@ref mochi::SoftSkinnedActorParams::softParams "SoftSkinnedActorParams::softParams"), at least one of @ref mochi::SoftActorParams::hasGravity "hasGravity", @ref mochi::SoftActorParams::hasInertia "hasInertia" or @ref mochi::SoftActorParams::hasStress "hasStress" must be enabled.
 ///
 
+/// @var mochi::SoftActorParams::useContactSkin
+///
+/// @brief [Experimental] Use the shape's authored contact skin for colliding contact samples.
+///
+/// @details The contact skin must be triangular and have node-based linear skinning data. The tetrahedral boundary remains the collider geometry when an SDF or Deep Flow collider is enabled. This option is not supported for ROM or nested soft actors.
+///
+/// @note A contact skin with linear skinning data is exposed through @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" and @ref mochi::QueryType::ContactSkinNodePositions "QueryType::ContactSkinNodePositions" / @ref mochi::QueryType::ContactSkinNodeNormals "QueryType::ContactSkinNodeNormals" independently of this flag.
+///
+/// @warning This is an experimental feature. It may be changed or removed in the future. Use at your own risk.
+///
+
 /// @var mochi::SoftActorParams::boundaryElementType
 ///
-/// @brief Finite element type for boundary discretization.
+/// @brief Finite element type for contact discretization.
 ///
-/// @note Affects accuracy and performance of contact and boundary integrals.
+/// @note Selects quadrature on the tetrahedral boundary, or on the authored contact skin when @ref mochi::SoftActorParams::useContactSkin "useContactSkin" is true.
 ///
 /// @see @ref mochi::ActorBoundaryElementType "ActorBoundaryElementType"
 ///
@@ -3599,6 +3610,7 @@
 /// @brief Element index in the mesh used for colliding samples on @ref mochi::ContactPoint::actorA "actorA".
 ///
 /// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
+/// @note For soft actors, this indexes the triangles of @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
 /// @note For rod actors, this field is not populated and is reported as 0. Use @ref mochi::ContactPoint::sampleIndex "sampleIndex" to identify the contact location.
 ///
 
@@ -3625,7 +3637,7 @@
 ///
 /// @brief Node index in the volumetric mesh or the mesh used for colliding samples.
 ///
-/// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
+/// @note For soft and shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
 ///
 
 /// @var mochi::NodeContactForce::force
@@ -5292,7 +5304,7 @@
 ///
 /// @brief Get a view of the actor's reference contact skin mesh.
 ///
-/// @details Returns the @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh" of the actor's shape, regardless of whether the actor selected it as its collision representation. Only shell and rod actors whose shape's contact skin has skinning data expose it. Other actors return an empty view. For shell actors, the mesh includes the linear contact-skin skinning data.
+/// @details Returns the @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh" of the actor's shape, regardless of whether the actor selected it as its collision representation. Only deformable actors whose shape's contact skin has skinning data expose it. Other actors return an empty view. For soft and shell actors, the mesh includes the linear contact-skin skinning data.
 ///
 /// @return A non-owning view of the actor's reference contact skin mesh, or an empty view if the actor has no contact skin.
 ///

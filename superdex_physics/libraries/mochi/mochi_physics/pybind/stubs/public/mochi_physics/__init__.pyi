@@ -2552,7 +2552,7 @@ class ModelData:
     visual_mesh: Optional[MeshData]
     contact_skin_mesh: Optional[MeshData]
     """Optional triangular mesh exposed through the contact-skin queries and, when
-    selected as a shell or rod actor's contact geometry, for contact quadrature.
+    selected as a deformable actor's contact geometry, for contact quadrature.
 
     For triangular and tetrahedral primary meshes, the skinning data is a node-based
     linear embedding whose indices reference primary-mesh nodes. For polylines, the
@@ -2620,7 +2620,7 @@ class ModelDataView:
     visual_mesh: Optional[MeshDataView]
     contact_skin_mesh: Optional[MeshDataView]
     """Optional triangular mesh exposed through the contact-skin queries and, when
-    selected as a shell or rod actor's contact geometry, for contact quadrature.
+    selected as a deformable actor's contact geometry, for contact quadrature.
 
     For triangular and tetrahedral primary meshes, the skinning data is a node-based
     linear embedding whose indices reference primary-mesh nodes. For polylines, the
@@ -4781,8 +4781,9 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`.
 
     Note:
-        Only supported for shell and rod actors whose shape has a contact skin with
+        Only supported for deformable actors whose shape has a contact skin with
         skinning data, regardless of
+        :attr:`~superdex.physics.SoftActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.RodActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.ShellActorParams.use_contact_skin`.
     """
@@ -4791,8 +4792,9 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`.
 
     Note:
-        Only supported for shell and rod actors whose shape has a contact skin with
+        Only supported for deformable actors whose shape has a contact skin with
         skinning data, regardless of
+        :attr:`~superdex.physics.SoftActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.RodActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.ShellActorParams.use_contact_skin`.
     """
@@ -5644,11 +5646,32 @@ class SoftActorParams:
         :attr:`~superdex.physics.SoftActorParams.has_inertia` or
         :attr:`~superdex.physics.SoftActorParams.has_stress` must be enabled.
     """
-    boundary_element_type: ActorBoundaryElementType
-    """Finite element type for boundary discretization.
+    use_contact_skin: bool
+    """[Experimental] Use the shape's authored contact skin for colliding contact
+    samples.
+
+    The contact skin must be triangular and have node-based linear skinning data.
+    The tetrahedral boundary remains the collider geometry when an SDF or Deep Flow
+    collider is enabled. This option is not supported for ROM or nested soft actors.
 
     Note:
-        Affects accuracy and performance of contact and boundary integrals.
+        A contact skin with linear skinning data is exposed through
+        :meth:`~superdex.physics.Actor.get_contact_skin_mesh` and
+        :class:`CONTACT_SKIN_NODE_POSITIONS <superdex.physics.QueryType>` /
+        :class:`CONTACT_SKIN_NODE_NORMALS <superdex.physics.QueryType>`
+        independently of this flag.
+
+    Warning:
+        This is an experimental feature. It may be changed or removed in the future.
+        Use at your own risk.
+    """
+    boundary_element_type: ActorBoundaryElementType
+    """Finite element type for contact discretization.
+
+    Note:
+        Selects quadrature on the tetrahedral boundary, or on the authored contact
+        skin when :attr:`~superdex.physics.SoftActorParams.use_contact_skin` is
+        true.
 
     See Also:
         :class:`~superdex.physics.ActorBoundaryElementType`
@@ -5667,6 +5690,7 @@ class SoftActorParams:
         has_gravity: bool = ...,
         has_inertia: bool = ...,
         has_stress: bool = ...,
+        use_contact_skin: bool = ...,
         boundary_element_type: ActorBoundaryElementType | int = ...,
     ) -> None: ...
     def __eq__(self, other: object) -> bool: ...
@@ -7330,6 +7354,12 @@ class ContactPoint:
         :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
 
     Note:
+        For soft actors, this indexes the triangles of
+        :meth:`~superdex.physics.Actor.get_surface_mesh` unless contact-skin contact
+        is enabled, in which case it is the compact contact skin returned by
+        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
+
+    Note:
         For rod actors, this field is not populated and is reported as 0. Use
         :attr:`~superdex.physics.ContactPoint.sample_index` to identify the contact
         location.
@@ -7392,7 +7422,7 @@ class NodeContactForce:
     """Node index in the volumetric mesh or the mesh used for colliding samples.
 
     Note:
-        For shell actors, this is the physics mesh returned by
+        For soft and shell actors, this is the physics mesh returned by
         :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
         enabled, in which case it is the compact contact skin returned by
         :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
@@ -9980,8 +10010,8 @@ class Actor:
 
         Returns the :attr:`~superdex.physics.ModelData.contact_skin_mesh` of the actor's
         shape, regardless of whether the actor selected it as its collision
-        representation. Only shell and rod actors whose shape's contact skin has
-        skinning data expose it. Other actors return an empty view. For shell actors,
+        representation. Only deformable actors whose shape's contact skin has skinning
+        data expose it. Other actors return an empty view. For soft and shell actors,
         the mesh includes the linear contact-skin skinning data.
 
         Returns:
@@ -13078,6 +13108,7 @@ class Scene:
         has_gravity: bool = ...,
         has_inertia: bool = ...,
         has_stress: bool = ...,
+        use_contact_skin: bool = ...,
         boundary_element_type: ActorBoundaryElementType | int = ...,
     ) -> Optional[Actor]: ...
     @overload

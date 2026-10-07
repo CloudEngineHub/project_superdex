@@ -113,29 +113,21 @@ TEST_F(CreateSoftSkinnedActorNameTest, AcceptsAttachLinksMatchingAutocorrectedLi
   ASSERT_NE(nullptr, actor);
 }
 
+TEST_F(CreateSoftSkinnedActorNameTest, RejectsContactSkinOnNestedSoftActor) {
+  auto params = MakeParams({"soft"}, "");
+  params.softParams[0].shape =
+      _mochiContext->CreateModelShape(test::CreateUnitCubeContactSkinModel(), test::ExpectOK{});
+  params.softParams[0].useContactSkin = true;
+  params.softAttachLinks.push_back("link_0");
+  Error error;
+  EXPECT_EQ(nullptr, _scene->CreateSoftSkinnedActor(params, error));
+  EXPECT_STREQ("useContactSkin is not supported for nested soft actors.", error.GetDescription());
+}
+
 TEST_F(CreateSoftSkinnedActorNameTest, PreservesContactSkinWhenCloningAttachedSoftShape) {
   auto params = MakeParams({"soft"}, "");
-  auto [tetCoordinates, tetConnectivity] = test::CreateMinimalTetMeshUnitCube();
-  auto [surfaceCoordinates, surfaceConnectivity] = test::CreateMinimalTriMeshUnitCube();
-
-  ModelData model;
-  model.mesh.emplace();
-  model.mesh->nodesPerElement = 4;
-  model.mesh->coordinates = Flatten(MakeSpan(tetCoordinates));
-  model.mesh->connectivity = Flatten(MakeSpan(tetConnectivity));
+  ModelData model = test::CreateUnitCubeContactSkinModel();
   model.constrainedNodes = DynamicArray<int>{0};
-  model.contactSkinMesh.emplace();
-  model.contactSkinMesh->nodesPerElement = 3;
-  model.contactSkinMesh->coordinates = Flatten(MakeSpan(surfaceCoordinates));
-  model.contactSkinMesh->connectivity = Flatten(MakeSpan(surfaceConnectivity));
-  int const numContactNodes = model.contactSkinMesh->GetNumNodes();
-  model.contactSkinMesh->skinning.emplace();
-  model.contactSkinMesh->skinning->weightsPerNode = 1;
-  model.contactSkinMesh->skinning->indices.resize_noinit(numContactNodes);
-  model.contactSkinMesh->skinning->weights.resize(numContactNodes, 1_r);
-  for (int i = 0; i < numContactNodes; ++i) {
-    model.contactSkinMesh->skinning->indices[i] = i;
-  }
   MeshData const expectedContactSkin = *model.contactSkinMesh;
 
   params.softParams[0].shape = _mochiContext->CreateModelShape(model, test::ExpectOK{});
@@ -153,6 +145,11 @@ TEST_F(CreateSoftSkinnedActorNameTest, PreservesContactSkinWhenCloningAttachedSo
   ModelData const clonedModel = tetShape->GetModelData(test::ExpectOK{});
   ASSERT_TRUE(clonedModel.contactSkinMesh.has_value());
   EXPECT_EQ(expectedContactSkin, *clonedModel.contactSkinMesh);
+
+  Actor const* const softActor = _scene->GetActor(softActors[0]);
+  ASSERT_NE(nullptr, softActor);
+  EXPECT_EQ(expectedContactSkin.GetNumNodes(), softActor->GetContactSkinMesh().GetNumNodes());
+  EXPECT_TRUE(softActor->IsQuerySupported(QueryType::ContactSkinNodePositions));
 }
 
 TEST_F(CreateSoftSkinnedActorNameTest, AssignsCollisionFreeEmptyNestedSoftLocalNames) {

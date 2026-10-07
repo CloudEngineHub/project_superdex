@@ -178,7 +178,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
   ;
 
   registry.GetClass<mochi::prefab::SoftActorPrefab, mochi::SoftActorParams>()
-    .def("__init__", [](mochi::prefab::SoftActorPrefab* self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object contact, nb::object has_gravity, nb::object has_inertia, nb::object has_stress, nb::object boundary_element_type, nb::object comment, nb::object shape_file, nb::object collider_type, nb::object sdf, nb::object flow_file, nb::object flow, nb::object use_recentering, nb::object scale, nb::object shape_rotation, nb::object shape_translation, nb::object rotation, nb::object translation, nb::object render_model_file, nb::object render_model_scale, nb::object render_model_rotation, nb::object render_model_translation) {
+    .def("__init__", [](mochi::prefab::SoftActorPrefab* self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object contact, nb::object has_gravity, nb::object has_inertia, nb::object has_stress, nb::object use_contact_skin, nb::object boundary_element_type, nb::object comment, nb::object shape_file, nb::object collider_type, nb::object sdf, nb::object flow_file, nb::object flow, nb::object use_recentering, nb::object scale, nb::object shape_rotation, nb::object shape_translation, nb::object rotation, nb::object translation, nb::object render_model_file, nb::object render_model_scale, nb::object render_model_rotation, nb::object render_model_translation) {
       mochi::prefab::SoftActorPrefab result{};
       result.name = nb::cast<mochi::DynamicString>(name);
       result.layer = nb::cast<mochi::DynamicString>(layer);
@@ -189,6 +189,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       result.hasGravity = nb::cast<bool>(has_gravity);
       result.hasInertia = nb::cast<bool>(has_inertia);
       result.hasStress = nb::cast<bool>(has_stress);
+      result.useContactSkin = nb::cast<bool>(use_contact_skin);
       result.boundaryElementType = nb::cast<mochi::ActorBoundaryElementType>(boundary_element_type);
       result.comment = nb::cast<std::optional<mochi::DynamicString>>(comment);
       result.shapeFile = nb::cast<mochi::DynamicString>(shape_file);
@@ -218,6 +219,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("has_gravity") = mochi::prefab::SoftActorPrefab{}.hasGravity
       , nb::arg("has_inertia") = mochi::prefab::SoftActorPrefab{}.hasInertia
       , nb::arg("has_stress") = mochi::prefab::SoftActorPrefab{}.hasStress
+      , nb::arg("use_contact_skin") = mochi::prefab::SoftActorPrefab{}.useContactSkin
       , nb::arg("boundary_element_type") = mochi::prefab::SoftActorPrefab{}.boundaryElementType
       , nb::arg("comment").sig("...") = mochi::prefab::SoftActorPrefab{}.comment
       , nb::arg("shape_file") = mochi::prefab::SoftActorPrefab{}.shapeFile

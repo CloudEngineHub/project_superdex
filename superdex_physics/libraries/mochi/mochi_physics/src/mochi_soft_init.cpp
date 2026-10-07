@@ -22,6 +22,7 @@
 #include "mochi_contact_filter.h"
 #include "mochi_deformable.h"
 #include "mochi_island.h"
+#include "mochi_linear_contact_skin.h"
 #include "mochi_scene_recorder.h"
 #include "mochi_simulation.h"
 #include "mochi_snle.h"
@@ -57,6 +58,10 @@ static void EmplaceSoftActorDiscretization(
 
   if (shape->GetVisualMesh() && shape->GetVisualEmbedding()) {
     reg.emplace<CVisualMesh>(e, shape->GetVisualMesh(), shape->GetVisualEmbedding());
+  }
+
+  if (shape->GetContactSkin() && shape->GetContactSkinEmbedding()) {
+    reg.emplace<CContactSkinMesh>(e, shape->GetContactSkin(), shape->GetContactSkinEmbedding());
   }
 }
 
@@ -222,6 +227,20 @@ void mochi::InitSoftActor(
       "Soft actors must have at least one of inertia, gravity or stress enabled.");
   ValidateSoftMaterialParams(params.material, error);
   ValidateContactParams(params.contact, error);
+  MOCHI_ERROR_IF(
+      params.useContactSkin && experimentalParams.rom,
+      error,
+      "useContactSkin is not supported for ROM soft actors.");
+  MOCHI_ERROR_IF(
+      params.useContactSkin && isNestedSoft,
+      error,
+      "useContactSkin is not supported for nested soft actors.");
+  bool const hasUsableContactSkin =
+      shapePtr->GetContactSkin() && shapePtr->GetContactSkinEmbedding();
+  MOCHI_ERROR_IF(
+      params.useContactSkin && !hasUsableContactSkin,
+      error,
+      "useContactSkin requires a soft shape with triangular contact skin and linear embedding data.");
   MOCHI_ERROR_RETURN(error);
   if (!params.hasInertia && params.material.massDampingCoefficient > 0_r) {
     MOCHI_LOG_WARNING("Nonzero soft mass damping inactive because hasInertia is false.");
@@ -351,27 +370,50 @@ void mochi::InitSoftActor(
     EmplaceSoftActorRigidPivotAndRecentering(reg, e, actorTetMesh, femLowVolDisc);
   }
 
-  // Boundary discretization
-  auto const& boundaryDisc = reg.emplace<CFemBoundaryDiscretization>(
-      e,
-      CFemBoundaryDiscretization::Create(actorTetMesh, femLowVolDisc, params.boundaryElementType));
-  int const numCollidingSamples = boundaryDisc.GetNumQuadPoints();
+  int numCollidingSamples = 0;
+  if (params.useContactSkin) {
+    auto const& contactSkin = *shapePtr->GetContactSkin();
+    auto const& surfaceDisc = reg.emplace<CFemSurfaceDiscretization>(
+        e, CFemSurfaceDiscretization::Create(params.boundaryElementType, contactSkin));
+    reg.emplace<CFemSurfaceDiscretizationLite>(
+        e, CFemSurfaceDiscretizationLite::Create(params.boundaryElementType, contactSkin));
+    numCollidingSamples = surfaceDisc.GetNumQuadPoints();
+    linear_contact_skin::EmplaceComponents(
+        reg,
+        e,
+        surfaceDisc,
+        contactSkin,
+        *shapePtr->GetContactSkinEmbedding(),
+        actorTetMesh.GetNodeCoordinates());
+  } else {
+    auto const& boundaryDisc = reg.emplace<CFemBoundaryDiscretization>(
+        e,
+        CFemBoundaryDiscretization::Create(
+            actorTetMesh, femLowVolDisc, params.boundaryElementType));
+    numCollidingSamples = boundaryDisc.GetNumQuadPoints();
 
-  // Boundary-face nodal based structure and L2G.
-  boundaryDisc.Visit([&](auto const& disc) {
-    BoundaryAssemblyData bdData(
-        MakeConstSpan(disc.femElements),
-        actorTetMesh.GetElementConnectivity(),
-        nbs.GetNToN(),
-        /*numFields*/ kSpaceDim3);
-    reg.emplace<CBoundaryNodalBasedStructure>(e, std::move(bdData.nbs));
-    reg.emplace<CBoundaryLocal2GlobalMap>(e, std::move(bdData.l2g));
-  });
+    boundaryDisc.Visit([&](auto const& disc) {
+      BoundaryAssemblyData bdData(
+          MakeConstSpan(disc.femElements),
+          actorTetMesh.GetElementConnectivity(),
+          nbs.GetNToN(),
+          /*numFields*/ kSpaceDim3);
+      reg.emplace<CBoundaryNodalBasedStructure>(e, std::move(bdData.nbs));
+      reg.emplace<CBoundaryLocal2GlobalMap>(e, std::move(bdData.l2g));
+    });
+  }
 
   EmplaceSoftActorContact(
       reg, e, params, experimentalParams, useContact, numCollidingSamples, shapePtr, error, flow);
+  MOCHI_ERROR_RETURN(error);
 
-  // bounds
+  if (params.useContactSkin) {
+    ecs::InvokeOnEntity(linear_contact_skin::UpdateBounds<TimeStep::Current>, reg, e);
+  } else {
+    ecs::InvokeOnEntity(soft::UpdateBounds<TimeStep::Current>, reg, e);
+  }
+
+  // Bounds used for collision detection.
   reg.emplace<CConservativeStepBounds>(e);
 
   // MassMatrix (for inertia)

@@ -156,11 +156,24 @@ static Actor* CreateSoftCube(
     Scene* scene,
     real scale,
     Real3 position,
-    RotationAxis90 rotationAxis = RotationAxis90::None) {
-  auto shape = CreateCubeShape(scene, scale);
+    RotationAxis90 rotationAxis = RotationAxis90::None,
+    bool useContactSkin = false) {
+  ShapeHandle shape;
+  if (useContactSkin) {
+    ModelData model = test::CreateUnitCubeContactSkinModel();
+    for (auto* mesh : {&*model.mesh, &*model.contactSkinMesh}) {
+      for (real& coordinate : mesh->coordinates) {
+        coordinate *= scale;
+      }
+    }
+    shape = scene->GetContext()->CreateModelShape(model, ErrorAssert{});
+  } else {
+    shape = CreateCubeShape(scene, scale);
+  }
   SoftActorParams caparams;
   caparams.name = "SoftCube";
   caparams.shape = shape;
+  caparams.useContactSkin = useContactSkin;
   caparams.worldFromLocal = GetCubeRotatedTransform(rotationAxis, scale, position);
   // Hard code contact and material params in case the default change in a way that would affect
   // this test.
@@ -1115,6 +1128,18 @@ TEST_P(NodeContactForcesTest, DynamicSoft_on_StaticRigid) {
   TestNodeContactForces(_scene, bodyA, bodyB);
 }
 
+TEST_P(NodeContactForcesTest, DynamicSoftContactSkin_on_StaticRigid) {
+  // Same as DynamicSoft_on_StaticRigid, but with skinned async contact assembly, which stores
+  // forces in collider space rather than colliding space.
+  auto params = GetParam();
+  Actor* bodyA = CreateSoftCube(
+      _scene, 0.1_r, Real3{-1_r, 0.001_r, 0_r}, params.topRotation, /*useContactSkin=*/true);
+  Actor* bodyB = CreateSoftCube(
+      _scene, 0.11_r, Real3{-1_r, 0.001_r, 0_r}, params.bottomRotation, /*useContactSkin=*/true);
+  CreateStaticGroundPlane(_scene, -1);
+  TestNodeContactForces(_scene, bodyA, bodyB);
+}
+
 TEST_P(NodeContactForcesTest, DynamicRigid_on_StaticRigid) {
   // Check that QueryType::NodeContactForces gives the same total force as QueryType::ContactPoints.
   // Rigid object on the ground.
@@ -1450,18 +1475,40 @@ static Actor* CreateSkinnedShell(Scene* scene, Real3 const& position) {
   return CreateShellActor(scene, params, ErrorAssert{});
 }
 
-static void ExpectSkinnedShellContactSkinResults(
-    Span<real const> (Actor::*getter)(Error&) const,
+using ContactSkinGetter = Span<real const> (Actor::*)(Error&) const;
+
+static void ExpectContactSkinResults(
+    ContactSkinGetter getter,
+    int numSkinNodes,
     bool expectResults,
     Actor const* actor) {
   Error error;
   auto const values = (actor->*getter)(error);
   if (expectResults) {
     EXPECT_OK(error);
-    EXPECT_EQ(3 * 3, isize(values));
+    EXPECT_EQ(kSpaceDim3 * numSkinNodes, isize(values));
   } else {
     EXPECT_NOT_OK(error);
   }
+}
+
+static void ExpectSkinnedShellContactSkinResults(
+    ContactSkinGetter getter,
+    bool expectResults,
+    Actor const* actor) {
+  ExpectContactSkinResults(getter, 3, expectResults, actor);
+}
+
+static Actor* CreateSkinnedSoftCube(Scene* scene, real scale, Real3 position) {
+  return CreateSoftCube(scene, scale, position, RotationAxis90::None, /*useContactSkin=*/true);
+}
+
+static void ExpectSkinnedSoftContactSkinResults(
+    ContactSkinGetter getter,
+    bool expectResults,
+    Actor const* actor) {
+  ExpectContactSkinResults(
+      getter, isize(test::CreateMinimalTriMeshUnitCube().first), expectResults, actor);
 }
 
 TEST_F(ActorQueryTest, ContactSkinNodePositions_Shell) {
@@ -1484,6 +1531,30 @@ TEST_F(ActorQueryTest, ContactSkinNodeNormals_Shell) {
       QueryType::ContactSkinNodeNormals,
       [](bool expectResults, Actor const* a) {
         ExpectSkinnedShellContactSkinResults(
+            &Actor::GetContactSkinMeshNodeNormalsLocal, expectResults, a);
+      });
+}
+
+TEST_F(ActorQueryTest, ContactSkinNodePositions_Soft) {
+  TestQuery(
+      _scene,
+      CreateSkinnedSoftCube(_scene, 1_r, Real3{-10_r, 0_r, 0_r}),
+      CreateSkinnedSoftCube(_scene, 2_r, Real3{10_r, 0_r, 0_r}),
+      QueryType::ContactSkinNodePositions,
+      [](bool expectResults, Actor const* a) {
+        ExpectSkinnedSoftContactSkinResults(
+            &Actor::GetContactSkinMeshNodePositionsLocal, expectResults, a);
+      });
+}
+
+TEST_F(ActorQueryTest, ContactSkinNodeNormals_Soft) {
+  TestQuery(
+      _scene,
+      CreateSkinnedSoftCube(_scene, 1_r, Real3{-10_r, 0_r, 0_r}),
+      CreateSkinnedSoftCube(_scene, 2_r, Real3{10_r, 0_r, 0_r}),
+      QueryType::ContactSkinNodeNormals,
+      [](bool expectResults, Actor const* a) {
+        ExpectSkinnedSoftContactSkinResults(
             &Actor::GetContactSkinMeshNodeNormalsLocal, expectResults, a);
       });
 }

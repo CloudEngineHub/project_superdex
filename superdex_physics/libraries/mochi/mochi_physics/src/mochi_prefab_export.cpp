@@ -419,6 +419,7 @@ static SoftActorPrefab ExportSoftActor(
   MOCHI_ASSERT(
       registry.all_of<CSoftExportParams>(entity), "Missing CSoftExportParams on a soft actor.");
   prefab.boundaryElementType = registry.get<CSoftExportParams const>(entity).boundaryElementType;
+  prefab.useContactSkin = registry.all_of<TagUseDeformableContactSkin>(entity);
 
   // Export physics properties
   prefab.contact = actor->GetContactParams(error);

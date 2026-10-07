@@ -24,6 +24,7 @@
 #include "mochi_group.h"
 #include "mochi_hyper_reduction.h"
 #include "mochi_island.h"
+#include "mochi_linear_contact_skin.h"
 #include "mochi_point_cloud_contact.h"
 #include "mochi_rigid.h"
 #include "mochi_rod.h"
@@ -1503,6 +1504,7 @@ static void CollisionDetection(entt::registry& reg, entt::entity ent) {
 template <bool kIsSync>
 static void SetupActiveCollisionNormals(entt::registry& reg, entt::entity ent) {
   MOCHI_PROFILE_SCOPE();
+  ecs::TryInvokeOnEntity(&linear_contact_skin::SetupActiveCollisionNormals<kIsSync>, reg, ent);
   ecs::TryInvokeOnEntity(
       &deformable::SetupActiveCollisionNormals<kIsSync, CFemBoundaryDiscretization>, reg, ent);
   ecs::TryInvokeOnEntity(
@@ -1537,8 +1539,8 @@ static void InitCollidingJacobians(
       &deformable::SetupCollidingJacobians<TagRodActor, CFemSegmentDiscretization>,
       reg,
       descendants.rodActors);
-  std::array<Span<entt::entity const>, 2> contactSkinActors = {
-      descendants.shellActors, descendants.rodActors};
+  std::array<Span<entt::entity const>, 3> contactSkinActors = {
+      descendants.softActors, descendants.shellActors, descendants.rodActors};
   for (auto actors : contactSkinActors) {
     ecs::ScheduleInvokeForEach(
         sem,
@@ -2908,6 +2910,14 @@ void mochi::UpdateQuerySdfDistances(
   }
 }
 
+// Async contact on deformable actors stores query forces in the colliding actor's local frame,
+// except skinned contact, which stores them in the collider's local frame like all other contact.
+static bool
+IsQueryForceCollidingLocal(entt::registry const& reg, entt::entity colliding, bool isSync) {
+  return !isSync && reg.all_of<TagDeformableActor>(colliding) &&
+      !reg.all_of<TagSkinnedContact>(colliding);
+}
+
 void mochi::UpdateQueryActiveContactsWorldSpace(
     entt::registry const& reg,
     entt::entity e,
@@ -2957,6 +2967,7 @@ void mochi::UpdateQueryActiveContactsWorldSpace(
       // have been updated by recentering.
       auto const isDeformable = reg.all_of<TagDeformableActor>(colliding);
       auto const isRigid = reg.all_of<TagRigidActor>(colliding);
+      auto const forceIsCollidingLocal = IsQueryForceCollidingLocal(reg, colliding, isSync);
       auto const& root = reg.get<CRootTransform const>(colliding);
       auto const& transformCurrent = isDeformable ? root.worldFromLocalPrev : root.worldFromLocal;
       auto const jacCollidingFromWorld = ToVMatrix3x3Transpose(transformCurrent.GetRotation());
@@ -2993,11 +3004,9 @@ void mochi::UpdateQueryActiveContactsWorldSpace(
         // Fetch the force and scale by the integration weight
         Real3 force = weight * collisionResult.forcePerUnitArea[iContact];
 
-        // Transform the force to world space. For async contact on deformable actors, force is in
-        // colliding space. Otherwise it is in collider space.
+        // Transform the force to world space. See @ref IsQueryForceCollidingLocal.
         force = ToReal3(DotVecMat3x3(
-            ToSimd(force),
-            (!isSync && isDeformable) ? jacCollidingFromWorld : jacColliderFromWorld));
+            ToSimd(force), forceIsCollidingLocal ? jacCollidingFromWorld : jacColliderFromWorld));
 
         // Get the discretization info of the contact point (element, nodes and basis weights).
         // Consider two cases: the discretization is made with trace elements of a volume
@@ -3186,6 +3195,7 @@ void mochi::UpdateQueryActorContactForces(
     // Define the source entity's transform. For soft actors, note that the transform may have been
     // modified by recentering, so use worldFromLocalPrev.
     auto const isCollidingDeformable = reg.all_of<TagDeformableActor>(colliding);
+    auto const forceIsCollidingLocal = IsQueryForceCollidingLocal(reg, colliding, isSync);
     auto const& collidingRoot = reg.get<CRootTransform const>(colliding);
     auto const& worldFromColliding =
         isCollidingDeformable ? collidingRoot.worldFromLocalPrev : collidingRoot.worldFromLocal;
@@ -3207,9 +3217,8 @@ void mochi::UpdateQueryActorContactForces(
       Vec4r force = collidingSamples.weights[sampleIndex] *
           ToSimd(collisionResult.forcePerUnitArea[iContact]);
 
-      // Transform the force to world space. For async contact on deformable actors, the force is in
-      // local colliding space. Otherwise, the force is in local collider space.
-      if (!isSync && isCollidingDeformable) {
+      // Transform the force to world space. See @ref IsQueryForceCollidingLocal.
+      if (forceIsCollidingLocal) {
         force = DotVecMat3x3(force, worldFromCollidingMatT);
       } else {
         force = DotVecMat3x3(force, collisionResult.jacColliderFromWorld[iTransform]);
@@ -4341,12 +4350,16 @@ void mochi::UpdateStageStartDataPipeline(
       rod::UpdateSurfaceContactPositions<TimeStep::StageStart>,
       reg,
       descendants.rodActors);
-  ecs::ScheduleInvokeForEach(
-      sem,
-      "shell::UpdateContactSkinPositions<TimeStep::StageStart>",
-      shell::UpdateContactSkinPositions<TimeStep::StageStart>,
-      reg,
-      descendants.shellActors);
+  std::array<Span<entt::entity const>, 2> linearContactSkinActors = {
+      descendants.softActors, descendants.shellActors};
+  for (auto actors : linearContactSkinActors) {
+    ecs::ScheduleInvokeForEach(
+        sem,
+        "linear_contact_skin::UpdatePositionsAndSamples<TimeStep::StageStart>",
+        linear_contact_skin::UpdatePositionsAndSamples<TimeStep::StageStart>,
+        reg,
+        actors);
+  }
   // Update stage-start contact samples of shell and compound actors (with a tri-mesh skin).
   std::array<Span<entt::entity const>, 2> shellAndCompoundActors = {
       descendants.shellActors, descendants.compoundActors};
@@ -4388,6 +4401,16 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
     for (auto actors : softAndCompoundActors) {
       ecs::ScheduleInvokeForEach(
           sem, "soft::UpdateBounds", &soft::UpdateBounds<kTimeStep>, reg, actors);
+    }
+    std::array<Span<entt::entity const>, 2> linearContactSkinActors = {
+        descendants.softActors, descendants.shellActors};
+    for (auto actors : linearContactSkinActors) {
+      ecs::ScheduleInvokeForEach(
+          sem,
+          "linear_contact_skin::UpdateBounds",
+          &linear_contact_skin::UpdateBounds<kTimeStep>,
+          reg,
+          actors);
     }
     // Compound actors with a skinned tri mesh.
     ecs::ScheduleInvokeForEach(
@@ -4493,9 +4516,9 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
           Schedule(sem, "AsyncCollisionAndResponse", [&, e]() { asyncCollisionAndResponse(e); });
           syncCollisionAndResponse(e);
         });
-      } else if (ecs::CanInvokeOnEntity(shell::UpdateContactSkinSamples<kTimeStep>, reg, e)) {
-        Schedule(sem, "shell::UpdateContactSkinSamples", [&, e, sem]() {
-          ecs::InvokeOnEntity(shell::UpdateContactSkinSamples<kTimeStep>, reg, e);
+      } else if (ecs::CanInvokeOnEntity(linear_contact_skin::UpdateSamples<kTimeStep>, reg, e)) {
+        Schedule(sem, "linear_contact_skin::UpdateSamples", [&, e, sem]() {
+          ecs::InvokeOnEntity(linear_contact_skin::UpdateSamples<kTimeStep>, reg, e);
           Schedule(sem, "AsyncCollisionAndResponse", [&, e]() { asyncCollisionAndResponse(e); });
           syncCollisionAndResponse(e);
         });

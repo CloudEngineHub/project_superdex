@@ -17,6 +17,7 @@
 #pragma once
 
 #include <mochi_core/contact/contact_utils.h>
+#include <mochi_core/geometry/model_data.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/nd_array_utils.h>
@@ -71,6 +72,32 @@ inline ShapeHandle CreateUnitCubeTetSoftShape(Context* context) {
   auto constrained = std::make_shared<ConstrainedNodesData const>(DynamicArray<int>{0});
   auto shape = std::make_shared<TetrahedralMeshShape>(mesh, skinning, constrained);
   return assert_cast<ContextImpl*>(context)->RegisterShape(shape, ExpectOK{});
+}
+
+// Build a unit-cube tetrahedral model with a unit-cube triangular contact skin whose node i is
+// embedded at tet node i with weight 1.
+inline ModelData CreateUnitCubeContactSkinModel() {
+  auto [tetCoordinates, tetConnectivity] = CreateMinimalTetMeshUnitCube();
+  auto [skinCoordinates, skinConnectivity] = CreateMinimalTriMeshUnitCube();
+
+  ModelData model;
+  model.mesh.emplace();
+  model.mesh->nodesPerElement = 4;
+  model.mesh->coordinates = Flatten(MakeSpan(tetCoordinates));
+  model.mesh->connectivity = Flatten(MakeSpan(tetConnectivity));
+  model.contactSkinMesh.emplace();
+  model.contactSkinMesh->nodesPerElement = 3;
+  model.contactSkinMesh->coordinates = Flatten(MakeSpan(skinCoordinates));
+  model.contactSkinMesh->connectivity = Flatten(MakeSpan(skinConnectivity));
+  int const numSkinNodes = model.contactSkinMesh->GetNumNodes();
+  auto& skinning = model.contactSkinMesh->skinning.emplace();
+  skinning.weightsPerNode = 1;
+  skinning.indices.resize_noinit(numSkinNodes);
+  skinning.weights.resize(numSkinNodes, 1_r);
+  for (int i = 0; i < numSkinNodes; ++i) {
+    skinning.indices[i] = i;
+  }
+  return model;
 }
 
 // Pin a scene's integrator, making explicit any test that depends on a specific integrator

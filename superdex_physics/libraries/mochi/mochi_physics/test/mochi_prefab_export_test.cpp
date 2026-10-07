@@ -94,6 +94,7 @@ static void ExpectEqual(
   EXPECT_EQ(expected.hasGravity, actual.hasGravity);
   EXPECT_EQ(expected.hasInertia, actual.hasInertia);
   EXPECT_EQ(expected.hasStress, actual.hasStress);
+  EXPECT_EQ(expected.useContactSkin, actual.useContactSkin);
 
   // Compare material properties
   EXPECT_EQ(expected.material, actual.material);
@@ -153,7 +154,7 @@ static constexpr char const* kRigidMinimalCubeStackJson = R"({
 })";
 
 // Prefab for testing mixed rigid/soft actor export
-static constexpr char const* kSoftArmadilloOnRigidCubeJson = R"({
+static constexpr char const* kSoftContactSkinCubeOnRigidCubeJson = R"({
   "actors": {
     "rigid": [
       {
@@ -183,15 +184,16 @@ static constexpr char const* kSoftArmadilloOnRigidCubeJson = R"({
             "youngsModulus": 10000
           }
         },
-        "name": "Armadillo",
+        "name": "ContactSkinCube",
         "scale": [0.2, 0.2, 0.2],
-        "shape": "armadillo/armadillo_coarse_mesh.mochi.json",
-        "translation": [-0.1, 0.5, -0.1]
+        "shape": "cube/cube_minimal_contact_skin.mochi.json",
+        "translation": [-0.1, 0.5, -0.1],
+        "useContactSkin": true
       }
     ]
   },
   "scene": {
-    "description": "Soft armadillo falling on static rigid cube"
+    "description": "Soft contact-skinned cube falling on static rigid cube"
   }
 })";
 
@@ -304,9 +306,9 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportScene_RigidActors) {
 
 TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportScene_SoftActors) {
   // Comprehensive test for soft actor export with material properties
-  auto tempDir = CreateTempDirectory("export_soft_armadillo_on_rigid_cube", ExpectOK{});
+  auto tempDir = CreateTempDirectory("export_soft_contact_skin_cube", ExpectOK{});
   auto originalPrefabPath = CreateTempPrefabFile(
-      kSoftArmadilloOnRigidCubeJson, "soft_armadillo_on_rigid_cube.mochi_scene", tempDir.Path());
+      kSoftContactSkinCubeOnRigidCubeJson, "soft_contact_skin_cube.mochi_scene", tempDir.Path());
   auto originalPrefab = prefab::ShallowLoadFromFile(originalPrefabPath.string(), ExpectOK{});
 
   auto* context = CreateContext(0);
@@ -318,7 +320,7 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportScene_SoftActors) {
   prefab::AddToScene(
       originalPrefabPath.string(), GetAssetsDir(), scene, prefab::PrefabParams{}, ExpectOK{});
 
-  auto prefabFile = ExportScene(scene, "soft_armadillo_on_rigid_cube", tempDir.Path());
+  auto prefabFile = ExportScene(scene, "soft_contact_skin_cube", tempDir.Path());
   auto exportedPrefab = prefab::ShallowLoadFromFile(prefabFile.string(), ExpectOK{});
 
   // Validate soft actors and their material properties

@@ -353,67 +353,25 @@ void AssembleAsyncContact(
     CDeformablePointAsyncCollisionsResponse& outResponse,
     CActorSnle& outActorSnle);
 
-template <TimeStep kTimeStep>
-void UpdateContactSkinPositions(
-    ecs::Included<TagShellActor>,
-    ecs::RequiredTag<TagUseDeformableContactSkin>,
-    CTriangularMesh const& physicsMesh,
-    CContactSkinMesh const& contactSkin,
-    CFinalDisplacementRef<kTimeStep> const& displacements,
-    CFemSurfaceDiscretization const& surfaceDisc,
-    CDeformedContactSkinNodes& deformedNodes,
-    CContactSamples<kTimeStep>& outSamples);
-
-template <TimeStep kTimeStep>
-void UpdateContactSkinSamples(
-    ecs::Included<TagShellActor>,
-    ecs::RequiredTag<TagUseDeformableContactSkin>,
-    CFemSurfaceDiscretization const& surfaceDisc,
-    CDeformedContactSkinNodes const& deformedNodes,
-    CContactSamples<kTimeStep>& outSamples);
-
 // Update CBoundingVolume.localShape based on the deformation of the shell. kStep selects the
 // displacement state used to compute the bounds.
 template <TimeStep kStep>
 void UpdateBounds(
     ecs::Included<TagShellActor>,
+    ecs::Excluded<TagUseDeformableContactSkin>,
     CTriangularMesh const& meshComponent,
-    CContactSkinMesh const* contactSkin,
     CFinalDisplacementRef<kStep> const& solComponent,
     CPointCloudColliderParams const* pointCloudColliderParams,
-    CDeformedContactSkinNodes* deformedContactSkinNodes,
     CBoundingVolume& outBounds) {
   static_assert(kStep == TimeStep::Current || kStep == TimeStep::StageStart);
   MOCHI_PROFILE_SCOPE();
 
   auto const nodeDisplacements = Unflatten<Real3 const>(solComponent.value.GetConstSpan());
-  Aabb bounds;
-  if (!deformedContactSkinNodes || pointCloudColliderParams) {
-    bounds = CalcAabbWithDisplacements(meshComponent.mesh->GetNodeCoordinates(), nodeDisplacements);
-    if (pointCloudColliderParams) {
-      bounds = GetAabb(ExpandShape(GetObb(bounds), pointCloudColliderParams->radius));
-    }
+  Aabb bounds =
+      CalcAabbWithDisplacements(meshComponent.mesh->GetNodeCoordinates(), nodeDisplacements);
+  if (pointCloudColliderParams) {
+    bounds = GetAabb(ExpandShape(GetObb(bounds), pointCloudColliderParams->radius));
   }
-
-  if (deformedContactSkinNodes) {
-    MOCHI_ASSERT_VERBOSE(
-        contactSkin != nullptr && contactSkin->embedding != nullptr,
-        "Contact skin requires a linear embedding.");
-    auto const deformedPositions = Unflatten<Real3>(MakeSpan(deformedContactSkinNodes->positions));
-    UpdateLinearEmbeddedNodePositionsFromDisplacements(
-        *contactSkin->embedding,
-        Unflatten<Real3 const>(MakeConstSpan(deformedContactSkinNodes->referencePositions)),
-        nodeDisplacements,
-        contactSkin->mesh->GetActiveNodes(),
-        deformedPositions);
-    Aabb const contactSkinBounds = CalcAabb(deformedPositions);
-    bounds = pointCloudColliderParams
-        ? Aabb{
-              Min(bounds.VGetMin(), contactSkinBounds.VGetMin()),
-              Max(bounds.VGetMax(), contactSkinBounds.VGetMax())}
-        : contactSkinBounds;
-  }
-
   outBounds.localShape = GetObb(bounds);
 }
 

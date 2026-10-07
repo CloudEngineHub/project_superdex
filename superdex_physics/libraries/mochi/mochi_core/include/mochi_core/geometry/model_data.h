@@ -197,7 +197,7 @@ struct ModelData {
   std::optional<MeshData> visualMesh;
   /**
    * @brief Optional triangular mesh exposed through the contact-skin queries and, when selected as
-   * a shell or rod actor's contact geometry, for contact quadrature.
+   * a deformable actor's contact geometry, for contact quadrature.
    *
    * @details For triangular and tetrahedral primary meshes, the skinning data is a node-based
    * linear embedding whose indices reference primary-mesh nodes. For polylines, the indices

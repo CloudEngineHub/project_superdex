@@ -1414,6 +1414,7 @@ class TestStructs(MochiTestBase):
         self.assertTrue(params.has_gravity)
         self.assertTrue(params.has_inertia)
         self.assertTrue(params.has_stress)
+        self.assertFalse(params.use_contact_skin)
 
         # Test keyword argument constructor with all fields in shuffled order.
         params_kw_all = mochi.SoftActorParams(
@@ -1423,6 +1424,7 @@ class TestStructs(MochiTestBase):
             world_from_local=mochi.TransformRT(translation=[1, 2, 3]),
             contact=mochi.ContactParams(penalty_coefficient=5e8),
             boundary_element_type=mochi.ActorBoundaryElementType.P1Q6,
+            use_contact_skin=True,
             has_gravity=False,
             has_inertia=False,
         )
@@ -1434,6 +1436,7 @@ class TestStructs(MochiTestBase):
         self.assertFalse(params_kw_all.has_gravity)
         self.assertFalse(params_kw_all.has_inertia)
         self.assertFalse(params_kw_all.has_stress)
+        self.assertTrue(params_kw_all.use_contact_skin)
         self.assertAlmostEqual(5e8, params_kw_all.contact.penalty_coefficient)
         self.assertEqual(
             mochi.ActorBoundaryElementType.P1Q6, params_kw_all.boundary_element_type
@@ -1458,6 +1461,7 @@ class TestStructs(MochiTestBase):
         params.has_gravity = False
         params.has_inertia = False
         params.has_stress = False
+        params.use_contact_skin = True
         params.boundary_element_type = mochi.ActorBoundaryElementType.DEFAULT
 
     def test_articulated_joint_friction_params(self):

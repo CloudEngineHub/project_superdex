@@ -128,7 +128,7 @@ void deformable::UpdateMaxGeometrySpeed(
 
 template <bool kIsSync, typename DiscretizationT>
 void deformable::SetupActiveCollisionNormals(
-    ecs::Excluded<TagShellActor, TagRodActor>,
+    ecs::Excluded<TagShellActor, TagRodActor, TagUseDeformableContactSkin>,
     ecs::CtxGlobal<CSimulationParams const> simParams,
     DiscretizationT const& femDisc,
     CFinalDisplacementRef<TimeStep::Current> const& currentDispl,
@@ -150,97 +150,55 @@ void deformable::SetupActiveCollisionNormals(
   ColumnVectorView<real const> displForNormals =
       explicitNormals ? stageStartDispl.value : currentDispl.value;
 
-  auto const rotWorldFromCollidingT = ToVMatrix3x3Transpose(transform.worldFromLocal.GetRotation());
-
-  // Process active collisions in parallel
-  ParallelForEach("SetupCollisionResultNormals", activeCollisions, 1, [&](auto& activeCollision) {
-    auto& collisionResult = activeCollision.collisionResult;
-    if (collisionResult.sampleIndices.empty()) {
-      return;
-    }
-
-    collisionResult.normalColliding.resize_noinit(collisionResult.sampleIndices.size());
-
-    // Initialize with the transform of the first contact. For rigid colliders, it is shared by all.
-    auto const& jacColliderFromWorld = explicitNormals
-        ? collisionResult.jacColliderFromWorldStageStart
-        : collisionResult.jacColliderFromWorld;
-    auto const jacColliderFromCollidingT =
-        Dot3x3(rotWorldFromCollidingT, Transpose3x3(jacColliderFromWorld[0]));
-
-    femDisc.Visit([&](auto const& discretizationImpl) {
-      using DiscretizationImplT = std::decay_t<decltype(discretizationImpl)>;
-      static int constexpr kNumQuads = DiscretizationImplT::kNumQuads;
-      static int constexpr kNumEleNodes = DiscretizationImplT::kNumEleNodes;
-      int prevElementIndex = -1;
-      NdArray<Vec4r, kNumEleNodes> nodeCoords;
-      Vec4r normalColliding;
-
-      for (size_t i = 0; i < collisionResult.sampleIndices.size(); i++) {
-        int const sampleIndex = collisionResult.sampleIndices[i];
-
-        // Fetch element and quad point.
-        int const elementIndex = sampleIndex / kNumQuads;
-        int const quadPointIndex = sampleIndex % kNumQuads;
+  details::SetupActiveCollisionNormalsFromElements(
+      explicitNormals,
+      transform,
+      femDisc,
+      activeCollisions,
+      [&](auto const& discretizationImpl, int elementIndex, int quadPointIndex) -> Vec4r {
+        using DiscretizationImplT = std::decay_t<decltype(discretizationImpl)>;
+        static int constexpr kNumEleNodes = DiscretizationImplT::kNumEleNodes;
         auto const& element = discretizationImpl.femElements[elementIndex];
-        using BaseElementT = std::decay_t<decltype(element.GetBaseElement())>;
-        static_assert(
-            BaseElementT::kPolyOrder == 1, "Collision-normal caching requires P1 elements.");
-
-        // Cache element-constant data if the element index has changed.
-        if (elementIndex != prevElementIndex) {
-          auto const baseElementDofIndices = kSpaceDim3 * element.GetBaseElement().Nodes();
-          for (int j = 0; j < kNumEleNodes; ++j) {
-            nodeCoords[j] = ToSimd(element.nodesCrdsPhys[j]) +
-                Load<3, Vec4r>(&displForNormals[baseElementDofIndices[j]]);
-          }
-
-          // Compute the surface normal in the colliding actor's local frame. Linear elements have
-          // a constant normal across their quadrature points.
-          if constexpr (std::is_same_v<DiscretizationT, CFemBoundaryDiscretization>) {
-            // Tetrahedral trace: evaluate the deformed normal from the tetrahedral map.
-            Vec4r vmap;
-            VMatrix3x3r vdmap;
-            element.QuadraturePointEvaluateMap(quadPointIndex, nodeCoords, vmap, vdmap);
-            real const det = Det3x3(vdmap);
-            real unused = 0_r;
-            element.QuadraturePointEvaluateWeightNormal(
-                quadPointIndex, det, Invert3x3(vdmap, det), unused, normalColliding);
-          } else {
-            // Triangular surface: evaluate the deformed tangent map as in
-            // Pk2DElement::QuadratureEvaluateMap.
-            using ElementImplT = std::decay_t<decltype(element)>;
-            Vec4r tangent0{};
-            Vec4r tangent1{};
-            for (int f = 0; f < kNumEleNodes; ++f) {
-              auto const& dBasis =
-                  ElementImplT::kBasisEvaluatedParametric.kDBasisEvaluated[quadPointIndex][f];
-              tangent0 += nodeCoords[f] * dBasis[0];
-              tangent1 += nodeCoords[f] * dBasis[1];
-            }
-            normalColliding = Normalize<3>(Cross3(tangent0, tangent1));
-          }
-
-          prevElementIndex = elementIndex;
+        auto const baseElementDofIndices = kSpaceDim3 * element.GetBaseElement().Nodes();
+        NdArray<Vec4r, kNumEleNodes> nodeCoords;
+        for (int j = 0; j < kNumEleNodes; ++j) {
+          nodeCoords[j] = ToSimd(element.nodesCrdsPhys[j]) +
+              Load<3, Vec4r>(&displForNormals[baseElementDofIndices[j]]);
         }
 
-        // Transform to the collider's local frame.
-        if (jacColliderFromWorld.size() == 1) {
-          collisionResult.normalColliding[i] =
-              ToReal3(DotVecMat3x3(normalColliding, jacColliderFromCollidingT));
+        // Compute the surface normal in the colliding actor's local frame. Linear elements have a
+        // constant normal across their quadrature points.
+        Vec4r normalColliding;
+        if constexpr (std::is_same_v<DiscretizationT, CFemBoundaryDiscretization>) {
+          // Tetrahedral trace: evaluate the deformed normal from the tetrahedral map.
+          Vec4r vmap;
+          VMatrix3x3r vdmap;
+          element.QuadraturePointEvaluateMap(quadPointIndex, nodeCoords, vmap, vdmap);
+          real const det = Det3x3(vdmap);
+          real unused = 0_r;
+          element.QuadraturePointEvaluateWeightNormal(
+              quadPointIndex, det, Invert3x3(vdmap, det), unused, normalColliding);
         } else {
-          auto const normalWorld = DotVecMat3x3(normalColliding, rotWorldFromCollidingT);
-          collisionResult.normalColliding[i] =
-              ToReal3(DotMatVec3x3(jacColliderFromWorld[i], normalWorld));
+          // Triangular surface: evaluate the deformed tangent map as in
+          // Pk2DElement::QuadratureEvaluateMap.
+          using ElementImplT = std::decay_t<decltype(element)>;
+          Vec4r tangent0{};
+          Vec4r tangent1{};
+          for (int f = 0; f < kNumEleNodes; ++f) {
+            auto const& dBasis =
+                ElementImplT::kBasisEvaluatedParametric.kDBasisEvaluated[quadPointIndex][f];
+            tangent0 += nodeCoords[f] * dBasis[0];
+            tangent1 += nodeCoords[f] * dBasis[1];
+          }
+          normalColliding = Normalize<3>(Cross3(tangent0, tangent1));
         }
-      }
-    });
-  });
+        return normalColliding;
+      });
 }
 
 #define MOCHI_SETUP_ACTIVE_COLLISIONS_KINEMATICS_INST(IS_SYNC, DISCRETIZATION_TYPE)    \
   template void deformable::SetupActiveCollisionNormals<IS_SYNC, DISCRETIZATION_TYPE>( \
-      ecs::Excluded<TagShellActor, TagRodActor>,                                       \
+      ecs::Excluded<TagShellActor, TagRodActor, TagUseDeformableContactSkin>,          \
       ecs::CtxGlobal<CSimulationParams const>,                                         \
       DISCRETIZATION_TYPE const&,                                                      \
       CFinalDisplacementRef<TimeStep::Current> const&,                                 \

@@ -3347,6 +3347,7 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
   bool const hasContactSkinComponents = _registry.all_of<
       CContactSkinningData,
       CDeformedContactSkinNodes,
+      CFemSurfaceDiscretization,
       CSkinnedContactSnle,
       TagSkinnedContact>(e);
   MOCHI_ASSERT(
@@ -3372,6 +3373,15 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
     MOCHI_ASSERT(
         usesContactSkin != hasDirectContactAssembly,
         "Shell contact must use exactly one of contact-skin or direct assembly.");
+  }
+  if (_registry.all_of<TagSoftActor>(e) && !_registry.all_of<TagNestedSoftActor>(e)) {
+    bool const hasDirectContactDiscretization = _registry.all_of<
+        CFemBoundaryDiscretization,
+        CBoundaryLocal2GlobalMap,
+        CBoundaryNodalBasedStructure>(e);
+    MOCHI_ASSERT(
+        usesContactSkin != hasDirectContactDiscretization,
+        "Soft contact must use exactly one of contact-skin or direct boundary discretization.");
   }
 
   // All actors must have a CConvergenceStatus, except static actors and internal-only compounds

@@ -702,7 +702,7 @@ void AssembleAsyncContact(
     entt::entity e,
     ecs::Included<TagSoftActor, TagUseContact>,
     ecs::OptionalTag<TagRomActor> isRom,
-    ecs::Excluded<TagNestedSoftActor>,
+    ecs::Excluded<TagNestedSoftActor, TagUseDeformableContactSkin>,
     ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
     ecs::CtxGlobal<CSimulationParams const> simParams,
     CTimeIntegratorState const& intState,
@@ -754,6 +754,7 @@ void UpdateRigidVelocity(
 // displacement state used to compute the bounds.
 template <TimeStep kStep>
 void UpdateBounds(
+    ecs::Excluded<TagUseDeformableContactSkin>,
     CColliderInfo const& /*collider*/, // TODO: Is this actually required for the ECS system?
     CTetrahedralMesh const& meshSolver,
     CFinalDisplacementRef<kStep> const& solSolver,

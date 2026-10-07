@@ -22,6 +22,7 @@
 #include "mochi_deformable.h"
 #include "mochi_ecs_utils.h"
 #include "mochi_island.h"
+#include "mochi_linear_contact_skin.h"
 #include "mochi_point_cloud_contact.h"
 #include "mochi_scene_recorder.h"
 #include "mochi_shell.h"
@@ -366,23 +367,13 @@ void mochi::InitShellActor(
       e, CFemSurfaceDiscretizationLite::Create(params.contactElementType, contactMesh));
 
   if (params.useContactSkin) {
-    auto& skinningData = reg.emplace<CContactSkinningData>(e);
-    InitializeLinearContactSkinningJacobian(
+    linear_contact_skin::EmplaceComponents(
+        reg,
+        e,
+        contactDisc,
+        *shapeContactSkinMesh,
         *shapeContactSkinEmbedding,
-        actorTriMesh.GetNumNodes(),
-        shapeContactSkinMesh->GetActiveNodes(),
-        skinningData);
-    InitializeContactSkinningColumnCoalescingMap(contactDisc, skinningData);
-    auto& deformedNodes = reg.emplace<CDeformedContactSkinNodes>(e);
-    deformedNodes.referencePositions.resize_noinit(
-        kSpaceDim3 * shapeContactSkinMesh->GetNumNodes());
-    shapeContactSkinEmbedding->Update(
-        actorTriMesh.GetNodeCoordinates(),
-        Unflatten<Real3>(MakeSpan(deformedNodes.referencePositions)));
-    deformedNodes.positions.resize(kSpaceDim3 * shapeContactSkinMesh->GetNumActiveNodes());
-    reg.emplace<TagUseDeformableContactSkin>(e);
-    reg.emplace<CSkinnedContactSnle>(e);
-    reg.emplace<TagSkinnedContact>(e);
+        actorTriMesh.GetNodeCoordinates());
   } else {
     // Direct contact assembles shell triangles into the actor's body matrix.
     auto const& triConnectivity = actorTriMesh.GetElementConnectivity();
@@ -399,7 +390,11 @@ void mochi::InitShellActor(
   EmplaceShellShellContact(reg, e, params, actorTriMesh, error);
   MOCHI_ERROR_RETURN(error);
 
-  ecs::InvokeOnEntity(shell::UpdateBounds<TimeStep::Current>, reg, e);
+  if (params.useContactSkin) {
+    ecs::InvokeOnEntity(linear_contact_skin::UpdateBounds<TimeStep::Current>, reg, e);
+  } else {
+    ecs::InvokeOnEntity(shell::UpdateBounds<TimeStep::Current>, reg, e);
+  }
 
   // Bounds used for collision detection.
   reg.emplace<CConservativeStepBounds>(e);

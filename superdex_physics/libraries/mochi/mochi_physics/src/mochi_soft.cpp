@@ -388,7 +388,7 @@ void mochi::soft::AssembleAsyncContact(
     entt::entity e,
     ecs::Included<TagSoftActor, TagUseContact>,
     ecs::OptionalTag<TagRomActor> isRom,
-    ecs::Excluded<TagNestedSoftActor>,
+    ecs::Excluded<TagNestedSoftActor, TagUseDeformableContactSkin>,
     ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
     ecs::CtxGlobal<CSimulationParams const> simParams,
     CTimeIntegratorState const& intState,

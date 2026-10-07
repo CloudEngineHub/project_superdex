@@ -875,6 +875,7 @@ static_assert(std::is_same_v<decltype(&mochi::SoftActorParams::contact), mochi::
 static_assert(std::is_same_v<decltype(&mochi::SoftActorParams::hasGravity), bool mochi::SoftActorParams::*>, "\n  ERROR: Field mochi::SoftActorParams::hasGravity is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::SoftActorParams::hasInertia), bool mochi::SoftActorParams::*>, "\n  ERROR: Field mochi::SoftActorParams::hasInertia is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::SoftActorParams::hasStress), bool mochi::SoftActorParams::*>, "\n  ERROR: Field mochi::SoftActorParams::hasStress is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::SoftActorParams::useContactSkin), bool mochi::SoftActorParams::*>, "\n  ERROR: Field mochi::SoftActorParams::useContactSkin is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::SoftActorParams::boundaryElementType), mochi::ActorBoundaryElementType mochi::SoftActorParams::*>, "\n  ERROR: Field mochi::SoftActorParams::boundaryElementType is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
 // struct mochi::ArticulatedJointParams
@@ -1644,6 +1645,7 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT((params.hasGravity == bool(true)), "DSL default value for SoftActorParams::hasGravity doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.hasInertia == bool(true)), "DSL default value for SoftActorParams::hasInertia doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.hasStress == bool(true)), "DSL default value for SoftActorParams::hasStress doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.useContactSkin == bool(false)), "DSL default value for SoftActorParams::useContactSkin doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.boundaryElementType == mochi::ActorBoundaryElementType::Default), "DSL default value for SoftActorParams::boundaryElementType doesn't match C++ default. DSL says Default, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {

@@ -15,12 +15,17 @@
  */
 
 #include <gtest/gtest.h>
+#include <mochi_core/utils/defer.h>
+#include <mochi_physics/src/mochi_linear_contact_skin.h>
 #include <mochi_physics/src/mochi_point_cloud_contact.h>
 #include <mochi_physics/src/mochi_rod.h>
 #include <mochi_physics/src/mochi_shell.h>
 #include <mochi_physics/src/mochi_step.h>
 #include "mochi_core/test/mochi_test_helpers.h"
 #include "mochi_physics_test_fixture.h"
+
+#include <array>
+#include <utility>
 
 using namespace mochi;
 using namespace mochi::shell;
@@ -1213,12 +1218,14 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
   for (int dof = 0; dof < displacement.Rows(); ++dof) {
     displacement = baseDisplacement;
     displacement(dof) += kEpsilon;
-    ecs::InvokeOnEntity(shell::UpdateContactSkinPositions<TimeStep::Current>, reg, entity);
+    ecs::InvokeOnEntity(
+        linear_contact_skin::UpdatePositionsAndSamples<TimeStep::Current>, reg, entity);
     auto const positionsPlus = samples.positions;
 
     displacement = baseDisplacement;
     displacement(dof) -= kEpsilon;
-    ecs::InvokeOnEntity(shell::UpdateContactSkinPositions<TimeStep::Current>, reg, entity);
+    ecs::InvokeOnEntity(
+        linear_contact_skin::UpdatePositionsAndSamples<TimeStep::Current>, reg, entity);
     auto const& positionsMinus = samples.positions;
 
     for (int contact = 0; contact < contactJacobian.nContacts; ++contact) {
@@ -1245,85 +1252,100 @@ TEST_F(MochiShellContactSkinTest, ContactJacobianMatchesFiniteDifferences) {
 }
 
 TEST_F(MochiShellContactSkinTest, ContactForceIsDistributedThroughSkinWeights) {
-  ShapeHandle const shellShape = CreateShape();
-  ShellActorParams shellParams;
-  shellParams.shape = shellShape;
-  shellParams.material.density = 1_r;
-  shellParams.useContactSkin = true;
-  shellParams.contactElementType = ActorBoundaryElementType::P1Q1;
-  shellParams.worldFromLocal.SetTranslation(Real3{0_r, 0_r, -0.01_r});
-  shellParams.contact.penaltyCoefficient = 1e6_r;
-  Actor* const shellActor = experimental::CreateShellActor(_scene, shellParams, test::ExpectOK{});
-  shellActor->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{});
-  shellActor->RegisterQuery(QueryType::NodeContactForces, test::ExpectOK{});
+  // A half turn about x keeps the shell in the z = 0 plane but flips its local frame relative to
+  // the collider, so query forces transformed with the wrong frame point into the plane.
+  std::array<std::pair<char const*, Quaternion>, 2> const orientations = {
+      std::pair{"Identity", Quaternion::Identity()},
+      std::pair{"HalfTurnX", Quaternion(1_r, 0_r, 0_r, 0_r)}};
+  for (auto const& [orientationName, rotation] : orientations) {
+    SCOPED_TRACE(orientationName);
+    ShellActorParams shellParams;
+    shellParams.shape = CreateShape();
+    shellParams.material.density = 1_r;
+    shellParams.useContactSkin = true;
+    shellParams.contactElementType = ActorBoundaryElementType::P1Q1;
+    shellParams.worldFromLocal = TransformRT{rotation, Real3{0_r, 0_r, -0.01_r}};
+    shellParams.contact.penaltyCoefficient = 1e6_r;
+    Actor* const shellActor = experimental::CreateShellActor(_scene, shellParams, test::ExpectOK{});
+    MOCHI_DEFER(_scene->DestroyActor(shellActor));
+    shellActor->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{});
+    shellActor->RegisterQuery(QueryType::NodeContactForces, test::ExpectOK{});
 
-  ShapeHandle const planeShape =
-      _mochiContext->CreatePlaneShape(Real3{0_r, 0_r, 1_r}, 0_r, test::ExpectOK{});
-  RigidActorParams planeParams;
-  planeParams.shape = planeShape;
-  planeParams.isStatic = true;
-  planeParams.colliderType = ColliderType::Plane;
-  planeParams.contact.penaltyCoefficient = shellParams.contact.penaltyCoefficient;
-  _scene->CreateRigidActor(planeParams, test::ExpectOK{});
+    RigidActorParams planeParams;
+    planeParams.shape =
+        _mochiContext->CreatePlaneShape(Real3{0_r, 0_r, 1_r}, 0_r, test::ExpectOK{});
+    planeParams.isStatic = true;
+    planeParams.colliderType = ColliderType::Plane;
+    planeParams.contact.penaltyCoefficient = shellParams.contact.penaltyCoefficient;
+    Actor* const planeActor = _scene->CreateRigidActor(planeParams, test::ExpectOK{});
+    MOCHI_DEFER(_scene->DestroyActor(planeActor));
 
-  _scene->SetGravity({});
-  _scene->Step(1e-4_r);
+    _scene->SetGravity({});
+    _scene->Step(1e-4_r);
 
-  auto& reg = GetRegistry();
-  entt::entity const entity = GetEntity(shellActor);
-  auto const& contactSnle = reg.get<CSkinnedContactSnle const>(entity);
-  ASSERT_TRUE(contactSnle.useInSolver);
-  ASSERT_EQ(1, isize(contactSnle.residuals));
+    auto& reg = GetRegistry();
+    entt::entity const entity = GetEntity(shellActor);
+    auto const& contactSnle = reg.get<CSkinnedContactSnle const>(entity);
+    ASSERT_TRUE(contactSnle.useInSolver);
+    ASSERT_EQ(1, isize(contactSnle.residuals));
 
-  std::array<Real3, 5> nodeForces{};
-  int const shellDofOffset = reg.get<CDofOffset const>(entity).dofsOffset;
-  for (auto const& [residualOffset, residual] : contactSnle.residuals) {
-    for (int i = 0; i < residual.Rows(); ++i) {
-      int const localDof = residualOffset + i - shellDofOffset;
-      if (localDof >= 0 && localDof < kSpaceDim3 * isize(nodeForces)) {
-        nodeForces[localDof / kSpaceDim3][localDof % kSpaceDim3] -= residual[i];
+    // Residuals are in the shell's local frame.
+    std::array<Real3, 5> nodeForces{};
+    int const shellDofOffset = reg.get<CDofOffset const>(entity).dofsOffset;
+    for (auto const& [residualOffset, residual] : contactSnle.residuals) {
+      for (int i = 0; i < residual.Rows(); ++i) {
+        int const localDof = residualOffset + i - shellDofOffset;
+        if (localDof >= 0 && localDof < kSpaceDim3 * isize(nodeForces)) {
+          nodeForces[localDof / kSpaceDim3][localDof % kSpaceDim3] -= residual[i];
+        }
       }
     }
-  }
 
-  real totalNormalForce = 0_r;
-  for (Real3 const& force : nodeForces) {
-    EXPECT_NEAR(0_r, force[0], 1e-5_r);
-    EXPECT_NEAR(0_r, force[1], 1e-5_r);
-    totalNormalForce += force[2];
-  }
-  ASSERT_GT(totalNormalForce, 0_r);
+    real totalNormalForce = 0_r;
+    for (Real3& force : nodeForces) {
+      force = rotation * force;
+      totalNormalForce += force[2];
+    }
+    ASSERT_GT(totalNormalForce, 0_r);
+    // The rotated actor frame adds round-off relative to the force magnitude.
+    real const tangentialTolerance = 1e-6_r * totalNormalForce;
+    for (Real3 const& force : nodeForces) {
+      EXPECT_NEAR(0_r, force[0], tangentialTolerance);
+      EXPECT_NEAR(0_r, force[1], tangentialTolerance);
+    }
 
-  std::array<real, 5> const expectedFractions = {1_r / 6_r, 5_r / 12_r, 1_r / 4_r, 1_r / 6_r, 0_r};
-  for (int node = 0; node < isize(nodeForces); ++node) {
-    EXPECT_NEAR(expectedFractions[node], nodeForces[node][2] / totalNormalForce, 1e-4_r)
-        << "Physics node " << node;
-  }
+    std::array<real, 5> const expectedFractions = {
+        1_r / 6_r, 5_r / 12_r, 1_r / 4_r, 1_r / 6_r, 0_r};
+    for (int node = 0; node < isize(nodeForces); ++node) {
+      EXPECT_NEAR(expectedFractions[node], nodeForces[node][2] / totalNormalForce, 1e-4_r)
+          << "Physics node " << node;
+    }
 
-  auto const contactPoints = shellActor->GetContactPointsWorld(test::ExpectOK{});
-  ASSERT_FALSE(contactPoints.empty());
-  Real3 totalContactForce{};
-  for (ContactPoint const& contactPoint : contactPoints) {
-    EXPECT_EQ(0, contactPoint.elementIndex);
-    EXPECT_NEAR_EQ((Real3{1_r / 3_r, 1_r / 3_r, 1_r / 3_r}), contactPoint.parametricCoords);
-    totalContactForce += contactPoint.force;
-  }
-  real const forceTolerance = 1e-5_r * totalNormalForce;
-  EXPECT_NEAR_TOL((Real3{0_r, 0_r, totalNormalForce}), totalContactForce, forceTolerance);
+    auto const contactPoints = shellActor->GetContactPointsWorld(test::ExpectOK{});
+    ASSERT_FALSE(contactPoints.empty());
+    Real3 totalContactForce{};
+    for (ContactPoint const& contactPoint : contactPoints) {
+      EXPECT_EQ(0, contactPoint.elementIndex);
+      EXPECT_NEAR_EQ((Real3{1_r / 3_r, 1_r / 3_r, 1_r / 3_r}), contactPoint.parametricCoords);
+      totalContactForce += contactPoint.force;
+    }
+    real const forceTolerance = 1e-5_r * totalNormalForce;
+    EXPECT_NEAR_TOL((Real3{0_r, 0_r, totalNormalForce}), totalContactForce, forceTolerance);
 
-  auto const contactForces = shellActor->GetNodeContactForcesWorld(test::ExpectOK{});
-  ASSERT_EQ(3, isize(contactForces));
-  std::array<bool, 3> foundNodes{};
-  Real3 totalNodeContactForce{};
-  for (NodeContactForce const& contactForce : contactForces) {
-    ASSERT_GE(contactForce.index, 0);
-    ASSERT_LT(contactForce.index, isize(foundNodes));
-    foundNodes[contactForce.index] = true;
-    EXPECT_NEAR_TOL(totalContactForce / 3_r, contactForce.force, forceTolerance);
-    totalNodeContactForce += contactForce.force;
+    auto const contactForces = shellActor->GetNodeContactForcesWorld(test::ExpectOK{});
+    ASSERT_EQ(3, isize(contactForces));
+    std::array<bool, 3> foundNodes{};
+    Real3 totalNodeContactForce{};
+    for (NodeContactForce const& contactForce : contactForces) {
+      ASSERT_GE(contactForce.index, 0);
+      ASSERT_LT(contactForce.index, isize(foundNodes));
+      foundNodes[contactForce.index] = true;
+      EXPECT_NEAR_TOL(totalContactForce / 3_r, contactForce.force, forceTolerance);
+      totalNodeContactForce += contactForce.force;
+    }
+    EXPECT_EQ((std::array{true, true, true}), foundNodes);
+    EXPECT_NEAR_TOL(totalContactForce, totalNodeContactForce, forceTolerance);
   }
-  EXPECT_EQ((std::array{true, true, true}), foundNodes);
-  EXPECT_NEAR_TOL(totalContactForce, totalNodeContactForce, forceTolerance);
 }
 
 TEST_F(MochiShellContactSkinTest, DirectContactQueriesUsePhysicsMeshIndices) {
@@ -1383,7 +1405,8 @@ TEST_F(MochiShellContactSkinTest, ContactSkinQuadratureDoesNotChangePointCloudCo
       isize(kPhysicsNodes),
       reg.get<CColliderPointCloudDiscretization const>(entity).GetNumColliderPoints());
 
-  ecs::InvokeOnEntity(shell::UpdateContactSkinPositions<TimeStep::Current>, reg, entity);
+  ecs::InvokeOnEntity(
+      linear_contact_skin::UpdatePositionsAndSamples<TimeStep::Current>, reg, entity);
   for (Real3 const& sample : reg.get<CContactSamples<TimeStep::Current> const>(entity).positions) {
     EXPECT_GE(sample[0], 0.5_r);
   }
@@ -1439,12 +1462,12 @@ TEST_F(MochiShellContactSkinTest, ContactSkinBoundsUseSkinAndColliderGeometryFor
         stageStart[kSpaceDim3 * node + component] = stageStartTranslation[component];
       }
     }
-    ecs::InvokeOnEntity(shell::UpdateBounds<TimeStep::Current>, reg, entity);
+    ecs::InvokeOnEntity(linear_contact_skin::UpdateBounds<TimeStep::Current>, reg, entity);
   }
   expectTranslatedBounds(currentTranslation);
 
   for (entt::entity const entity : {skinOnlyEntity, pointCloudEntity}) {
-    ecs::InvokeOnEntity(shell::UpdateBounds<TimeStep::StageStart>, reg, entity);
+    ecs::InvokeOnEntity(linear_contact_skin::UpdateBounds<TimeStep::StageStart>, reg, entity);
   }
   expectTranslatedBounds(stageStartTranslation);
 }

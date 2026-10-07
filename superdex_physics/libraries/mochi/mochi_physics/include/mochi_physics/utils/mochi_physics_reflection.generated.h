@@ -221,6 +221,7 @@ MOCHI_FIELD(contact)
 MOCHI_FIELD(hasGravity)
 MOCHI_FIELD(hasInertia)
 MOCHI_FIELD(hasStress)
+MOCHI_FIELD(useContactSkin)
 MOCHI_FIELD(boundaryElementType)
 MOCHI_STRUCT_END_EX()
 

@@ -448,9 +448,24 @@ struct SoftActorParams [equality] {
   // @ref hasStress must be enabled.
   bool hasStress = true;
 
-  // @brief Finite element type for boundary discretization.
+  // @brief [Experimental] Use the shape's authored contact skin for colliding contact samples.
   //
-  // @note Affects accuracy and performance of contact and boundary integrals.
+  // @warning This is an experimental feature. It may be changed or removed in the future. Use at
+  // your own risk.
+  //
+  // @details The contact skin must be triangular and have node-based linear skinning data. The
+  // tetrahedral boundary remains the collider geometry when an SDF or Deep Flow collider is
+  // enabled. This option is not supported for ROM or nested soft actors.
+  //
+  // @note A contact skin with linear skinning data is exposed through @ref
+  // Actor::GetContactSkinMesh and @ref QueryType::ContactSkinNodePositions / @ref
+  // QueryType::ContactSkinNodeNormals independently of this flag.
+  bool useContactSkin = false;
+
+  // @brief Finite element type for contact discretization.
+  //
+  // @note Selects quadrature on the tetrahedral boundary, or on the authored contact skin when
+  // @ref useContactSkin is true.
   //
   // @see ActorBoundaryElementType
   ActorBoundaryElementType boundaryElementType = Default;
@@ -1388,6 +1403,9 @@ struct ContactPoint {
   // @note For shell actors, this is the physics mesh returned by @ref Actor::GetMesh unless
   // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
   // Actor::GetContactSkinMesh.
+  // @note For soft actors, this indexes the triangles of @ref Actor::GetSurfaceMesh unless
+  // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
+  // Actor::GetContactSkinMesh.
   // @note For rod actors, this field is not populated and is reported as 0. Use @ref sampleIndex
   // to identify the contact location.
   int elementIndex = -1;
@@ -1413,9 +1431,9 @@ struct NodeContactForce {
 
   // @brief Node index in the volumetric mesh or the mesh used for colliding samples.
   //
-  // @note For shell actors, this is the physics mesh returned by @ref Actor::GetMesh unless
-  // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
-  // Actor::GetContactSkinMesh.
+  // @note For soft and shell actors, this is the physics mesh returned by @ref Actor::GetMesh
+  // unless contact-skin contact is enabled, in which case it is the compact contact skin returned
+  // by @ref Actor::GetContactSkinMesh.
   int index;
 
   // @brief Contact force [N] applied to the node.

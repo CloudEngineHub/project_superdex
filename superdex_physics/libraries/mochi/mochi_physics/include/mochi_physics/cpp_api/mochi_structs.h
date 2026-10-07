@@ -194,6 +194,8 @@ struct SoftActorParams {
 
   bool hasStress = true;
 
+  bool useContactSkin = false;
+
   ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
 
 #if MOCHI_LANGUAGE_CPP20

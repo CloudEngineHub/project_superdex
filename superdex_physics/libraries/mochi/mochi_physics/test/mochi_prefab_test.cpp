@@ -1408,6 +1408,7 @@ TEST(Prefab, SoftActor_Serialization) {
           "hasGravity": false,
           "hasInertia": false,
           "hasStress": false,
+          "useContactSkin": true,
           "boundaryElementType": "P1Q6"
         }
       ]
@@ -1453,6 +1454,7 @@ TEST(Prefab, SoftActor_Serialization) {
     EXPECT_FALSE(soft.hasGravity);
     EXPECT_FALSE(soft.hasInertia);
     EXPECT_FALSE(soft.hasStress);
+    EXPECT_TRUE(soft.useContactSkin);
     EXPECT_EQ(ActorBoundaryElementType::P1Q6, soft.boundaryElementType);
   };
 

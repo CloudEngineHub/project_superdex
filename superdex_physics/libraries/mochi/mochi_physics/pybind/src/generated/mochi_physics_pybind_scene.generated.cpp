@@ -222,7 +222,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsScene([[maybe_unused]] nb::module_& m
       , "Create a soft deformable actor.\n\nArgs:\n    params (SoftActorParams): Parameters defining the soft actor.\n\nReturns:\n    Pointer to the created :class:`~superdex.physics.Actor`, or None on error.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :class:`~superdex.physics.SoftActorParams`,\n    :meth:`~superdex.physics.Scene.destroy_actor`"
       , nb::rv_policy::reference
     )
-    .def("create_soft_actor", [](mochi::Scene& self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object contact, nb::object has_gravity, nb::object has_inertia, nb::object has_stress, nb::object boundary_element_type) {
+    .def("create_soft_actor", [](mochi::Scene& self, nb::object name, nb::object layer, nb::object world_from_local, nb::object shape, nb::object material, nb::object contact, nb::object has_gravity, nb::object has_inertia, nb::object has_stress, nb::object use_contact_skin, nb::object boundary_element_type) {
       mochi::SoftActorParams params{};
       params.name = nb::cast<mochi::DynamicString>(name);
       params.layer = nb::cast<mochi::DynamicString>(layer);
@@ -233,6 +233,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsScene([[maybe_unused]] nb::module_& m
       params.hasGravity = nb::cast<bool>(has_gravity);
       params.hasInertia = nb::cast<bool>(has_inertia);
       params.hasStress = nb::cast<bool>(has_stress);
+      params.useContactSkin = nb::cast<bool>(use_contact_skin);
       params.boundaryElementType = nb::cast<mochi::ActorBoundaryElementType>(boundary_element_type);
       mochi::Error error;
       auto result = self.CreateSoftActor(params, error);
@@ -251,6 +252,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsScene([[maybe_unused]] nb::module_& m
       , nb::arg("has_gravity") = mochi::SoftActorParams{}.hasGravity
       , nb::arg("has_inertia") = mochi::SoftActorParams{}.hasInertia
       , nb::arg("has_stress") = mochi::SoftActorParams{}.hasStress
+      , nb::arg("use_contact_skin") = mochi::SoftActorParams{}.useContactSkin
       , nb::arg("boundary_element_type") = mochi::SoftActorParams{}.boundaryElementType
       , "Create a soft deformable actor.\n\nArgs:\n    params (SoftActorParams): Parameters defining the soft actor.\n\nReturns:\n    Pointer to the created :class:`~superdex.physics.Actor`, or None on error.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :class:`~superdex.physics.SoftActorParams`,\n    :meth:`~superdex.physics.Scene.destroy_actor`", nb::rv_policy::reference)
     .def("create_articulated_actor", [](mochi::Scene& self, mochi::ArticulatedActorParams const& params) {

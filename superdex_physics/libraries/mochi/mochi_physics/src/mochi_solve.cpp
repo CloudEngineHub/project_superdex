@@ -717,7 +717,7 @@ void mochi::solver::AssembleIslandPipeline(
   // Start a task for each actor with async skinned contact.
   std::array<Span<entt::entity const>, 4> skinnedActors = {
       descendants.compoundActors,
-      descendants.nestedSoftActors,
+      descendants.softActors,
       descendants.shellActors,
       descendants.rodActors};
   for (auto actors : skinnedActors) {
