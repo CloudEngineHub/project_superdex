@@ -26,7 +26,7 @@
 
 #include <superdex_robotics/utils/file_utils.h> // kCollisionSubdir
 
-#include <imguios/imguios.h>
+#include <imgui.h>
 
 #include <mochi_mesh/isosurface_reconstruction.h> // ReconstructSurfaceFromSdf
 

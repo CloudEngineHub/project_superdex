@@ -16,8 +16,8 @@
 
 #include "meshing/processing_modifiers/unknown_placeholder.h"
 
+#include <imgui.h>
 #include <imguios/fonts/icons_font_awesome5.h> // ICON_FA_EXCLAMATION_TRIANGLE
-#include <imguios/imguios.h>
 
 #include <picojson/picojson.h>
 

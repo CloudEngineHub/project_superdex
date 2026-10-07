@@ -20,7 +20,7 @@
 #include "meshing/processing_modifiers/processing_mesh_utils.h" // LoadMochiMesh
 #include "ui/imgui_widgets.h" // ImGui::AssetSlot
 
-#include <imguios/imguios.h>
+#include <imgui.h>
 
 #include <mochi_core/utils/dynamic_string.h>
 

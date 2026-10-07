@@ -25,7 +25,7 @@
 
 #include <superdex_robotics/utils/file_utils.h> // kRenderSubdir
 
-#include <imguios/imguios.h>
+#include <imgui.h>
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/dynamic_string.h>
