@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <mochi_core/mochi_platform.h>
 #include <mochi_core/utils/matrix_utils.h> // for intellisense
 
 #include <cmath>
@@ -58,7 +59,7 @@ template <typename T, size_t N, size_t M>
 MOCHI_FORCE_INLINE constexpr NdArray<T, N> DotMatVec(
     NdArray<T, N, M> const& a,
     NdArray<T, M> const& b) {
-  NdArray<T, N> result = {};
+  NdArray<T, N> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
   for (size_t i = 0; i < result.size(); ++i) {
     result[i] = Dot(a[i], b);
   }
@@ -75,7 +76,7 @@ MOCHI_FORCE_INLINE void DotMatVec(NdArray<T, N, M> const& a, Span<T const> b, Sp
 
 template <typename T, size_t N, size_t M>
 MOCHI_FORCE_INLINE constexpr NdArray<T, N> DotMatVec(NdArray<T, N, M> const& a, Span<T const> b) {
-  NdArray<T, N> result = {};
+  NdArray<T, N> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
   DotMatVec(a, b, Span<T>(result));
   return result;
 }
@@ -163,7 +164,7 @@ template <typename T, size_t N, size_t M, size_t L>
 MOCHI_FORCE_INLINE constexpr NdArray<T, N, L> Dot(
     NdArray<T, N, M> const& a,
     NdArray<T, M, L> const& b) {
-  NdArray<T, N, L> result = {};
+  NdArray<T, N, L> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
   NdArray<T, L, M> bT = Transpose(b);
   for (int n = 0; n < N; ++n) {
     result[n] = DotMatVec(bT, a[n]);
@@ -572,18 +573,22 @@ MOCHI_FORCE_INLINE NdArray<Simd<T, 4>, 4> InvertTransformation(NdArray<Simd<T, 4
 
 template <size_t N, typename T>
 MOCHI_FORCE_INLINE constexpr NdArray<T, N, N> DiagonalMatrix(T valueOnDiagonal) {
-  NdArray<T, N, N> result = {};
-  for (size_t i = 0; i < result.size(); ++i) {
-    result[i][i] = valueOnDiagonal;
+  NdArray<T, N, N> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+  for (size_t i = 0; i < N; ++i) {
+    for (size_t j = 0; j < N; ++j) {
+      result[i][j] = (i == j) ? valueOnDiagonal : T{};
+    }
   }
   return result;
 }
 
 template <size_t N, typename T>
 MOCHI_FORCE_INLINE constexpr NdArray<T, N, N> DiagonalMatrix(NdArray<T, N> const& diagonalVector) {
-  NdArray<T, N, N> result = {};
-  for (size_t i = 0; i < result.size(); ++i) {
-    result[i][i] = diagonalVector[i];
+  NdArray<T, N, N> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+  for (size_t i = 0; i < N; ++i) {
+    for (size_t j = 0; j < N; ++j) {
+      result[i][j] = (i == j) ? diagonalVector[i] : T{};
+    }
   }
   return result;
 }
@@ -712,7 +717,7 @@ MOCHI_FORCE_INLINE T Det2x2(Simd<T, 4> const& A) {
 
 template <typename T, size_t N, size_t M>
 MOCHI_FORCE_INLINE constexpr NdArray<T, M, N> Transpose(NdArray<T, N, M> const& mat) {
-  NdArray<T, M, N> result = {};
+  NdArray<T, M, N> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
   for (size_t i = 0; i < M; ++i) {
     for (size_t j = 0; j < N; ++j) {
       result[i][j] = mat[j][i];
@@ -970,7 +975,7 @@ MOCHI_FORCE_INLINE constexpr NdArray<T, N, N> DNormalize(NdArray<T, N> const& v,
   static_assert(kMin > 0); // Check numeric_limits has been correctly specialized.
   T const invNorm = T(1) / (Sqrt(sqrNorm) + T(kMin));
   NdArray<T, N> const n = v * invNorm;
-  NdArray<T, N, N> result{};
+  NdArray<T, N, N> result MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
   for (size_t i = 0; i < N; ++i) {
     for (size_t j = 0; j < N; ++j) {
       result[i][j] = -n[i] * n[j] * invNorm;

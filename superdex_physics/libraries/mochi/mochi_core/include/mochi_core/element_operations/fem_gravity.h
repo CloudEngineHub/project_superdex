@@ -92,7 +92,10 @@ bool GravityWork(
 
     if (evalObj) {
       // y_q = map_q + Σ_f N_f(q) * u_f  (interpolate displacement to quad point)
-      V3 y = {};
+      V3 y MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int d = 0; d < kSpaceDim; ++d) {
+        y[d] = V{0_r};
+      }
       for (int f = 0; f < kNumNodes; ++f) {
         y += basis[f] * V3{disp[f * kSpaceDim], disp[f * kSpaceDim + 1], disp[f * kSpaceDim + 2]};
       }

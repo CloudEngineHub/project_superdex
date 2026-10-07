@@ -18,6 +18,7 @@
 
 #include <mochi_core/element_operations/batched_element_utils.h>
 #include <mochi_core/element_operations/element_operation_utils.h>
+#include <mochi_core/mochi_platform.h>
 #include <mochi_core/utils/batch_types.h>
 #include <mochi_core/utils/decomposition_utils.h>
 #include <mochi_core/utils/math_utils.h>
@@ -463,7 +464,15 @@ DSecondFundamentalFormDEdges(NdArray<BatchReal3<kBatchSize>, kBendingStencilNode
   NdArray<V3x3, 4> const dnHat_dn = {
       DNormalize(n[0]), DNormalize(n[1]), DNormalize(n[2]), DNormalize(n[3])};
 
-  NdArray<BatchSymMatrix2x2<kBatchSize>, kBendingStencilNodes, kSpaceDim3> db_dv{};
+  NdArray<BatchSymMatrix2x2<kBatchSize>, kBendingStencilNodes, kSpaceDim3> db_dv
+      MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+  for (int i = 0; i < kBendingStencilNodes; ++i) {
+    for (int j = 0; j < kSpaceDim3; ++j) {
+      for (int k = 0; k < 3; ++k) {
+        db_dv[i][j][k] = V{0_r};
+      }
+    }
+  }
   V const two{2_r};
   V3 const twoNAvg1Minus0 = two * (nAvg[1] - nAvg[0]);
   V3 const twoNAvg0Minus2 = two * (nAvg[0] - nAvg[2]);
@@ -478,7 +487,12 @@ DSecondFundamentalFormDEdges(NdArray<BatchReal3<kBatchSize>, kBendingStencilNode
   V3 const v2d2 = DotVecMat(v[2], dnAvg_dnSum[2]);
 
   for (int vi = 0; vi < kBendingStencilNodes; ++vi) {
-    V3x3 dn0{};
+    V3x3 dn0 MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    for (int r = 0; r < 3; ++r) {
+      for (int c = 0; c < 3; ++c) {
+        dn0[r][c] = V{0_r};
+      }
+    }
     if (vi == 2) {
       dn0 = -Dot(dnHat_dn[0], Skew(v[0]));
     } else if (vi == 0) {
@@ -489,7 +503,12 @@ DSecondFundamentalFormDEdges(NdArray<BatchReal3<kBatchSize>, kBendingStencilNode
     for (int ns = 0; ns < 3; ++ns) {
       int const ni = ns + 1;
       int const e0 = ni + 2, e1 = (e0 + 1) % 3;
-      V3x3 dn_ni{};
+      V3x3 dn_ni MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+          dn_ni[r][c] = V{0_r};
+        }
+      }
       if (vi == e0) {
         dn_ni = -Dot(dnHat_dn[ni], Skew(v[e1]));
       } else if (vi == e1) {
@@ -553,7 +572,14 @@ inline void SecondFundamentalFormAndDEdges(
   NdArray<V3x3, 4> const dnHat_dn = {
       DNormalize(n[0]), DNormalize(n[1]), DNormalize(n[2]), DNormalize(n[3])};
 
-  outDb_dv = {};
+  // Zeroed in loops: required to avoid memset calls (e.g. on MSVC).
+  for (int i = 0; i < kBendingStencilNodes; ++i) {
+    for (int j = 0; j < kSpaceDim3; ++j) {
+      for (int k = 0; k < 3; ++k) {
+        outDb_dv[i][j][k] = V{0_r};
+      }
+    }
+  }
   V3 const twoNAvg1Minus0 = two * d10;
   V3 const twoNAvg0Minus2 = two * d02;
   for (int i = 0; i < kSpaceDim3; ++i) {
@@ -565,7 +591,12 @@ inline void SecondFundamentalFormAndDEdges(
   V3 const v2d0 = DotVecMat(v[2], dnAvg_dnSum[0]);
   V3 const v2d2 = DotVecMat(v[2], dnAvg_dnSum[2]);
   for (int vi = 0; vi < kBendingStencilNodes; ++vi) {
-    V3x3 dn0{};
+    V3x3 dn0 MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    for (int r = 0; r < 3; ++r) {
+      for (int c = 0; c < 3; ++c) {
+        dn0[r][c] = V{0_r};
+      }
+    }
     if (vi == 2) {
       dn0 = -Dot(dnHat_dn[0], Skew(v[0]));
     } else if (vi == 0) {
@@ -575,7 +606,12 @@ inline void SecondFundamentalFormAndDEdges(
     for (int ns = 0; ns < 3; ++ns) {
       int const ni = ns + 1;
       int const e0 = ni + 2, e1 = (e0 + 1) % 3;
-      V3x3 dn_ni{};
+      V3x3 dn_ni MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+          dn_ni[r][c] = V{0_r};
+        }
+      }
       if (vi == e0) {
         dn_ni = -Dot(dnHat_dn[ni], Skew(v[e1]));
       } else if (vi == e1) {

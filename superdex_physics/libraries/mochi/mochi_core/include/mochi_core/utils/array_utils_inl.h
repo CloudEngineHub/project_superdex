@@ -19,6 +19,7 @@
 // Reverse include for intellisense
 #include "array_utils.h"
 
+#include <mochi_core/mochi_platform.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/profile.h>
@@ -594,7 +595,10 @@ T HSum(Span<T, SZ> a) {
   if constexpr (VT::kIsSupported) {
     int constexpr kNumBlocks = 4; // Large enough to hide latency
     int constexpr kBlockStride = VT::kSize * kNumBlocks;
-    VT block[kNumBlocks] = {};
+    VT block[kNumBlocks] MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    for (int k = 0; k < kNumBlocks; ++k) {
+      block[k] = SimdZero<VT>();
+    }
     if (n >= kBlockStride) {
       for (; i + kBlockStride <= n; i += kBlockStride) {
         auto tmp0 = Load<VT>(&a[i + VT::kSize * 0]);

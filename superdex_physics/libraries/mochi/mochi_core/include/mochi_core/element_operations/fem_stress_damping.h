@@ -202,7 +202,10 @@ bool StressDampingWork(
     if (needStrainWork) {
       // Stage-start right Cauchy–Green tensor Css in Voigt, accumulated one Fss row at a time so
       // the full Fss 3×3 is never materialized. Css[k][l] = Σ_p Fss[p][k]·Fss[p][l].
-      NdArray<V, 6> Css{};
+      NdArray<V, 6> Css MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+      for (int i = 0; i < 6; ++i) {
+        Css[i] = V{0_r};
+      }
       for (int p = 0; p < kSpaceDim; ++p) {
         V fssRow[3] MOCHI_NO_INIT;
         for (int c = 0; c < kSpaceDim; ++c) {

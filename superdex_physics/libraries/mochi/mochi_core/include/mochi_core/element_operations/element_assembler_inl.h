@@ -387,11 +387,16 @@ MOCHI_FORCE_INLINE void ProcessBatch(
   if (assemObj) {
     batchEnergy = {};
   }
+  // Zeroed in loops: required to avoid memset calls (e.g. on MSVC).
   if constexpr (kAssemRes) {
-    batchRes = {};
+    for (int i = 0; i < batchRes.size(); ++i) {
+      batchRes[i] = SimdZero<BatchReal<kBatchSize>>();
+    }
   }
   if constexpr (kAssemDRes) {
-    batchDRes = {};
+    for (int i = 0; i < batchDRes.size(); ++i) {
+      batchDRes[i] = SimdZero<BatchReal<kBatchSize>>();
+    }
   }
 
   bool const hasOutput = InvokeBatchedElOp<kGatherSolution, ElementT, kNumFields, kBatchSize>(
@@ -530,8 +535,10 @@ static void DynamicLoadBalancingAssembly(
 
     // Per-thread buffers.
     BatchDouble<kBatchSize> batchEnergy{};
-    fem::BatchElementVector<kBatchSize, ElementT, kNumFields> batchRes{};
-    fem::BatchElementMatrix<kBatchSize, ElementT, kNumFields> batchDRes{};
+    fem::BatchElementVector<kBatchSize, ElementT, kNumFields> batchRes
+        MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    fem::BatchElementMatrix<kBatchSize, ElementT, kNumFields> batchDRes
+        MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
 
     if (numThreads == 1) {
       // Single-threaded: linear pass over all (active) elements to improve cache locality.
@@ -868,8 +875,10 @@ void AssembleAndProjectObjResDResImpl(
 
     // Per-batch objective, residual and dresidual.
     BatchDouble<kBatchSize> batchEnergy{};
-    fem::BatchElementVector<kBatchSize, ElementT, kNumFields> batchRes{};
-    fem::BatchElementMatrix<kBatchSize, ElementT, kNumFields> batchDRes{};
+    fem::BatchElementVector<kBatchSize, ElementT, kNumFields> batchRes
+        MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
+    fem::BatchElementMatrix<kBatchSize, ElementT, kNumFields> batchDRes
+        MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
 
     // Per-element residual and dresidual.
     alignas(alignof(Simd<real>)) ColumnVector<real, kNumEleDofs> eleRes MOCHI_NO_INIT;
@@ -896,11 +905,16 @@ void AssembleAndProjectObjResDResImpl(
       if (params.assemObj) {
         batchEnergy = {};
       }
+      // Zeroed in loops: required to avoid memset calls (e.g. on MSVC).
       if (params.assemRes) {
-        batchRes = {};
+        for (int i = 0; i < batchRes.size(); ++i) {
+          batchRes[i] = SimdZero<BatchReal<kBatchSize>>();
+        }
       }
       if (params.assemDRes) {
-        batchDRes = {};
+        for (int i = 0; i < batchDRes.size(); ++i) {
+          batchDRes[i] = SimdZero<BatchReal<kBatchSize>>();
+        }
       }
 
       bool const hasOutput = InvokeBatchedElOp<kGatherSolution, ElementT, kNumFields, kBatchSize>(

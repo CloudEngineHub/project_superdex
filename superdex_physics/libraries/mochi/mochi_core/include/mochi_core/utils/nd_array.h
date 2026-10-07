@@ -17,6 +17,7 @@
 #pragma once
 
 #include <mochi_core/mochi_config.h>
+#include <mochi_core/mochi_platform.h>
 #include <mochi_core/utils/concepts.h>
 #include <mochi_core/utils/debug.h>
 #include <mochi_core/utils/reflection.h>
@@ -182,7 +183,8 @@ using Tensor3x3x3f = NdArray<float, 3, 3, 3>;
 
 template <typename T, size_t D0, size_t... DIMS>
 MOCHI_FORCE_INLINE constexpr NdArray<T, D0, DIMS...> operator-(NdArray<T, D0, DIMS...> const& a) {
-  NdArray<T, D0, DIMS...> result{};
+  NdArray<T, D0, DIMS...> result
+      MOCHI_CONSTEXPR_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
   MOCHI_DETAILS_UNROLL_D0(result[i] = -a[i]);
   return result;
 }
@@ -233,7 +235,9 @@ MOCHI_FORCE_INLINE constexpr bool operator!=(
 // NdArray memberwise math operators (+=, -=, *=, /=, +, -, *, /)
 //
 // In-place OP_EQ variants (NdArray += NdArray, NdArray += scalar) avoid creating a temporary. For
-// large or nested NdArrays, the temporary may otherwise spill out of the register file.
+// large or nested NdArrays, the temporary may otherwise spill out of the register file. The other
+// variants declare their results MOCHI_CONSTEXPR_NO_INIT, to avoid memset calls with some
+// compilers (e.g. MSVC).
 #define MOCHI_DETAILS_NDARRAY_MEMBERWISE_OP(OP_EQ, OP)                          \
                                                                                 \
   template <typename T, size_t D0, size_t... DIMS>                              \
@@ -260,7 +264,7 @@ MOCHI_FORCE_INLINE constexpr bool operator!=(
   template <typename T, size_t D0, size_t... DIMS>                              \
   MOCHI_FORCE_INLINE constexpr NdArray<T, D0, DIMS...> operator OP(             \
       NdArray<T, D0, DIMS...> const& lhs, NdArray<T, D0, DIMS...> const& rhs) { \
-    NdArray<T, D0, DIMS...> result{};                                           \
+    NdArray<T, D0, DIMS...> result MOCHI_CONSTEXPR_NO_INIT;                     \
     MOCHI_DETAILS_UNROLL_D0(result[i] = lhs[i] OP rhs[i]);                      \
     return result;                                                              \
   }                                                                             \
@@ -268,7 +272,7 @@ MOCHI_FORCE_INLINE constexpr bool operator!=(
   template <typename T, size_t D0, size_t... DIMS>                              \
   MOCHI_FORCE_INLINE constexpr NdArray<T, D0, DIMS...> operator OP(             \
       NdArray<T, D0, DIMS...> const& lhs, T rhs) {                              \
-    NdArray<T, D0, DIMS...> result{};                                           \
+    NdArray<T, D0, DIMS...> result MOCHI_CONSTEXPR_NO_INIT;                     \
     MOCHI_DETAILS_UNROLL_D0(result[i] = lhs[i] OP rhs);                         \
     return result;                                                              \
   }                                                                             \
@@ -276,7 +280,7 @@ MOCHI_FORCE_INLINE constexpr bool operator!=(
   template <typename T, size_t D0, size_t... DIMS>                              \
   MOCHI_FORCE_INLINE constexpr NdArray<T, D0, DIMS...> operator OP(             \
       T lhs, NdArray<T, D0, DIMS...> const& rhs) {                              \
-    NdArray<T, D0, DIMS...> result{};                                           \
+    NdArray<T, D0, DIMS...> result MOCHI_CONSTEXPR_NO_INIT;                     \
     MOCHI_DETAILS_UNROLL_D0(result[i] = lhs OP rhs[i]);                         \
     return result;                                                              \
   }

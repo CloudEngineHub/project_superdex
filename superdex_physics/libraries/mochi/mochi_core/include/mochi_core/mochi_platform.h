@@ -519,6 +519,19 @@
 #endif
 
 /**************************************************************************************************
+  MOCHI_CONSTEXPR_NO_INIT
+    MOCHI_NO_INIT for a local variable of a constexpr function. C++17 requires such variables to be
+    initialized, so they are value-initialized before C++20.
+*/
+#if MOCHI_LANGUAGE_CPP20
+#define MOCHI_CONSTEXPR_NO_INIT MOCHI_NO_INIT
+#else
+// clang-format off
+#define MOCHI_CONSTEXPR_NO_INIT {}
+// clang-format on
+#endif
+
+/**************************************************************************************************
   MOCHI_DEBUG_BREAK()
     Trigger a debug breakpoint (fatal if no debugger is connected)
 */
