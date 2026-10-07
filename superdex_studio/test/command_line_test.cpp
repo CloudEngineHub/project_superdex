@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -103,4 +104,94 @@ TEST(CommandLineTest, MistakesAreReported) {
       "--out is given more than once");
   EXPECT_EQ(ParseError({"--out", "x"}), "--out only applies with --process");
   EXPECT_EQ(ParseError({"--process", "a.json", "b.json"}), "unexpected argument 'b.json'");
+}
+
+TEST(CommandLineTest, ScreenshotTakesEveryOption) {
+  CommandLine const commandLine = Parse(
+      {"--screenshot",
+       "out.png",
+       "--open=board.mochi_prefab",
+       "--size",
+       "1280x720",
+       "--focus",
+       "board/screw",
+       "--viewport-only"});
+
+  ASSERT_TRUE(commandLine.screenshot.has_value());
+  ScreenshotOptions const& screenshot = *commandLine.screenshot;
+  EXPECT_EQ(screenshot.outPath, "out.png");
+  EXPECT_EQ(screenshot.openPath, "board.mochi_prefab");
+  EXPECT_EQ(screenshot.width, 1280);
+  EXPECT_EQ(screenshot.height, 720);
+  EXPECT_EQ(screenshot.focus, "board/screw");
+  EXPECT_FALSE(screenshot.camera.has_value());
+  EXPECT_TRUE(screenshot.viewportOnly);
+  EXPECT_FALSE(commandLine.process.has_value());
+}
+
+TEST(CommandLineTest, ScreenshotDefaultsToTheWholeWindowAtItsSize) {
+  ScreenshotOptions const screenshot =
+      Parse({"--screenshot", "out.png", "--open", "bot.superdex_bot"}).screenshot.value();
+
+  EXPECT_EQ(screenshot.width, 0);
+  EXPECT_EQ(screenshot.height, 0);
+  EXPECT_TRUE(screenshot.focus.empty());
+  EXPECT_FALSE(screenshot.camera.has_value());
+  EXPECT_FALSE(screenshot.viewportOnly);
+}
+
+TEST(CommandLineTest, CameraTakesEyeAndTargetAsTwoArgumentsOrOne) {
+  std::vector<std::string> const base{"--screenshot", "out.png", "--open", "a.mochi_prefab"};
+  auto parseCamera = [&](std::vector<std::string> const& cameraArgs) {
+    std::vector<std::string> args = base;
+    args.insert(args.end(), cameraArgs.begin(), cameraArgs.end());
+    return Parse(args).screenshot.value().camera.value();
+  };
+  std::array<double, 3> const eye{0.5, -0.5, 0.25};
+  std::array<double, 3> const target{0.0, 0.0, 0.1};
+
+  for (auto const& cameraArgs : std::vector<std::vector<std::string>>{
+           {"--camera", "eye=0.5,-0.5,0.25", "target=0,0,0.1"},
+           {"--camera", "target=0,0,0.1", "eye=0.5,-0.5,0.25"},
+           {"--camera", "eye=0.5,-0.5,0.25 target=0,0,0.1"},
+           {"--camera=eye=0.5,-0.5,0.25", "target=0,0,0.1"},
+       }) {
+    CameraPlacement const camera = parseCamera(cameraArgs);
+    EXPECT_EQ(camera.eye, eye) << cameraArgs[1];
+    EXPECT_EQ(camera.target, target) << cameraArgs[1];
+  }
+}
+
+TEST(CommandLineTest, ScreenshotMistakesAreReported) {
+  EXPECT_EQ(ParseError({"--screenshot", "out.png"}), "--screenshot needs --open <file>");
+  EXPECT_EQ(ParseError({"--open", "a.mochi_prefab"}), "--open only applies with --screenshot");
+  EXPECT_EQ(ParseError({"--viewport-only"}), "--viewport-only only applies with --screenshot");
+  EXPECT_EQ(
+      ParseError({"--process", "p.json", "--screenshot", "out.png"}),
+      "--process and --screenshot cannot be combined");
+
+  std::vector<std::string> const base{"--screenshot", "out.png", "--open", "a.mochi_prefab"};
+  auto error = [&](std::vector<std::string> const& extra) {
+    std::vector<std::string> args = base;
+    args.insert(args.end(), extra.begin(), extra.end());
+    return ParseError(args);
+  };
+  std::string const sizeError = "--size must be <width>x<height>, each from 1 to 8192 pixels";
+  EXPECT_EQ(error({"--size", "1280"}), sizeError);
+  EXPECT_EQ(error({"--size", "0x720"}), sizeError);
+  EXPECT_EQ(error({"--size", "9000x720"}), sizeError);
+  std::string const cameraError =
+      "--camera needs eye=<x,y,z> target=<x,y,z>, two different points with each coordinate "
+      "within 1e6";
+  EXPECT_EQ(error({"--camera", "eye=1,2,3"}), cameraError);
+  EXPECT_EQ(error({"--camera", "eye=0,1e39,0", "target=0,0,0"}), cameraError);
+  EXPECT_EQ(error({"--camera", "eye=1,2", "target=0,0,0"}), cameraError);
+  EXPECT_EQ(error({"--camera", "eye=1,2,3", "target=1,2,3"}), cameraError);
+  // Different as doubles, but the same point in the camera's float precision.
+  EXPECT_EQ(error({"--camera", "eye=1,2,3", "target=1.00000001,2,3"}), cameraError);
+  EXPECT_EQ(error({"--camera"}), "--camera needs eye=<x,y,z> target=<x,y,z>");
+  EXPECT_EQ(
+      error({"--focus", "box", "--camera", "eye=1,2,3", "target=0,0,0"}),
+      "--focus and --camera cannot be combined");
+  EXPECT_EQ(error({"extra.png"}), "unexpected argument 'extra.png'");
 }

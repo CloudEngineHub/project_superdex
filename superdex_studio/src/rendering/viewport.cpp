@@ -817,6 +817,16 @@ std::vector<SceneObject*> Viewport::FindActors(std::string_view path, bool* ambi
   return actors;
 }
 
+bool Viewport::HasVisibleGeometry() const {
+  if (_renderScene == nullptr) {
+    return false;
+  }
+  return std::ranges::any_of(_renderScene->GetSceneObjects(), [](SceneObject const* object) {
+    return object != nullptr && !object->_internal && object->IsVisible() &&
+        !object->GetAABB().isEmpty();
+  });
+}
+
 void Viewport::SetCameraLookAt(mochi::Real3 const& eye, mochi::Real3 const& target) const {
   auto const& converter = _studio->GetEditorToRendererSpaceConverter();
   _cameraController->LookAt(

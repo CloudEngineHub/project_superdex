@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "app/screenshot_command.h"
 #include "assets/asset_manager.h"
 #include "core/common.h"
 #include "core/settings.h"
@@ -59,6 +60,7 @@ class SuperDexStudio : public ImGuios::Application {
   SuperDexStudio();
   void OnInitialize() override;
   void OnUpdate() override;
+  void OnPostSwap() override;
   void OnShutdown() override;
 
   //------------------------------------------------------------------------------------------------
@@ -109,6 +111,16 @@ class SuperDexStudio : public ImGuios::Application {
       int height,
       mochi::Path const& outFile,
       mochi::Error& error);
+  // Writes the window to @p outFile as a PNG. Call once a frame is on screen, as OnPostSwap does;
+  // the image may be a frame or two old, so wait that long after a change.
+  void SaveWindowScreenshot(mochi::Path const& outFile, mochi::Error& error);
+  // Makes this a screenshot run (see screenshot_command.h): the app stops by itself once the PNG is
+  // written or the run fails. Call before Run.
+  void StartScreenshotRun(ScreenshotOptions options);
+  // The exit code for the process: 1 when a screenshot run failed or did not finish, else 0.
+  int GetExitCode() const {
+    return _exitCode;
+  }
 
   //------------------------------------------------------------------------------------------------
   // File
@@ -224,6 +236,11 @@ class SuperDexStudio : public ImGuios::Application {
   std::function<void()> _onUnsavedProceed;
   Importer* _activeImporter = nullptr; // importer whose modal is currently open, if any
   AsyncTaskRunner _asyncTasks; // runs importer background work + its progress modal
+  std::unique_ptr<ScreenshotRun> _screenshotRun;
+  // Off for a screenshot run, which must leave the user's settings and layout as they were: batch
+  // runs would otherwise record every temp folder, and parallel ones race on the files.
+  bool _persistSettings = true;
+  int _exitCode = 0;
   int _activeAssetEditorIdx = -1;
   bool _needDefaultDockLayout = false;
   bool _needDefaultWindowFocus = false;

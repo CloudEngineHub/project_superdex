@@ -51,6 +51,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -683,7 +684,18 @@ void SuperDexStudio::OnUpdate() {
   }
 }
 
+void SuperDexStudio::OnPostSwap() {
+  if (_screenshotRun != nullptr && !_screenshotRun->Step(*this)) {
+    _exitCode = _screenshotRun->ExitCode();
+    _screenshotRun.reset();
+    Stop();
+  }
+}
+
 void SuperDexStudio::OnShutdown() {
+  if (_screenshotRun != nullptr) {
+    std::fputs("superdex_studio: Studio closed before the screenshot was saved\n", stderr);
+  }
   SaveSettings();
   _logConsole.reset();
   while (!_assetEditors.empty()) {
@@ -1230,6 +1242,53 @@ void SuperDexStudio::RenderViewportScreenshot(
   }
 }
 
+void SuperDexStudio::SaveWindowScreenshot(
+    [[maybe_unused]] mochi::Path const& outFile,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+#if MOCHI_PLATFORM_MACOS
+  MOCHI_ERROR_SET(error, "Window screenshots are not available with Metal; save the viewport.");
+#else
+  int width = 0;
+  int height = 0;
+  glfwGetFramebufferSize(GetMainWindow()->GetGLFW(), &width, &height);
+  MOCHI_ERROR_IF(width <= 0 || height <= 0, error, "The window has no pixels to save.");
+  MOCHI_ERROR_RETURN(error);
+
+  std::size_t const rowBytes = static_cast<std::size_t>(width) * 4;
+  std::vector<uint8_t> rows(rowBytes * height);
+  // Reads the back buffer, as the MCP bridge's window capture does: after the swap it still holds a
+  // recent frame (the front buffer reads back black on Mesa under Xvfb).
+  while (glGetError() != GL_NO_ERROR) {
+  }
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rows.data());
+  MOCHI_ERROR_IF(glGetError() != GL_NO_ERROR, error, "Reading the window's pixels failed.");
+  MOCHI_ERROR_RETURN(error);
+
+  // GL rows run bottom to top, and the window is opaque whatever its alpha channel holds.
+  std::vector<uint8_t> pixels(rows.size());
+  for (int y = 0; y < height; ++y) {
+    std::copy_n(
+        rows.begin() + static_cast<std::ptrdiff_t>(rowBytes * (height - 1 - y)),
+        rowBytes,
+        pixels.begin() + static_cast<std::ptrdiff_t>(rowBytes * y));
+  }
+  for (std::size_t alpha = 3; alpha < pixels.size(); alpha += 4) {
+    pixels[alpha] = 255;
+  }
+  mochi_renderer::WritePng(outFile, width, height, 4, pixels, error);
+#endif
+}
+
+void SuperDexStudio::StartScreenshotRun(ScreenshotOptions options) {
+  _screenshotRun = std::make_unique<ScreenshotRun>(std::move(options));
+  _persistSettings = false;
+  ImGui::GetIO().IniFilename = nullptr;
+  // Until the run says otherwise: the app may stop before it finishes.
+  _exitCode = 1;
+}
+
 //--------------------------------------------------------------------------------------------------
 // File
 //--------------------------------------------------------------------------------------------------
@@ -1470,6 +1529,9 @@ void SuperDexStudio::LoadSettings() {
 }
 
 void SuperDexStudio::SaveSettings() {
+  if (!_persistSettings) {
+    return;
+  }
   mochi::ErrorLog error;
   superdex::robotics::SaveParamsToFile(_appSettings, GetSettingsFilePath().ToString(), error);
 }

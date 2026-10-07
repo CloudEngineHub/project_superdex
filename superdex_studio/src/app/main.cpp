@@ -20,9 +20,11 @@
 #include "app/command_line.h"
 #include "app/process_command.h"
 
+#include <mochi_core/mochi_platform.h>
 #include <mochi_core/utils/console.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -51,7 +53,22 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "superdex_studio: ignoring unknown option '%s'\n", option.c_str());
   }
 
+#if MOCHI_PLATFORM_LINUX
+  if (commandLine.screenshot.has_value() && std::getenv("DISPLAY") == nullptr &&
+      std::getenv("WAYLAND_DISPLAY") == nullptr) {
+    std::fputs(
+        "superdex_studio: --screenshot runs Studio's window and needs a display. Without one, use "
+        "a virtual one:\n  xvfb-run -a -s \"-screen 0 1920x1080x24\" superdex_studio "
+        "--screenshot ...\n",
+        stderr);
+    return 1;
+  }
+#endif
+
   SuperDexStudio app;
+  if (commandLine.screenshot.has_value()) {
+    app.StartScreenshotRun(*commandLine.screenshot);
+  }
   app.Run();
-  return 0;
+  return app.GetExitCode();
 }

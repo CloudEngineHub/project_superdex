@@ -210,6 +210,8 @@ class Viewport {
   std::vector<mochi_renderer::SceneObject*> FindActors(
       std::string_view path = {},
       bool* ambiguous = nullptr) const;
+  // Whether any visible object, named or not, has geometry to show.
+  [[nodiscard]] bool HasVisibleGeometry() const;
   // Places the camera at @p eye looking at @p target, both in editor space, at once.
   void SetCameraLookAt(mochi::Real3 const& eye, mochi::Real3 const& target) const;
   // The camera position and the point it orbits, in editor space.

@@ -16,10 +16,12 @@
 
 #pragma once
 
-// superdex_studio's command line. With no options it starts the GUI; `--process` runs a processing
-// pipeline without a window instead (see process_command.h).
+// superdex_studio's command line. With no options it starts the GUI. `--process` runs a processing
+// pipeline without a window instead (see process_command.h), and `--screenshot` saves a picture of
+// a file and exits (see screenshot_command.h).
 
 #include "app/process_command.h"
+#include "app/screenshot_command.h"
 
 #include <optional>
 #include <string>
@@ -30,13 +32,14 @@ namespace superdex::studio {
 struct CommandLine {
   bool help = false;
   std::optional<ProcessOptions> process;
+  std::optional<ScreenshotOptions> screenshot;
   std::vector<std::string> ignoredOptions; // unknown options, when the GUI starts anyway
 };
 
 // Parses @p args, the arguments after the program name. Returns false and sets @p error on the
-// first problem. Without `--process`, arguments that are not options are ignored, as they always
-// were, so a launcher that passes a file name still starts the GUI; unknown options are ignored
-// too, and listed so the caller can warn about them.
+// first problem. Without `--process` or `--screenshot`, arguments that are not options are ignored,
+// as they always were, so a launcher that passes a file name still starts the GUI; unknown options
+// are ignored too, and listed so the caller can warn about them.
 bool ParseCommandLine(std::vector<std::string> const& args, CommandLine& out, std::string& error);
 
 // The `--help` text.

@@ -110,8 +110,8 @@ def _child_environment() -> dict[str, str]:
     return environment
 
 
-# Options that run the application once, without a window, and report through its exit code.
-_WINDOWLESS_OPTIONS = ("--process", "--help", "-h")
+# Options that run the application once and report through its exit code.
+_WINDOWLESS_OPTIONS = ("--process", "--screenshot", "--help", "-h")
 
 
 def _runs_windowless(arguments: list[str]) -> bool:
