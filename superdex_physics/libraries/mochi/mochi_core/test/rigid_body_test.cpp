@@ -343,6 +343,19 @@ TEST(RigidBodyUtils, IsMomentOfInertiaValid) {
   EXPECT_TRUE(IsMomentOfInertiaValid(Real6{1.5_r, -0.5_r, 0_r, 1.5_r, 0_r, 2.5_r}));
   EXPECT_FALSE(IsMomentOfInertiaValid(Real6{1_r, 5_r, 0_r, 1_r, 0_r, 1_r}));
 
+  // Rotated slender bodies: a repeated principal moment and a tight triangle inequality.
+  auto rng = RandomGenerator(42);
+  for (real const axialMoment : {0_r, 2_r * kMomentOfInertiaValidationRelTol}) {
+    for (int i = 0; i < 1000; ++i) {
+      Real3 rotVector;
+      SetRandom(rng, -kPI, kPI, rotVector);
+      VMatrix3x3r const I =
+          RotateInertia(Vec4r{1_r, 1_r, axialMoment}, Quaternion::FromRotationVector(rotVector));
+      EXPECT_TRUE(
+          IsMomentOfInertiaValid(Real6{I[0][0], I[0][1], I[0][2], I[1][1], I[1][2], I[2][2]}));
+    }
+  }
+
   // Non-finite tensor entries are rejected.
   EXPECT_FALSE(IsMomentOfInertiaValid(Real6{1_r, 0_r, 0_r, 1_r, 0_r, kInf}));
 }

@@ -78,7 +78,9 @@ inline VMatrix3x3r SecondMomentToMomentOfInertia(VMatrix3x3r const& M) {
       Vec4r{momentOfInertia[0], momentOfInertia[3], momentOfInertia[5]},
       Vec4r{momentOfInertia[1], momentOfInertia[2], momentOfInertia[4]}};
   Vec4r principalMoments;
-  AnalyticalEigendecompSym3x3(moiSym, principalMoments);
+  VMatrix3x3r principalAxes MOCHI_NO_INIT;
+  // With eigenvectors, even close principal moments, as for a slender body, are O(ε) accurate.
+  AnalyticalEigendecompSym3x3(moiSym, principalMoments, &principalAxes);
   if (!IsFinite(principalMoments)) {
     return false;
   }
