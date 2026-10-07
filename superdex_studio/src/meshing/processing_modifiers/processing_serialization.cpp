@@ -308,6 +308,7 @@ bool LoadProcessingPipeline(
         std::string const propsJson =
             hasProps ? propsIt->second.serialize(/*prettify=*/false) : "{}";
         modifier = MakeUnknownPlaceholderModifier(modName, methodName, propsJson);
+        out.unrecognized.push_back(out.modifiers.size());
       }
       modifier->enabled = entry.enabled;
       modifier->collapsed = entry.collapsed;

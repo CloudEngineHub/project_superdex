@@ -31,6 +31,7 @@
 #include <mochi_core/utils/nd_array.h>
 #include <mochi_core/utils/quaternion.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -90,6 +91,8 @@ struct LoadedPipeline {
   ProcessingEditorState editorState;
   bool hasEditorState = false; // whether the file actually contained an editorState block
   std::vector<ReferenceModelState> referenceModels;
+  // Indices into modifiers of the passthrough placeholders for unrecognized entries.
+  std::vector<std::size_t> unrecognized;
 };
 
 // Serializes @p modifiers + @p editorState + @p referenceModels into the pipeline JSON document
