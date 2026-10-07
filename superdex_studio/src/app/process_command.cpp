@@ -16,7 +16,7 @@
 
 #include "app/process_command.h"
 
-#include "assets/asset.h"
+#include "assets/asset_types.h"
 #include "meshing/processing_modifiers/processing_serialization.h"
 #include "meshing/processing_modifiers/processing_stack.h"
 
