@@ -169,8 +169,23 @@ class Viewport {
   float& HighlightOverlayAlpha() {
     return _highlightOverlayAlpha;
   }
-  void FocusCameraOnScene(std::optional<mochi::Real3> dir = std::nullopt) const;
+  // The focus functions frame their objects viewed from the editor-space direction @p dir, or along
+  // the current view direction. They animate the camera unless @p animate is false, in which case
+  // it is placed at once.
+  void FocusCameraOnScene(std::optional<mochi::Real3> dir = std::nullopt, bool animate = true)
+      const;
   void FocusCameraOnSelectedSceneObject(std::optional<mochi::Real3> dir = std::nullopt) const;
+  // Frames @p objects together, or the whole scene when none of them has bounds.
+  void FocusCameraOnSceneObjects(
+      std::vector<mochi_renderer::SceneObject*> const& objects,
+      std::optional<mochi::Real3> dir = std::nullopt,
+      bool animate = true) const;
+  // Places the camera at @p eye looking at @p target, both in editor space, at once.
+  void SetCameraLookAt(mochi::Real3 const& eye, mochi::Real3 const& target) const;
+  // The camera position and the point it orbits, in editor space.
+  std::pair<mochi::Real3, mochi::Real3> GetCameraLookAt() const;
+  // True while the camera animates or the user moves it.
+  bool IsCameraMoving() const;
   // ImGui
   void ShowViewportContents(bool showCameraOrientationGizmo);
   void ShowStatsOverlay(
@@ -193,7 +208,8 @@ class Viewport {
       filament::math::double3 from,
       filament::math::double3 to,
       float orthoHeight,
-      std::optional<mochi::Real3> dir) const;
+      std::optional<mochi::Real3> dir,
+      bool animate) const;
   bool ShowCameraOrientationGizmo() const;
   bool ShowCameraOrientationToolbar() const;
   bool ShowTransformGizmo(float x, float y, float width, float height) const;

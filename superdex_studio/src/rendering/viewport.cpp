@@ -537,7 +537,8 @@ void Viewport::ApplyCameraFocus(
     filament::math::double3 from,
     filament::math::double3 to,
     float orthoHeight,
-    std::optional<mochi::Real3> dir) const {
+    std::optional<mochi::Real3> dir,
+    bool animate) const {
   if (dir.has_value()) {
     // View the focal point from the given editor-space direction. Convert it into renderer space
     // (the same way the constructor sets up the initial camera) and derive the orbit yaw/pitch from
@@ -545,10 +546,18 @@ void Viewport::ApplyCameraFocus(
     auto const& converter = _studio->GetEditorToRendererSpaceConverter();
     filament::math::double3 const d =
         normalize(mochi_renderer::ToFilament<double>(converter.DirectionToOutput(*dir)));
+    if (!animate) {
+      _cameraController->LookAt(to + d * length(from - to), to);
+      _renderScene->SetOrthographicHeight(orthoHeight);
+      return;
+    }
     constexpr double kRad2Deg = 180.0 / std::numbers::pi;
     double const yawDeg = std::atan2(d.x, d.z) * kRad2Deg;
     double const pitchDeg = -std::asin(std::clamp(d.y, -1.0, 1.0)) * kRad2Deg;
     _cameraController->LerpOrbitTo(to, length(from - to), yawDeg, pitchDeg, 0.2f, orthoHeight);
+  } else if (!animate) {
+    _cameraController->LookAt(from, to);
+    _renderScene->SetOrthographicHeight(orthoHeight);
   } else {
     _cameraController->SetOrbitPosition(to);
     // Always pass the orthographic height (for both modes) so that when switching
@@ -557,24 +566,30 @@ void Viewport::ApplyCameraFocus(
   }
 }
 
-void Viewport::FocusCameraOnScene(std::optional<mochi::Real3> dir) const {
+void Viewport::FocusCameraOnScene(std::optional<mochi::Real3> dir, bool animate) const {
   filament::math::double3 from = {1.0f, 0.5f, 1.0f};
   filament::math::double3 to = {0.0f, 0.0f, 0.0f};
   float orthoHeight = 10.0f;
   _renderScene->GetCameraFocusOnAllSceneObjects(from, to, orthoHeight);
-  ApplyCameraFocus(from, to, orthoHeight, dir);
+  ApplyCameraFocus(from, to, orthoHeight, dir, animate);
 }
 
 void Viewport::FocusCameraOnSelectedSceneObject(std::optional<mochi::Real3> dir) const {
+  FocusCameraOnSceneObjects(_selectedObjects, dir);
+}
+
+void Viewport::FocusCameraOnSceneObjects(
+    std::vector<SceneObject*> const& objects,
+    std::optional<mochi::Real3> dir,
+    bool animate) const {
   filament::math::double3 from = {1.0f, 0.5f, 1.0f};
   filament::math::double3 to = {0.0f, 0.0f, 0.0f};
   float orthoHeight = 10.0f;
   bool focused = false;
-  if (_selectedObjects.size() == 1) {
-    focused =
-        _renderScene->GetCameraFocusOnSceneObject(_selectedObjects.back(), from, to, orthoHeight);
-  } else if (_selectedObjects.size() > 1) {
-    // Frame the combined (union) world bounds of the whole selection via its bounding sphere.
+  if (objects.size() == 1) {
+    focused = _renderScene->GetCameraFocusOnSceneObject(objects.back(), from, to, orthoHeight);
+  } else if (objects.size() > 1) {
+    // Frame the combined (union) world bounds of all the objects via its bounding sphere.
     filament::math::float3 boundsMin{
         std::numeric_limits<float>::max(),
         std::numeric_limits<float>::max(),
@@ -583,8 +598,8 @@ void Viewport::FocusCameraOnSelectedSceneObject(std::optional<mochi::Real3> dir)
         std::numeric_limits<float>::lowest(),
         std::numeric_limits<float>::lowest(),
         std::numeric_limits<float>::lowest()};
-    for (SceneObject* selected : _selectedObjects) {
-      filament::Box const box = selected->GetAABB();
+    for (SceneObject* object : objects) {
+      filament::Box const box = object->GetAABB();
       filament::math::float3 const lo = box.center - box.halfExtent;
       filament::math::float3 const hi = box.center + box.halfExtent;
       for (int i = 0; i < 3; ++i) {
@@ -601,7 +616,27 @@ void Viewport::FocusCameraOnSelectedSceneObject(std::optional<mochi::Real3> dir)
   if (!focused) {
     _renderScene->GetCameraFocusOnAllSceneObjects(from, to, orthoHeight);
   }
-  ApplyCameraFocus(from, to, orthoHeight, dir);
+  ApplyCameraFocus(from, to, orthoHeight, dir, animate);
+}
+
+void Viewport::SetCameraLookAt(mochi::Real3 const& eye, mochi::Real3 const& target) const {
+  auto const& converter = _studio->GetEditorToRendererSpaceConverter();
+  _cameraController->LookAt(
+      mochi_renderer::ToFilament<double>(converter.TranslationToOutput(eye)),
+      mochi_renderer::ToFilament<double>(converter.TranslationToOutput(target)));
+}
+
+std::pair<mochi::Real3, mochi::Real3> Viewport::GetCameraLookAt() const {
+  auto const& converter = _studio->GetRendererToEditorSpaceConverter();
+  return {
+      converter.TranslationToOutput(
+          mochi_renderer::ToMochi<mochi::real>(_renderScene->GetCameraPosition())),
+      converter.TranslationToOutput(
+          mochi_renderer::ToMochi<mochi::real>(_cameraController->GetOrbitPosition()))};
+}
+
+bool Viewport::IsCameraMoving() const {
+  return _cameraController->IsActive();
 }
 
 void Viewport::ShowViewportContents(bool showCameraOrientationGizmo) {

@@ -60,6 +60,10 @@ class CameraController {
       double pitchDeg,
       double durationSeconds = 0.2f,
       std::optional<float> orthoHeight = std::nullopt);
+  // Places the camera at @p eye looking at @p target, which becomes the orbit pivot, at once. Drops
+  // any camera animation in progress. When the two points coincide, the camera keeps its current
+  // orientation.
+  void LookAt(filament::math::double3 eye, filament::math::double3 target);
   void SetOrbitPosition(filament::math::double3 orbitPosition);
   filament::math::double3 GetOrbitPosition() const;
   double GetYaw() const;
