@@ -191,19 +191,24 @@ ProcessReport RunProcessingPipeline(
     MOCHI_ERROR_RETURN(error, report);
     RedirectExports(stack, AbsolutePath(options.outDir));
   }
-  bool collide = false;
   for (std::size_t a = 0; a < chain.size(); ++a) {
     for (std::size_t b = a + 1; b < chain.size(); ++b) {
-      collide = collide ||
-          (writesFile(chain[a]) && writesFile(chain[b]) &&
-           SameFilePath(stack.at(chain[a])->ExportPath(), stack.at(chain[b])->ExportPath()));
+      std::string const path = stack.at(chain[a])->ExportPath();
+      if (writesFile(chain[a]) && writesFile(chain[b]) &&
+          SameFilePath(path, stack.at(chain[b])->ExportPath()) &&
+          std::ranges::none_of(report.collidingExportPaths, [&path](std::string const& known) {
+            return SameFilePath(known, path);
+          })) {
+        report.collidingExportPaths.push_back(path);
+      }
     }
   }
   MOCHI_ERROR_IF(
-      collide,
+      !report.collidingExportPaths.empty() && !options.allowCollidingExports,
       error,
       "Two exports would write the same file. Give them different paths in the Model Editor, or "
-      "different file names when --out collects them in one folder.");
+      "different file names when --out collects them in one folder, or pass --override to let "
+      "the later one win, as the Model Editor does.");
   MOCHI_ERROR_RETURN(error, report);
   MOCHI_ERROR_IF_NOT(
       stack.at(chain.front())->CanGenerate(ctx),
@@ -312,7 +317,22 @@ int RunProcessCommand(ProcessOptions const& options) {
     if (!report.outConflictPath.empty()) {
       std::fprintf(stderr, "    %s\n", report.outConflictPath.c_str());
     }
+    for (std::string const& path : report.collidingExportPaths) {
+      std::fprintf(stderr, "    %s\n", path.c_str());
+    }
     return 1;
+  }
+  for (std::string const& path : report.collidingExportPaths) {
+    auto const writes =
+        std::ranges::count_if(report.stages, [&path](ProcessStageReport const& stage) {
+          return SameFilePath(stage.exportedPath, path);
+        });
+    if (writes > 1) {
+      std::fprintf(
+          stderr,
+          "warning: more than one export wrote %s; the last one's file is kept\n",
+          path.c_str());
+    }
   }
   std::printf(
       "Models: CAD '%s', render '%s', mochi '%s'\n",

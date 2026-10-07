@@ -206,11 +206,44 @@ TEST_F(ProcessCommandTest, ExportsThatWouldWriteTheSameFileAreRefused) {
 
   ASSERT_TRUE(separateError.IsOK()) << separateError.GetDescription();
   EXPECT_TRUE(separate.succeeded);
+  EXPECT_TRUE(separate.collidingExportPaths.empty());
   EXPECT_TRUE(fs::is_regular_file(_root / "render" / "cube.glb"));
   EXPECT_TRUE(fs::is_regular_file(_root / "preview" / "cube.glb"));
   EXPECT_FALSE(collectedError.IsOK());
   EXPECT_TRUE(collected.stages.empty());
+  EXPECT_EQ(collected.collidingExportPaths, std::vector<std::string>{(out / "cube.glb").string()});
   EXPECT_FALSE(fs::exists(out));
+}
+
+TEST_F(ProcessCommandTest, OverrideLetsTheLaterOfTwoCollidingExportsWin) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  // Two mesh exports to the same file, the second with a color the first does not use.
+  fs::create_directories(pipeline.parent_path());
+  std::ofstream(pipeline) << R"({
+  "version": 1,
+  "modifiers": [
+    )" << kSourceFromModelViewer
+                          << R"(,
+    {"modifier": "Export Mesh File", "method": "Mesh File", "enabled": true, "collapsed": true,
+     "properties": {"path": "../render/cube.glb", "color": [0.2, 0.4, 0.6]}},
+    {"modifier": "Export Mesh File", "method": "Mesh File", "enabled": true, "collapsed": true,
+     "properties": {"path": "../render/cube.glb", "color": [0.9, 0.1, 0.1]}}
+  ]
+})";
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline(
+      {.pipelinePath = pipeline.string(), .allowCollidingExports = true}, error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  EXPECT_TRUE(report.succeeded);
+  ASSERT_EQ(report.collidingExportPaths.size(), 1u);
+  EXPECT_TRUE(fs::equivalent(report.collidingExportPaths[0], _root / "render" / "cube.glb"));
+  std::vector<mochi_renderer::MeshSection> const sections =
+      mochi_renderer::ReadGlbFromFile((_root / "render" / "cube.glb").string().c_str());
+  ASSERT_EQ(sections.size(), 1u);
+  EXPECT_NEAR(sections[0].baseColor[0], 0.9f, 1e-3f);
 }
 
 TEST_F(ProcessCommandTest, CadOptionSuppliesAModelNamedDifferentlyFromThePipeline) {

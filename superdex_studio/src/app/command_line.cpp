@@ -121,6 +121,7 @@ bool ParseCommandLine(std::vector<std::string> const& args, CommandLine& out, st
   std::string size;
   std::vector<std::string> cameraWords;
   bool viewportOnly = false;
+  bool allowCollidingExports = false;
   struct ValueOption {
     std::string_view name;
     std::string& destination;
@@ -149,6 +150,10 @@ bool ParseCommandLine(std::vector<std::string> const& args, CommandLine& out, st
     }
     if (arg == "--viewport-only") {
       viewportOnly = true;
+      continue;
+    }
+    if (arg == "--override") {
+      allowCollidingExports = true;
       continue;
     }
     if (!arg.starts_with("--")) {
@@ -216,6 +221,10 @@ bool ParseCommandLine(std::vector<std::string> const& args, CommandLine& out, st
       return false;
     }
   }
+  if (!processing && allowCollidingExports) {
+    error = "--override only applies with --process";
+    return false;
+  }
   if (!screenshotting && (viewportOnly || !cameraWords.empty())) {
     error = std::string(viewportOnly ? "--viewport-only" : "--camera") +
         " only applies with --screenshot";
@@ -234,6 +243,7 @@ bool ParseCommandLine(std::vector<std::string> const& args, CommandLine& out, st
     return false;
   }
   if (processing) {
+    process.allowCollidingExports = allowCollidingExports;
     out.process = std::move(process);
     return true;
   }
@@ -271,6 +281,7 @@ std::string CommandLineUsage() {
       Start SuperDex Studio.
 
   superdex_studio --process <pipeline> [--out <dir>] [--cad <file>] [--render <file>] [--mochi <file>]
+                  [--override]
       Run a Model Editor processing pipeline (a .StudioProcessing.json) without opening a window:
       every enabled modifier in order, each export writing its file as soon as its stage has
       run, as Build/Export All does. Prints one line
@@ -287,6 +298,8 @@ std::string CommandLineUsage() {
       --cad <file>     The CAD model (STEP or STL) to use instead.
       --render <file>  The render model to use instead.
       --mochi <file>   The mochi model (.mochi.h5) to use instead.
+      --override       Run even when two exports would write the same file; the later one wins,
+                       as in the Model Editor. Without it, such a pipeline is refused.
 
   superdex_studio --screenshot <png> --open <file> [--size <W>x<H>]
                   [--focus <actor> | --camera eye=<x,y,z> target=<x,y,z>] [--viewport-only]

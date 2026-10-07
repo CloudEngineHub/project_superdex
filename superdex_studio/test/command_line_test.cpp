@@ -73,9 +73,11 @@ TEST(CommandLineTest, ProcessTakesEveryOptionInEitherSpelling) {
        "cad/part.step",
        "--render=render/part.glb",
        "--mochi",
-       "collision/part.mochi.h5"});
+       "collision/part.mochi.h5",
+       "--override"});
 
   ASSERT_TRUE(commandLine.process.has_value());
+  EXPECT_TRUE(commandLine.process->allowCollidingExports);
   EXPECT_EQ(commandLine.process->pipelinePath, "intermediates/part.StudioProcessing.json");
   EXPECT_EQ(commandLine.process->outDir, "build");
   EXPECT_EQ(commandLine.process->slots.cadPath, "cad/part.step");
@@ -103,6 +105,7 @@ TEST(CommandLineTest, MistakesAreReported) {
       ParseError({"--process", "a.json", "--out", "x", "--out", "y"}),
       "--out is given more than once");
   EXPECT_EQ(ParseError({"--out", "x"}), "--out only applies with --process");
+  EXPECT_EQ(ParseError({"--override"}), "--override only applies with --process");
   EXPECT_EQ(ParseError({"--process", "a.json", "b.json"}), "unexpected argument 'b.json'");
 }
 

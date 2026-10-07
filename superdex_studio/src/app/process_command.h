@@ -45,6 +45,9 @@ struct ProcessOptions {
   std::string outDir;
   // Overrides for the model slots. An empty slot is found the way the Model Editor finds it.
   PipelineModelSlots slots;
+  // Runs even when two exports would write the same file, the later one winning, as in the Model
+  // Editor. Otherwise such a pipeline is refused before anything runs.
+  bool allowCollidingExports = false;
 };
 
 struct ProcessStageReport {
@@ -60,6 +63,8 @@ struct ProcessStageReport {
 
 struct ProcessReport {
   PipelineModelSlots slots; // as resolved
+  // Files that more than one enabled export writes.
+  std::vector<std::string> collidingExportPaths;
   std::vector<ProcessStageReport> stages;
   bool succeeded = false;
   // "modifier / method" of each unrecognized modifier in the chain, when that refused the run.
