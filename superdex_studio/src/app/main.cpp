@@ -17,14 +17,41 @@
 #include <imguios/gpu_selector.h>
 
 #include "app/app.h"
+#include "app/command_line.h"
+#include "app/process_command.h"
 
 #include <mochi_core/utils/console.h>
 
-int main(int, char**) {
+#include <cstdio>
+#include <string>
+#include <vector>
+
+int main(int argc, char** argv) {
   // This is a GUI-subsystem binary on Windows, so it starts with no console and would otherwise
   // discard everything it prints -- including the reason it is about to fail.
   mochi::AttachParentConsole();
-  superdex::studio::SuperDexStudio app;
+
+  using namespace superdex::studio;
+  std::vector<std::string> const args(argv + 1, argv + argc);
+  CommandLine commandLine;
+  std::string error;
+  if (!ParseCommandLine(args, commandLine, error)) {
+    std::fprintf(stderr, "superdex_studio: %s\n\n%s", error.c_str(), CommandLineUsage().c_str());
+    return 2;
+  }
+  if (commandLine.help) {
+    std::fputs(CommandLineUsage().c_str(), stdout);
+    return 0;
+  }
+  // Checked before the app is constructed: constructing it opens the window.
+  if (commandLine.process.has_value()) {
+    return RunProcessCommand(*commandLine.process);
+  }
+  for (std::string const& option : commandLine.ignoredOptions) {
+    std::fprintf(stderr, "superdex_studio: ignoring unknown option '%s'\n", option.c_str());
+  }
+
+  SuperDexStudio app;
   app.Run();
   return 0;
 }
