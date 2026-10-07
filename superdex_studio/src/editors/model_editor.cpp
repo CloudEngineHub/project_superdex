@@ -23,6 +23,7 @@
 #include "meshing/processing_modifiers/preset_discovery.h"
 #include "meshing/processing_modifiers/processing_mesh_utils.h"
 #include "meshing/processing_modifiers/processing_serialization.h"
+#include "meshing/processing_modifiers/processing_stack.h"
 #include "rendering/measure_tool.h"
 #include "ui/asset_browser.h"
 #include "ui/imgui_widgets.h"
@@ -1718,11 +1719,11 @@ void ModelEditor::ShowMeshModifierStack() {
   // GUI services shared by every modifier's ShowParams (the app widgets; the source file path is
   // what an export modifier's Browse offers as its suggestion, falling back to the opened model's
   // folder when there is no source).
-  std::string const sourceFilePath = StackSourceFilePath();
+  std::string const sourceFilePath = StackSourceFilePath(_modifiers, MakeRunContext());
   // Keep every Auto export path equal to what Browse would offer. Safe to do per frame: an Auto
   // path is never serialized, so however often it moves it cannot dirty the saved snapshot.
-  RefreshAutoExportPaths(sourceFilePath);
-  std::vector<bool> const exportPathCollides = FindCollidingExportPaths();
+  RefreshAutoExportPaths(_modifiers, sourceFilePath);
+  std::vector<bool> const exportPathCollides = FindCollidingExportPaths(_modifiers);
   // Display names by array index, so a modifier's reference dropdown (edge swap) can list the
   // elements above it. selfIndex is set per modifier just before its ShowParams call below.
   std::vector<std::string> modifierNames;
@@ -2029,76 +2030,6 @@ void ModelEditor::ShowMeshModifierStack() {
       "export modifier that has a configured output path.");
 }
 
-std::vector<std::size_t> ModelEditor::BuildGenerationChain(std::size_t index) const {
-  // Climb from @p index to the nearest preceding source, collecting the enabled providers (each
-  // modifier's input is the nearest enabled modifier before it). Returns source-first; empty if no
-  // source is reachable upstream.
-  std::vector<std::size_t> chain;
-  if (index >= _modifiers.size()) {
-    return chain;
-  }
-  std::size_t cur = index;
-  while (true) {
-    chain.push_back(cur);
-    if (_modifiers[cur]->Kind() == ModifierKind::Source) {
-      break;
-    }
-    bool foundProvider = false;
-    for (std::size_t j = cur; j-- > 0;) {
-      if (_modifiers[j]->enabled) {
-        cur = j;
-        foundProvider = true;
-        break;
-      }
-    }
-    if (!foundProvider) {
-      return {}; // no upstream provider / source: cannot build
-    }
-  }
-  if (_modifiers[chain.back()]->Kind() != ModifierKind::Source) {
-    return {};
-  }
-  std::reverse(chain.begin(), chain.end());
-  return chain;
-}
-
-std::vector<std::size_t> ModelEditor::BuildFullGenerationChain() const {
-  // Every enabled modifier from the first enabled source on, in stack order. A source ignores its
-  // input, so a stack that holds SEVERAL source->...->export segments is already a valid execution
-  // order exactly as it stands -- each later source just restarts the data flow from its own file
-  // (typically the one the export above it writes). Climbing to the nearest source instead, the way
-  // BuildGenerationChain does for a single modifier's Generate, would cover only the last segment.
-  std::vector<std::size_t> chain;
-  for (std::size_t i = 0; i < _modifiers.size(); ++i) {
-    if (!_modifiers[i]->enabled) {
-      continue;
-    }
-    if (chain.empty() && _modifiers[i]->Kind() != ModifierKind::Source) {
-      continue; // ahead of the first source: nothing to build from
-    }
-    chain.push_back(i);
-  }
-  return chain;
-}
-
-int ModelEditor::ReferenceModifierIndex(std::size_t index) const {
-  // The modifier whose output an edge-swap references, or -1 if none.
-  int const refIndex = _modifiers[index]->ReferenceIndex();
-  if (refIndex >= 0) {
-    // An explicit reference is valid only when it points strictly upstream. If it does not (e.g.
-    // the modifier was moved above its reference), return -1 so the edge flip gets no reference
-    // mesh and fails generation -- rather than silently fitting toward a different source.
-    return refIndex < static_cast<int>(index) ? refIndex : -1;
-  }
-  // Preceding-source sentinel: walk up to the nearest preceding source.
-  for (std::size_t j = index; j-- > 0;) {
-    if (_modifiers[j]->Kind() == ModifierKind::Source) {
-      return static_cast<int>(j);
-    }
-  }
-  return -1;
-}
-
 bool ModelEditor::CanGenerateModifier(std::size_t index) const {
   // Generate is available whenever the chain is buildable (a source is reachable) and that source
   // has its input file/slot -- NOT gated on intermediate upstream buffers being up to date, since
@@ -2106,7 +2037,7 @@ bool ModelEditor::CanGenerateModifier(std::size_t index) const {
   if (_studio->IsAsyncTasksRunning()) {
     return false;
   }
-  std::vector<std::size_t> const chain = BuildGenerationChain(index);
+  std::vector<std::size_t> const chain = BuildGenerationChain(_modifiers, index);
   if (chain.empty()) {
     return false;
   }
@@ -2117,7 +2048,7 @@ void ModelEditor::GenerateModifier(std::size_t index) {
   if (index >= _modifiers.size()) {
     return;
   }
-  std::vector<std::size_t> const chain = BuildGenerationChain(index);
+  std::vector<std::size_t> const chain = BuildGenerationChain(_modifiers, index);
   if (chain.empty()) {
     MOCHI_LOG_WARNING(
         "Generate: '%s' has no source upstream to build from.", _modifiers[index]->DisplayName());
@@ -2130,7 +2061,7 @@ void ModelEditor::GenerateAndExportModifier(std::size_t index) {
   if (index >= _modifiers.size()) {
     return;
   }
-  std::vector<std::size_t> const chain = BuildGenerationChain(index);
+  std::vector<std::size_t> const chain = BuildGenerationChain(_modifiers, index);
   if (chain.empty()) {
     MOCHI_LOG_WARNING(
         "Export: '%s' has no source upstream to build from.", _modifiers[index]->DisplayName());
@@ -2142,7 +2073,7 @@ void ModelEditor::GenerateAndExportModifier(std::size_t index) {
 }
 
 void ModelEditor::BuildAndExportAll() {
-  std::vector<std::size_t> const chain = BuildFullGenerationChain();
+  std::vector<std::size_t> const chain = BuildFullGenerationChain(_modifiers);
   if (chain.empty()) {
     MOCHI_LOG_WARNING("Build/Export All: no enabled source to build from.");
     return;
@@ -2157,7 +2088,7 @@ void ModelEditor::BuildAndExportAll() {
   }
   // Logged here rather than alongside the inline UI warning: this runs once per build instead of
   // every frame, so it records the overwrite in the log without flooding it.
-  std::vector<bool> const collides = FindCollidingExportPaths();
+  std::vector<bool> const collides = FindCollidingExportPaths(_modifiers);
   for (std::size_t const q : exportChainPositions) {
     if (collides[chain[q]]) {
       MOCHI_LOG_WARNING(
@@ -2209,7 +2140,7 @@ void ModelEditor::GenerateChainWithExports(
           (p > 0 && _modifiers[chain[p - 1]]->outputGenId != m.inputGenIdAtLastGen);
     }
     if (!stale && m.NeedsReferenceMesh()) {
-      int const refIdx = ReferenceModifierIndex(chain[p]);
+      int const refIdx = ReferenceModifierIndex(_modifiers, chain[p]);
       int const refId = refIdx >= 0 ? _modifiers[static_cast<std::size_t>(refIdx)]->outputGenId : 0;
       stale = refId != m.referenceGenIdAtLastGen;
     }
@@ -2263,7 +2194,7 @@ void ModelEditor::RunGenerationCascade(
     if (!_modifiers[chain[p]]->NeedsReferenceMesh()) {
       continue;
     }
-    int const refModIdx = ReferenceModifierIndex(chain[p]);
+    int const refModIdx = ReferenceModifierIndex(_modifiers, chain[p]);
     RefInfo info;
     for (std::size_t q = 0; q < n; ++q) {
       if (static_cast<int>(chain[q]) == refModIdx) {
@@ -2368,7 +2299,7 @@ void ModelEditor::RunGenerationCascade(
           mod.inputGenIdAtLastGen =
               (!isSource && p > 0) ? _modifiers[chain[p - 1]]->outputGenId : 0;
           if (mod.NeedsReferenceMesh()) {
-            int const refIdx = ReferenceModifierIndex(s);
+            int const refIdx = ReferenceModifierIndex(_modifiers, s);
             mod.referenceGenIdAtLastGen =
                 refIdx >= 0 ? _modifiers[static_cast<std::size_t>(refIdx)]->outputGenId : 0;
           }
@@ -2478,39 +2409,6 @@ ModifierRunContext ModelEditor::MakeRunContext() const {
   ctx.cadRotation = _cadRotation;
   ctx.cadTranslation = _cadTranslation;
   return ctx;
-}
-
-std::string ModelEditor::StackSourceFilePath() const {
-  return _modifiers.empty() ? std::string() : _modifiers.front()->SourceFilePath(MakeRunContext());
-}
-
-void ModelEditor::RefreshAutoExportPaths(std::string const& sourceFilePath) {
-  for (auto const& modifier : _modifiers) {
-    modifier->RefreshAutoExportPath(sourceFilePath);
-  }
-}
-
-std::vector<bool> ModelEditor::FindCollidingExportPaths() const {
-  std::vector<bool> collides(_modifiers.size(), false);
-  // Quadratic, but over a handful of export modifiers in a stack drawn once per frame. Compares the
-  // resolved paths rather than which ones are on Auto, so two hand-picked paths that happen to
-  // match are caught too. Disabled modifiers write nothing, so they are left out.
-  for (std::size_t i = 0; i < _modifiers.size(); ++i) {
-    if (!_modifiers[i]->enabled || !_modifiers[i]->ProvidesFileExport()) {
-      continue;
-    }
-    std::string const pathI = _modifiers[i]->ExportPath();
-    for (std::size_t j = i + 1; j < _modifiers.size(); ++j) {
-      if (!_modifiers[j]->enabled || !_modifiers[j]->ProvidesFileExport()) {
-        continue;
-      }
-      if (processing::SamePath(pathI, _modifiers[j]->ExportPath())) {
-        collides[i] = true;
-        collides[j] = true;
-      }
-    }
-  }
-  return collides;
 }
 
 mochi::DynamicString ModelEditor::OriginModelPath() const {

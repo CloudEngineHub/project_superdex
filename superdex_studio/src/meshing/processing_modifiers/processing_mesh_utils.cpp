@@ -27,6 +27,7 @@
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <string_view>
 #include <utility>
 
 namespace superdex::studio::processing {
@@ -305,14 +306,6 @@ std::string ExportDialogStartPath(
   std::filesystem::path folder = std::filesystem::path(modelFolder) / "";
   folder.make_preferred();
   return folder.string();
-}
-
-bool SamePath(std::string_view a, std::string_view b) {
-  if (a.empty() || b.empty()) {
-    return false; // an unset path collides with nothing
-  }
-  return std::filesystem::path(a).lexically_normal().generic_string() ==
-      std::filesystem::path(b).lexically_normal().generic_string();
 }
 
 } // namespace superdex::studio::processing

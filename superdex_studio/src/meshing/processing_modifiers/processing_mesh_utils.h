@@ -31,7 +31,6 @@
 #include <array>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace superdex::studio::processing {
@@ -129,11 +128,5 @@ std::string ExportDialogStartPath(
     std::string const& currentPath,
     std::string const& suggestedPath,
     std::string const& modelFolder);
-
-// Whether @p a and @p b name the same file. Compares the lexically-normalized generic (forward
-// slash) form, so a derived path built with native separators still matches an equivalent one the
-// user typed or that round-tripped through the pipeline JSON. Used to spot two export modifiers
-// aimed at the same output file.
-bool SamePath(std::string_view a, std::string_view b);
 
 } // namespace superdex::studio::processing

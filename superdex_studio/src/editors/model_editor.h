@@ -241,16 +241,6 @@ class ModelEditor : public AssetEditor {
   void GenerateChainWithExports(
       std::vector<std::size_t> const& chain,
       std::vector<std::size_t> const& exportChainPositions);
-  // The source-first list of enabled modifier indices feeding @p index (with @p index last), or
-  // empty when no source is reachable upstream. Stops at the nearest source -- one modifier's
-  // Generate rebuilds its own segment, not the segments feeding it through files.
-  [[nodiscard]] std::vector<std::size_t> BuildGenerationChain(std::size_t index) const;
-  // The whole enabled stack in order, from its first enabled source -- what Build/Export All
-  // builds, spanning every source->...->export segment. Empty when no enabled source exists.
-  [[nodiscard]] std::vector<std::size_t> BuildFullGenerationChain() const;
-  // The modifier index whose output an edge-swap at @p index references (its explicit upstream
-  // target, else the nearest preceding source), or -1 if none.
-  int ReferenceModifierIndex(std::size_t index) const;
   // Whether Generate is available for @p index: a source is reachable upstream and has its input
   // file/slot, and no async task is running. Deliberately NOT gated on intermediate buffers being
   // up to date (the cascade rebuilds stale ones).
@@ -278,22 +268,6 @@ class ModelEditor : public AssetEditor {
   // Directory holding OriginModelPath, or empty when there is no origin. Only used to give an
   // export Browse dialog somewhere sensible to open when there is no source to suggest from.
   std::string OriginModelFolder() const;
-  // The file the stack's source (first) modifier reads, which every export modifier derives its
-  // default output path from. Empty when the stack is empty or its source has no file yet.
-  std::string StackSourceFilePath() const;
-  // Re-derives every export modifier's path from @p sourceFilePath while its Auto toggle is on (see
-  // MeshProcessingMethod::RefreshAutoExportPath), so an export writes its file on Build/Export All
-  // without the user opening Browse, and an Auto path always matches what Browse would offer.
-  // Called once per frame from the stack UI, ahead of everything that reads an export path. Safe
-  // to run that often because an Auto path is never serialized, so re-deriving it cannot dirty the
-  // saved snapshot however much it moves.
-  void RefreshAutoExportPaths(std::string const& sourceFilePath);
-  // Per-modifier flag marking export modifiers that share an output file with another enabled
-  // export modifier, so the UI can say so. Two exports aimed at the same path silently overwrite
-  // each other; the Auto path is deliberately not disambiguated (it has to keep the model's own
-  // name to stay associated with it), so the fix is to turn Auto off on one of them. Compares
-  // resolved paths, so hand-picked duplicates are caught as well.
-  std::vector<bool> FindCollidingExportPaths() const;
   // Appends a new modifier of registry type @p name to the stack.
   void AddModifier(std::string_view name);
   // Inserts a new modifier of registry type @p name at @p at (clamped to [0, size]), updating
