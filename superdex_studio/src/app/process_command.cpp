@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 
 namespace superdex::studio {
@@ -167,6 +168,11 @@ ProcessReport RunProcessingPipeline(
   MOCHI_ERROR_RETURN(error, report);
 
   RefreshAutoExportPaths(stack, StackSourceFilePath(stack, ctx));
+  // Where each modifier exports before --out moves it.
+  std::unordered_map<MeshProcessingModifier const*, std::string> pipelineExportPaths;
+  for (auto const& modifier : stack) {
+    pipelineExportPaths.emplace(modifier.get(), modifier->ExportPath());
+  }
   // Only the chain's exports run, so only they can write over each other or over a source's model.
   auto const writesFile = [&stack](std::size_t index) {
     return stack.at(index)->ProvidesFileExport() && !stack.at(index)->ExportPath().empty();
@@ -245,6 +251,7 @@ ProcessReport RunProcessingPipeline(
           "the export has no file path: an Auto export is named after the pipeline's first "
           "modifier, which has no model. Give the export a path in the Model Editor.";
     } else if (modifier.ProvidesFileExport()) {
+      stage.pipelineExportPath = pipelineExportPaths.at(&modifier);
       stage.succeeded = run.Export(p, stageError);
       if (stage.succeeded) {
         stage.exportedPath = modifier.ExportPath();

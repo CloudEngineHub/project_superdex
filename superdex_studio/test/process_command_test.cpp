@@ -175,6 +175,12 @@ TEST_F(ProcessCommandTest, OutDirCollectsTheExports) {
   EXPECT_TRUE(report.succeeded);
   EXPECT_TRUE(fs::is_regular_file(out / "cube.mochi.h5"));
   EXPECT_TRUE(fs::is_regular_file(out / "cube.glb"));
+  ASSERT_EQ(report.stages.size(), 3u);
+  EXPECT_EQ(
+      report.stages[1].pipelineExportPath, (_root / "asset" / "render" / "cube.glb").string());
+  EXPECT_EQ(
+      report.stages[2].pipelineExportPath,
+      (_root / "asset" / "collision" / "cube.mochi.h5").string());
   EXPECT_FALSE(fs::exists(_root / "asset" / "collision"));
   EXPECT_FALSE(fs::exists(_root / "asset" / "render"));
 }

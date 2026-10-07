@@ -58,6 +58,8 @@ struct ProcessStageReport {
   int64_t triangles = 0;
   std::optional<mochi::Int3> sdfGrid; // set by stages that bake an SDF
   std::string exportedPath; // the file an export stage wrote
+  // Where the pipeline itself puts the export stage's file: exportedPath, unless --out moved it.
+  std::string pipelineExportPath;
   double seconds = 0.0;
 };
 
