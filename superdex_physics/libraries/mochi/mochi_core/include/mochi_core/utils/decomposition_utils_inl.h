@@ -247,20 +247,21 @@ template <typename V>
       sym[4] * x[0] + sym[5] * x[1] + sym[2] * x[2]};
 }
 
-// Eigendecomposition of `sym`, given lambdaSep, its eigenvalue farthest from the other two to
-// within O(ε‖A‖), and whether that is the smallest eigenvalue. Outputs the eigenvalues in
-// descending order and the eigenvectors as the rows of a rotation.
-template <typename V, typename Mask>
-MOCHI_FORCE_INLINE void EigendecompSym3x3(
-    NdArray<V, 6> const& sym,
-    V lambdaSep,
-    Mask sepIsSmallest,
-    NdArray<V, 3>& eigvals,
-    NdArray<V, 3, 3>& eigvecs) {
+// Eigenvalues of `sym` in descending order, and its eigenvectors as the rows of a rotation.
+template <typename V>
+MOCHI_FORCE_INLINE void
+EigendecompSym3x3(NdArray<V, 6> const& sym, NdArray<V, 3>& eigvals, NdArray<V, 3, 3>& eigvecs) {
   using V3 = NdArray<V, 3>;
   V const zero{0_r};
   V const one{1_r};
   V const realMin{std::numeric_limits<real>::min()};
+
+  V q MOCHI_NO_INIT;
+  V signedTwoP MOCHI_NO_INIT;
+  V cosSep MOCHI_NO_INIT;
+  SolveEigenCubicSym3x3(sym, q, signedTwoP, cosSep);
+  V const lambdaSep = q + signedTwoP * cosSep;
+  auto const sepIsSmallest = signedTwoP < zero;
 
   // The rows of the cofactor matrix of A - lambdaSep I are parallel to the eigenvector of
   // lambdaSep. An error δ in lambdaSep tilts them by δ/gap towards eigenvectors a gap away, so the
@@ -314,17 +315,6 @@ MOCHI_FORCE_INLINE void EigendecompSym3x3(
       Select(sepIsSmallest, lambda2, lambda1),
       Select(sepIsSmallest, lambda0, lambda2)};
   eigvecs = {select(e1, e0), select(e2, e1), select(e0, e2)};
-}
-
-// Eigenvalues of `sym` in descending order, and its eigenvectors as the rows of a rotation.
-template <typename V>
-MOCHI_FORCE_INLINE void
-EigendecompSym3x3(NdArray<V, 6> const& sym, NdArray<V, 3>& eigvals, NdArray<V, 3, 3>& eigvecs) {
-  V q MOCHI_NO_INIT;
-  V signedTwoP MOCHI_NO_INIT;
-  V cosSep MOCHI_NO_INIT;
-  SolveEigenCubicSym3x3(sym, q, signedTwoP, cosSep);
-  EigendecompSym3x3(sym, q + signedTwoP * cosSep, signedTwoP < V{0_r}, eigvals, eigvecs);
 }
 
 // The scalar and SIMD solvers' conversion and diagonal fast path, on matrices that need not be
