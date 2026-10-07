@@ -17,26 +17,26 @@
 #include "meshing/processing_modifiers/processing_stack.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <utility>
 
 namespace superdex::studio {
 
-namespace {
-
-// Whether @p a and @p b name the same file. Compares the lexically-normalized generic (forward
-// slash) form, so a derived path built with native separators still matches an equivalent one the
-// user typed or that round-tripped through the pipeline JSON.
-bool SamePath(std::string_view a, std::string_view b) {
+bool SameFilePath(std::string_view a, std::string_view b) {
   if (a.empty() || b.empty()) {
     return false; // an unset path collides with nothing
   }
-  return std::filesystem::path(a).lexically_normal().generic_string() ==
-      std::filesystem::path(b).lexically_normal().generic_string();
+  // The generic (forward slash) form, so a derived path built with native separators still matches
+  // an equivalent one the user typed or that round-tripped through the pipeline JSON.
+  std::string const normalA = std::filesystem::path(a).lexically_normal().generic_string();
+  std::string const normalB = std::filesystem::path(b).lexically_normal().generic_string();
+  return std::ranges::equal(normalA, normalB, [](unsigned char x, unsigned char y) {
+    return std::tolower(x) == std::tolower(y);
+  });
 }
-
-} // namespace
 
 std::vector<std::size_t> BuildGenerationChain(ModifierStack const& stack, std::size_t index) {
   // Climb from @p index to the nearest preceding source, collecting the enabled providers (each
@@ -117,6 +117,15 @@ void RefreshAutoExportPaths(ModifierStack& stack, std::string const& sourceFileP
   }
 }
 
+void RedirectExports(ModifierStack& stack, std::filesystem::path const& folder) {
+  for (auto const& modifier : stack) {
+    std::string const path = modifier->ExportPath();
+    if (modifier->enabled && modifier->ProvidesFileExport() && !path.empty()) {
+      modifier->OverrideExportPath((folder / std::filesystem::path(path).filename()).string());
+    }
+  }
+}
+
 std::vector<bool> FindCollidingExportPaths(ModifierStack const& stack) {
   std::vector<bool> collides(stack.size(), false);
   // Quadratic, but over a handful of export modifiers in a stack drawn once per frame. Compares the
@@ -131,7 +140,7 @@ std::vector<bool> FindCollidingExportPaths(ModifierStack const& stack) {
       if (!stack[j]->enabled || !stack[j]->ProvidesFileExport()) {
         continue;
       }
-      if (SamePath(pathI, stack[j]->ExportPath())) {
+      if (SameFilePath(pathI, stack[j]->ExportPath())) {
         collides.at(i) = true;
         collides.at(j) = true;
       }

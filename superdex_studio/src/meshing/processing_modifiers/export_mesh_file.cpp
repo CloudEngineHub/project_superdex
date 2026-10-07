@@ -89,6 +89,10 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
       _props.path = SuggestedExportPath(sourceFilePath);
     }
   }
+  void OverrideExportPath(std::string const& path) override {
+    _props.path = path;
+    _autoExportPath = false;
+  }
 
   // An auto path is reproduced on load, so it is left out of the document entirely; the presence of
   // the key is exactly what marks a path as the user's own (see DeserializeProps).

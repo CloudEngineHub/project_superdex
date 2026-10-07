@@ -25,9 +25,12 @@
 #include <mochi_core/utils/error.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace superdex::studio {
@@ -61,6 +64,19 @@ using ModifierStack = std::vector<std::unique_ptr<MeshProcessingModifier>>;
 // enough to call every frame, and safe to: an Auto path is never serialized, so re-deriving it
 // cannot dirty the saved snapshot however much it moves.
 void RefreshAutoExportPaths(ModifierStack& stack, std::string const& sourceFilePath);
+
+// Moves every enabled file export into @p folder, keeping each file's name (see
+// MeshProcessingMethod::OverrideExportPath); disabled modifiers write nothing, so they keep their
+// paths. Call after RefreshAutoExportPaths, so Auto exports keep their derived names. Exports that
+// shared a file name in different folders now share one path; FindCollidingExportPaths reports
+// them, so check it before running the stack.
+void RedirectExports(ModifierStack& stack, std::filesystem::path const& folder);
+
+// Whether @p a and @p b name the same file: equal once lexically normalized, ignoring case. Case is
+// ignored on every platform because pipelines move between systems, and the default file systems
+// of Windows and macOS treat names that differ only in case as one file. An empty path names no
+// file.
+[[nodiscard]] bool SameFilePath(std::string_view a, std::string_view b);
 
 // Per-modifier flag marking export modifiers that share an output file with another enabled export
 // modifier. Two exports aimed at the same path silently overwrite each other; the Auto path is

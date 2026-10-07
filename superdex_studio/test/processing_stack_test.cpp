@@ -22,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -91,6 +92,10 @@ class TestMethod : public MeshProcessingMethod {
     if (_spec.autoExportPath) {
       _spec.exportPath = sourceFilePath + ".out";
     }
+  }
+  void OverrideExportPath(std::string const& path) override {
+    _spec.exportPath = path;
+    _spec.autoExportPath = false;
   }
 
  private:
@@ -238,6 +243,25 @@ TEST(ProcessingStackTest, RefreshAutoExportPathsUpdatesOnlyAutoExports) {
   EXPECT_EQ(stack[2]->ExportPath(), "chosen.glb");
 }
 
+TEST(ProcessingStackTest, RedirectExportsKeepsFileNamesInTheNewFolder) {
+  ModifierStack stack = MakeStack(
+      {{.kind = kSource},
+       {.kind = kExport, .autoExportPath = true},
+       {.kind = kExport, .exportPath = "render/chosen.glb"},
+       {.kind = kExport, .enabled = false, .exportPath = "render/off.glb"}});
+  RefreshAutoExportPaths(stack, "cad/part.step");
+
+  RedirectExports(stack, "out");
+
+  EXPECT_EQ(stack[0]->ExportPath(), "");
+  EXPECT_EQ(stack[1]->ExportPath(), (std::filesystem::path("out") / "part.step.out").string());
+  EXPECT_EQ(stack[2]->ExportPath(), (std::filesystem::path("out") / "chosen.glb").string());
+  EXPECT_EQ(stack[3]->ExportPath(), "render/off.glb");
+  // The redirected Auto export no longer follows the source.
+  RefreshAutoExportPaths(stack, "cad/other.step");
+  EXPECT_EQ(stack[1]->ExportPath(), (std::filesystem::path("out") / "part.step.out").string());
+}
+
 TEST(ProcessingStackTest, CollidingExportPathsCompareNormalizedPathsOfEnabledExports) {
   ModifierStack const stack = MakeStack(
       {{.kind = kSource},
@@ -247,6 +271,16 @@ TEST(ProcessingStackTest, CollidingExportPathsCompareNormalizedPathsOfEnabledExp
        {.kind = kExport, .exportPath = "collision/part.mochi.h5"}});
 
   std::vector<bool> const expected{false, true, true, false, false};
+  EXPECT_EQ(FindCollidingExportPaths(stack), expected);
+}
+
+TEST(ProcessingStackTest, CollidingExportPathsIgnoreCase) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource},
+       {.kind = kExport, .exportPath = "render/Part.glb"},
+       {.kind = kExport, .exportPath = "render/part.glb"}});
+
+  std::vector<bool> const expected{false, true, true};
   EXPECT_EQ(FindCollidingExportPaths(stack), expected);
 }
 

@@ -222,6 +222,9 @@ class MeshProcessingMethod {
   // never serialized (see SerializeProps on the export methods), so it cannot dirty the saved
   // snapshot or a future undo/redo state no matter how often it moves.
   virtual void RefreshAutoExportPath(std::string const& /*sourceFilePath*/) {}
+  // Points the export at @p path instead of this method's own setting, turning Auto off. Used to
+  // collect a headless run's exports in one folder; not serialized unless the pipeline is saved.
+  virtual void OverrideExportPath(std::string const& /*path*/) {}
   // Optional override for the color the editor shows this method's output surface with. Most
   // methods return nullopt (the editor derives a hashed stage color); the Export Mesh File method
   // returns its configured material color so its viewport preview matches the color it will write.
