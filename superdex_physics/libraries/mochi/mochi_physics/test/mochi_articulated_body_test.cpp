@@ -1198,10 +1198,9 @@ TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
   auto& reg = GetRegistry();
   auto const entity = GetEntity(actor->GetHandle());
 
-  // Re-initialize the problem, as on a change of global DoFs, after a gradient assembly resized the
-  // reduced residual for its target.
+  // The constraint added after creation updates the full-DoF problem on the next step, which must
+  // also handle a reduced residual left resized by a gradient assembly for its target.
   reg.get<CActorSnle>(entity).reducedResidual.Resize(0);
-  articulated::compound::InitFullDofProblem(reg, entity);
   _scene->Step(CSceneTime::kDefaultTimeStep);
 
   AssemblyParams const assemblyParams{.assemObj = false, .assemDRes = true};

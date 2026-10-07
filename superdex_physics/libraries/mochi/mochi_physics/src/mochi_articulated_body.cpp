@@ -1443,51 +1443,21 @@ static void InitSkinMesh(
       reg, e, e, *shape, MakeSingletonConstSpan(strategy), params.contact, numCollidingSamples);
 }
 
-void mochi::articulated::compound::InitFullDofProblem(entt::registry& reg, entt::entity e) {
+void mochi::articulated::compound::UpdateFullDofInfo(entt::registry& reg, entt::entity e) {
   // Every compound has a CDofOffset. In regular compounds, this component refers to DoFs in the
   // island's SNLE problem. However, articulated compounds contain full DoF actors which do not
   // contribute to the island directly. Instead, these full DoF actors are assembled into a local
   // SNLE problem. Therefore, the actors in an articulated compound should start with a DoF offset
-  // of zero (relative to the articulation).
-  auto const& groupMembers = reg.get<CGroupMembers const>(e);
+  // of zero (relative to the articulation). Their constraints, if any, refer to these offsets.
   mochi::compound::UpdateDofInfo(
       reg,
       e, // compound
-      groupMembers,
+      reg.get<CGroupMembers const>(e),
       0, // Start at zero dofs offset
       0, // Start at zero pose offset
       0, // Start at zero derived state offset (unused by articulated links)
       0 // Start at zero diff input offset (unused by articulated links)
   );
-
-  // An articulated compound can have constraints (e.g. the position & rotation tracking constraints
-  // at the wrist of an articulated hand). Such constraints pertain to the full pose and do not get
-  // used by the solver directly.
-  auto* fullConstraintSnle = reg.try_get<CCompoundConstraintSnle>(e);
-  if (fullConstraintSnle) {
-    fullConstraintSnle->useInSolver = false;
-  }
-
-  // A compound with zero reduced dofs (e.g. an all-Hard/weld skeleton) has nothing to solve. Skip
-  // the SNLE machinery entirely instead of running it as a chain of no-ops on a 0x0 problem.
-  int const reducedSize = reg.get<CActorDofInfo const>(e).dofsSize;
-  if (reducedSize == 0) {
-    MOCHI_ASSERT(
-        !reg.any_of<CActorSnle>(e), "Articulated actors with no DoFs should not have CActorSnle.");
-    return;
-  }
-
-  // Storage for assembly of the compound's SNLE problem.
-  reg.emplace_or_replace<CActorSnle>(
-      e,
-      Matrix<real>::Zero(reducedSize, reducedSize),
-      isize(groupMembers.actors) * RigidSize::kDAll);
-
-  // Non-linear solver convergence weights (lazily initialized). Preserved across re-invocations of
-  // InitFullDofProblem. Nothing this function does invalidates the convergence weights.
-  if (!reg.any_of<CActorConvergenceWeights>(e)) {
-    reg.emplace<CActorConvergenceWeights>(e);
-  }
 }
 
 /**
@@ -1648,8 +1618,19 @@ void mochi::articulated::compound::InitArticulatedBodyActor(
   actorDofInfo.poseSize = reducedPoseDim;
   actorDofInfo.dofsSize = reducedDofsDim;
 
-  // Initialize data related to the full DoF problem
-  InitFullDofProblem(reg, e);
+  // DoF offsets of the links and sparsity of the constraints of the full-DoF problem
+  UpdateFullDofInfo(reg, e);
+
+  // An articulated actor with zero reduced dofs (e.g. an all-Hard/weld skeleton) has nothing to
+  // solve. Skip the SNLE machinery entirely instead of running it as a chain of no-ops on a 0x0
+  // problem.
+  if (reducedDofsDim != 0) {
+    // Storage for assembly of the compound's SNLE problem.
+    reg.emplace<CActorSnle>(e, Matrix<real>::Zero(reducedDofsDim, reducedDofsDim), fullDofsDim);
+
+    // Non-linear solver convergence weights (lazily initialized).
+    reg.emplace<CActorConvergenceWeights>(e);
+  }
 
   // Create vector of internal rigid actors' handles
   SceneHandle sceneHandle = reg.ctx<CSceneHandle const>().value;

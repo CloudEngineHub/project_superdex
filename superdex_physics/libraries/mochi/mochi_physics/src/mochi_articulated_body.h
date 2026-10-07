@@ -246,8 +246,9 @@ void ValidateDifferentiabilitySupport(entt::registry const& reg, entt::entity e,
 // Initialization specific to a differentiable scene
 void InitDifferentiableActor(entt::registry& reg, entt::entity e, Error& error);
 
-// Method to initialize the full-dof problem, necessary after an update to constraints on the bones
-void InitFullDofProblem(entt::registry& reg, entt::entity e);
+// Update the DoF offsets of the links, relative to the articulated actor, and the sparsity of its
+// constraints. Necessary on creation and after a change of constraints.
+void UpdateFullDofInfo(entt::registry& reg, entt::entity e);
 
 /*
  * Pipeline to set values of internal full-space and reduced pose from the state of the bones, and
