@@ -46,6 +46,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <set>
 
 using namespace mochi_renderer;
 
@@ -769,6 +770,51 @@ void Viewport::FocusCameraOnSceneObjects(
     _renderScene->GetCameraFocusOnAllSceneObjects(from, to, orthoHeight);
   }
   ApplyCameraFocus(from, to, orthoHeight, dir, animate);
+}
+
+std::vector<SceneObject*> Viewport::FindActors(std::string_view path, bool* ambiguous) const {
+  std::vector<SceneObject*> actors;
+  if (ambiguous != nullptr) {
+    *ambiguous = false;
+  }
+  if (_renderScene == nullptr) {
+    return actors;
+  }
+  // Whole segments only: "arm" covers "arm" and "arm/hand", not "armrest".
+  auto const covers = [&path](std::string_view name) {
+    return name.starts_with(path) && (name.size() == path.size() || name[path.size()] == '/');
+  };
+  auto const collect = [&](auto const& matches) {
+    for (SceneObject* object : _renderScene->GetSceneObjects()) {
+      if (object != nullptr && !object->_internal && IsShown(object) &&
+          matches(std::string_view(object->GetName()))) {
+        actors.push_back(object);
+      }
+    }
+  };
+  if (path.empty()) {
+    collect([](std::string_view name) { return !name.empty(); });
+    return actors;
+  }
+  collect(covers);
+  if (actors.empty()) {
+    // The part of each matching name before the path: the actor the match belongs to.
+    std::set<std::string> owners;
+    collect([&covers, &owners](std::string_view name) {
+      for (std::size_t slash = name.find('/'); slash != std::string_view::npos;
+           slash = name.find('/', slash + 1)) {
+        if (covers(name.substr(slash + 1))) {
+          owners.emplace(name.substr(0, slash));
+          return true;
+        }
+      }
+      return false;
+    });
+    if (ambiguous != nullptr) {
+      *ambiguous = owners.size() > 1;
+    }
+  }
+  return actors;
 }
 
 void Viewport::SetCameraLookAt(mochi::Real3 const& eye, mochi::Real3 const& target) const {

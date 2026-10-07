@@ -34,6 +34,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -200,6 +201,15 @@ class Viewport {
       std::vector<mochi_renderer::SceneObject*> const& objects,
       std::optional<mochi::Real3> dir = std::nullopt,
       bool animate = true) const;
+  // The visible objects named @p path or sitting under it ("arm" also matches "arm/hand"), or all
+  // visible named objects when @p path is empty. When no name starts with @p path, it may start
+  // after any '/' instead, so "hand" finds "arm/hand". When those names belong to more than one
+  // actor ("left/hand" and "right/hand"), every match is returned and @p ambiguous, if given, is
+  // set. Bots and prefabs stage one object per link or actor, named like the physics actor
+  // ("prefab/actor", "articulated/link").
+  std::vector<mochi_renderer::SceneObject*> FindActors(
+      std::string_view path = {},
+      bool* ambiguous = nullptr) const;
   // Places the camera at @p eye looking at @p target, both in editor space, at once.
   void SetCameraLookAt(mochi::Real3 const& eye, mochi::Real3 const& target) const;
   // The camera position and the point it orbits, in editor space.
