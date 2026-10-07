@@ -20,6 +20,8 @@
 #include "rendering/debug_text.h"
 #include "rendering/render_target.h"
 
+#include <mochi_core/utils/error.h>
+
 #include <mochi_renderer/resource_manager.h>
 #include <mochi_renderer/scene.h>
 
@@ -137,6 +139,21 @@ class Viewport {
   RenderTarget* GetRenderTarget() const {
     return _renderTarget.get();
   }
+  // Runs @p render with the render target and the camera sized to @p width x @p height pixels, then
+  // gives the viewport its own size and projection back, also when @p render throws. @p render
+  // reports a failure through the Error it is passed, which ends up in @p error. A restore step
+  // that fails is logged and the others still run. Returns whether the viewport got everything
+  // back. If only the restore failed, @p error is left alone, so an image @p render captured can
+  // still be kept; if @p render failed too, or threw, @p error says the restore failed as well. The
+  // image shows at least what the viewport shows (see FrameScreenshot). Sets @p error, without
+  // calling @p render, for an empty @p render, a size outside 1 to
+  // SuperDexStudio::kMaxScreenshotSide, a camera setting that is not finite or out of range, a view
+  // it cannot frame, or a viewport that has no size, target or scene yet.
+  [[nodiscard]] bool WithRenderSize(
+      int width,
+      int height,
+      std::function<void(mochi::Error&)> const& render,
+      mochi::Error& error);
   // Positions the drop-shadow ground plane at the lowest point of the scene's meshes (from their
   // AABBs, including hidden ones, so toggling visibility doesn't move it) and returns that height.
   // Call after geometry changes; do NOT call while a physics sim is running -- the plane should

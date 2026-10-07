@@ -23,6 +23,7 @@
 #include "ui/imgui_widgets.h"
 
 #include <mochi_core/mochi_platform.h>
+#include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/file_utils.h>
 #include <mochi_core/utils/path.h>
 #include <mochi_mesh/mesh_cli_control.h>
@@ -50,6 +51,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <system_error>
 
@@ -1119,6 +1121,108 @@ void SuperDexStudio::SaveViewportScreenshot(
   MOCHI_ERROR_RETURN(error);
 
   mochi_renderer::WritePng(outFile, width, height, 4, pixels, error);
+}
+
+void SuperDexStudio::RenderViewportScreenshot(
+    AssetEditor& editor,
+    int width,
+    int height,
+    mochi::Path const& outFile,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  // GetEngine() reads _mochiRenderer, and every frame goes through _renderer.
+  MOCHI_ERROR_IF(
+      _renderer == nullptr || _mochiRenderer == nullptr, error, "Studio has no renderer yet.");
+  MOCHI_ERROR_RETURN(error);
+  Viewport* const viewportPtr = editor.GetViewport();
+  if (viewportPtr == nullptr) {
+    MOCHI_ERROR_SET(error, "The editor has no viewport.");
+    return;
+  }
+  Viewport& viewport = *viewportPtr;
+
+  std::vector<uint8_t> pixels;
+  bool restored = true;
+  try {
+    restored = viewport.WithRenderSize(
+        width,
+        height,
+        [&](mochi::Error& renderError) {
+          // The editor adds its 3D overlays (joint axes, contacts, drag handles) in OnRender, so
+          // the image matches the viewport; labels drawn with ImGui, such as debug text, are not in
+          // it. A frame skipped for pacing draws nothing. Pacing skips a frame only while earlier
+          // ones are in flight, so after flushAndWait a later attempt renders.
+          auto const renderFrame = [&] {
+            bool const began = _renderer->BeginFrame();
+            // Every BeginFrame needs its EndFrame, even for a skipped frame: BeginFrame marks the
+            // frame active either way, and EndFrame clears that and ends Filament's frame only if
+            // one began.
+            MOCHI_DEFER({ _renderer->EndFrame(); });
+            if (began) {
+              editor.OnRender(_renderer.get());
+            }
+            return began;
+          };
+          // flushAndWait leaves nothing in flight, so pacing has no reason to skip the next
+          // frame; the extra attempts only cover an unexpected skip.
+          constexpr int kRenderAttempts = 3;
+          bool rendered = renderFrame();
+          for (int attempt = 1; attempt < kRenderAttempts && !rendered; ++attempt) {
+            filament::Engine* const engine = GetEngine();
+            if (engine == nullptr) {
+              break;
+            }
+            engine->flushAndWait();
+            rendered = renderFrame();
+          }
+          if (!rendered) {
+            MOCHI_ERROR_SET(renderError, "The renderer skipped the frame.");
+            return;
+          }
+          RenderTarget const* const target = viewport.GetRenderTarget();
+          MOCHI_ERROR_IF(target == nullptr, renderError, "The viewport has no render target.");
+          MOCHI_ERROR_RETURN(renderError);
+          // ReadPixels queues the readback after this frame's commands, then flushes and waits for
+          // it, so it reads the frame just rendered.
+          _renderer->ReadPixels(*target, pixels, renderError);
+        },
+        error);
+  } catch (std::exception const& e) {
+    MOCHI_LOG_ERROR("Rendering the screenshot failed: %s", e.what());
+    // MOCHI_ERROR_SET keeps the first error, so a more specific one the render already set stays.
+    MOCHI_ERROR_SET(error, "Rendering the screenshot failed; see the log.");
+    return;
+  } catch (...) {
+    MOCHI_LOG_ERROR(
+        "Rendering the screenshot failed with an exception that is not a std::exception.");
+    MOCHI_ERROR_SET(error, "Rendering the screenshot failed; see the log.");
+    return;
+  }
+  MOCHI_ERROR_RETURN(error);
+  mochi::Error saveError;
+  MOCHI_ERROR_IF(
+      pixels.size() != static_cast<std::size_t>(width) * height * 4,
+      saveError,
+      "The rendered image does not have the requested size.");
+  mochi_renderer::WritePng(outFile, width, height, 4, pixels, saveError);
+  // One Error holds one message, so when saving and the restore both failed, saving's goes to the
+  // log.
+  if (restored) {
+    if (!saveError.IsOK()) {
+      error.SetFirstError(saveError.GetDescription(), saveError.GetFile(), saveError.GetLine());
+    }
+  } else if (saveError.IsOK()) {
+    MOCHI_ERROR_SET(
+        error,
+        "The screenshot was saved, but the viewport could not get its own size and view back; "
+        "see the log.");
+  } else {
+    MOCHI_LOG_ERROR("Saving the screenshot failed: %s", saveError.GetDescription());
+    MOCHI_ERROR_SET(
+        error,
+        "Saving the screenshot failed, and the viewport could not get its own size and view "
+        "back; see the log.");
+  }
 }
 
 //--------------------------------------------------------------------------------------------------

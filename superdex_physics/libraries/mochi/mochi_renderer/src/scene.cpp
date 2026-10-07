@@ -549,6 +549,23 @@ float Scene::GetOrthographicHeight() const {
   return _orthographicHeight;
 }
 
+float Scene::GetFieldOfView() const {
+  return _fov;
+}
+
+float Scene::GetNearPlane() const {
+  return _near;
+}
+
+float Scene::GetFarPlane() const {
+  return _far;
+}
+
+void Scene::GetViewportSize(int& width, int& height) const {
+  width = _viewportWidth;
+  height = _viewportHeight;
+}
+
 void Scene::CameraLookAt(
     filament::math::double3 from,
     filament::math::double3 to,

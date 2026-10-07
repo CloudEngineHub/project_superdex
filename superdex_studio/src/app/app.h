@@ -98,6 +98,17 @@ class SuperDexStudio : public ImGuios::Application {
   void
   SaveAssetThumbnail(Asset& asset, int sizePx, mochi::Path const& outFile, mochi::Error& error);
   void SaveViewportScreenshot(Viewport& viewport, mochi::Path const& outFile, mochi::Error& error);
+  // Largest width or height Viewport::WithRenderSize renders; the image is a single GPU texture.
+  // The largest image, 8192 x 8192, takes 256 MiB on the GPU and as much again when read back.
+  static constexpr int kMaxScreenshotSide = 8192;
+  // Renders @p editor's viewport at @p width x @p height pixels and writes it to @p outFile as a
+  // PNG, without a dialog. The size need not match the viewport's; see Viewport::WithRenderSize.
+  void RenderViewportScreenshot(
+      AssetEditor& editor,
+      int width,
+      int height,
+      mochi::Path const& outFile,
+      mochi::Error& error);
 
   //------------------------------------------------------------------------------------------------
   // File

@@ -18,6 +18,7 @@
 #include "app/app.h"
 #include "rendering/measure_tool.h"
 #include "rendering/scene_stage.h"
+#include "rendering/screenshot_framing.h"
 #include "ui/imgui_widgets.h"
 
 #include <mochi_core/mochi_platform.h>
@@ -41,8 +42,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <numbers>
+#include <optional>
 
 using namespace mochi_renderer;
 
@@ -223,6 +226,135 @@ std::unique_ptr<Viewport> Viewport::Create(
 
 mochi_renderer::Scene* Viewport::GetRenderScene() const {
   return _renderScene.get();
+}
+
+namespace {
+
+// Runs one step of giving a viewport its own size back after a screenshot and returns whether it
+// worked. A step that throws is logged and skipped, so the later steps still run and an exception
+// from the render is kept.
+template <typename Step>
+bool RestoreStep(char const* what, Step const& step) {
+  try {
+    step();
+    return true;
+  } catch (std::exception const& e) {
+    MOCHI_LOG_ERROR("Could not restore the viewport's %s after a screenshot: %s", what, e.what());
+  } catch (...) {
+    MOCHI_LOG_ERROR("Could not restore the viewport's %s after a screenshot.", what);
+  }
+  return false;
+}
+
+} // namespace
+
+bool Viewport::WithRenderSize(
+    int width,
+    int height,
+    std::function<void(mochi::Error&)> const& render,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error, true);
+  MOCHI_ERROR_IF(
+      width < 1 || height < 1 || width > SuperDexStudio::kMaxScreenshotSide ||
+          height > SuperDexStudio::kMaxScreenshotSide,
+      error,
+      "The render size is empty or larger than the largest image Studio renders.");
+  MOCHI_ERROR_IF(!render, error, "There is nothing to render.");
+  MOCHI_ERROR_IF(_renderTarget == nullptr, error, "The viewport has no render target.");
+  MOCHI_ERROR_IF(_renderScene == nullptr, error, "The viewport has no scene.");
+  MOCHI_ERROR_RETURN(error, true);
+  int ownWidth = 0;
+  int ownHeight = 0;
+  _renderTarget->GetSize(ownWidth, ownHeight);
+  int sceneWidth = 0;
+  int sceneHeight = 0;
+  _renderScene->GetViewportSize(sceneWidth, sceneHeight);
+  // The sizes are restored afterwards, so there have to be some.
+  MOCHI_ERROR_IF(
+      ownWidth < 1 || ownHeight < 1 || sceneWidth < 1 || sceneHeight < 1,
+      error,
+      "The viewport has no size yet.");
+  MOCHI_ERROR_RETURN(error, true);
+  float const fovDeg = _renderScene->GetFieldOfView();
+  float const nearPlane = _renderScene->GetNearPlane();
+  float const farPlane = _renderScene->GetFarPlane();
+  float const orthoHeight = _renderScene->GetOrthographicHeight();
+  CameraMode const cameraMode = _renderScene->GetCameraMode();
+  MOCHI_ERROR_IF(
+      !std::isfinite(fovDeg) || !std::isfinite(nearPlane) || !std::isfinite(farPlane) ||
+          !std::isfinite(orthoHeight) || fovDeg <= 0.0f || fovDeg >= 180.0f || nearPlane <= 0.0f ||
+          farPlane <= nearPlane || orthoHeight <= 0.0f,
+      error,
+      "The viewport's camera has a setting that is not finite or out of range.");
+  MOCHI_ERROR_RETURN(error, true);
+  auto const restore = [&] {
+    bool restored = true;
+    auto const step = [&restored](char const* what, auto const& action) {
+      bool const stepRestored = RestoreStep(what, action);
+      restored = restored && stepRestored;
+    };
+    step("render target size", [&] { _renderTarget->Resize(ownWidth, ownHeight); });
+    step("camera mode", [&] { _renderScene->SetCameraMode(cameraMode); });
+    step("orthographic height", [&] { _renderScene->SetOrthographicHeight(orthoHeight); });
+    step("projection", [&] {
+      _renderScene->SetViewport(sceneWidth, sceneHeight, fovDeg, nearPlane, farPlane);
+    });
+    // A highlighted object sized the overlay to the image; it would stay that size until the next
+    // highlight. An overlay the screenshot created stays too, at the viewport's size: the next
+    // highlight would create it anyway.
+    if (_overlayTarget != nullptr) {
+      step("highlight overlay", [&] { EnsureHighlightOverlay(ownWidth, ownHeight); });
+    }
+    return restored;
+  };
+  // Both projections are widened; the camera uses its own.
+  std::optional<ScreenshotFraming> const framing =
+      FrameScreenshot(fovDeg, width, height, sceneWidth, sceneHeight);
+  if (!framing.has_value()) {
+    MOCHI_ERROR_SET(error, "The screenshot cannot be framed from this view.");
+    return true;
+  }
+  float const widenedOrthoHeight = orthoHeight * static_cast<float>(framing->orthoScale);
+  MOCHI_ERROR_IF(
+      !std::isfinite(widenedOrthoHeight),
+      error,
+      "The viewport's orthographic view is too tall to widen for this image.");
+  MOCHI_ERROR_RETURN(error, true);
+  mochi::Error renderError;
+  // Moves the render's error into @p error, and says so when the restore failed too. One Error
+  // holds one message, so when both failed the render's goes to the log. A failed restore alone is
+  // only returned on a normal exit, so an image the render captured can still be kept; after a
+  // throw it goes into @p error, as nothing is returned then.
+  auto const report = [&](bool restored, bool threw) {
+    if (!renderError.IsOK() && restored) {
+      error.SetFirstError(
+          renderError.GetDescription(), renderError.GetFile(), renderError.GetLine());
+    } else if (!renderError.IsOK()) {
+      MOCHI_LOG_ERROR("Rendering the screenshot failed: %s", renderError.GetDescription());
+      MOCHI_ERROR_SET(
+          error,
+          "Rendering the screenshot failed, and the viewport could not get its own size and view "
+          "back; see the log.");
+    } else if (!restored && threw) {
+      MOCHI_ERROR_SET(
+          error,
+          "The viewport could not get its own size and view back after the screenshot; see the log.");
+    }
+  };
+  // restore() never throws, so an exception from render() reaches the caller unchanged.
+  try {
+    _renderTarget->Resize(width, height);
+    _renderScene->SetOrthographicHeight(widenedOrthoHeight);
+    _renderScene->SetViewport(
+        width, height, static_cast<float>(framing->fovDeg), nearPlane, farPlane);
+    render(renderError);
+  } catch (...) {
+    report(restore(), /*threw=*/true);
+    throw;
+  }
+  bool const restored = restore();
+  report(restored, /*threw=*/false);
+  return restored;
 }
 
 float Viewport::UpdateGroundPlane() {

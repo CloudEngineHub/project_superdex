@@ -121,6 +121,12 @@ class Scene {
   // Filament's reversed-Z float depth keeps precision fine despite the wide near/far ratio.
   void
   SetViewport(int width, int height, float fov = 45.0f, float near = 0.003f, float far = 100.0f);
+  // What SetViewport last set. The field of view (vertical, degrees) is kept in orthographic mode
+  // too, for the switch back to perspective.
+  float GetFieldOfView() const;
+  float GetNearPlane() const;
+  float GetFarPlane() const;
+  void GetViewportSize(int& width, int& height) const;
   void SetCameraMode(CameraMode mode);
   CameraMode GetCameraMode() const;
   void SetOrthographicHeight(float height);
