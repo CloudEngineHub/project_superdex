@@ -842,33 +842,6 @@ inline NdArray<Simd<T, 4>, 3> Cofactor3x3(NdArray<Simd<T, 4>, 3> const& mat) {
   };
 }
 
-// Calculate the cofactor matrix from the symmetric 2x2 SIMD matrix.
-template <typename T>
-MOCHI_FORCE_INLINE Simd<T, 4> CofactorSym2x2(Simd<T, 4> const& mat) {
-  return Neg<false, true, false, false>(Shuffle<2, 1, 0, 3>(mat));
-}
-
-// Calculate the cofactor matrix from the symmetric 3x3 SIMD matrix.
-template <typename T>
-MOCHI_FORCE_INLINE NdArray<Simd<T, 4>, 2> CofactorSym3x3(NdArray<Simd<T, 4>, 2> const& mat) {
-  // Equivalent to Transpose(Invert(mat, 1_r)), which reduces to:
-  //
-  //  |bc - ff, ef - dc, df - be|
-  //  |   ·   , ac - ee, de - af|
-  //  |   ·   ,    ·   , ab - dd|
-  //
-  // diag = (bc - ff, ac - ee, ab - dd)
-  // offd = (ef - dc, df - be, de - af)
-
-  auto diag = Shuffle<1, 0, 0, 3>(mat[0]) * Shuffle<2, 2, 1, 3>(mat[0]) -
-      Shuffle<2, 1, 0, 3>(mat[1] * mat[1]);
-
-  auto offd = Shuffle<1, 0, 0, 3>(mat[1]) * Shuffle<2, 2, 1, 3>(mat[1]) -
-      mat[1] * Shuffle<2, 1, 0, 3>(mat[0]);
-
-  return NdArray<Simd<T, 4>, 2>{diag, offd};
-}
-
 /**************************************************************************************************
   Matrix Trace (sum of diagonal elements)
 */
@@ -1009,55 +982,6 @@ inline constexpr auto LargestRow(NdArray<T, D0, D1> const& A, T* sqrNorm) {
 
   // Return largest row.
   return A[index];
-}
-
-inline auto LargestRowColSym2x2(VSymMatrix2x2r A, Vec4r& outNormSqr) {
-  // Vectors are:
-  // r₁ = (a, c)
-  // r₂ = (c, b)
-
-  // Evaluate squared norms.
-  Vec4r entriesSqr = A * A; // (a², c², b², ?)
-  Vec4r temp0 = Broadcast<1>(entriesSqr); // (c², c², ?, ?)
-  Vec4r normSqr = entriesSqr + temp0; // (|r₁|², ?, |r₂|², ?)
-  real r1NormSqr = Get<0>(normSqr);
-  real r2NormSqr = Get<2>(normSqr);
-
-  // Shuffle values according depending on which row was larger
-  if (r1NormSqr > r2NormSqr) {
-    outNormSqr = r1NormSqr;
-    return Shuffle<0, 1, 3, 3>(A);
-  } else {
-    outNormSqr = r2NormSqr;
-    return Shuffle<1, 2, 3, 3>(A);
-  }
-}
-
-inline auto LargestRowColSym3x3(VSymMatrix3x3r A, Vec4r& outNormSqr) {
-  // Vectors are:
-  // r₁ = (a, d, e)
-  // r₂ = (d, b, f)
-  // r₃ = (e, f, c)
-
-  // Evaluate squared norms.
-  Vec4r diagSqr = A[0] * A[0]; // (a², b², c², ?)
-  Vec4r offdSqr = A[1] * A[1]; // (d², e², f², ?)
-  Vec4r temp0 = Shuffle<0, 0, 2, 3>(offdSqr); // (d², d², f², ?)
-  Vec4r temp1 = Shuffle<1, 2, 1, 3>(offdSqr); // (e², f², e², ?)
-  Vec4r normSqr = diagSqr + temp0 + temp1; // (|r₁|², |r₂|², |r₃|², ?)
-
-  // Blend entries according to norms.
-  real max = HMax<3>(normSqr);
-  if (max == Get<0>(normSqr)) { // If r1 was the largest row
-    outNormSqr = Broadcast<0>(normSqr);
-    return Blend<0, 1, 1, 0>(A[0], Shuffle<0, 0, 1, 0>(A[1]));
-  } else if (max == Get<1>(normSqr)) { // If r2 was the largest row
-    outNormSqr = Broadcast<1>(normSqr);
-    return Blend<1, 0, 1, 0>(A[0], Shuffle<0, 0, 2, 0>(A[1]));
-  } else { // If r3 was the largest row
-    outNormSqr = Broadcast<2>(normSqr);
-    return Blend<1, 1, 0, 0>(A[0], Shuffle<1, 2, 0, 0>(A[1]));
-  }
 }
 
 } // namespace mochi

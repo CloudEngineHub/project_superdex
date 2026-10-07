@@ -441,13 +441,6 @@ template <typename T>
 [[nodiscard]] NdArray<Simd<T, 4>, 3> Cofactor3x3(
     NdArray<Simd<T, 4>, 3> const& mat); // Ignores the last SIMD column
 
-template <typename T>
-[[nodiscard]] MOCHI_FORCE_INLINE Simd<T, 4> CofactorSym2x2(Simd<T, 4> const& mat);
-
-template <typename T>
-[[nodiscard]] MOCHI_FORCE_INLINE NdArray<Simd<T, 4>, 2> CofactorSym3x3(
-    NdArray<Simd<T, 4>, 2> const& mat);
-
 /**************************************************************************************************
   Matrix Trace (sum of diagonal elements)
 */
@@ -510,14 +503,6 @@ template <typename T, size_t N>
 // its squared norm.
 template <typename T, size_t D0, size_t D1>
 [[nodiscard]] constexpr auto LargestRow(NdArray<T, D0, D1> const& A, T* sqrNorm = nullptr);
-
-// Retrieves the largest row/col (in the L-2 sense) of the given symmetric matrix.
-// Optionally outputs its squared norm.
-[[nodiscard]] auto LargestRowColSym2x2(VSymMatrix2x2r A, Vec4r& outNormSqr);
-
-// Retrieves the largest row/col (in the L-2 sense) of the given symmetric matrix.
-// Optionally outputs its squared norm.
-[[nodiscard]] auto LargestRowColSym3x3(VSymMatrix3x3r A, Vec4r& outNormSqr);
 
 } // namespace mochi
 
