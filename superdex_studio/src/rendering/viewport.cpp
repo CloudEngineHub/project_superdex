@@ -702,7 +702,27 @@ void Viewport::FocusCameraOnScene(std::optional<mochi::Real3> dir, bool animate)
   filament::math::double3 from = {1.0f, 0.5f, 1.0f};
   filament::math::double3 to = {0.0f, 0.0f, 0.0f};
   float orthoHeight = 10.0f;
-  _renderScene->GetCameraFocusOnAllSceneObjects(from, to, orthoHeight);
+  // Scene::GetCameraFocusOnAllSceneObjects skips hidden objects, and a highlight hides a selected
+  // object behind an internal stand-in, so it would leave selected actors out of the frame.
+  filament::Box box;
+  bool hasBox = false;
+  for (SceneObject* object : _renderScene->GetSceneObjects()) {
+    if (object == nullptr || object->_internal || !IsShown(object)) {
+      continue;
+    }
+    filament::Box const aabb = object->GetAABB();
+    if (hasBox) {
+      box.unionSelf(aabb);
+    } else {
+      box = aabb;
+    }
+    hasBox = true;
+  }
+  if (hasBox && !box.isEmpty() &&
+      _renderScene->GetCameraFocusOnSphere(box.center, length(box.halfExtent), from, to)) {
+    // The margin Scene::GetCameraFocusOnAllSceneObjects uses.
+    orthoHeight = 2.4f * std::max({box.halfExtent.x, box.halfExtent.y, box.halfExtent.z});
+  }
   ApplyCameraFocus(from, to, orthoHeight, dir, animate);
 }
 
@@ -765,6 +785,22 @@ std::pair<mochi::Real3, mochi::Real3> Viewport::GetCameraLookAt() const {
           mochi_renderer::ToMochi<mochi::real>(_renderScene->GetCameraPosition())),
       converter.TranslationToOutput(
           mochi_renderer::ToMochi<mochi::real>(_cameraController->GetOrbitPosition()))};
+}
+
+bool Viewport::IsShown(SceneObject const* object) const {
+  if (object == nullptr) {
+    return false;
+  }
+  int const index = _stage != nullptr ? _stage->GetSceneObjectIndex(object) : -1;
+  if (index >= 0) {
+    StagedActor const& actor = _stage->GetActors()[index];
+    for (StagedActor::Instance const* instance : {&actor.render, &actor.shape}) {
+      if (instance->sceneObject == object) {
+        return instance->visible;
+      }
+    }
+  }
+  return object->IsVisible();
 }
 
 bool Viewport::IsCameraMoving() const {

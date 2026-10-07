@@ -165,6 +165,9 @@ class Viewport {
   void SetSceneStage(SceneStage* stage) {
     _stage = stage;
   }
+  // Whether the scene's display mode shows `object`. Unlike SceneObject::IsVisible, this stays true
+  // while a selection or hover highlight hides the object behind its tinted stand-in.
+  [[nodiscard]] bool IsShown(mochi_renderer::SceneObject const* object) const;
   // Scene Object Selection / Highlighting
   // Replaces the whole selection with `objects` (nulls and duplicates are dropped; order preserved,
   // back() = primary/active). Pass {} to clear the selection.

@@ -40,6 +40,7 @@
 
 #ifdef MOCHI_MCP_ENABLED
 #include <imgui_mcp_bridge.h>
+#include "app/internal/mcp_commands.h"
 #include "app/mcp_port.h"
 #endif
 
@@ -437,6 +438,10 @@ void SuperDexStudio::OnInitialize() {
 
   // Register importers
   RegisterImporter(std::make_unique<UrdfImporter>(this));
+
+#ifdef MOCHI_MCP_ENABLED
+  RegisterMcpCommands(*this);
+#endif
 
   // Auto-load file from environment variable (for headless/MCP automation)
   if (char const* autoLoadPath = std::getenv("MOCHI_AUTO_LOAD")) {
