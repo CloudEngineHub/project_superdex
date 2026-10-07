@@ -27,6 +27,7 @@
 // (enums serialize as their string names, keeping the files human-readable/editable).
 
 #include <mochi_core/geometry/mesh_data.h>
+#include <mochi_core/utils/dynamic_string.h>
 #include <mochi_core/utils/error.h>
 #include <mochi_core/utils/nd_array.h>
 #include <mochi_core/utils/quaternion.h>
@@ -38,6 +39,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,9 +49,6 @@ class value;
 } // namespace picojson
 
 namespace superdex::studio {
-
-class SuperDexStudio;
-class AssetManager;
 
 // Everything a method's Run may need beyond its own params and input, supplied by the editor.
 struct ModifierRunContext {
@@ -67,12 +66,34 @@ struct ModifierRunContext {
 // Hover-tooltip helper injected by the editor so a method can annotate its widgets consistently.
 using ModifierTooltip = std::function<void(char const*)>;
 
+// The model types a source method's own file slot can hold.
+enum class ModelSlotType { CadModel, RenderModel, MochiModel };
+
 // GUI services a method may need to render its parameters (asset slots for file sources / exports,
-// the reference dropdown for edge flip). Most methods use only `tooltip`.
+// the reference dropdown for edge flip). Most methods use only `tooltip`. Widgets that belong to
+// the app are injected the same way as `tooltip`, so the methods depend on Dear ImGui alone and
+// never on the app. A callable left empty leaves its widget out.
 struct ModifierGuiContext {
   ModifierTooltip tooltip;
-  SuperDexStudio* studio = nullptr;
-  AssetManager const* assetManager = nullptr;
+  // Asset slot showing and accepting a model file of @p type, bound to @p path.
+  std::function<void(char const* id, mochi::DynamicString& path, ModelSlotType type)> modelSlot;
+  // Native save dialog opened at @p defaultPath. Returns the chosen path, or empty on cancel.
+  std::function<std::string(
+      char const* title,
+      std::span<char const* const> filters,
+      char const* filterDescription,
+      std::string const& defaultPath)>
+      saveFileDialog;
+  // Editor for every field of the reflected struct at @p value. Returns true when a field changed.
+  std::function<bool(SReflect::StructTypeInfo const& type, void* value)> reflectedStruct;
+  // Per-axis drag for @p value, moving @p speed per pixel and shown with the printf @p format, and
+  // a rotation + translation editor. Return true on change.
+  std::function<bool(char const* label, mochi::Real3& value, float speed, char const* format)>
+      dragXYZ;
+  std::function<bool(char const* label, mochi::Quaternion& rotation, mochi::Real3& translation)>
+      dragTransformRT;
+  // The stable color the app derives from a file path, so a default matches the models' colors.
+  std::function<mochi::Real3(std::string_view path)> pathColor;
   // File path of the stack's first (source) modifier, used to pre-populate export default paths.
   std::string sourceFilePath;
   // Folder of the model this editor was opened for. Used only as the Browse dialog's starting point

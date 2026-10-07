@@ -16,16 +16,15 @@
 
 #include "meshing/processing_modifiers/export_mesh_file.h"
 
-#include "app/app.h" // SuperDexStudio::GetFileDialogPath
 #include "meshing/processing_modifiers/processing_export_path.h" // DefaultExportPath
 #include "meshing/processing_modifiers/processing_mesh_utils.h" // WriteObjFile, WriteGlbFile, EndsWithNoCase
-#include "ui/imgui_widgets.h" // ImGui::InputText
 
 #include <picojson/picojson.h>
 
 #include <superdex_robotics/utils/file_utils.h> // kRenderSubdir
 
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h> // ImGui::InputText(std::string*)
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/dynamic_string.h>
@@ -117,9 +116,8 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
       std::string const currentPath{_props.path.data(), _props.path.size()};
       std::string const defaultPath =
           !currentPath.empty() ? currentPath : SuggestedExportPath(gui.sourceFilePath);
-      if (!defaultPath.empty()) {
-        ImVec4 const c = HashStringToColor(defaultPath);
-        _props.color = {c.x, c.y, c.z};
+      if (!defaultPath.empty() && gui.pathColor) {
+        _props.color = gui.pathColor(defaultPath);
         _colorInitialized = true;
       }
     }
@@ -135,14 +133,17 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
         "export a .obj, since the derived path is always a .glb.");
     ImGui::SameLine();
     ImGui::BeginDisabled(_autoExportPath);
-    ImGui::InputText("Path", &_props.path);
+    std::string path{_props.path.data(), _props.path.size()};
+    if (ImGui::InputText("Path", &path)) {
+      _props.path = path;
+    }
     tooltip(
         "Output path; the extension selects the format (.obj or .glb). No/unknown suffix defaults to "
         ".glb.");
     ImGui::EndDisabled();
     // Browse stays live while Auto is on: choosing a file IS taking the path over, so it turns Auto
     // off. Cancelling leaves everything as it was -- Browse only ever turns Auto off, never on.
-    if (ImGui::Button("Browse##meshexport")) {
+    if (gui.saveFileDialog && ImGui::Button("Browse##meshexport")) {
       char const* filters[] = {"*.obj", "*.glb"};
       std::string const defaultPath = processing::ExportDialogStartPath(
           std::string{_props.path.data(), _props.path.size()},
@@ -153,15 +154,10 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
       // directory when a default's parent is missing, which would defeat suggesting it at all.
       superdex::robotics::EnsureDirectoriesCreated(
           defaultPath, mochi::ErrorLog{mochi::LogChannel::Warning});
-      mochi::Path const chosen = SuperDexStudio::GetFileDialogPath(
-          "Export Mesh",
-          filters,
-          2,
-          "Mesh (*.obj, *.glb)",
-          /*isSaveDialog=*/true,
-          mochi::Path{defaultPath});
-      if (!chosen.IsEmpty()) {
-        _props.path = chosen.ToString();
+      std::string const chosen =
+          gui.saveFileDialog("Export Mesh", filters, "Mesh (*.obj, *.glb)", defaultPath);
+      if (!chosen.empty()) {
+        _props.path = chosen;
         _autoExportPath = false;
       }
     }

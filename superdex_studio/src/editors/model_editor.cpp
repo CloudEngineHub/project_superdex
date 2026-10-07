@@ -25,6 +25,7 @@
 #include "meshing/processing_modifiers/processing_serialization.h"
 #include "rendering/measure_tool.h"
 #include "ui/asset_browser.h"
+#include "ui/imgui_widgets.h"
 
 #include <imgui_internal.h> // ImGuiWindow / WorkRect, to bound the modifier header width
 #include <tinyfiledialogs.h> // tinyfd_messageBox (preset-replace confirm)
@@ -45,6 +46,7 @@
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/geometry/model_data.h>
 #include <mochi_core/geometry/model_utils.h>
+#include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/container_utils.h>
 #include <mochi_core/utils/dynamic_string.h>
 #include <mochi_core/utils/log.h>
@@ -62,6 +64,7 @@
 #include <iomanip>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -528,6 +531,20 @@ void DrawMeshVizControls(
 // an .obj/.stl slot lines up with the equivalent .glb rather than sitting a quarter turn off.
 std::vector<MeshSection> ReadRenderModelSections(mochi::Path const& path) {
   return processing::ReadSectionsInRenderSpace(path.ToString());
+}
+
+AssetType AssetTypeForModelSlot(ModelSlotType type) {
+  switch (type) {
+    case ModelSlotType::CadModel:
+      return AssetType::CadModel;
+    case ModelSlotType::RenderModel:
+      return AssetType::RenderModel;
+    case ModelSlotType::MochiModel:
+      return AssetType::MochiModel;
+  }
+  // Only a value outside the enum gets here: -Wswitch flags a new ModelSlotType above.
+  MOCHI_LOG_ERROR("Unknown model slot type %d", static_cast<int>(type));
+  return AssetType::Unknown;
 }
 
 } // namespace
@@ -1697,10 +1714,9 @@ void ModelEditor::ShowMeshModifierStack() {
   int saveOutputIndex = -1; // a modifier whose Save-output button was pressed this frame
   int saveIndex = -1; // an export modifier whose Export button was pressed this frame
 
-  // GUI services shared by every modifier's ShowParams (asset slots need the studio + manager; the
-  // source file path is what an export modifier's Browse offers as its suggestion, falling back to
-  // the opened model's folder when there is no source).
-  AssetManager const& assetManager = _studio->GetAssetManager();
+  // GUI services shared by every modifier's ShowParams (the app widgets; the source file path is
+  // what an export modifier's Browse offers as its suggestion, falling back to the opened model's
+  // folder when there is no source).
   std::string const sourceFilePath = StackSourceFilePath();
   // Keep every Auto export path equal to what Browse would offer. Safe to do per frame: an Auto
   // path is never serialized, so however often it moves it cannot dirty the saved snapshot.
@@ -1714,12 +1730,49 @@ void ModelEditor::ShowMeshModifierStack() {
     modifierNames.emplace_back(modifier->DisplayName());
   }
   ModifierGuiContext gui{
-      tooltip,
-      _studio,
-      &assetManager,
-      sourceFilePath,
-      OriginModelFolder(),
-      _cadModelAsset ? _cadModelAsset->GetPath().ToString() : std::string()};
+      .tooltip = tooltip,
+      .modelSlot =
+          [this](char const* id, mochi::DynamicString& path, ModelSlotType type) {
+            ImGui::AssetSlot(
+                id,
+                path,
+                _studio->GetAssetManager(),
+                _studio,
+                AssetTypeForModelSlot(type),
+                /*acceptDragDropPayload=*/true);
+          },
+      .saveFileDialog =
+          [](char const* title,
+             std::span<char const* const> filters,
+             char const* filterDescription,
+             std::string const& defaultPath) {
+            return SuperDexStudio::GetFileDialogPath(
+                       title,
+                       filters.data(),
+                       mochi::isize(filters),
+                       filterDescription,
+                       /*isSaveDialog=*/true,
+                       mochi::Path{defaultPath})
+                .ToString();
+          },
+      .reflectedStruct = [](SReflect::StructTypeInfo const& type,
+                            void* value) { return ImGui::SimpleReflectionStruct(type, value); },
+      .dragXYZ =
+          [](char const* label, mochi::Real3& value, float speed, char const* format) {
+            return ImGui::DragRealXYZ(label, value, speed, 0.0f, 0.0f, format, 0, 1.0f);
+          },
+      .dragTransformRT =
+          [](char const* label, mochi::Quaternion& rotation, mochi::Real3& translation) {
+            return ImGui::DragTransformRT(label, rotation, translation);
+          },
+      .pathColor =
+          [](std::string_view path) {
+            ImVec4 const c = HashStringToColor(path);
+            return mochi::Real3{c.x, c.y, c.z};
+          },
+      .sourceFilePath = sourceFilePath,
+      .modelFolder = OriginModelFolder(),
+      .cadFilePath = _cadModelAsset ? _cadModelAsset->GetPath().ToString() : std::string()};
   gui.modifierNames = &modifierNames;
 
   DragReorderState& drag = _modifierDrag;

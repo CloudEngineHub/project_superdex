@@ -17,9 +17,6 @@
 #include "meshing/processing_modifiers/transform.h"
 
 #include "meshing/processing_modifiers/processing_mesh_utils.h" // ApplyTransform
-#include "ui/imgui_widgets.h" // ImGui::DragRealXYZ / DragTransformRT
-
-#include <imguios/imguios.h>
 
 #include <memory>
 #include <vector>
@@ -52,12 +49,16 @@ class SrtTransformMethod : public ReflectedMethod<TransformSrtProps> {
   }
   void ShowParams(ModifierGuiContext const& gui) override {
     ModifierTooltip const& tooltip = gui.tooltip;
-    ImGui::DragRealXYZ("Scale", _props.scale, 0.01f, 0, 0, "%.4f", 0, 1.0f);
-    tooltip("Per-axis scale applied to the input mesh first.");
-    mochi::Quaternion rotation = _props.rotation;
-    ImGui::DragTransformRT("Transform", rotation, _props.translation);
-    _props.rotation = rotation;
-    tooltip("Rotation then translation applied after scaling.");
+    if (gui.dragXYZ) {
+      gui.dragXYZ("Scale", _props.scale, 0.01f, "%.4f");
+      tooltip("Per-axis scale applied to the input mesh first.");
+    }
+    if (gui.dragTransformRT) {
+      mochi::Quaternion rotation = _props.rotation;
+      gui.dragTransformRT("Transform", rotation, _props.translation);
+      _props.rotation = rotation;
+      tooltip("Rotation then translation applied after scaling.");
+    }
   }
   mochi::MeshData Run(
       mochi::MeshData const& input,

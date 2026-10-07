@@ -16,9 +16,7 @@
 
 #include "meshing/processing_modifiers/source_mochi_model.h"
 
-#include "app/app.h" // AssetType, AssetManager, SuperDexStudio
 #include "meshing/processing_modifiers/processing_mesh_utils.h" // LoadMochiMesh
-#include "ui/imgui_widgets.h" // ImGui::AssetSlot
 
 #include <imgui.h>
 
@@ -94,16 +92,10 @@ class MochiFromFileMethod : public ReflectedMethod<MochiFileSourceProps> {
     return {"path"};
   }
   void ShowParams(ModifierGuiContext const& gui) override {
-    if (gui.studio == nullptr || gui.assetManager == nullptr) {
+    if (!gui.modelSlot) {
       return;
     }
-    ImGui::AssetSlot(
-        "##mochisocket",
-        _props.path,
-        *gui.assetManager,
-        gui.studio,
-        AssetType::MochiModel,
-        /*acceptDragDropPayload=*/true);
+    gui.modelSlot("##mochisocket", _props.path, ModelSlotType::MochiModel);
     gui.tooltip(
         "Drop a Mochi Model here (e.g. a .mochi.h5 in the _mochi folder). This slot is independent "
         "of the editor's own Model Viewer slots.");

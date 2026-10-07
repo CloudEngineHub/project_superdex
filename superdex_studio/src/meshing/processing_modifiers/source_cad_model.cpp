@@ -16,9 +16,7 @@
 
 #include "meshing/processing_modifiers/source_cad_model.h"
 
-#include "app/app.h" // AssetType, AssetManager, SuperDexStudio
 #include "meshing/processing_modifiers/processing_mesh_utils.h" // ApplyTransform, LoadRenderMesh, EndsWithNoCase
-#include "ui/imgui_widgets.h" // ImGui::AssetSlot
 
 #include <imgui.h>
 
@@ -279,16 +277,10 @@ class CadFromFileMethod : public ReflectedMethod<CadFileSourceProps> {
     return {"path"};
   }
   void ShowParams(ModifierGuiContext const& gui) override {
-    if (gui.studio == nullptr || gui.assetManager == nullptr) {
+    if (!gui.modelSlot) {
       return;
     }
-    ImGui::AssetSlot(
-        "##cadsocket",
-        _props.path,
-        *gui.assetManager,
-        gui.studio,
-        AssetType::CadModel,
-        /*acceptDragDropPayload=*/true);
+    gui.modelSlot("##cadsocket", _props.path, ModelSlotType::CadModel);
     gui.tooltip(
         "Drop a CAD Model here (a STEP/STL in the 'cad' folder). This slot is independent of the "
         "editor's own Model Viewer slots.");
