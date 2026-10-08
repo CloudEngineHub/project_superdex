@@ -1154,11 +1154,12 @@ TEST_F(ArticulatedBodyDynamicsTest, TransmissionForces) {
       /* actorSetupCallback */ addTransmission);
 }
 
-// The links and full-DoF constraints contribute J^T * D * J to the reduced dresidual, with D their
-// full-DoF dresidual. The tree has a zero-DoF root link and links with non-contiguous ancestor
-// DoFs. A cycle and a prismatic joint couple link 3 with two links, the constraints act on all 6
-// DoFs of some links but only on the rotation (link 1) or the position (link 4) of others, and
-// they leave the last link unconstrained.
+// The links and full-DoF constraints contribute the exactly symmetric J^T * D * J to the reduced
+// dresidual, with D their full-DoF dresidual. The tree has a zero-DoF root link, links with
+// non-contiguous ancestor DoFs, and links with 10 of them. A cycle and a prismatic joint couple
+// link 3 with two links, and a second cycle couples two links through the last DoF. The
+// constraints act on all 6 DoFs of some links but only on the rotation (link 1) or the position
+// (link 4) of others, and they leave link 5 unconstrained.
 TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
   TransformRT const jointOffset{Real3{0.5_r, 0.2_r, 0.1_r}};
   ArticulatedActorParams params;
@@ -1176,12 +1177,17 @@ TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
        .axis = kReal3YAxis},
       {.type = ArticulatedJointType::Revolute,
        .parentLinkFromJoint = jointOffset,
-       .axis = kReal3XAxis}};
+       .axis = kReal3XAxis},
+      {.type = ArticulatedJointType::Spherical, .parentLinkFromJoint = jointOffset},
+      {.type = ArticulatedJointType::Spherical, .parentLinkFromJoint = jointOffset},
+      {.type = ArticulatedJointType::Hard, .parentLinkFromJoint = jointOffset}};
 
-  for (int parent : {-1, 0, 1, 1, 0, 4}) {
+  for (int parent : {-1, 0, 1, 1, 0, 4, 3, 6, 7}) {
     params.links.push_back({.parentLink = parent, .shape = _cubeShape, .layer = "Articulated"});
   }
-  params.cycles = {{.parentLink = 2, .childLink = 3, .stiffness = 1e7_r}};
+  params.cycles = {
+      {.parentLink = 2, .childLink = 3, .stiffness = 1e7_r},
+      {.parentLink = 7, .childLink = 8, .stiffness = 1e7_r}};
   Actor* actor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
 
   auto const links = actor->GetNestedLinkActors(test::ExpectOK{});
@@ -1217,10 +1223,10 @@ TEST_F(ArticulatedBodyDynamicsTest, LinkAndConstraintDResidual) {
   auto const constraintDRes =
       ToMatrix(AsConstView(reg.get<CCompoundConstraintSnle const>(entity).dresiduals[0].matrix));
   fullDRes.Block(0, 0, constraintDRes.Rows(), constraintDRes.Cols()) += constraintDRes;
-  Compare(
-      Matrix<real>(jacobian.Transpose() * fullDRes * jacobian),
-      std::get<Matrix<real>>(reg.get<CActorSnle const>(entity).reducedDResidual),
-      1e-5_r);
+  auto const& reducedDRes =
+      std::get<Matrix<real>>(reg.get<CActorSnle const>(entity).reducedDResidual);
+  Compare(Matrix<real>(jacobian.Transpose() * fullDRes * jacobian), reducedDRes, 1e-5_r);
+  Compare(reducedDRes, Matrix<real>(reducedDRes.Transpose()), 0_r);
 }
 
 /**************************************************************************************

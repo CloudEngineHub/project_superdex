@@ -2493,8 +2493,9 @@ static void AssembleReducedDResidual(
 
   // Link i's 6 rows J_i of J are nonzero only in the columns of its ancestor joints' DoFs, which
   // its compact Jacobian lists, so the 6x6 diagonal block D_ii contributes J_i^T * D_ii * J_i
-  // through them. Constraint entries C_i coupling link i with other links (e.g. in closed
-  // kinematic loops) contribute J_i^T * C_i * J.
+  // through them. Constraint entries C_ij coupling link i with another link j (e.g. in closed
+  // kinematic loops) contribute J_i^T * C_ij * J_j. D is symmetric, and so is J^T * D * J: only
+  // its upper triangle is assembled, counting each pair of coupled links once, and then mirrored.
   for (int i = 0; i < isize(links); ++i) {
     int const offset = i * RigidSize::kDAll;
     MOCHI_ASSERT_VERBOSE(
@@ -2520,31 +2521,37 @@ static void AssembleReducedDResidual(
       for (int nz = 0; nz < isize(cols); nz += 3) {
         int const col = cols[nz];
         auto const block = blockRow.MiddleCols<3>(nz, 3);
-        if (col / RigidSize::kDAll == i) {
+        int const j = col / RigidSize::kDAll;
+        if (j == i) {
           if (!isConstrained) {
             diagonalBlock = linkDRes;
             isConstrained = true;
           }
           diagonalBlock.Block<3, 3>(row - offset, col - offset, 3, 3) += block;
-          continue;
+        } else if (j > i) {
+          if (!isCoupled) {
+            couplingDJ.SetZero();
+            isCoupled = true;
+          }
+          couplingDJ.MiddleRows<3>(row - offset, 3) += block * jacobian.value.MiddleRows<3>(col, 3);
         }
-        if (!isCoupled) {
-          couplingDJ.SetZero();
-          isCoupled = true;
-        }
-        couplingDJ.MiddleRows<3>(row - offset, 3) += block * jacobian.value.MiddleRows<3>(col, 3);
       }
     }
 
     auto const& linkJacobian = reg.get<CArticulatedRigidJacobian const>(links[i]);
     auto const& dofs = linkJacobian.dofs;
+    MOCHI_ASSERT_VERBOSE(std::is_sorted(dofs.begin(), dofs.end()), "Expected ascending link DoFs.");
     int const numLinkDofs = isize(dofs);
     RowMatrixView<real const, RigidSize::kDAll> const Ji = linkJacobian.value;
     if (isCoupled) {
+      // J_i^T * C_ij * J_j over links j > i and its transpose meet in the upper triangle, and both
+      // add to its diagonal.
       auto couplingJtDJ = linkJtDJ.TopRows(numLinkDofs);
       couplingJtDJ = Ji.Transpose() * couplingDJ;
       for (int p = 0; p < numLinkDofs; ++p) {
-        outJtDJ.Row(dofs[p]) += couplingJtDJ.Row(p);
+        int const dof = dofs[p];
+        outJtDJ.Col(dof).TopRows(dof + 1) += couplingJtDJ.Row(p).LeftCols(dof + 1).Transpose();
+        outJtDJ.Row(dof).RightCols(numDofs - dof) += couplingJtDJ.Row(p).RightCols(numDofs - dof);
       }
     }
 
@@ -2552,12 +2559,25 @@ static void AssembleReducedDResidual(
         isConstrained ? diagonalBlock.Data() : linkDRes.Data());
     auto blockDJ = DJ.LeftCols(numLinkDofs);
     blockDJ = Dii * Ji;
-    auto blockJtDJ = linkJtDJ.Block(0, 0, numLinkDofs, numLinkDofs);
-    blockJtDJ = Ji.Transpose() * blockDJ;
+    // Panels of columns of J_i^T * D_ii * J_i, each computed only over the rows that reach the
+    // diagonal. Narrower panels take more products, and wider ones compute more of the lower
+    // triangle.
+    constexpr int kPanelCols = 8;
+    for (int q0 = 0; q0 < numLinkDofs; q0 += kPanelCols) {
+      int const q1 = Min(q0 + kPanelCols, numLinkDofs);
+      linkJtDJ.Block(0, q0, q1, q1 - q0) =
+          Ji.LeftCols(q1).Transpose() * blockDJ.MiddleCols(q0, q1 - q0);
+    }
     for (int q = 0; q < numLinkDofs; ++q) {
-      for (int p = 0; p < numLinkDofs; ++p) {
-        outJtDJ(dofs[p], dofs[q]) += blockJtDJ(p, q);
+      for (int p = 0; p <= q; ++p) {
+        outJtDJ(dofs[p], dofs[q]) += linkJtDJ(p, q);
       }
+    }
+  }
+
+  for (int col = 1; col < numDofs; ++col) {
+    for (int row = 0; row < col; ++row) {
+      outJtDJ(col, row) = outJtDJ(row, col);
     }
   }
 }
