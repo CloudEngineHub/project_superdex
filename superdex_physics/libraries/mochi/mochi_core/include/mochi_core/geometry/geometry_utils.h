@@ -889,39 +889,6 @@ template <typename ShapeT, MOCHI_CONCEPT(IsPrimitiveShape<ShapeT>)>
   return std::visit([&rhs](auto& x) { return HasOverlap(x, rhs); }, lhs);
 }
 
-/**
- * Checks for overlap between a single shape and multiple shapes in batch.
- *
- * @tparam kMaxBatchSize Maximum number of shapes to process in a batch.
- * @tparam ShapeL Type of the left-hand shape.
- * @tparam ShapeR Type of the right-hand shapes.
- * @param batchSize Number of shapes to process in this batch (must not exceed kMaxBatchSize).
- * @param lhs The single shape to check against all right-hand shapes.
- * @param rhs Span of shapes to check for overlap with the left-hand shape (must be at least
- *            batchSize in length).
- * @param outHasOverlap Output span to store overlap results (must be at least batchSize in length).
- *
- * @note Currently implemented as sequential calls to HasOverlap. It could be optimized in the
- *       future using vertical SIMD operations for better performance.
- */
-template <
-    int kMaxBatchSize,
-    typename ShapeL,
-    typename ShapeR,
-    MOCHI_CONCEPT(IsPrimitiveShape<ShapeL>&& IsPrimitiveShape<ShapeR>)>
-MOCHI_FORCE_INLINE void HasOverlapBatch(
-    int batchSize,
-    ShapeL const& lhs,
-    Span<ShapeR const> rhs,
-    Span<bool> outHasOverlap) {
-  MOCHI_ASSERT_VERBOSE(
-      (batchSize >= 0) && (batchSize <= Min(kMaxBatchSize, isize(rhs), isize(outHasOverlap))),
-      "Invalid batch size.");
-  for (int i = 0; i < batchSize; ++i) {
-    outHasOverlap[i] = HasOverlap(lhs, rhs[i]);
-  }
-}
-
 /**************************************************************************************************
   Tetrahedral Geometry Utils
 */

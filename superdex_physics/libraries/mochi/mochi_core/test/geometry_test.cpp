@@ -1841,9 +1841,12 @@ static BatchSphere<kBatchSize> MakeBatchSphere(std::array<Sphere, kBatchSize> co
   return batch;
 }
 
-// Verify that the batch HasOverlap overload matches its scalar counterpart for every sphere.
-template <int kBatchSize, typename Shape>
-static void TestOverlapShapeBatchSphere(Shape const& shape, Span<Sphere const> spheres) {
+// Verify that the batch HasOverlap overload matches a scalar reference for every sphere.
+template <int kBatchSize, typename Shape, typename ExpectedOverlapFn>
+static void TestOverlapShapeBatchSphere(
+    Shape const& shape,
+    Span<Sphere const> spheres,
+    ExpectedOverlapFn const& expectedOverlapFn) {
   using V = BatchSphere<kBatchSize>;
   using I = std::conditional_t<sizeof(real) == 4, int, int64_t>;
   ASSERT_FALSE(spheres.empty());
@@ -1857,7 +1860,7 @@ static void TestOverlapShapeBatchSphere(Shape const& shape, Span<Sphere const> s
     auto const batchSphere = MakeBatchSphere<kBatchSize>(lanes);
     auto const hasOverlap = ReinterpretCast<Simd<I, V::kSize>>(HasOverlap(shape, batchSphere));
     for (int i = 0; i < kBatchSize; ++i) {
-      bool const expectedOverlap = HasOverlap(shape, lanes[i]);
+      bool const expectedOverlap = expectedOverlapFn(lanes[i]);
       EXPECT_EQ(!!hasOverlap[i], expectedOverlap);
       sawOverlap |= expectedOverlap;
       sawNoOverlap |= !expectedOverlap;
@@ -1868,10 +1871,20 @@ static void TestOverlapShapeBatchSphere(Shape const& shape, Span<Sphere const> s
   EXPECT_TRUE(sawNoOverlap);
 }
 
+template <typename Shape, typename ExpectedOverlapFn>
+static void TestOverlapShapeBatchSphere(
+    Shape const& shape,
+    Span<Sphere const> spheres,
+    ExpectedOverlapFn const& expectedOverlapFn) {
+  TestOverlapShapeBatchSphere<4>(shape, spheres, expectedOverlapFn);
+  TestOverlapShapeBatchSphere<8>(shape, spheres, expectedOverlapFn);
+}
+
+// Uses the scalar HasOverlap overload as the reference.
 template <typename Shape>
 static void TestOverlapShapeBatchSphere(Shape const& shape, Span<Sphere const> spheres) {
-  TestOverlapShapeBatchSphere<4>(shape, spheres);
-  TestOverlapShapeBatchSphere<8>(shape, spheres);
+  TestOverlapShapeBatchSphere(
+      shape, spheres, [&](Sphere const& sphere) { return HasOverlap(shape, sphere); });
 }
 
 TEST(BatchSphere, HasOverlap_Sphere) {
@@ -1959,37 +1972,29 @@ TEST(BatchSphere, HasOverlap_SdfBv) {
   GridSdfParams const params;
   GridSdf const sdf(mesh, params, test::ExpectOK{});
 
-  // Use actor space as the points space, i.e. gridFromPoints == gridFromActor.
-  SdfBv const sdfBv{
-      .gridSdf = &sdf,
-      .distanceThreshold = 0_r,
-      .gridFromPointsT = sdf.GetGridFromActorTranspose()};
-
-  Sphere const nearInside{Real3{0.9_r, 1_r, 1.5_r}, 0.05_r};
-  Sphere const nearOutside{Real3{1.2_r, 1_r, 1.5_r}, 0.05_r};
+  // All probes lie on the line y=1, z=1.5, where the exact SDF of the box is max(-x, x-1).
+  auto const probe = [](real x, real radius) { return Sphere{Real3{x, 1_r, 1.5_r}, radius}; };
   Sphere const probes[] = {
-      Sphere{Real3{0.5_r, 1_r, 1.5_r}, 0.2_r}, // deep inside the box
-      Sphere{Real3{0.5_r, 1_r, 1.5_r}, 5_r}, // enclosing the box
-      Sphere{Real3{1.2_r, 1_r, 1.5_r}, 0.5_r}, // just outside the +x face, overlapping
-      nearInside,
-      nearOutside,
-      Sphere{Real3{2_r, 1_r, 1.5_r}, 0.2_r}, // outside, separated
-      Sphere{Real3{10_r, 1_r, 1.5_r}, 0.2_r}, // far, separated
+      probe(0.5_r, 0.2_r), // deep inside the box
+      probe(0.5_r, 5_r), // enclosing the box
+      probe(0.9_r, 0.05_r), // inside, near the +x face
+      probe(1.2_r, 0.05_r), // outside, near the +x face
+      probe(1.2_r, 0.5_r), // outside, overlapping the +x face
+      probe(2_r, 0.2_r), // outside, separated
+      probe(10_r, 0.2_r), // far, separated
   };
 
-  EXPECT_TRUE(HasOverlap(sdfBv, nearInside));
-  EXPECT_FALSE(HasOverlap(sdfBv, nearOutside));
-  TestOverlapShapeBatchSphere(sdfBv, probes);
-
-  SdfBv expandedSdfBv = sdfBv;
-  expandedSdfBv.distanceThreshold = 0.25_r;
-  EXPECT_TRUE(HasOverlap(expandedSdfBv, nearOutside));
-  TestOverlapShapeBatchSphere(expandedSdfBv, probes);
-
-  SdfBv contractedSdfBv = sdfBv;
-  contractedSdfBv.distanceThreshold = -0.25_r;
-  EXPECT_FALSE(HasOverlap(contractedSdfBv, nearInside));
-  TestOverlapShapeBatchSphere(contractedSdfBv, probes);
+  for (real const threshold : {0_r, 0.25_r, -0.25_r}) {
+    // Use actor space as the points space, i.e. gridFromPoints == gridFromActor.
+    SdfBv const sdfBv{
+        .gridSdf = &sdf,
+        .distanceThreshold = threshold,
+        .gridFromPointsT = sdf.GetGridFromActorTranspose()};
+    TestOverlapShapeBatchSphere(sdfBv, probes, [&](Sphere const& sphere) {
+      real const x = sphere.GetCenter()[0];
+      return Max(-x, x - 1_r) <= sphere.GetRadius() + threshold;
+    });
+  }
 }
 
 TEST(Sphere, ExpandShape) {

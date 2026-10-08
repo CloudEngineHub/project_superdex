@@ -336,17 +336,17 @@ template <GridExtrapolation kMode>
     if (indices[i] != index) {
       return false;
     }
-    Real3 point = pointsInGridSpace[index];
-    real value = {};
-    Real3 gradient = {};
-    grid->TrilinearSample(
-        MakeSingletonSpan(point), MakeSingletonSpan(value), TrilinearSamplerOptions<kMode>{});
-    grid->TrilinearSampleGradient(
-        MakeSingletonSpan(point), MakeSingletonSpan(gradient), TrilinearSamplerOptions<kMode>{});
+    using V = Simd<real>;
+    Real3 const point = pointsInGridSpace[index];
+    V value = {};
+    NdArray<V, 3> gradient = {};
+    grid->template TrilinearSampleBatch<V::kSize, kMode, true, true>(
+        BroadcastEach<V>(point), &value, &gradient);
+    Real3 const gridGradient{gradient[0][0], gradient[1][0], gradient[2][0]};
     Real3 const expectedGradient =
-        ToReal3(DotMatVec3x3(actorFromGrid, ToSimd(gradient, 0_r))) / scale;
+        ToReal3(DotMatVec3x3(actorFromGrid, ToSimd(gridGradient, 0_r))) / scale;
     if (!NearEqual(TransformPoint(actorFromGrid, point), contacts[i], 2e-5_r) ||
-        !NearEqual(value * scale, sdfInfo.val[i], 2e-5_r) ||
+        !NearEqual(value[0] * scale, sdfInfo.val[i], 2e-5_r) ||
         !NearEqual(expectedGradient, sdfInfo.grad[i], 2e-5_r)) {
       return false;
     }
@@ -458,11 +458,10 @@ template <GridExtrapolation kMode>
 ReferenceIndices(DenseGrid3D<real> const& grid, Span<Real3 const> points, real tolerance) {
   DynamicArray<int> indices;
   for (int i = 0; i < isize(points); ++i) {
-    Real3 point = points[i];
-    real value = {};
-    grid.TrilinearSample(
-        MakeSingletonSpan(point), MakeSingletonSpan(value), TrilinearSamplerOptions<kMode>{});
-    if (value <= tolerance) {
+    using V = Simd<real>;
+    V value = {};
+    grid.template TrilinearSampleBatch<V::kSize, kMode>(BroadcastEach<V>(points[i]), &value);
+    if (value[0] <= tolerance) {
       indices.push_back(i);
     }
   }
