@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <random>
 #include <string>
@@ -631,6 +632,51 @@ TEST(ArrayUtils, ArrayTransformsIndependentOfPosition) {
       point, [&](auto singleThreaded, Span<Real3> dst, Span<Real3 const> pts) {
         ArrayRotateVectors<singleThreaded>(dst, pts, rotation);
       });
+}
+
+// Each element must round like the fused multiply-adds of the batch helpers, in full batches and in
+// every tail, so that other code can reproduce the results bit for bit.
+TEST(ArrayUtils, ArrayTransformsMatchFusedReference) {
+  // Full-mantissa values far from the origin, so fused and unfused multiply-adds round differently.
+  std::mt19937 rng(5);
+  std::uniform_real_distribution<real> unit(-1_r, 1_r);
+  auto randomReal3 = [&](real scale) { return Real3{unit(rng), unit(rng), unit(rng)} * scale; };
+  VMatrix4x4r matT;
+  for (int row = 0; row < 4; ++row) {
+    matT[row] = ToSimd(randomReal3(row < 3 ? 1_r : 32_r), 0_r);
+  }
+  auto rotate = [&](Real3 const& v) {
+    Real3 result;
+    for (int j = 0; j < 3; ++j) {
+      result[j] = std::fma(v[2], matT[2][j], std::fma(v[0], matT[0][j], v[1] * matT[1][j]));
+    }
+    return result;
+  };
+  auto transform = [&](Real3 const& p) { return rotate(p) + ToReal3(matT[3]); };
+
+  // Cover full batches followed by every tail size.
+  for (int count = 0; count < 3 * Simd<real>::kSize; ++count) {
+    DynamicArray<Real3> src(count), refs(count), dst(count), expected(count);
+    for (int i = 0; i < count; ++i) {
+      src[i] = randomReal3(32_r);
+      refs[i] = randomReal3(32_r);
+    }
+
+    std::ranges::transform(src, expected.begin(), transform);
+    ArrayTransformPoints_MatT<true>(MakeSpan(dst), MakeConstSpan(src), matT);
+    EXPECT_SPAN_EQ(dst, expected) << "TransformPoints, count=" << count;
+
+    for (int i = 0; i < count; ++i) {
+      expected[i] = transform(src[i] + refs[i]) - refs[i];
+    }
+    ArrayTransformDisplacements_MatT<true>(
+        MakeSpan(dst), MakeConstSpan(src), MakeConstSpan(refs), matT);
+    EXPECT_SPAN_EQ(dst, expected) << "TransformDisplacements, count=" << count;
+
+    std::ranges::transform(src, expected.begin(), rotate);
+    ArrayRotateVectors_MatT<true>(MakeSpan(dst), MakeConstSpan(src), matT);
+    EXPECT_SPAN_EQ(dst, expected) << "RotateVectors, count=" << count;
+  }
 }
 
 TEST(ArrayUtils, MinMax) {

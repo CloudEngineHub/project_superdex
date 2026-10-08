@@ -220,6 +220,35 @@ inline void ArrayAddTriplesN(T* vec, Span<int const> const& indices, T const* va
   }
 }
 
+namespace details {
+
+// Return x * c0 + y * c1 + z * c2. The compiler cannot contract an explicit MulAdd or a product
+// that feeds one, so this rounds the same in every loop, call site, and element type.
+template <typename V>
+[[nodiscard]] MOCHI_FORCE_INLINE V FusedDot3(V x, V y, V z, V c0, V c1, V c2) {
+  return MulAdd(z, c2, MulAdd(x, c0, y * c1));
+}
+
+} // namespace details
+
+template <typename V>
+MOCHI_FORCE_INLINE NdArray<V, 3> RotateVectorsBatch(
+    NdArray<V, 3> const& src,
+    NdArray<V, 3, 3> const& rotT) {
+  return NdArray<V, 3>{
+      details::FusedDot3(src[0], src[1], src[2], rotT[0][0], rotT[1][0], rotT[2][0]),
+      details::FusedDot3(src[0], src[1], src[2], rotT[0][1], rotT[1][1], rotT[2][1]),
+      details::FusedDot3(src[0], src[1], src[2], rotT[0][2], rotT[1][2], rotT[2][2])};
+}
+
+template <typename V>
+MOCHI_FORCE_INLINE NdArray<V, 3> TransformPointsBatch(
+    NdArray<V, 3> const& src,
+    NdArray<V, 3, 3> const& rotT,
+    NdArray<V, 3> const& trans) {
+  return RotateVectorsBatch(src, rotT) + trans;
+}
+
 // This overload takes a TRANSPOSED 4x4 matrix
 template <bool kSingleThreaded = false, typename T>
 inline void ArrayTransformPoints_MatT(
@@ -239,8 +268,6 @@ inline void ArrayTransformPoints_MatT(
     // Vectorize rotation and translation. Ignore the right column of the matrix.
     auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
     auto const trans = Broadcast3<V>(matT[3]); // 3xN
-    auto const transform = [&](NdArray<V, 3> const& pt)
-                               MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt, rotT) + trans; };
     // Local spans stay in registers. Reading them through the captures reloads them after stores.
     auto const srcLocal = src;
     auto const dstLocal = dst;
@@ -248,15 +275,13 @@ inline void ArrayTransformPoints_MatT(
     for (; i + kBatchSize <= iEnd; i += kBatchSize) {
       NdArray<V, 3> pt;
       LoadTransposed(&srcLocal[i][0], pt);
-      auto const result = transform(pt);
-      StoreTransposed(&dstLocal[i][0], result);
+      StoreTransposed(&dstLocal[i][0], TransformPointsBatch(pt, rotT, trans));
     }
     // Process the tail as a partial batch, so every point's result is independent of its index.
     if (i < iEnd) {
       NdArray<V, 3> pt;
       LoadTransposed(&srcLocal[i][0], pt, iEnd - i);
-      auto const result = transform(pt);
-      StoreTransposed(&dstLocal[i][0], result, iEnd - i);
+      StoreTransposed(&dstLocal[i][0], TransformPointsBatch(pt, rotT, trans), iEnd - i);
     }
   };
   if constexpr (kSingleThreaded) {
@@ -301,9 +326,6 @@ inline void ArrayTransformDisplacements_MatT(
     // Vectorize rotation and translation. Ignore the right column of the matrix.
     auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
     auto const trans = Broadcast3<V>(matT[3]); // 3xN
-    auto const transform =
-        [&](NdArray<V, 3> const& pt, NdArray<V, 3> const& ref)
-            MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt + ref, rotT) + trans - ref; };
     // Local spans stay in registers. Reading them through the captures reloads them after stores.
     auto const refLocal = refCoords;
     auto const srcLocal = srcDisplacements;
@@ -313,16 +335,14 @@ inline void ArrayTransformDisplacements_MatT(
       NdArray<V, 3> ref, pt;
       LoadTransposed(&refLocal[i][0], ref);
       LoadTransposed(&srcLocal[i][0], pt);
-      auto const result = transform(pt, ref);
-      StoreTransposed(&dstLocal[i][0], result);
+      StoreTransposed(&dstLocal[i][0], TransformPointsBatch(pt + ref, rotT, trans) - ref);
     }
     // Process the tail as a partial batch, so every point's result is independent of its index.
     if (i < iEnd) {
       NdArray<V, 3> ref, pt;
       LoadTransposed(&refLocal[i][0], ref, iEnd - i);
       LoadTransposed(&srcLocal[i][0], pt, iEnd - i);
-      auto const result = transform(pt, ref);
-      StoreTransposed(&dstLocal[i][0], result, iEnd - i);
+      StoreTransposed(&dstLocal[i][0], TransformPointsBatch(pt + ref, rotT, trans) - ref, iEnd - i);
     }
   };
   if constexpr (kSingleThreaded) {
@@ -390,8 +410,6 @@ void ArrayRotateVectors_MatT(
     int constexpr kBatchSize = Simd<T>::kSize;
     // Vectorize rotation. Ignore the right column of the matrix.
     auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
-    auto const rotate = [&](NdArray<V, 3> const& pt)
-                            MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt, rotT); };
     // Local spans stay in registers. Reading them through the captures reloads them after stores.
     auto const srcLocal = src;
     auto const dstLocal = dst;
@@ -399,15 +417,13 @@ void ArrayRotateVectors_MatT(
     for (; i + kBatchSize <= iEnd; i += kBatchSize) {
       NdArray<V, 3> pt;
       LoadTransposed(&srcLocal[i][0], pt);
-      auto const result = rotate(pt);
-      StoreTransposed(&dstLocal[i][0], result);
+      StoreTransposed(&dstLocal[i][0], RotateVectorsBatch(pt, rotT));
     }
     // Process the tail as a partial batch, so every point's result is independent of its index.
     if (i < iEnd) {
       NdArray<V, 3> pt;
       LoadTransposed(&srcLocal[i][0], pt, iEnd - i);
-      auto const result = rotate(pt);
-      StoreTransposed(&dstLocal[i][0], result, iEnd - i);
+      StoreTransposed(&dstLocal[i][0], RotateVectorsBatch(pt, rotT), iEnd - i);
     }
   };
   if constexpr (kSingleThreaded) {
