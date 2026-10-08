@@ -565,16 +565,53 @@ inline real MaxPackedVector3Norm(Span<real const> values) {
   static_assert(kStride >= 3, "Packed 3D vector stride must be at least three.");
   MOCHI_ASSERT_VERBOSE(
       isize(values) % kStride == 0, "Packed vector size must be divisible by its stride.");
-
-  real maxNormSqr = 0_r;
-  int i = 0;
-  for (; i + Vec4r::kSize <= isize(values); i += kStride) {
-    maxNormSqr = Max(maxNormSqr, NormSqr<3>(Load<Vec4r>(&values[i])));
+  real const* const ptr = values.data();
+  int const count = isize(values) / kStride;
+  if constexpr (kStride == 3) {
+    using V = Simd<real>;
+    V maxNormSqr = SimdZero<V>();
+    NdArray<V, 3> pt MOCHI_NO_INIT;
+    int i = 0;
+    for (; i + V::kSize <= count; i += V::kSize) {
+      LoadTransposed(ptr + 3 * i, pt);
+      maxNormSqr = Max(maxNormSqr, NormSqr(pt));
+    }
+    // Process the tail as a partial batch, with zeros in the unused lanes.
+    if (i < count) {
+      LoadTransposed(ptr + 3 * i, pt, count - i);
+      maxNormSqr = Max(maxNormSqr, NormSqr(pt));
+    }
+    return Sqrt(HMax(maxNormSqr));
+  } else {
+    // LoadTransposed only supports 3-tuples. Instead, load one point per vector and transpose 4
+    // points at a time, ignoring the components after the 3rd.
+    using V = Simd<real, 4>;
+    auto loadPoint = [ptr](int iPoint)
+                         MOCHI_FORCE_INLINE_LAMBDA { return Load<V>(ptr + kStride * iPoint); };
+    auto normSqr4 = [](V a, V b, V c, V d) MOCHI_FORCE_INLINE_LAMBDA {
+      auto const t = Transpose4x4(NdArray<V, 4>{a, b, c, d});
+      return NormSqr(NdArray<V, 3>{t[0], t[1], t[2]});
+    };
+    V maxNormSqr = SimdZero<V>();
+    int i = 0;
+    for (; i + V::kSize <= count; i += V::kSize) {
+      maxNormSqr = Max(
+          maxNormSqr, normSqr4(loadPoint(i), loadPoint(i + 1), loadPoint(i + 2), loadPoint(i + 3)));
+    }
+    // Process the tail as a partial batch, with zeros in the unused lanes.
+    if (i < count) {
+      V const zero = SimdZero<V>();
+      int const numTail = count - i;
+      maxNormSqr =
+          Max(maxNormSqr,
+              normSqr4(
+                  loadPoint(i),
+                  numTail > 1 ? loadPoint(i + 1) : zero,
+                  numTail > 2 ? loadPoint(i + 2) : zero,
+                  zero));
+    }
+    return Sqrt(HMax(maxNormSqr));
   }
-  if (i < isize(values)) {
-    maxNormSqr = Max(maxNormSqr, NormSqr(Load<3, Vec4r>(&values[i])));
-  }
-  return Sqrt(maxNormSqr);
 }
 
 template <typename T, typename SZ>

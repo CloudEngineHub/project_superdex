@@ -740,14 +740,44 @@ TEST(ArrayUtils, MaxAbs) {
   }
 }
 
+template <int kStride>
+static void TestMaxPackedVector3Norm() {
+  // Cover every tail size more than once, for batches of up to 64 points (e.g. 4 x Vec16r).
+  int constexpr kMaxCount = 129;
+  std::mt19937 rng(123);
+  std::uniform_real_distribution<real> dist(-1_r, 1_r);
+  std::vector<real> values;
+  for (int count = 0; count <= kMaxCount; ++count) {
+    values.resize(count * kStride);
+    for (int i = 0; i < count * kStride; ++i) {
+      // Extra components beyond the 3D vector must be ignored.
+      values[i] = (i % kStride < 3) ? dist(rng) : 1000_r;
+    }
+    // Make each point the largest in turn, so every SIMD lane, including tail lanes, is checked.
+    for (int iMax = 0; iMax < count; ++iMax) {
+      std::vector<real> modified = values;
+      modified[iMax * kStride + 0] = 2_r;
+      modified[iMax * kStride + 1] = -3_r;
+      modified[iMax * kStride + 2] = 6_r;
+      EXPECT_NEAR_EQ(7_r, MaxPackedVector3Norm<kStride>(MakeConstSpan(modified)))
+          << "count=" << count << " iMax=" << iMax;
+    }
+  }
+}
+
 TEST(ArrayUtils, MaxPackedVector3Norm) {
   EXPECT_EQ(0_r, MaxPackedVector3Norm<3>({}));
+  EXPECT_EQ(0_r, MaxPackedVector3Norm<4>({}));
 
   std::array<real, 9> const packed3 = {1_r, 2_r, 2_r, 0_r, 0_r, 0_r, 3_r, -4_r, 0_r};
   EXPECT_NEAR_EQ(5_r, MaxPackedVector3Norm<3>(MakeConstSpan(packed3)));
 
   std::array<real, 8> const packed4 = {1_r, 2_r, 2_r, 1000_r, 3_r, -4_r, 0_r, -1000_r};
   EXPECT_NEAR_EQ(5_r, MaxPackedVector3Norm<4>(MakeConstSpan(packed4)));
+
+  TestMaxPackedVector3Norm<3>();
+  TestMaxPackedVector3Norm<4>();
+  TestMaxPackedVector3Norm<5>();
 }
 
 TEST(ArrayUtils, MaxAbsDifference) {
