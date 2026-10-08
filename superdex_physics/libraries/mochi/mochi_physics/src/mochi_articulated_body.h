@@ -102,6 +102,11 @@ template <TimeStep kRelTime>
 struct CArticulatedLinkTransforms : public std::vector<TransformRT>, NoCopy {
   using std::vector<TransformRT>::vector; // Inherit base class' constructors
 };
+// Per-joint velocities. The meaning of each RigidBodyVel depends on the joint type:
+// - Free: finite-step rigid velocity (vcom, omega and vsym).
+// - Spherical: finite-step rotation velocity (omega and vsym); vcom is zero.
+// - Revolute: exact angle rate times the joint axis in omega; vcom and vsym are zero.
+// - Prismatic: exact displacement rate times the joint axis in vcom; omega and vsym are zero.
 struct ArticulatedJointVelocities {
   ArticulatedJointVelocities() = default;
   explicit ArticulatedJointVelocities(int size) : value(size) {}

@@ -1067,6 +1067,103 @@ TEST_F(ArticulatedBodyDynamicsTest, SetArticulatedJointVelocities) {
   }
 }
 
+// Checks that a revolute joint velocity stores rate * axis in omega, with zero vcom and vsym.
+static void
+ExpectRevoluteJointVelocity(RigidBodyVel const& jointVel, Real3 const& axis, real rate) {
+  ASSERT_FALSE(jointVel.IsVSymDirty());
+  ColumnVector<real, RigidBodyVel::kRawSize> raw;
+  jointVel.ToRawValues(raw);
+  real const tol = 1e-5_r * Max(1_r, Abs(rate));
+  for (int k = 0; k < 3; ++k) {
+    EXPECT_EQ(raw[k], 0_r) << "vcom[" << k << "]";
+    EXPECT_NEAR(raw[4 + k], rate * axis[k], tol) << "omega[" << k << "]";
+  }
+  for (int k = 8; k < RigidBodyVel::kRawSize; ++k) {
+    EXPECT_EQ(raw[k], 0_r) << "vsym entry " << k - 8;
+  }
+}
+
+// A revolute joint velocity is the exact angle rate, even for large per-step rotations where the
+// finite-step rotation velocity sin(dtheta) / h would differ noticeably.
+TEST_F(ArticulatedBodyDynamicsTest, RevoluteJointVelocityIsExactAngleRate) {
+  auto solverParams = _scene->GetSolverParams();
+  solverParams.integrationMethod = IntegrationMethod::BackwardEuler;
+  _scene->SetSolverParams(solverParams, test::ExpectOK{});
+
+  std::array const joints{ArticulatedJointType::Revolute};
+  real constexpr kDt = 1e-2_r;
+  real constexpr kAngleStep = 0.8_r;
+  Actor* actor = CreateActor(joints, 0_r, 0_r, 0_r);
+  std::array<real, 1> pose{0.3_r};
+  actor->SetArticulatedPoseFromJoints(pose, test::ExpectOK{});
+
+  pose[0] += kAngleStep;
+  std::array const inds{0};
+  actor->AddBoundaryConditionDofsWorld(inds, pose, test::ExpectOK{});
+  _scene->Step(kDt);
+
+  real constexpr kRate = kAngleStep / kDt;
+  std::array<real, 1> vel{};
+  actor->GetArticulatedJointVelocities(vel, test::ExpectOK{});
+  EXPECT_NEAR(vel[0], kRate, 1e-5_r * kRate);
+  auto const& jointVels =
+      GetRegistry()
+          .get<CArticulatedJointVels<TimeStep::Current> const>(GetEntity(actor->GetHandle()))
+          .value;
+  ExpectRevoluteJointVelocity(jointVels[0], Real3{1_r, 0_r, 0_r}, kRate);
+
+  _scene->DestroyActor(actor->GetHandle());
+}
+
+// Setting a revolute joint velocity stores a clean velocity, so the step-start vsym update leaves
+// it unchanged.
+TEST_F(ArticulatedBodyDynamicsTest, SetRevoluteJointVelocityHasZeroVSym) {
+  std::array const joints{ArticulatedJointType::Free, ArticulatedJointType::Revolute};
+  Actor* actor = CreateActor(joints, 0_r, 0_r, 0_r);
+  auto const numDofs = actor->GetNumDofs();
+  std::vector<real> vel(numDofs, 0.5_r);
+  real constexpr kRevoluteRate = 30_r;
+  vel.back() = kRevoluteRate;
+  actor->SetArticulatedJointVelocities(vel, test::ExpectOK{});
+
+  auto const& jointVels =
+      GetRegistry()
+          .get<CArticulatedJointVels<TimeStep::Current> const>(GetEntity(actor->GetHandle()))
+          .value;
+  ExpectRevoluteJointVelocity(jointVels[1], Real3{1_r, 0_r, 0_r}, kRevoluteRate);
+
+  _scene->DestroyActor(actor->GetHandle());
+}
+
+// With dominant joint inertia, a freely spinning revolute joint keeps its angle rate. The
+// single-dof inertia compares angle differences with the stored joint velocity, so a finite-step
+// velocity sin(h * rate) / h would make the rate decay at every step. The joint inertia must
+// dominate, because the link's own rigid inertia dissipates at this large rotation per step.
+TEST_F(ArticulatedBodyDynamicsTest, RevoluteJointWithInertiaKeepsConstantRate) {
+  _scene->SetGravity({});
+  std::array const joints{ArticulatedJointType::Revolute};
+  real constexpr kDt = 1e-2_r;
+  real constexpr kRate = 50_r; // 0.5 rad per step
+  real constexpr kJointInertia = 1e6_r;
+  for (IntegrationMethod const method :
+       {IntegrationMethod::BackwardEuler, IntegrationMethod::BDF2, IntegrationMethod::DIRK22}) {
+    auto solverParams = _scene->GetSolverParams();
+    solverParams.integrationMethod = method;
+    _scene->SetSolverParams(solverParams, test::ExpectOK{});
+
+    Actor* actor = CreateActor(joints, 0_r, kJointInertia, 0_r);
+    std::array<real, 1> vel{kRate};
+    actor->SetArticulatedJointVelocities(vel, test::ExpectOK{});
+    for (int step = 0; step < 10; ++step) {
+      _scene->Step(kDt);
+    }
+    actor->GetArticulatedJointVelocities(vel, test::ExpectOK{});
+    EXPECT_NEAR(vel[0], kRate, 1e-2_r * kRate) << "method " << static_cast<int>(method);
+
+    _scene->DestroyActor(actor->GetHandle());
+  }
+}
+
 TEST_F(ArticulatedBodyDynamicsTest, DampingForces) {
   for (auto const& body : kBodies) {
     TestJointForces(

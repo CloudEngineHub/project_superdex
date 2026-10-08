@@ -317,6 +317,23 @@ TEST(RigidBodyUtils, EvalFiniteDifferenceRotationVelocity) {
   test(EvalTimeSteppedRotationAccurate, EvalFiniteDifferenceRotationVelocityAccurate, dt, 1e-5_r);
 }
 
+TEST(RigidBodyUtils, SetOmegaWithZeroVSym) {
+  real constexpr kDt = 3e-1_r;
+  RigidBodyVel vel;
+  vel.SetOmega({1.1_r, -0.7_r, 0.8_r});
+  vel.UpdateVSymIfDirty(kDt); // Nonzero vsym, to be cleared below
+
+  Vec4r const omega{0.3_r, 0.2_r, -0.5_r};
+  vel.SetOmegaWithZeroVSym(omega);
+  EXPECT_FALSE(vel.IsVSymDirty());
+
+  // A clean velocity is not modified by the vsym update.
+  vel.UpdateVSymIfDirty(kDt);
+  auto const [outOmega, outVSym] = vel.GetOmegaAndVSym();
+  EXPECT_TRUE(NearEqual(ToReal3(omega), ToReal3(outOmega), 0_r));
+  EXPECT_TRUE(NearEqual(ToNdArray3x3(SimdSymToFull(outVSym)), Matrix3x3r{}, 0_r));
+}
+
 TEST(RigidBodyUtils, RotateInertia) {
   auto q = Quaternion::FromRotationVector(Vec4r{0.3_r, -1.4_r, 0.5_r});
   real m = 2.1_r;

@@ -209,15 +209,14 @@ class RigidBodyInertia {
 // 4. Perform time integration on both omega and vsym.
 // 5. Reconstruct dRdt_approx = (skew(omega) + sym(vsym)) * R.
 //
-// To integrate velocity and evaluate a new rotation, use the function EvalTimeSteppedRotation(),
-// which uses both omega and vsym. Do not use omega alone.
-//
-// Velocity should be updated by calling the function SetFromFiniteDifferencePose(), which
-// internally updates both omega and vsym.
-//
-// If omega is set externally, then vsym must be updated by calling the function
-// UpdateVSymIfDirty() as soon as the time-step size is known. This ensures that omega and vsym
-// together exactly reproduce a rotation when calling EvalTimeSteppedRotation().
+// How to update and integrate the rotation velocity depends on the kind of rotation:
+// - 3D rotations: update the velocity with SetFromFiniteDifferencePose(), which sets both omega and
+//   vsym. If omega is set externally with SetOmega(), update vsym with UpdateVSymIfDirty() as soon
+//   as the time-step size is known. Evaluate a new rotation with EvalTimeSteppedRotation(), which
+//   uses both omega and vsym to exactly reproduce a rotation. Do not use omega alone.
+// - 1D rotations about a fixed axis (e.g., revolute joints): store the exact angle rate times the
+//   axis with SetOmegaWithZeroVSym(), which keeps vsym zero. The angle is integrated directly, not
+//   with EvalTimeSteppedRotation().
 class RigidBodyVel {
  public:
   static constexpr int kRawSize = 4 /* _vcom */ + 4 /* _omega */ + 8 /* _vsym */;
@@ -243,6 +242,13 @@ class RigidBodyVel {
   void SetOmega(Vec4r omega) {
     _omega = omega;
     _isVSymDirty = true;
+  }
+
+  // Set an exact angular velocity without a finite-step symmetric part (see class comment).
+  void SetOmegaWithZeroVSym(Vec4r omega) {
+    _omega = omega;
+    _vsym = {};
+    _isVSymDirty = false;
   }
 
   // Warning: omega and vsym can only reproduce a rotation if |omega| < 1/h. This should be checked

@@ -386,7 +386,7 @@ void articulated::compound::SetArticulatedJointVelocities(
         jointVel.SetOmega(Load<3, Vec4r>(&vel[dofInfo.GetRotOffset()]));
       } break;
       case ArticulatedJointType::Revolute: {
-        jointVel.SetOmega(vel[dofInfo.GetRotOffset()] * ToSimd(joints->jointAxes[i]));
+        jointVel.SetOmegaWithZeroVSym(vel[dofInfo.GetRotOffset()] * ToSimd(joints->jointAxes[i]));
       } break;
       case ArticulatedJointType::Prismatic:
         jointVel.SetVCom(vel[dofInfo.GetTransOffset()] * ToSimd(joints->jointAxes[i]));
@@ -2868,14 +2868,28 @@ static void PushCurrentStateAndVelocityToIntegrationStages(
 static void ComputeCurrentVelocity(
     ecs::RequiredTag<TagArticulatedActor>,
     CTimeIntegratorState const& intState,
+    CArticulatedBodyShape const& bodyShape,
+    CArticulatedJointPoseInfo const& poseInfo,
+    CArticulatedReducedPose<TimeStep::StageStart> const& stageStartPose,
+    CArticulatedReducedPose<TimeStep::Current> const& currPose,
     CArticulatedJointTransforms<TimeStep::StageStart> const& stageStartJointTransforms,
     CArticulatedJointTransforms<TimeStep::Current> const& currJointTransforms,
     CArticulatedJointVels<TimeStep::Current>& outCurrJointVels) {
   // Joint velocities are recovered via finite differences of the pose at the beginning and at the
-  // end of the stage.
+  // end of the stage. Revolute joints finite-difference their angle, which yields the exact angle
+  // rate assumed by their single-dof inertia, instead of a finite-step rotation velocity.
+  auto const* joints = bodyShape.shape->GetJointsData();
+  real const invDt = 1_r / intState.dtStage;
   for (int i = 0; i < isize(currJointTransforms); ++i) {
-    outCurrJointVels.value[i].SetFromFiniteDifferencePose(
-        stageStartJointTransforms[i], currJointTransforms[i], intState.dtStage);
+    auto& jointVel = outCurrJointVels.value[i];
+    if (joints->jointTypes[i] == ArticulatedJointType::Revolute) {
+      int const offset = poseInfo[i].offset;
+      real const angleRate = invDt * (currPose.value[offset] - stageStartPose.value[offset]);
+      jointVel.SetOmegaWithZeroVSym(angleRate * ToSimd(joints->jointAxes[i]));
+    } else {
+      jointVel.SetFromFiniteDifferencePose(
+          stageStartJointTransforms[i], currJointTransforms[i], intState.dtStage);
+    }
   }
 }
 
