@@ -26,7 +26,6 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
-#include <stdexcept>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -60,12 +59,10 @@ static bool EveryValidRowIsSortedAndWithoutDuplicatesUpToGivenBound(
 static Graph<int, int> CreateCSRGraphFromSortedAndUniquedMatrix(
     int const numRows,
     std::vector<std::vector<int>> const& M,
-    int numUsableRows,
     std::vector<int> const& usableColumnsCountPerRow) {
   MOCHI_PROFILE_SCOPE();
 
-  MOCHI_ASSERT(numUsableRows <= M.size());
-  MOCHI_ASSERT(numUsableRows <= usableColumnsCountPerRow.size());
+  MOCHI_ASSERT(usableColumnsCountPerRow.size() == M.size());
 #if MOCHI_DEBUG
   MOCHI_ASSERT(
       EveryValidRowIsSortedAndWithoutDuplicatesUpToGivenBound(M, usableColumnsCountPerRow));
@@ -76,7 +73,7 @@ static Graph<int, int> CreateCSRGraphFromSortedAndUniquedMatrix(
 
   auto indicesSize = std::accumulate(
       usableColumnsCountPerRow.begin(),
-      usableColumnsCountPerRow.begin() + numUsableRows,
+      usableColumnsCountPerRow.end(),
       0); // It could also be precomputed and passed as argument to
           // CreateCSRGraphFromSortedAndUniquedMatrix
   indices.reserve(indicesSize);
@@ -85,7 +82,7 @@ static Graph<int, int> CreateCSRGraphFromSortedAndUniquedMatrix(
   pointers.push_back(0);
   for (int i = 0; i < numRows; ++i) {
     // this if is needed to cover the case when numRowsOps is used to modify the number of rows
-    if (i < numUsableRows) {
+    if (i < isize(M)) {
       auto from_it_begin = M[i].cbegin();
       auto from_it_end = M[i].cbegin() + usableColumnsCountPerRow[i];
       auto destination_it = std::back_inserter(indices);
@@ -110,16 +107,12 @@ static void SortAndUniqueEachValidRow(
 
   MOCHI_PROFILE_SCOPE();
 
-  // the number of rows to use might not be all the matrix' rows
-  // this can be the case when using a matrix that is larger but we only
-  // care about a specific range of rows
-  int const numUsableRows = isize(usableColumnsCountPerRow);
-
-  MOCHI_ASSERT(numUsableRows <= M.size());
+  MOCHI_ASSERT(usableColumnsCountPerRow.size() == M.size());
+  int const numRows = isize(M);
 
   // FRIZZI: this 200 should be tuned
-  int const itemsPerThread = std::min(numUsableRows, 200);
-  ParallelForN("SortAndFindDuplicates", numUsableRows, itemsPerThread, [&](int i) {
+  int const itemsPerThread = std::min(numRows, 200);
+  ParallelForN("SortAndFindDuplicates", numRows, itemsPerThread, [&](int i) {
     MOCHI_ASSERT(usableColumnsCountPerRow[i] <= M[i].size());
 
     auto it_begin = M[i].begin();
@@ -133,52 +126,8 @@ static void SortAndUniqueEachValidRow(
 }
 
 //
-// overloads accepting Local2GlobalMap
+// overload accepting Local2GlobalMap
 //
-Graph<int, int> mochi::MakeSparsityGraph(
-    Local2GlobalMap const& map,
-    std::vector<std::vector<int>>& M,
-    std::optional<int> numRowsOpt) {
-  MOCHI_PROFILE_SCOPE();
-
-  if (M.empty()) {
-    return {};
-  }
-
-  int const currentColCount = isize(M[0]);
-  auto const maxRangeValueFoundFromMapPlusOne = map.GetGlobalRange().Max() + 1;
-  // if the matrix passed does not have enough rows, we resize it.
-  if (M.size() < maxRangeValueFoundFromMapPlusOne) {
-    M.resize(maxRangeValueFoundFromMapPlusOne, std::vector<int>(currentColCount));
-  }
-
-  std::vector<int> usableCountPerRow(maxRangeValueFoundFromMapPlusOne, 0);
-  for (int e = 0; e < map.GetNumElements(); ++e) {
-    auto indices = map.GetGlobalIndices(e);
-    for (int ii = 0; ii < isize(indices); ++ii) {
-      int const row = indices[ii];
-      auto& vec = M[row];
-
-      int col = usableCountPerRow[row];
-      for (int j : indices) {
-        vec[col++] = j;
-      }
-      usableCountPerRow[row] = col;
-      MOCHI_ASSERT(col < currentColCount);
-    }
-  }
-
-  int numRows = maxRangeValueFoundFromMapPlusOne;
-  if (numRowsOpt) {
-    MOCHI_ASSERT(numRowsOpt.value() >= numRows, "Input rows don't match coordinates");
-    numRows = numRowsOpt.value();
-  }
-
-  SortAndUniqueEachValidRow(M, usableCountPerRow);
-  return CreateCSRGraphFromSortedAndUniquedMatrix(
-      numRows, M, maxRangeValueFoundFromMapPlusOne, usableCountPerRow);
-}
-
 Graph<int, int> mochi::MakeSparsityGraph(
     Local2GlobalMap const& map,
     std::optional<int> numRowsOpt) {
@@ -212,8 +161,7 @@ Graph<int, int> mochi::MakeSparsityGraph(
   }
 
   SortAndUniqueEachValidRow(M, usableCountPerRow);
-  return CreateCSRGraphFromSortedAndUniquedMatrix(
-      numGraphRows, M, maxRangeValueFoundFromMapPlusOne, usableCountPerRow);
+  return CreateCSRGraphFromSortedAndUniquedMatrix(numGraphRows, M, usableCountPerRow);
 }
 
 //
@@ -230,7 +178,7 @@ Graph<int, int> mochi::MakeSparsityGraph(
 
   if (M.empty()) {
     int const numRows = numRowsOpt.value_or(0);
-    return CreateCSRGraphFromSortedAndUniquedMatrix(numRows, {}, 0, {});
+    return CreateCSRGraphFromSortedAndUniquedMatrix(numRows, {}, {});
   }
 
   // since here M is given, the number
@@ -248,7 +196,7 @@ Graph<int, int> mochi::MakeSparsityGraph(
   }
 
   SortAndUniqueEachValidRow(M, usableCountPerRow);
-  return CreateCSRGraphFromSortedAndUniquedMatrix(numGraphRows, M, isize(M), usableCountPerRow);
+  return CreateCSRGraphFromSortedAndUniquedMatrix(numGraphRows, M, usableCountPerRow);
 }
 
 //
@@ -263,7 +211,7 @@ Graph<int, int> mochi::MakeSparsityGraph(
 
   if (coordinates.empty()) {
     int const numRows = numRowsOpt.value_or(0);
-    return CreateCSRGraphFromSortedAndUniquedMatrix(numRows, {}, 0, {});
+    return CreateCSRGraphFromSortedAndUniquedMatrix(numRows, {}, {});
   }
 
   auto const max_row_it =
@@ -294,7 +242,7 @@ Graph<int, int> mochi::MakeSparsityGraph(
   }
 
   SortAndUniqueEachValidRow(M, usableCountPerRow);
-  return CreateCSRGraphFromSortedAndUniquedMatrix(numGraphRows, M, isize(M), usableCountPerRow);
+  return CreateCSRGraphFromSortedAndUniquedMatrix(numGraphRows, M, usableCountPerRow);
 }
 
 //

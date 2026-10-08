@@ -127,13 +127,6 @@ void ConvertToFillLevel(
 
 } // namespace details
 
-// Use a Local2GlobalMap to build a sparsity graph using M as auxiliary/scratch storage.
-// The method can take an optional number of rows to support empty rows.
-Graph<int, int> MakeSparsityGraph(
-    Local2GlobalMap const& map,
-    std::vector<std::vector<int>>& M,
-    std::optional<int> numRowsOpt = {});
-
 // Build a sparsity pattern from an associative collection of non-zero coordinates,
 // represented as a vector of vectors: each entry in the vector contains all
 // column indices of a given row.
