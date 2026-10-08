@@ -64,14 +64,16 @@ IKSolverImpl::IKSolverImpl(Scene* scene, Error& error) {
   });
   reg.ctx<CContactPairParamsOverrideTable>().DisableDissipation();
 
-  // Disable joint friction and inertia by zeroing them via the setters. The components are
-  // always present on articulated actors, so zeroing (rather than removing them) keeps that
-  // invariant while the assembly gates skip the now-zero forces. IK always supplies
-  // validly-sized, finite, non-negative values, so a failure here is a bug, not user error —
-  // hence ErrorAssert{}. (CActorInterface is file-local to mochi_scene.cpp, so the Actor*
-  // comes from ForEachActor rather than a reg.view here.)
-  ArticulatedJointFrictionParams zeroFriction{};
-  zeroFriction.falloffVel = 0_r; // value-init keeps the struct's 1e-3 default; zero it too
+  // Disable damping on every existing constraint, including articulated joint limits and pose
+  // controller constraints.
+  _scene->ForEachConstraint(
+      [](Constraint* constraint) { constraint->SetDamping(0_r, ErrorAssert{}); });
+
+  // Ignore pending pose-controller target velocities, whose extrapolation is rate-dependent.
+  reg.view<CControllerTargetVelocity>().each(
+      [](CControllerTargetVelocity& targetVelocity) { targetVelocity.use = false; });
+
+  // Disable joint friction forces and inertia via the setters.
   // Fixed FILO stack budget (a generous joint-count bound). The macro needs a compile-time
   // size, so it can't be numJoints; the DynamicArrays spill to heap if an actor exceeds it.
   constexpr size_t kJointStackBudget =
@@ -80,9 +82,15 @@ IKSolverImpl::IKSolverImpl(Scene* scene, Error& error) {
     if (actor->GetType() != ActorType::Articulated) {
       return;
     }
-    size_t const numJoints = actor->GetArticulatedJointFrictionParams(ErrorAssert{}).size();
+    auto const currentFriction = actor->GetArticulatedJointFrictionParams(ErrorAssert{});
+    size_t const numJoints = currentFriction.size();
     MOCHI_FILO_STACK_ALLOCATOR(allocator, kJointStackBudget);
-    DynamicArray<ArticulatedJointFrictionParams> friction(numJoints, zeroFriction, &allocator);
+    DynamicArray<ArticulatedJointFrictionParams> friction(currentFriction, &allocator);
+    for (auto& params : friction) {
+      params.viscous = 0_r;
+      params.coulomb = 0_r;
+      params.stictionExtra = 0_r;
+    }
     actor->SetArticulatedJointFrictionParams(friction, ErrorAssert{});
     DynamicArray<real> inertia(numJoints, 0_r, &allocator);
     actor->SetArticulatedJointInertiaParams(inertia, ErrorAssert{});
@@ -154,6 +162,7 @@ Constraint* IKSolverImpl::CreatePositionTarget(
   conParams.targetPosition = targetPosition;
   conParams.actor = actor;
   conParams.stiffness = weight;
+  conParams.damping = 0_r;
   auto* con = _scene->CreateRigidPivotPositionConstraint(conParams, error);
   MOCHI_ERROR_RETURN(error, {});
 
@@ -188,6 +197,7 @@ Constraint* IKSolverImpl::CreateRotationTarget(
   conParams.targetRotation = targetRotation;
   conParams.actor = actor;
   conParams.stiffness = weight;
+  conParams.damping = 0_r;
   auto* con = _scene->CreateRigidPivotRotationConstraint(conParams, error);
   MOCHI_ERROR_RETURN(error, {});
 

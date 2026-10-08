@@ -24,7 +24,9 @@
 #include <mochi_core/utils/file_utils.h>
 #include <mochi_core/utils/task_scheduler.h>
 #include <mochi_physics/mochi_physics_experimental.h>
+#include <mochi_physics/src/mochi_contact_pair_params.h>
 #include <mochi_physics/src/mochi_context.h>
+#include <mochi_physics/src/mochi_pose_controller.h>
 #include <mochi_physics/src/mochi_rigid.h>
 #include <mochi_physics/src/mochi_shape.h>
 #include <mochi_physics/src/mochi_soft.h>
@@ -1488,6 +1490,8 @@ TEST_P(MochiContextTest, CreateIKTargets_ReplacesOnlyAfterSuccessfulCreation) {
       solver->CreateRotationTarget(actor->GetHandle(), {}, {}, 1_r, ExpectOK{});
   ASSERT_NE(nullptr, positionTarget);
   ASSERT_NE(nullptr, rotationTarget);
+  EXPECT_EQ(0_r, positionTarget->GetDamping());
+  EXPECT_EQ(0_r, rotationTarget->GetDamping());
   ConstraintHandle const positionHandle = positionTarget->GetHandle();
   ConstraintHandle const rotationHandle = rotationTarget->GetHandle();
   real const nan = std::numeric_limits<real>::quiet_NaN();
@@ -1505,6 +1509,133 @@ TEST_P(MochiContextTest, CreateIKTargets_ReplacesOnlyAfterSuccessfulCreation) {
   EXPECT_EQ(2, scene->GetNumConstraints());
   EXPECT_EQ(nullptr, scene->GetConstraint(positionHandle));
   EXPECT_EQ(nullptr, scene->GetConstraint(rotationHandle));
+}
+
+TEST_P(MochiContextTest, CreateIKSolver_DisablesDissipation) {
+  Scene* scene = _mochiContext->CreateScene("IK Scene");
+  MOCHI_DEFER(if (_mochiContext->IsValidScene(scene)) { _mochiContext->DestroyScene(scene); });
+  auto const shape = test::CreateUnitCubeTetMeshShape(_mochiContext);
+
+  RigidActorParams rigidParams;
+  rigidParams.shape = shape;
+  rigidParams.colliderType = ColliderType::None;
+  rigidParams.contact.coulombFrictionCoefficient = 1_r;
+  rigidParams.contact.viscousFrictionCoefficient = 2_r;
+  rigidParams.contact.normalViscousDampingCoefficient = 3_r;
+  Actor* actorA = scene->CreateRigidActor(rigidParams, ExpectOK{});
+  Actor* actorB = scene->CreateRigidActor(rigidParams, ExpectOK{});
+  ASSERT_NE(nullptr, actorA);
+  ASSERT_NE(nullptr, actorB);
+
+  RigidSphericalJointConstraintParams constraintParams;
+  constraintParams.actorA = actorA->GetHandle();
+  constraintParams.actorB = actorB->GetHandle();
+  constraintParams.damping = 4_r;
+  Constraint* constraint = scene->CreateRigidSphericalJointConstraint(constraintParams, ExpectOK{});
+  ASSERT_NE(nullptr, constraint);
+
+  auto& reg = assert_cast<SceneImpl*>(scene)->GetRegistry();
+  auto const entityA = GetEntity(reg, actorA->GetHandle(), ExpectOK{});
+  auto const entityB = GetEntity(reg, actorB->GetHandle(), ExpectOK{});
+  ContactPairParamsOverride pairParams;
+  pairParams.coulombFrictionCoefficient = 5_r;
+  pairParams.viscousFrictionCoefficient = 6_r;
+  pairParams.normalViscousDampingCoefficient = 7_r;
+  auto& pairTable = reg.ctx<CContactPairParamsOverrideTable>();
+  pairTable.Set(entityA, entityB, pairParams);
+
+  auto* solver = experimental::CreateIKSolver(scene, _mochiContext, ExpectOK{});
+  ASSERT_NE(nullptr, solver);
+  MOCHI_DEFER(experimental::DestroyIKSolver(solver, _mochiContext, ExpectOK{}));
+
+  for (Actor* actor : {actorA, actorB}) {
+    ContactParams const params = actor->GetContactParams(ExpectOK{});
+    EXPECT_EQ(0_r, params.coulombFrictionCoefficient);
+    EXPECT_EQ(0_r, params.viscousFrictionCoefficient);
+    EXPECT_EQ(0_r, params.normalViscousDampingCoefficient);
+  }
+  EXPECT_EQ(0_r, constraint->GetDamping());
+
+  auto const* disabledPairParams = pairTable.Find(entityA, entityB);
+  ASSERT_NE(nullptr, disabledPairParams);
+  EXPECT_EQ(0_r, disabledPairParams->coulombFrictionCoefficient.value());
+  EXPECT_EQ(0_r, disabledPairParams->viscousFrictionCoefficient.value());
+  EXPECT_EQ(0_r, disabledPairParams->normalViscousDampingCoefficient.value());
+}
+
+TEST_P(MochiContextTest, CreateIKSolver_DisablesArticulatedRateDependentTerms) {
+  Scene* scene = _mochiContext->CreateScene("IK Scene");
+  MOCHI_DEFER(if (_mochiContext->IsValidScene(scene)) { _mochiContext->DestroyScene(scene); });
+  auto const shape = test::CreateUnitCubeTetMeshShape(_mochiContext);
+
+  ArticulatedActorParams actorParams;
+  actorParams.joints = {
+      {.type = ArticulatedJointType::Hard},
+      {
+          .type = ArticulatedJointType::Revolute,
+          .axis = Real3{1_r, 0_r, 0_r},
+          .friction =
+              {
+                  .viscous = 1_r,
+                  .coulomb = 1_r,
+                  .falloffVel = 1_r,
+                  .stictionExtra = 1_r,
+                  .stribeckVel = 1_r,
+              },
+          .inertia = 1_r,
+          .minLimit = Real3{-1_r, 0_r, 0_r},
+          .maxLimit = Real3{1_r, 0_r, 0_r},
+          .limitStiffness = 10_r,
+          .limitDamping = 2_r,
+      },
+  };
+  actorParams.links = {
+      {.parentLink = -1, .shape = shape, .colliderType = ColliderType::None},
+      {.parentLink = 0, .shape = shape, .colliderType = ColliderType::None},
+  };
+  Actor* actor = scene->CreateArticulatedActor(actorParams, ExpectOK{});
+  ASSERT_NE(nullptr, actor);
+
+  PoseTrackingParams const trackingParams{.stiffness = 10_r, .damping = 3_r};
+  PoseControllerParams controllerParams;
+  controllerParams.linkPosTracking = {trackingParams};
+  controllerParams.linkRotTracking = {trackingParams};
+  controllerParams.jointTracking = {trackingParams};
+  actor->AddArticulatedPoseController(controllerParams, ExpectOK{});
+
+  int const numPoseConstraints = isize(actor->GetArticulatedPoseConstraints(ExpectOK{}));
+  ASSERT_GT(scene->GetNumConstraints(), numPoseConstraints);
+  scene->ForEachConstraint(
+      [](Constraint* existingConstraint) { EXPECT_GT(existingConstraint->GetDamping(), 0_r); });
+
+  DynamicArray<real> targetVelocity(actor->GetNumDofs(), 1_r);
+  actor->SetArticulatedTargetVelocity(targetVelocity, ExpectOK{});
+
+  auto& reg = assert_cast<SceneImpl*>(scene)->GetRegistry();
+  auto const actorEntity = GetEntity(reg, actor->GetHandle(), ExpectOK{});
+  EXPECT_TRUE(reg.get<CControllerTargetVelocity const>(actorEntity).use);
+
+  auto* solver = experimental::CreateIKSolver(scene, _mochiContext, ExpectOK{});
+  ASSERT_NE(nullptr, solver);
+  MOCHI_DEFER(experimental::DestroyIKSolver(solver, _mochiContext, ExpectOK{}));
+
+  scene->ForEachConstraint(
+      [](Constraint* existingConstraint) { EXPECT_EQ(0_r, existingConstraint->GetDamping()); });
+
+  EXPECT_FALSE(reg.get<CControllerTargetVelocity const>(actorEntity).use);
+
+  auto const frictionParams = actor->GetArticulatedJointFrictionParams(ExpectOK{});
+  ASSERT_EQ(2, frictionParams.size());
+  for (auto const& params : frictionParams) {
+    EXPECT_EQ(0_r, params.viscous);
+    EXPECT_EQ(0_r, params.coulomb);
+    EXPECT_EQ(0_r, params.stictionExtra);
+  }
+  EXPECT_EQ(1_r, frictionParams[1].falloffVel);
+  EXPECT_EQ(1_r, frictionParams[1].stribeckVel);
+  for (real const value : actor->GetArticulatedJointInertiaParams(ExpectOK{})) {
+    EXPECT_EQ(0_r, value);
+  }
 }
 
 TEST_P(MochiContextTest, CreateAsyncScene) {
