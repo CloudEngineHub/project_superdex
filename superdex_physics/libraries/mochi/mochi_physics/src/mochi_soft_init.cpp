@@ -358,10 +358,8 @@ void mochi::InitSoftActor(
     auto const meshConnec = actorTetMesh.GetElementConnectivity();
     int const meshNumEle = actorTetMesh.GetNumElements();
     for (int i = 0; i < meshNumEle; ++i) {
-      femLowVolDisc.femElements.emplace_back(
-          i, meshCoords, meshConnec, tetrahedral::kTetrahedralQuadrature1);
-      femHighVolDisc.femElements.emplace_back(
-          i, meshCoords, meshConnec, tetrahedral::kTetrahedralQuadrature4);
+      femLowVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
+      femHighVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
     }
   }
 

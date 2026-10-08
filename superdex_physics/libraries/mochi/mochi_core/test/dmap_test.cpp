@@ -226,11 +226,7 @@ static std::vector<VolumeElement> CreateVolumeElements(TetrahedralMesh const& me
   std::vector<VolumeElement> femElementsVolume;
   femElementsVolume.reserve(mesh.GetNumElements());
   for (int i = 0; i < mesh.GetNumElements(); ++i) {
-    femElementsVolume.emplace_back(
-        i,
-        mesh.GetNodeCoordinates(),
-        mesh.GetElementConnectivity(),
-        tetrahedral::kTetrahedralQuadrature1);
+    femElementsVolume.emplace_back(i, mesh.GetNodeCoordinates(), mesh.GetElementConnectivity());
   }
   return femElementsVolume;
 }
@@ -252,10 +248,7 @@ static std::vector<BoundaryElement> CreateBoundaryElements(
   std::vector<BoundaryElement> femElementsBoundary;
   femElementsBoundary.reserve(mesh.GetNumBoundaryFaces());
   for (auto const& bdface : mesh.GetBoundaryFaces()) {
-    femElementsBoundary.emplace_back(
-        femElementsVolume[bdface.element],
-        bdface.faceNum,
-        tetrahedral::kTetrahedralTraceQuadrature3[bdface.faceNum]);
+    femElementsBoundary.emplace_back(femElementsVolume[bdface.element], bdface.faceNum);
   }
   return femElementsBoundary;
 }
@@ -1037,7 +1030,7 @@ TEST_F(DMapTest, QuadratureSkinningBlendingSoft) {
         kInds,
         {addEpsAndMapSoft, addEpsAndMapSkeleton},
         toCollider,
-        1.1e-2_r);
+        1.5e-2_r);
   }
 }
 

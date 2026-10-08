@@ -1132,10 +1132,7 @@ TEST(ElementAssembler, PhysicalInvariantsAndPsd) {
   DynamicArray<TraceT> traces;
   traces.reserve(mesh.GetNumBoundaryFaces());
   for (auto const& bdFace : mesh.GetBoundaryFaces()) {
-    traces.emplace_back(
-        elements[bdFace.element],
-        static_cast<int>(bdFace.faceNum),
-        tetrahedral::kTetrahedralTraceQuadrature3[bdFace.faceNum]);
+    traces.emplace_back(elements[bdFace.element], static_cast<int>(bdFace.faceNum));
   }
   BoundaryAssemblyData bdData(
       MakeConstSpan(traces), mesh.GetElementConnectivity(), nbs.GetNToN(), kFields);

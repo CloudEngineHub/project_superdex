@@ -62,23 +62,15 @@ class Pk2DElement final {
   }
 
  private:
-  void Initialize() {
-    // Tabulate the isoparametric map and its derivative at the quad points
-    QuadratureEvaluateMap();
-
-    // Tabulate basis functions
-    QuadratureEvaluateBasis();
-  }
-
   /**
-    Evaluate basis and derivatives at quadrature points
+    Tabulate the isoparametric map, the normals, the quadrature weights and the basis derivatives
+    with respect to physical coordinates at the quad points
   */
-  void QuadratureEvaluateMap() {
-    // Get the number of quadrature points
+  void Initialize() {
     for (int q = 0; q < kNumQuadPoints; ++q) {
       // Here we are using an isoparametric map
       mapEvaluated[q] = {};
-      dMapEvaluated[q] = {};
+      NdArray<real, kSpaceDim, kSpaceDimParam> dMap = {};
       for (int f = 0; f < kNumDofs; ++f) {
         // Get the map of the quadrature point
         mapEvaluated[q] += kBasisEvaluatedParametric.kBasisEvaluated[q][f] * nodesCrdsPhys[f];
@@ -87,32 +79,26 @@ class Pk2DElement final {
         // effectively here we have the induced basis from the mapping
         // the matrix is a space_dim x param_dim so in each column
         // we have an induced base
-        dMapEvaluated[q] +=
-            Outer(nodesCrdsPhys[f], kBasisEvaluatedParametric.kDBasisEvaluated[q][f]);
+        dMap += Outer(nodesCrdsPhys[f], kBasisEvaluatedParametric.kDBasisEvaluated[q][f]);
       }
-      normals[q] = Cross(Transpose(dMapEvaluated[q])[0], Transpose(dMapEvaluated[q])[1]);
+      normals[q] = Cross(Transpose(dMap)[0], Transpose(dMap)[1]);
       normals[q] /= Norm(normals[q]);
 
       // Get the metric change
       // this is the norm of the cross product of the
-      // induced basis (each stored in [q,:,baseIndex])
-      PseudoInvert(dMapEvaluated[q], &dMapEvaluatedInv[q], &dMapEvaluatedDet[q]);
+      // induced basis (each stored in [:,baseIndex])
+      NdArray<real, kSpaceDimParam, kSpaceDim> dMapInv;
+      real dMapDet = 0_r;
+      PseudoInvert(dMap, &dMapInv, &dMapDet);
 
       // Compute quadrature weight
-      quadWeights[q] = kQuadrature.weights[q] * dMapEvaluatedDet[q];
-    }
-  }
+      quadWeights[q] = kQuadrature.weights[q] * dMapDet;
 
-  /**
-    Evaluate basis and derivatives at quadrature points
-  */
-  void QuadratureEvaluateBasis() {
-    for (int q = 0; q < kNumQuadPoints; ++q) {
+      // Compute gradient with respect to physical coordinates
       dBasisEvaluated[q] = {};
       for (int f = 0; f < kNumDofs; ++f) {
-        // Compute gradient with respect to physical coordinates
-        dBasisEvaluated[q][f] = DotMatVec(
-            Transpose(dMapEvaluatedInv[q]), kBasisEvaluatedParametric.kDBasisEvaluated[q][f]);
+        dBasisEvaluated[q][f] =
+            DotMatVec(Transpose(dMapInv), kBasisEvaluatedParametric.kDBasisEvaluated[q][f]);
       }
     }
   }
@@ -121,8 +107,7 @@ class Pk2DElement final {
     Computes the nodal position in physical space of interior nodes.
 
     Only relevant for higher order elements this method interpolates
-    linearly the mid and interior nodes on the physical domain. If we want to
-    specify the value we can set the nodes using SetInteriorNodesCoordinates.
+    linearly the mid and interior nodes on the physical domain.
   */
   void InterpolateInteriorNodes() {
     // Here we are simply interpolating linearly the physical coordinates
@@ -200,36 +185,14 @@ class Pk2DElement final {
   // The array of mapped quadrature points into physical space
   NdArray<real, kNumQuadPoints, kSpaceDim> mapEvaluated;
 
-  // The array of the tangent map from parametric to physical
-  // evaluated at the quadrature points
-  NdArray<real, kNumQuadPoints, kSpaceDim, kSpaceDimParam> dMapEvaluated;
+  // The unit normal at the quadrature points
   NdArray<real, kNumQuadPoints, kSpaceDim> normals;
-
-  // The array of the inverse of the tangent map from
-  // parametric to physical evaluated at the quadrature points
-  NdArray<real, kNumQuadPoints, kSpaceDimParam, kSpaceDim> dMapEvaluatedInv;
-
-  // The array of the determinant of the tangent map from
-  // parametric to physical evaluated at the quadrature points
-  NdArray<real, kNumQuadPoints> dMapEvaluatedDet;
 
   // dbasis evaluated at quad pts
   NdArray<real, kNumQuadPoints, kNumDofs, kSpaceDim> dBasisEvaluated;
 
   // The quadrature weights for area integration
   NdArray<real, kNumQuadPoints> quadWeights = {};
-
-  // It overloads the assumption that the edge nodes lie along a line
-  // allowing for curved boundaries
-  void SetInteriorNodesCoordinates(
-      NdArray<real, Pk2DElement<kPolyOrder>::kNumDofs, Pk2DElement<kPolyOrder>::kSpaceDim> const&
-          nodes_crds_phys) {
-    static_assert(
-        (nodes_crds_phys.dims[0] == kNumDofs) && (nodes_crds_phys.dims[1] == kSpaceDim),
-        "There must be a coordinate of space dim for each node, including vertex nodes");
-    nodesCrdsPhys = nodes_crds_phys;
-    Initialize();
-  }
 };
 
 } // namespace mochi::triangular

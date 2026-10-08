@@ -49,42 +49,29 @@ class Pk1DElement final {
     // corresponding to the coordinates of each degree of freedom
     InterpolateInteriorNodes();
 
-    // Tabulate the isoparametric map and its derivative at the quad points
+    // Tabulate the isoparametric map and the quadrature weights at the quad points
     QuadratureEvaluateMap();
   }
 
  private:
-  /** @brief Evaluate basis and derivatives at quadrature points. */
+  /** @brief Tabulate the isoparametric map and the quadrature weights at the quad points. */
   void QuadratureEvaluateMap() {
     for (int q = 0; q < kNumQuadPoints; ++q) {
       // Here we are using an isoparametric map
       mapEvaluated[q] = {};
-      dMapEvaluated[q] = {};
+      Real3 tangent = {};
       for (int f = 0; f < kNumDofs; ++f) {
         // Get the map of the quadrature point
         mapEvaluated[q] += kBasisEvaluatedParametric.kBasisEvaluated[q][f] * nodesCrdsPhys[f];
 
-        // Get the tangent map at the quadrature point
-        // effectively here we have the induced basis from the mapping
-        // the matrix is a space_dim x param_dim so in each column
-        // we have an induced base
-        for (int i = 0; i < kSpaceDim; ++i) {
-          // Specialized for parametric dimension = 1
-          dMapEvaluated[q][i][0] +=
-              nodesCrdsPhys[f][i] * kBasisEvaluatedParametric.kDBasisEvaluated[q][f][0];
-        }
+        // Get the tangent map at the quadrature point, which for parametric dimension 1 is a
+        // single vector
+        tangent += kBasisEvaluatedParametric.kDBasisEvaluated[q][f][0] * nodesCrdsPhys[f];
       }
 
-      // Get Jacobian determinant of the mapping.
-      // For 1D elements embedded in 3D, this is the norm of the tangent vector
-      Real3 tangent = {};
-      for (int i = 0; i < kSpaceDim; ++i) {
-        tangent[i] = dMapEvaluated[q][i][0];
-      }
-      dMapEvaluatedDet[q] = Norm(tangent);
-
-      // Compute quadrature weight
-      quadWeights[q] = kQuadrature.weights[q] * dMapEvaluatedDet[q];
+      // Compute quadrature weight. The Jacobian determinant of the mapping of a 1D element
+      // embedded in 3D is the norm of the tangent vector.
+      quadWeights[q] = kQuadrature.weights[q] * Norm(tangent);
     }
   }
 
@@ -146,15 +133,6 @@ class Pk1DElement final {
 
   // The array of mapped quadrature points into physical space
   NdArray<real, kNumQuadPoints, kSpaceDim> mapEvaluated;
-
-  // The array of the tangent map from parametric to physical
-  // evaluated at the quadrature points
-  NdArray<real, kNumQuadPoints, kSpaceDim, kSpaceDimParam> dMapEvaluated;
-
-  // The array of the determinant of the tangent map from
-  // parametric to physical evaluated at the quadrature points
-  // (for 1D elements, this is the length of the tangent vector)
-  NdArray<real, kNumQuadPoints> dMapEvaluatedDet;
 
   // The quadrature weights for arc length integration
   NdArray<real, kNumQuadPoints> quadWeights = {};

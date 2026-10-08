@@ -31,7 +31,6 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -172,6 +171,8 @@ struct FemDiscretizationBase : public NoCopy {
 
 template <typename ElementT_>
 struct FemDiscretization : public FemDiscretizationBase<ElementT_> {
+  // TODO: Explore a structure-of-arrays layout for per-element data, so batched kernels load SIMD
+  // lanes directly instead of gathering them.
   std::vector<ElementT_> femElements;
 
   int GetNumQuadPoints() const {
@@ -236,13 +237,10 @@ struct CFemBoundaryDiscretization : public CVariant<
       ActorBoundaryElementType const& elementType) {
     auto disc = CreateNoInitialize(elementType);
     disc.Visit([&](auto& femBoundaryDiscImpl) {
-      using BoundaryDiscretizationT = std::decay_t<decltype(femBoundaryDiscImpl)>;
-
       femBoundaryDiscImpl.femElements.reserve(mesh.GetNumBoundaryFaces());
       for (auto const& bdface : mesh.GetBoundaryFaces()) {
         femBoundaryDiscImpl.femElements.emplace_back(
-            MakeBoundaryElement<BoundaryDiscretizationT>(
-                femVolDisc.femElements[bdface.element], bdface.faceNum));
+            femVolDisc.femElements[bdface.element], bdface.faceNum);
       }
     });
 
@@ -250,38 +248,6 @@ struct CFemBoundaryDiscretization : public CVariant<
   }
 
  private:
-  template <typename FemBoundaryDiscretizationT, typename FemVolumeElementT>
-  static auto MakeBoundaryElement(FemVolumeElementT const& volElement, int faceNum) {
-    using ElementT = typename FemBoundaryDiscretizationT::ElementT;
-    if constexpr (std::is_same_v<FemBoundaryDiscretizationT, CFemBoundaryDiscretizationP1Q1_1>) {
-      return ElementT{volElement, faceNum, tetrahedral::kTetrahedralTraceQuadrature1[faceNum]};
-    } else if constexpr (std::is_same_v<
-                             FemBoundaryDiscretizationT,
-                             CFemBoundaryDiscretizationP1Q1_3>) {
-      return ElementT{volElement, faceNum, tetrahedral::kTetrahedralTraceQuadrature3[faceNum]};
-    } else if constexpr (std::is_same_v<
-                             FemBoundaryDiscretizationT,
-                             CFemBoundaryDiscretizationP1Q1_6>) {
-      return ElementT{volElement, faceNum, tetrahedral::kTetrahedralTraceQuadrature6[faceNum]};
-    } else if constexpr (std::is_same_v<
-                             FemBoundaryDiscretizationT,
-                             CFemBoundaryDiscretizationP1Q1_7>) {
-      return ElementT{volElement, faceNum, tetrahedral::kTetrahedralTraceQuadrature7[faceNum]};
-    } else if constexpr (std::is_same_v<
-                             FemBoundaryDiscretizationT,
-                             CFemBoundaryDiscretizationP1Q1_12>) {
-      return ElementT{volElement, faceNum, tetrahedral::kTetrahedralTraceQuadrature12[faceNum]};
-    } else if constexpr (std::is_same_v<
-                             FemBoundaryDiscretizationT,
-                             CFemBoundaryDiscretizationP1Q1_16>) {
-      return ElementT{volElement, faceNum, tetrahedral::kTetrahedralTraceQuadrature16[faceNum]};
-    } else {
-      static_assert(
-          std::is_void_v<FemBoundaryDiscretizationT>,
-          "MakeBoundaryElement not implemented for this boundary discretization type.");
-    }
-  }
-
   static CFemBoundaryDiscretization CreateNoInitialize(
       ActorBoundaryElementType const& elementType) {
     switch (elementType) {

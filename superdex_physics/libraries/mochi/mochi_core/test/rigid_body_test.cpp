@@ -55,7 +55,7 @@ static void TestMomentOfInertia(
   std::vector<ElementT> elements;
   elements.reserve(numEle);
   for (int i = 0; i < numEle; ++i) {
-    elements.emplace_back(int(i), coordinates, connectivity, tetrahedral::kTetrahedralQuadrature4);
+    elements.emplace_back(int(i), coordinates, connectivity);
   }
   real mass = {};
   Vec4r comLocal = {};

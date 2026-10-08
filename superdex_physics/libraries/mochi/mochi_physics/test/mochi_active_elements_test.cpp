@@ -51,8 +51,7 @@ static CFemVolumeDiscretizationP1Q1 CreateFemLowVolDiscretization(TetrahedralMes
   CFemVolumeDiscretizationP1Q1 femLowVolDisc;
   femLowVolDisc.femElements.reserve(meshNumEle);
   for (int i = 0; i < meshNumEle; ++i) {
-    femLowVolDisc.femElements.emplace_back(
-        i, meshCoords, meshConnec, tetrahedral::kTetrahedralQuadrature1);
+    femLowVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
   }
   return femLowVolDisc;
 }
@@ -63,10 +62,7 @@ static auto CreateTraces(
   using ET = tetrahedral::Pk3DElementTrace<tetrahedral::Pk3DElement<1, 1>, 1>;
   std::vector<ET> result;
   for (auto const& bdface : mesh.GetBoundaryFaces()) {
-    auto const& volElem = femLowVolDisc.femElements[bdface.element];
-    int const faceNum = bdface.faceNum;
-    ET o{volElem, faceNum, tetrahedral::kTetrahedralTraceQuadrature1[faceNum]};
-    result.push_back(std::move(o));
+    result.emplace_back(femLowVolDisc.femElements[bdface.element], bdface.faceNum);
   }
 
   return result;

@@ -53,11 +53,7 @@ TEST(FemInertia, MassMatrix) {
 
   TetrahedralMesh mesh = test::CreateMinimalTetMeshSingleTet();
 
-  auto element = ElementT{
-      0,
-      mesh.GetNodeCoordinates(),
-      mesh.GetElementConnectivity(),
-      tetrahedral::kTetrahedralQuadrature4};
+  auto element = ElementT{0, mesh.GetNodeCoordinates(), mesh.GetElementConnectivity()};
   auto elements = Span<ElementT>{&element, 1};
 
   // Compute the mass matrix per element

@@ -110,16 +110,9 @@ static void ElementAssemblerBenchmark(
   femLowVolDisc.reserve(numElements);
   femHighVolDisc.reserve(numElements);
   for (int i = 0; i < numElements; ++i) {
-    femLowVolDisc.emplace_back(
-        i,
-        tetMesh->GetNodeCoordinates(),
-        tetMesh->GetElementConnectivity(),
-        tetrahedral::kTetrahedralQuadrature1);
+    femLowVolDisc.emplace_back(i, tetMesh->GetNodeCoordinates(), tetMesh->GetElementConnectivity());
     femHighVolDisc.emplace_back(
-        i,
-        tetMesh->GetNodeCoordinates(),
-        tetMesh->GetElementConnectivity(),
-        tetrahedral::kTetrahedralQuadrature4);
+        i, tetMesh->GetNodeCoordinates(), tetMesh->GetElementConnectivity());
   }
 
   // Nodal based structure.

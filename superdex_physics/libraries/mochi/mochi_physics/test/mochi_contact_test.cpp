@@ -294,10 +294,7 @@ TEST(MochiContact, SetupActiveCollisionNormalsCachesLinearElementNormal) {
 
   CFemVolumeDiscretizationP1Q1 volumeDiscretization;
   volumeDiscretization.femElements.emplace_back(
-      0,
-      tetMesh.GetNodeCoordinates(),
-      tetMesh.GetElementConnectivity(),
-      tetrahedral::kTetrahedralQuadrature1);
+      0, tetMesh.GetNodeCoordinates(), tetMesh.GetElementConnectivity());
   runTest(
       CFemBoundaryDiscretization::Create(
           tetMesh, volumeDiscretization, ActorBoundaryElementType::P1Q3));

@@ -94,16 +94,8 @@ auto CreateFemDiscretizations(TetrahedralMesh const& tetMesh) {
   femLowVolDisc.reserve(numElements);
   femHighVolDisc.reserve(numElements);
   for (int i = 0; i < numElements; ++i) {
-    femLowVolDisc.emplace_back(
-        i,
-        tetMesh.GetNodeCoordinates(),
-        tetMesh.GetElementConnectivity(),
-        tetrahedral::kTetrahedralQuadrature1);
-    femHighVolDisc.emplace_back(
-        i,
-        tetMesh.GetNodeCoordinates(),
-        tetMesh.GetElementConnectivity(),
-        tetrahedral::kTetrahedralQuadrature4);
+    femLowVolDisc.emplace_back(i, tetMesh.GetNodeCoordinates(), tetMesh.GetElementConnectivity());
+    femHighVolDisc.emplace_back(i, tetMesh.GetNodeCoordinates(), tetMesh.GetElementConnectivity());
   }
 
   return std::make_tuple(femLowVolDisc, femHighVolDisc);
@@ -115,10 +107,7 @@ std::vector<ElementTraceT> CreateElementTraces(
   std::vector<ElementTraceT> elementsTraces;
   elementsTraces.reserve(tetMesh.GetNumBoundaryFaces());
   for (auto const& bdface : tetMesh.GetBoundaryFaces()) {
-    elementsTraces.emplace_back(
-        femLowVolDisc[bdface.element],
-        static_cast<int>(bdface.faceNum),
-        tetrahedral::kTetrahedralTraceQuadrature3[bdface.faceNum]);
+    elementsTraces.emplace_back(femLowVolDisc[bdface.element], static_cast<int>(bdface.faceNum));
   }
   return elementsTraces;
 }

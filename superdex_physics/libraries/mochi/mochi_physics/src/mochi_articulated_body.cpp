@@ -1327,10 +1327,7 @@ int mochi::InitDiscretizationSkinMesh(
     femVolDisc.femElements.reserve(tetMesh->GetNumElements());
     for (int i = 0; i < tetMesh->GetNumElements(); ++i) {
       femVolDisc.femElements.emplace_back(
-          i,
-          tetMesh->GetNodeCoordinates(),
-          tetMesh->GetElementConnectivity(),
-          tetrahedral::kTetrahedralQuadrature1);
+          i, tetMesh->GetNodeCoordinates(), tetMesh->GetElementConnectivity());
     }
 
     // Emplace the boundary discretization.

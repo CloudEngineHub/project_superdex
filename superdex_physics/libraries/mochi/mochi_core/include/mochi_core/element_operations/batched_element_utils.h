@@ -58,10 +58,15 @@ MOCHI_FORCE_INLINE void PackBasisAndQuadWeight(
   constexpr int kNumNodes = ElementT::kNumDofs;
   alignas(alignof(V)) real staging[V::kSize]{};
   for (int f = 0; f < kNumNodes; ++f) {
-    for (size_t b = 0; b < kBatchSize; ++b) {
-      staging[b] = elements[elementIndices[b]].basisEvaluated[q][f];
+    if constexpr (requires { ElementT::kBasisEvaluated; }) {
+      // Shared by all elements of the type: broadcast it rather than gather identical values.
+      batchedBasis[f] = V(ElementT::kBasisEvaluated[q][f]);
+    } else {
+      for (size_t b = 0; b < kBatchSize; ++b) {
+        staging[b] = elements[elementIndices[b]].basisEvaluated[q][f];
+      }
+      batchedBasis[f] = Load<V>(staging);
     }
-    batchedBasis[f] = Load<V>(staging);
   }
   for (size_t b = 0; b < kBatchSize; ++b) {
     staging[b] = elements[elementIndices[b]].quadWeights[q] * extraWeight[b];

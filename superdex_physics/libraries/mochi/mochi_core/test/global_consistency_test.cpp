@@ -96,7 +96,7 @@ TEST(GlobalConsistency, cube) {
   real volume = 0_r;
   for (auto& e : elements) {
     for (int q = 0; q < e.kNumQuadPoints; ++q) {
-      volume += e.dMapEvaluatedDet[q] * e.quadrature.weights[q];
+      volume += e.quadWeights[q];
     }
   }
   EXPECT_TRUE(NearEqual(1_r, volume)); // unit cube
