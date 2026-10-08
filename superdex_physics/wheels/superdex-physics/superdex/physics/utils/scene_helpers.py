@@ -127,7 +127,7 @@ def load_bot_scene(
         )
     import superdex.robotics as sdr  # @manual
 
-    return sdr.load_bot_scene(path, bots_ctx)
+    return sdr.load_bot_scene(_strip_win_extended_prefix(path), bots_ctx)
 
 
 def load_bot_scene_prefab(path: str):  # noqa: ANN201
@@ -146,7 +146,7 @@ def load_bot_scene_prefab(path: str):  # noqa: ANN201
     """
     import superdex.robotics as sdr  # @manual
 
-    return sdr.load_bot_scene_prefab_from_file(path)
+    return sdr.load_bot_scene_prefab_from_file(_strip_win_extended_prefix(path))
 
 
 def load_bot_task_prefab(path: str):  # noqa: ANN201
@@ -164,7 +164,7 @@ def load_bot_task_prefab(path: str):  # noqa: ANN201
     """
     import superdex.robotics as sdr  # @manual
 
-    return sdr.load_bot_task_prefab_from_file(path)
+    return sdr.load_bot_task_prefab_from_file(_strip_win_extended_prefix(path))
 
 
 def create_scene_from_prefab(
