@@ -149,24 +149,23 @@ LinearSolverStatus PCG(
   for (int iter = 1; iter <= maxIter; ++iter) {
     Apply(A, p, Ap);
     auto const pTAp = dot(p, Ap);
-    if (pTAp <= 0)
-      MOCHI_UNLIKELY {
-        if (!abortIfNotSpd) {
-          if (verbosity >= VerbosityLevel::Warning) {
-            MOCHI_LOG_WARNING(
-                "Matrix does not seem to be SPD at iteration %d. A-dot product: %e.",
-                iter,
-                static_cast<double>(pTAp));
-          }
-        } else {
-          return LinearSolverStatus{
-              .numIterDone = iter,
-              .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
-              .relativeResidualNorm =
-                  static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
-              .convergence = LinearSolverConvergenceStatus::Diverged};
+    if (pTAp <= 0) MOCHI_UNLIKELY {
+      if (!abortIfNotSpd) {
+        if (verbosity >= VerbosityLevel::Warning) {
+          MOCHI_LOG_WARNING(
+              "Matrix does not seem to be SPD at iteration %d. A-dot product: %e.",
+              iter,
+              static_cast<double>(pTAp));
         }
+      } else {
+        return LinearSolverStatus{
+            .numIterDone = iter,
+            .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
+            .relativeResidualNorm =
+                static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
+            .convergence = LinearSolverConvergenceStatus::Diverged};
       }
+    }
 
     auto const alpha = rTz_current / pTAp;
     x += alpha * p; // x_i = x_{i-1} + alpha p
@@ -212,19 +211,17 @@ LinearSolverStatus PCG(
       rTz_current = dot(r, z);
     }
 
-    if (rTz_current == 0)
-      MOCHI_UNLIKELY {
-        if (verbosity >= VerbosityLevel::Error) {
-          // The residual is not zero at this point. The preconditioner may have a singularity.
-          MOCHI_LOG_ERROR("Zero Preconditioner-dot product at iteration %d", iter);
-        }
-        return LinearSolverStatus{
-            .numIterDone = iter,
-            .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
-            .relativeResidualNorm =
-                static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
-            .convergence = LinearSolverConvergenceStatus::Diverged};
+    if (rTz_current == 0) MOCHI_UNLIKELY {
+      if (verbosity >= VerbosityLevel::Error) {
+        // The residual is not zero at this point. The preconditioner may have a singularity.
+        MOCHI_LOG_ERROR("Zero Preconditioner-dot product at iteration %d", iter);
       }
+      return LinearSolverStatus{
+          .numIterDone = iter,
+          .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
+          .relativeResidualNorm = static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
+          .convergence = LinearSolverConvergenceStatus::Diverged};
+    }
 
     beta = (rTz_current - beta) / rTz_old;
     p = z + beta * p;

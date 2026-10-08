@@ -164,10 +164,9 @@ class VariantJacobian {
     MOCHI_ASSERT(
         std::holds_alternative<MatrixBlockDiag>(_value),
         "This overload can only be used for block diagonal jacobians");
-    if (input.NumNonZeros() == 0)
-      MOCHI_UNLIKELY {
-        return;
-      }
+    if (input.NumNonZeros() == 0) MOCHI_UNLIKELY {
+      return;
+    }
     auto const& J = std::get<MatrixBlockDiag>(_value);
     constexpr int kMinFlopsPerTask = 500000; // 50 μs @ 10 GFLOPs
     auto const numFlopsPerBlockRow =

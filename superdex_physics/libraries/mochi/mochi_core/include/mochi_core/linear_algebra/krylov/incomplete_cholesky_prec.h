@@ -964,11 +964,10 @@ void IncompleteCholeskyPrec<
   auto const n = _rIC.Rows();
   for (int i = 0; i < n; ++i) {
     // Test for zero or negative entry on the diagonal
-    if (_rIC(i, i) < std::numeric_limits<NonConstScalar>::min())
-      MOCHI_UNLIKELY {
-        info = i + 1;
-        break;
-      }
+    if (_rIC(i, i) < std::numeric_limits<NonConstScalar>::min()) MOCHI_UNLIKELY {
+      info = i + 1;
+      break;
+    }
     //
     _rIC(i, i) = Sqrt(_rIC(i, i));
     //
@@ -976,16 +975,14 @@ void IncompleteCholeskyPrec<
     _rIC.template Block<1, krylov::kDynamic>(i, i + 1, 1, n - i - 1) *= scaling;
     //
     for (int k = i + 1; k < n; ++k) {
-      if (_rIC(i, k) == Scalar{0})
-        MOCHI_UNLIKELY {
-          continue;
-        }
+      if (_rIC(i, k) == Scalar{0}) MOCHI_UNLIKELY {
+        continue;
+      }
       auto const rik_t = _rIC(i, k);
       for (int j = k; j < n; ++j) {
-        if (Abs(_rIC(k, j)) < std::numeric_limits<NonConstScalar>::min())
-          MOCHI_UNLIKELY {
-            continue;
-          }
+        if (Abs(_rIC(k, j)) < std::numeric_limits<NonConstScalar>::min()) MOCHI_UNLIKELY {
+          continue;
+        }
         _rIC(k, j) -= rik_t * _rIC(i, j);
       }
     }
@@ -1144,11 +1141,10 @@ void IncompleteCholeskyPrec<SparseMatrix<Scalar, CRIdx, Ptr, Storage>>::Factoriz
   NonConstIdx info = 0;
   for (NonConstIdx i = 0; i < _rChol.Rows(); ++i) {
     // Test for zero or negative entry on the diagonal
-    if (rVal[_uStart[i]] < std::numeric_limits<NonConstScalar>::min())
-      MOCHI_UNLIKELY {
-        info = i + 1;
-        break;
-      }
+    if (rVal[_uStart[i]] < std::numeric_limits<NonConstScalar>::min()) MOCHI_UNLIKELY {
+      info = i + 1;
+      break;
+    }
     //--- Get inverse map of rIdx only for the upper "triangular" part
     for (NonConstPtr p = _uStart[i]; p < rPtr[i + 1]; ++p) {
       iw[rIdx[p]] = p;

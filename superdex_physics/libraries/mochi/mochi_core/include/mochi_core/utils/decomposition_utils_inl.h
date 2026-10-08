@@ -528,11 +528,9 @@ inline void RotationVariantSvd(Matrix3x3r const& F, Matrix3x3r& U, Real3& Sg, Ma
   // Compute first row of UT
   U[0] = DotMatVec(F, VT[0]);
   real u0norm = Norm(U[0]);
-  if (u0norm < std::numeric_limits<real>::epsilon())
-    MOCHI_UNLIKELY {
-      U[0] = Real3{1.0_r, 0.0_r, 0.0_r};
-    }
-  else {
+  if (u0norm < std::numeric_limits<real>::epsilon()) MOCHI_UNLIKELY {
+    U[0] = Real3{1.0_r, 0.0_r, 0.0_r};
+  } else {
     U[0] /= u0norm;
   }
 
@@ -541,11 +539,9 @@ inline void RotationVariantSvd(Matrix3x3r const& F, Matrix3x3r& U, Real3& Sg, Ma
   U[1] = DotMatVec(F, VT[1]);
   U[1] -= Dot(U[0], U[1]) * U[0];
   real u1norm = Norm(U[1]);
-  if (u1norm < std::numeric_limits<real>::epsilon())
-    MOCHI_UNLIKELY {
-      U[1] = Normalize(OrthogonalVector(U[0]));
-    }
-  else {
+  if (u1norm < std::numeric_limits<real>::epsilon()) MOCHI_UNLIKELY {
+    U[1] = Normalize(OrthogonalVector(U[0]));
+  } else {
     U[1] /= u1norm;
   }
 
@@ -609,26 +605,20 @@ RotationVariantSvd3x3(VMatrix3x3r const& F, VMatrix3x3r& U, Vec4r& Sg, VMatrix3x
   // Compute first row of UT
   U[0] = DotVecMat3x3(VT[0], FT); // Faster than DotMatVec3x3
   real const u0normSqr = NormSqr<3>(U[0]);
-  if (u0normSqr > kEpsilon)
-    MOCHI_LIKELY {
-      U[0] = Normalize(U[0], u0normSqr);
-    }
-  else
-    MOCHI_UNLIKELY {
-      U[0] = SimdBasisVector<0>();
-    }
+  if (u0normSqr > kEpsilon) MOCHI_LIKELY {
+    U[0] = Normalize(U[0], u0normSqr);
+  } else MOCHI_UNLIKELY {
+    U[0] = SimdBasisVector<0>();
+  }
 
   // Compute second row of UT
   U[1] = DotVecMat3x3(VT[1], FT); // Faster than DotMatVec3x3
   real const u1normSqr = NormSqr<3>(U[1]);
-  if (u1normSqr > kEpsilon)
-    MOCHI_LIKELY {
-      U[1] = Normalize(U[1], u1normSqr);
-    }
-  else
-    MOCHI_UNLIKELY {
-      U[1] = Normalize<3>(OrthogonalVector3(U[0]));
-    }
+  if (u1normSqr > kEpsilon) MOCHI_LIKELY {
+    U[1] = Normalize(U[1], u1normSqr);
+  } else MOCHI_UNLIKELY {
+    U[1] = Normalize<3>(OrthogonalVector3(U[0]));
+  }
 
   // Compute third row of UT
   U[2] = Cross3(U[0], U[1]);
@@ -853,14 +843,13 @@ MOCHI_FORCE_INLINE void BatchedComputeU(
   u1[1] *= u1invNorm;
   u1[2] *= u1invNorm;
 
-  if (AnyTrue<kBatchSize>(u1zero))
-    MOCHI_UNLIKELY {
-      // Fallback: OrthogonalVector(U[0])
-      V3 const fo = Normalize(OrthogonalVector(u0));
-      u1[0] = Select(u1zero, fo[0], u1[0]);
-      u1[1] = Select(u1zero, fo[1], u1[1]);
-      u1[2] = Select(u1zero, fo[2], u1[2]);
-    }
+  if (AnyTrue<kBatchSize>(u1zero)) MOCHI_UNLIKELY {
+    // Fallback: OrthogonalVector(U[0])
+    V3 const fo = Normalize(OrthogonalVector(u0));
+    u1[0] = Select(u1zero, fo[0], u1[0]);
+    u1[1] = Select(u1zero, fo[1], u1[1]);
+    u1[2] = Select(u1zero, fo[2], u1[2]);
+  }
 
   // UT row 2 = cross(UT[0], UT[1])
   V3 const u2 = Cross(u0, u1);

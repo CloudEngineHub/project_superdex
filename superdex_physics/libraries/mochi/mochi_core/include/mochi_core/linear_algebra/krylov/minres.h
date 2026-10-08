@@ -102,27 +102,26 @@ LinearSolverStatus MinRes(
   Solve(prec, rhs, z);
 
   auto gammaSqr = dot(rhs, z);
-  if (!IsFinite(gammaSqr) || gammaSqr <= 0)
-    MOCHI_UNLIKELY {
-      if (dot(rhs, rhs) == 0) {
-        SetZero(x);
-        return LinearSolverStatus{
-            .numIterDone = 0,
-            .residualNorm = 0.0,
-            .relativeResidualNorm = 0.0,
-            .convergence = LinearSolverConvergenceStatus::Converged};
-      }
-      if (verbosity >= VerbosityLevel::Warning) {
-        MOCHI_LOG_WARNING(
-            "Preconditioner does not seem to be SPD. P-dot product: %e",
-            static_cast<double>(gammaSqr));
-      }
+  if (!IsFinite(gammaSqr) || gammaSqr <= 0) MOCHI_UNLIKELY {
+    if (dot(rhs, rhs) == 0) {
+      SetZero(x);
       return LinearSolverStatus{
           .numIterDone = 0,
           .residualNorm = 0.0,
           .relativeResidualNorm = 0.0,
-          .convergence = LinearSolverConvergenceStatus::Diverged};
+          .convergence = LinearSolverConvergenceStatus::Converged};
     }
+    if (verbosity >= VerbosityLevel::Warning) {
+      MOCHI_LOG_WARNING(
+          "Preconditioner does not seem to be SPD. P-dot product: %e",
+          static_cast<double>(gammaSqr));
+    }
+    return LinearSolverStatus{
+        .numIterDone = 0,
+        .residualNorm = 0.0,
+        .relativeResidualNorm = 0.0,
+        .convergence = LinearSolverConvergenceStatus::Diverged};
+  }
   statusCheck.SetScaling(Sqrt(gammaSqr));
 
   auto Az = vectorFactory.GetSameAs(x);
@@ -137,26 +136,25 @@ LinearSolverStatus MinRes(
     gammaSqr = dot(v, z);
   }
 
-  if (!IsFinite(gammaSqr) || gammaSqr <= 0)
-    MOCHI_UNLIKELY {
-      if (dot.Norm(v) == 0) {
-        return LinearSolverStatus{
-            .numIterDone = 0,
-            .residualNorm = 0.0,
-            .relativeResidualNorm = 0.0,
-            .convergence = LinearSolverConvergenceStatus::Converged};
-      }
-      if (verbosity >= VerbosityLevel::Warning) {
-        MOCHI_LOG_WARNING(
-            "Preconditioner does not seem to be SPD. P-dot product: %e",
-            static_cast<double>(gammaSqr));
-      }
+  if (!IsFinite(gammaSqr) || gammaSqr <= 0) MOCHI_UNLIKELY {
+    if (dot.Norm(v) == 0) {
       return LinearSolverStatus{
           .numIterDone = 0,
           .residualNorm = 0.0,
           .relativeResidualNorm = 0.0,
-          .convergence = LinearSolverConvergenceStatus::Diverged};
+          .convergence = LinearSolverConvergenceStatus::Converged};
     }
+    if (verbosity >= VerbosityLevel::Warning) {
+      MOCHI_LOG_WARNING(
+          "Preconditioner does not seem to be SPD. P-dot product: %e",
+          static_cast<double>(gammaSqr));
+    }
+    return LinearSolverStatus{
+        .numIterDone = 0,
+        .residualNorm = 0.0,
+        .relativeResidualNorm = 0.0,
+        .convergence = LinearSolverConvergenceStatus::Diverged};
+  }
 
   auto gamma = Sqrt(gammaSqr);
   auto myStatus = statusCheck.CheckStatus(0, gamma, z, Az);
@@ -196,49 +194,48 @@ LinearSolverStatus MinRes(
     Solve(prec, v_new, z_new);
 
     gammaSqr = dot(v_new, z_new);
-    if (!IsFinite(gammaSqr) || gammaSqr <= 0)
-      MOCHI_UNLIKELY {
-        // Failure: non-finite gammaSqr (NaN/Inf from a non-finite operator/preconditioner), a
-        // non-SPD preconditioner (gammaSqr < 0), or a singular one (gammaSqr == 0, v_new != 0).
-        // Continuing would poison the solution with NaN/Inf.
-        if (!IsFinite(gammaSqr) || dot.Norm(v_new) > 0) {
-          if (verbosity >= VerbosityLevel::Warning) {
-            MOCHI_LOG_WARNING(
-                "Preconditioner does not seem to be SPD. P-dot product: %e",
-                static_cast<double>(gammaSqr));
-          }
-          return LinearSolverStatus{
-              .numIterDone = iter - 1,
-              .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
-              .relativeResidualNorm =
-                  static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
-              .convergence = LinearSolverConvergenceStatus::Diverged};
-        } else {
-          // Lucky breakdown: gammaSqr == 0 and ||v_new|| == 0, so the Krylov subspace is
-          // exhausted. Perform the final Givens rotation to update x before returning.
-          Scalar alpha0 = c * delta - c_old * s * gamma;
-          Scalar alpha1 = Abs(alpha0);
-          if (alpha1 != Scalar(0)) {
-            Scalar alpha2 = s * delta + c_old * c * gamma;
-            Scalar alpha3 = s_old * gamma;
-            Scalar invAlpha1 = Scalar(1) / alpha1;
-            c_new = alpha0 * invAlpha1;
-            w_new = invAlpha1 * z - (alpha3 * invAlpha1) * w_old - (alpha2 * invAlpha1) * w;
-            x += c_new * eta * w_new;
-            eta = Scalar(0); // s_new = gammaNew / alpha1 = 0, so eta *= (-s_new) = 0
-          }
-          // eta is now the implicit residual: zero if the rotation was performed (nonsingular
-          // case), unchanged from the previous iteration otherwise (singular operator).
-          myStatus = statusCheck.CheckStatus(iter, Abs(eta), z, Az);
-          return LinearSolverStatus{
-              .numIterDone = iter,
-              .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
-              .relativeResidualNorm =
-                  static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
-              .convergence = IsConverged(myStatus) ? LinearSolverConvergenceStatus::Converged
-                                                   : LinearSolverConvergenceStatus::Diverged};
+    if (!IsFinite(gammaSqr) || gammaSqr <= 0) MOCHI_UNLIKELY {
+      // Failure: non-finite gammaSqr (NaN/Inf from a non-finite operator/preconditioner), a
+      // non-SPD preconditioner (gammaSqr < 0), or a singular one (gammaSqr == 0, v_new != 0).
+      // Continuing would poison the solution with NaN/Inf.
+      if (!IsFinite(gammaSqr) || dot.Norm(v_new) > 0) {
+        if (verbosity >= VerbosityLevel::Warning) {
+          MOCHI_LOG_WARNING(
+              "Preconditioner does not seem to be SPD. P-dot product: %e",
+              static_cast<double>(gammaSqr));
         }
+        return LinearSolverStatus{
+            .numIterDone = iter - 1,
+            .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
+            .relativeResidualNorm =
+                static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
+            .convergence = LinearSolverConvergenceStatus::Diverged};
+      } else {
+        // Lucky breakdown: gammaSqr == 0 and ||v_new|| == 0, so the Krylov subspace is
+        // exhausted. Perform the final Givens rotation to update x before returning.
+        Scalar alpha0 = c * delta - c_old * s * gamma;
+        Scalar alpha1 = Abs(alpha0);
+        if (alpha1 != Scalar(0)) {
+          Scalar alpha2 = s * delta + c_old * c * gamma;
+          Scalar alpha3 = s_old * gamma;
+          Scalar invAlpha1 = Scalar(1) / alpha1;
+          c_new = alpha0 * invAlpha1;
+          w_new = invAlpha1 * z - (alpha3 * invAlpha1) * w_old - (alpha2 * invAlpha1) * w;
+          x += c_new * eta * w_new;
+          eta = Scalar(0); // s_new = gammaNew / alpha1 = 0, so eta *= (-s_new) = 0
+        }
+        // eta is now the implicit residual: zero if the rotation was performed (nonsingular
+        // case), unchanged from the previous iteration otherwise (singular operator).
+        myStatus = statusCheck.CheckStatus(iter, Abs(eta), z, Az);
+        return LinearSolverStatus{
+            .numIterDone = iter,
+            .residualNorm = static_cast<double>(statusCheck.GetLatestResidualNorm()),
+            .relativeResidualNorm =
+                static_cast<double>(statusCheck.GetLatestRelativeResidualNorm()),
+            .convergence = IsConverged(myStatus) ? LinearSolverConvergenceStatus::Converged
+                                                 : LinearSolverConvergenceStatus::Diverged};
       }
+    }
 
     Scalar gammaNew = Sqrt(gammaSqr);
     Scalar alpha0 = c * delta - c_old * s * gamma;
@@ -271,12 +268,12 @@ LinearSolverStatus MinRes(
       auto rNormB = Sqrt(Abs(dot(residual, Rr)));
       auto estimateNormB = statusCheck.GetLatestResidualNorm();
       if (estimateNormB > Scalar(1.1) * rNormB && verbosity >= VerbosityLevel::Warning)
-        MOCHI_UNLIKELY {
-          MOCHI_LOG_WARNING(
-              "P-norm estimate %e is exceeds value %e",
-              static_cast<double>(estimateNormB),
-              static_cast<double>(rNormB));
-        }
+          MOCHI_UNLIKELY {
+        MOCHI_LOG_WARNING(
+            "P-norm estimate %e is exceeds value %e",
+            static_cast<double>(estimateNormB),
+            static_cast<double>(rNormB));
+      }
     }
 #endif
     if (myStatus != IterationStatus::Active) {

@@ -160,12 +160,11 @@ inline void Inverse1x1(
     Matrix<std::remove_const_t<Scalar>, kRowsAtCT, kColsAtCT, kMajorDirection>& invA) {
   MOCHI_ASSERT_VERBOSE((A.Rows() == 1) && (A.Cols() == 1), "Incorrect matrix size.");
   MOCHI_ASSERT_VERBOSE((invA.Rows() == 1) && (invA.Cols() == 1), "Incorrect matrix size.");
-  if (A(0, 0) == Scalar{0})
-    MOCHI_UNLIKELY {
-      MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(A(0, 0)));
-      invA(0, 0) = Scalar(0);
-      return;
-    }
+  if (A(0, 0) == Scalar{0}) MOCHI_UNLIKELY {
+    MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(A(0, 0)));
+    invA(0, 0) = Scalar(0);
+    return;
+  }
   invA(0, 0) = Scalar(1) / A(0, 0);
 }
 
@@ -182,12 +181,11 @@ inline void Inverse2x2(
   MOCHI_ASSERT_VERBOSE((A.Rows() == 2) && (A.Cols() == 2), "Incorrect matrix size.");
   MOCHI_ASSERT_VERBOSE((invA.Rows() == 2) && (invA.Cols() == 2), "Incorrect matrix size.");
   auto const detA = Determinant(A);
-  if (detA == Scalar{0})
-    MOCHI_UNLIKELY {
-      MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(detA));
-      invA.SetZero();
-      return;
-    }
+  if (detA == Scalar{0}) MOCHI_UNLIKELY {
+    MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(detA));
+    invA.SetZero();
+    return;
+  }
   invA(0, 0) = A(1, 1);
   invA(0, 1) = -A(0, 1);
   invA(1, 0) = -A(1, 0);
@@ -225,12 +223,11 @@ inline void Inverse3x3(
   invA(2, 2) = details::Cofactor_3x3<ResultType, 2, 2>(A);
 
   Scalar const detA = invA(0, 0) * A(0, 0) + invA(0, 1) * A(1, 0) + invA(0, 2) * A(2, 0);
-  if (detA == Scalar{0})
-    MOCHI_UNLIKELY {
-      MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(detA));
-      invA.SetZero();
-      return;
-    }
+  if (detA == Scalar{0}) MOCHI_UNLIKELY {
+    MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(detA));
+    invA.SetZero();
+    return;
+  }
   invA *= Scalar(1) / detA; // For 3x3, no performance difference between "invA /= detA" and
   // "invA *= Scalar(1) / detA".
 }
@@ -272,31 +269,28 @@ inline void SymInverse3x3(
   };
 
   T const d0 = a00;
-  if (d0 == T{0})
-    MOCHI_UNLIKELY {
-      setSingular(0, d0, a00);
-      return;
-    }
+  if (d0 == T{0}) MOCHI_UNLIKELY {
+    setSingular(0, d0, a00);
+    return;
+  }
   T const d0Inv = T{1} / d0;
   T const l10 = a10 * d0Inv;
   T const l20 = a20 * d0Inv;
 
   T const d1 = a11 - l10 * a10;
-  if (RejectSymInversePivot(d1, a11))
-    MOCHI_UNLIKELY {
-      setSingular(1, d1, a11);
-      return;
-    }
+  if (RejectSymInversePivot(d1, a11)) MOCHI_UNLIKELY {
+    setSingular(1, d1, a11);
+    return;
+  }
   T const d1Inv = T{1} / d1;
   T const q21 = a21 - l20 * a10;
   T const l21 = q21 * d1Inv;
 
   T const d2 = a22 - l20 * a20 - l21 * q21;
-  if (RejectSymInversePivot(d2, a22))
-    MOCHI_UNLIKELY {
-      setSingular(2, d2, a22);
-      return;
-    }
+  if (RejectSymInversePivot(d2, a22)) MOCHI_UNLIKELY {
+    setSingular(2, d2, a22);
+    return;
+  }
   T const d2Inv = T{1} / d2;
 
   // A^-1 = L^-T D^-1 L^-1. Compute one triangle and mirror it exactly.
@@ -353,22 +347,20 @@ inline void SymInverse4x4(
   };
 
   T const d0 = a00;
-  if (d0 == T{0})
-    MOCHI_UNLIKELY {
-      setSingular(0, d0, a00);
-      return;
-    }
+  if (d0 == T{0}) MOCHI_UNLIKELY {
+    setSingular(0, d0, a00);
+    return;
+  }
   T const d0Inv = T{1} / d0;
   T const l10 = a10 * d0Inv;
   T const l20 = a20 * d0Inv;
   T const l30 = a30 * d0Inv;
 
   T const d1 = a11 - l10 * a10;
-  if (RejectSymInversePivot(d1, a11))
-    MOCHI_UNLIKELY {
-      setSingular(1, d1, a11);
-      return;
-    }
+  if (RejectSymInversePivot(d1, a11)) MOCHI_UNLIKELY {
+    setSingular(1, d1, a11);
+    return;
+  }
   T const d1Inv = T{1} / d1;
   T const q21 = a21 - l20 * a10;
   T const q31 = a31 - l30 * a10;
@@ -376,21 +368,19 @@ inline void SymInverse4x4(
   T const l31 = q31 * d1Inv;
 
   T const d2 = a22 - l20 * a20 - l21 * q21;
-  if (RejectSymInversePivot(d2, a22))
-    MOCHI_UNLIKELY {
-      setSingular(2, d2, a22);
-      return;
-    }
+  if (RejectSymInversePivot(d2, a22)) MOCHI_UNLIKELY {
+    setSingular(2, d2, a22);
+    return;
+  }
   T const d2Inv = T{1} / d2;
   T const q32 = a32 - l30 * a20 - l31 * q21;
   T const l32 = q32 * d2Inv;
 
   T const d3 = a33 - l30 * a30 - l31 * q31 - l32 * q32;
-  if (RejectSymInversePivot(d3, a33))
-    MOCHI_UNLIKELY {
-      setSingular(3, d3, a33);
-      return;
-    }
+  if (RejectSymInversePivot(d3, a33)) MOCHI_UNLIKELY {
+    setSingular(3, d3, a33);
+    return;
+  }
   T const d3Inv = T{1} / d3;
 
   // A^-1 = L^-T D^-1 L^-1. Compute one triangle and mirror it exactly.
@@ -459,12 +449,11 @@ inline void Inverse4x4(
 
   Scalar const detA = (s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0);
 
-  if (detA == Scalar{0})
-    MOCHI_UNLIKELY {
-      MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(detA));
-      invA.SetZero();
-      return;
-    }
+  if (detA == Scalar{0}) MOCHI_UNLIKELY {
+    MOCHI_LOG_ERROR("Matrix is numerically singular (%e)", static_cast<double>(detA));
+    invA.SetZero();
+    return;
+  }
   Scalar const invDetA = Scalar(1) / detA;
 
   // Performance notes:
@@ -930,10 +919,9 @@ auto SymInverse(
   }
   //--- Otherwise, use the LDLt factorization.
   int const info = details::LDLtInverse(A, invA);
-  if (info != 0)
-    MOCHI_UNLIKELY {
-      invA.SetZero();
-    }
+  if (info != 0) MOCHI_UNLIKELY {
+    invA.SetZero();
+  }
   return invA;
 }
 
@@ -1235,10 +1223,9 @@ void ExtractBlockDiagonal(
   using Idx = std::remove_const_t<decltype(A.Rows())>;
   Idx const numBlockRows = A.Rows() / kBlockSize;
   MOCHI_ASSERT_VERBOSE(diagonal.size() >= numBlockRows, "Insufficient memory in the span");
-  if (numBlockRows == 0)
-    MOCHI_UNLIKELY {
-      return;
-    }
+  if (numBlockRows == 0) MOCHI_UNLIKELY {
+    return;
+  }
   // TODO: Fine tune value of minPerTask.
   auto const minPerTask = Clamp(9216 / (kBlockSize * kBlockSize), 1, numBlockRows);
   ParallelForRange(

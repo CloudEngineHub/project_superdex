@@ -273,10 +273,9 @@ auto const& IslandOperators<T>::GetInteractionMatrices() const {
 template <typename T>
 template <typename InVector, typename OutVector>
 void IslandOperators<T>::Apply(InVector const& x, OutVector&& Ax) const {
-  if (Rows() == 0)
-    MOCHI_UNLIKELY {
-      return;
-    }
+  if (Rows() == 0) MOCHI_UNLIKELY {
+    return;
+  }
   if (_workerRowRanges.empty()) {
     constexpr int kNumNzPerWorker = 25000; // Empirically chosen value. Optimized for x.Cols() == 1.
     _numWorkers =

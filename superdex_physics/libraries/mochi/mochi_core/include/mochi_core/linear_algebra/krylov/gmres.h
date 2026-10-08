@@ -49,14 +49,12 @@ void ApplyGivens(Scalar c, Scalar s, Scalar& f, Scalar& g) {
 template <typename Scalar>
 auto MakeGivens(Scalar f, Scalar g, VerbosityLevel verbosity) {
   auto givensNorm = Sqrt(Sqr<Scalar>(f) + Sqr<Scalar>(g));
-  if (givensNorm == Scalar(0))
-    MOCHI_UNLIKELY {
-      if (verbosity >= VerbosityLevel::Error) {
-        MOCHI_LOG_ERROR("Zero vector for Givens rotation matrix.");
-      }
-      return std::pair{Scalar(1), Scalar(0)};
+  if (givensNorm == Scalar(0)) MOCHI_UNLIKELY {
+    if (verbosity >= VerbosityLevel::Error) {
+      MOCHI_LOG_ERROR("Zero vector for Givens rotation matrix.");
     }
-  else {
+    return std::pair{Scalar(1), Scalar(0)};
+  } else {
     return std::pair{f / givensNorm, g / givensNorm};
   }
 }
@@ -286,20 +284,19 @@ LinearSolverStatus GMRes(
                                                : LinearSolverConvergenceStatus::Diverged};
     }
 
-    if (normQ == 0)
-      MOCHI_UNLIKELY {
-        if (verbosity >= VerbosityLevel::Error) {
-          MOCHI_LOG_ERROR(
-              "Redundant Krylov direction without convergence at iteration %d.", totalIter);
-        }
-        // Krylov subspace exhausted. Solve with the current Hessenberg system.
-        details::SolveHessenbergSystem(iter, H, b, prec, Q, z, Ap, x, vectorFactory);
-        return LinearSolverStatus{
-            .numIterDone = totalIter,
-            .residualNorm = statusCheck.GetLatestResidualNorm(),
-            .relativeResidualNorm = statusCheck.GetLatestRelativeResidualNorm(),
-            .convergence = LinearSolverConvergenceStatus::Diverged};
+    if (normQ == 0) MOCHI_UNLIKELY {
+      if (verbosity >= VerbosityLevel::Error) {
+        MOCHI_LOG_ERROR(
+            "Redundant Krylov direction without convergence at iteration %d.", totalIter);
       }
+      // Krylov subspace exhausted. Solve with the current Hessenberg system.
+      details::SolveHessenbergSystem(iter, H, b, prec, Q, z, Ap, x, vectorFactory);
+      return LinearSolverStatus{
+          .numIterDone = totalIter,
+          .residualNorm = statusCheck.GetLatestResidualNorm(),
+          .relativeResidualNorm = statusCheck.GetLatestRelativeResidualNorm(),
+          .convergence = LinearSolverConvergenceStatus::Diverged};
+    }
 
     Col(Q, iter) *= Scalar(1) / normQ;
 

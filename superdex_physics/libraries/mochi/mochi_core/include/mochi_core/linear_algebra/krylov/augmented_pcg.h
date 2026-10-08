@@ -253,10 +253,9 @@ LinearSolverStatus AugmentedPCG(
       recyclingStatus.V.MiddleCols(recyclingSubspaceSize, Vnew.Cols()) = Vnew;
       recyclingStatus.AV.MiddleCols(recyclingSubspaceSize, AVnew.Cols()) = AVnew;
       recyclingStatus.subspaceSize = recyclingSubspaceSize + Vnew.Cols();
-    } else
-      MOCHI_UNLIKELY {
-        MOCHI_ASSERT(false, "Unsupported recycling algorithm.");
-      }
+    } else MOCHI_UNLIKELY {
+      MOCHI_ASSERT(false, "Unsupported recycling algorithm.");
+    }
   }
 
   return status;

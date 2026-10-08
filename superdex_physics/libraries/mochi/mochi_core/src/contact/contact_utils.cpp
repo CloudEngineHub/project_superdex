@@ -568,11 +568,10 @@ bool MeshColliderBvh<Bv>::QueryPoint(
           normal = ToSimd(_nodeNormals[face[1]]); // Closest point is node B
         } else if (bC) {
           normal = ToSimd(_nodeNormals[face[2]]); // Closest point is node C
-        } else
-          MOCHI_UNLIKELY {
-            MOCHI_ASSERT(false, "Bad parametric coordinates");
-            normal = {};
-          }
+        } else MOCHI_UNLIKELY {
+          MOCHI_ASSERT(false, "Bad parametric coordinates");
+          normal = {};
+        }
       }
     }
 

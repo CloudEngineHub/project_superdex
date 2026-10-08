@@ -336,12 +336,10 @@ void SetupActiveCollisionNormalsFromElements(
   int extraConsumed = 0;
   if ((component == 0) && ((i + 2) < numForces) &&
       (externalForces.dofs[i + 1] == nodeStartIndex + 1) &&
-      (externalForces.dofs[i + 2] == nodeStartIndex + 2))
-    MOCHI_LIKELY {
-      forceWorld = Load<3, Vec4r>(&(externalForces.forces[i]));
-      extraConsumed = 2;
-    }
-  else {
+      (externalForces.dofs[i + 2] == nodeStartIndex + 2)) MOCHI_LIKELY {
+    forceWorld = Load<3, Vec4r>(&(externalForces.forces[i]));
+    extraConsumed = 2;
+  } else {
     forceWorld = Set(Vec4r{}, component, externalForces.forces[i]);
   }
   Vec4r const forceLocal =

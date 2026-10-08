@@ -257,13 +257,12 @@ void AsyncSceneImpl::QueueActorCommand(
 }
 
 void AsyncSceneImpl::WaitForQueuedCommands() {
-  if (IsSimThread())
-    MOCHI_UNLIKELY {
-      MOCHI_LOG_ERROR_ONCE(
-          "AsyncScene::WaitForQueuedCommands must not be called from the simulation thread (would self-deadlock). "
-          "Returning without waiting. Previously queued commands may not have executed yet. Do not rely on their effects.");
-      return;
-    }
+  if (IsSimThread()) MOCHI_UNLIKELY {
+    MOCHI_LOG_ERROR_ONCE(
+        "AsyncScene::WaitForQueuedCommands must not be called from the simulation thread (would self-deadlock). "
+        "Returning without waiting. Previously queued commands may not have executed yet. Do not rely on their effects.");
+    return;
+  }
 
   // Queue a new command that will set the stack variable 'done' to true.
   // Commands are executed in order, so any previously queued commands will

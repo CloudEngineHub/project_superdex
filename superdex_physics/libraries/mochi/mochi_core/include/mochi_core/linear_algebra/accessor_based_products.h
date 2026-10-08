@@ -201,7 +201,7 @@ MOCHI_ANY void DirectProductSimdAlongM(
         MOCHI_CASE_DIRECT_ROW_BLOCK_PRODUCT_SIMD_ALONG_M(13);
         MOCHI_CASE_DIRECT_ROW_BLOCK_PRODUCT_SIMD_ALONG_M(14);
         MOCHI_CASE_DIRECT_ROW_BLOCK_PRODUCT_SIMD_ALONG_M(15);
-        MOCHI_UNLIKELY default : {
+        MOCHI_UNLIKELY default: {
           static_assert(
               kRowsPerBatchHalf == 16, "Please update the cases in this switch statement");
           MOCHI_ASSERT_VERBOSE(false, "Unsupported number of leftover rows.");
@@ -387,7 +387,7 @@ MOCHI_ANY inline void DirectProductSimdAlongK(
         MOCHI_CASE_DIRECT_ROW_BLOCK_PRODUCT_SIMD_ALONG_K(5);
         MOCHI_CASE_DIRECT_ROW_BLOCK_PRODUCT_SIMD_ALONG_K(6);
         MOCHI_CASE_DIRECT_ROW_BLOCK_PRODUCT_SIMD_ALONG_K(7);
-        MOCHI_UNLIKELY default : {
+        MOCHI_UNLIKELY default: {
           static_assert(kRowsPerBatch == 8, "Please update the cases in this switch statement");
           MOCHI_ASSERT_VERBOSE(false, "Unsupported number of leftover rows.");
         }

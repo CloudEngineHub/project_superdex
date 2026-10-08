@@ -203,10 +203,9 @@ class SparseMatrix {
   }
 
   void SetZero() {
-    if (!_v.empty())
-      MOCHI_LIKELY {
-        memset(_v.data(), 0, _v.size() * sizeof(Scalar));
-      }
+    if (!_v.empty()) MOCHI_LIKELY {
+      memset(_v.data(), 0, _v.size() * sizeof(Scalar));
+    }
   }
 
   void SetConstant(Scalar value) {

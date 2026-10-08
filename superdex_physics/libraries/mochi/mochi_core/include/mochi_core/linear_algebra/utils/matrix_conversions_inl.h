@@ -159,18 +159,17 @@ void AddInteractionToBlockSparseMatrix(
                 std::lower_bound(aBlockColIdxItr, aBlockColIdx.end(), aLocalBlock);
             bool const targetBlockIsMissing =
                 targetBlock == aBlockColIdx.end() || *targetBlock != aLocalBlock;
-            if (targetBlockIsMissing)
-              MOCHI_UNLIKELY {
-                if constexpr (kMissingSparsityPolicy == MissingSparsityPolicy::AddAbsToDiagonal) {
-                  hasMissingBlock = true;
-                  for (int localRow = 0; localRow < kBlockSize; ++localRow) {
-                    for (int localCol = 0; localCol < kBlockSize; ++localCol) {
-                      diagonalIncrements[localRow] += Abs(blockValues[k](localRow, localCol));
-                    }
+            if (targetBlockIsMissing) MOCHI_UNLIKELY {
+              if constexpr (kMissingSparsityPolicy == MissingSparsityPolicy::AddAbsToDiagonal) {
+                hasMissingBlock = true;
+                for (int localRow = 0; localRow < kBlockSize; ++localRow) {
+                  for (int localCol = 0; localCol < kBlockSize; ++localCol) {
+                    diagonalIncrements[localRow] += Abs(blockValues[k](localRow, localCol));
                   }
                 }
-                continue;
               }
+              continue;
+            }
             auto const targetBlockIndex = int(targetBlock - aBlockColIdx.begin());
             aBlockValues[targetBlockIndex] += blockValues[k];
             aBlockColIdxItr = targetBlock + 1;
@@ -256,13 +255,12 @@ void AddInteractionToBlockSparseMatrix(
               currentTargetBlockIndex =
                   targetBlockIsMissing ? -1 : static_cast<int>(targetBlock - aBlockColIdx.begin());
             }
-            if (currentTargetBlockIndex < 0)
-              MOCHI_UNLIKELY {
-                if constexpr (kMissingSparsityPolicy == MissingSparsityPolicy::AddAbsToDiagonal) {
-                  diagonalIncrement += Abs(values[k]);
-                }
-                continue;
+            if (currentTargetBlockIndex < 0) MOCHI_UNLIKELY {
+              if constexpr (kMissingSparsityPolicy == MissingSparsityPolicy::AddAbsToDiagonal) {
+                diagonalIncrement += Abs(values[k]);
               }
+              continue;
+            }
             auto const aLocalCol = aCol % kBlockSize;
             aBlockValues[currentTargetBlockIndex](aLocalRow, aLocalCol) += values[k];
           }

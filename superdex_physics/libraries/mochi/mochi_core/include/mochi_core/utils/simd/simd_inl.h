@@ -515,10 +515,9 @@ inline Simd<T, N> Cos(Simd<T, N> a) {
     // There are x64 intrinsics if SVML extension is available
     return Simd<T, N>::Cos(a);
   } else if constexpr (std::is_same_v<T, float>) {
-    if (!details::IsFastSinCosInput(a))
-      MOCHI_UNLIKELY {
-        return MOCHI_SIMD_MEMBERWISE_FALLBACK(T, N, std::cos, a);
-      }
+    if (!details::IsFastSinCosInput(a)) MOCHI_UNLIKELY {
+      return MOCHI_SIMD_MEMBERWISE_FALLBACK(T, N, std::cos, a);
+    }
     // Reduce x to [-pi/4, pi/4) in quadrant n and compute Taylor series
     Simd<float, N> sin, cos;
     Simd<int, N> n;
@@ -538,10 +537,9 @@ inline Simd<T, N> Sin(Simd<T, N> a) {
     // There are x64 intrinsics if SVML extension is available
     return Simd<T, N>::Sin(a);
   } else if constexpr (std::is_same_v<T, float>) {
-    if (!details::IsFastSinCosInput(a))
-      MOCHI_UNLIKELY {
-        return MOCHI_SIMD_MEMBERWISE_FALLBACK(T, N, std::sin, a);
-      }
+    if (!details::IsFastSinCosInput(a)) MOCHI_UNLIKELY {
+      return MOCHI_SIMD_MEMBERWISE_FALLBACK(T, N, std::sin, a);
+    }
     // Reduce x to [-pi/4, pi/4) in quadrant n and compute Taylor series
     Simd<T, N> sin, cos;
     Simd<int, N> n;
@@ -561,10 +559,9 @@ inline std::pair<Simd<T, N>, Simd<T, N>> SinCos(Simd<T, N> a) {
   // time. However, we still use call Sin and Cos separately when they are implemented with SVML, so
   // that the results will be exactly the same.
   if constexpr (!MOCHI_ARCH_X64_SVML && std::is_same_v<T, float>) {
-    if (!details::IsFastSinCosInput(a))
-      MOCHI_UNLIKELY {
-        return {Sin(a), Cos(a)};
-      }
+    if (!details::IsFastSinCosInput(a)) MOCHI_UNLIKELY {
+      return {Sin(a), Cos(a)};
+    }
     Simd<float, N> sin, cos;
     Simd<int, N> n;
     details::SinCosImpl(a, sin, cos, n);

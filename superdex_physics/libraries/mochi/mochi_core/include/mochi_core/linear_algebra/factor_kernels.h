@@ -410,15 +410,14 @@ MOCHI_FORCE_INLINE int Factor(
       A(rv, er) = sum;
     }
     Scalar& d = A(er, er);
-    if (singularDetection(er, d, A.Block(er, er, n - er, n - er)))
-      MOCHI_UNLIKELY {
-        ++singularities;
-        d = Scalar{0};
-        for (int r = er + 1; r < n; ++r) {
-          A(er, r) = Scalar{0};
-        }
-        continue;
+    if (singularDetection(er, d, A.Block(er, er, n - er, n - er))) MOCHI_UNLIKELY {
+      ++singularities;
+      d = Scalar{0};
+      for (int r = er + 1; r < n; ++r) {
+        A(er, r) = Scalar{0};
       }
+      continue;
+    }
     auto const dInv = Scalar(1) / d;
     // Copy to the upper part and multiply by the inverse.
     for (int r = er + 1; r < n; ++r) {
@@ -490,12 +489,11 @@ MOCHI_FORCE_INLINE Matrix<Scalar, kBlockSize, kBlockSize> FactorBlock(
         }
       }
       auto& d = A(r, r);
-      if (singularDetection(r, d, A.Block(r, r, kBlockSize - r, kBlockSize - r)))
-        MOCHI_UNLIKELY {
-          d = Scalar{0};
-          ++singularities;
-          continue;
-        }
+      if (singularDetection(r, d, A.Block(r, r, kBlockSize - r, kBlockSize - r))) MOCHI_UNLIKELY {
+        d = Scalar{0};
+        ++singularities;
+        continue;
+      }
       auto const invD = Scalar{1} / d;
       // Copy lower part to U and multiply by the inverse.
       for (int c = r + 1; c < kBlockSize; ++c) {
@@ -533,31 +531,28 @@ MOCHI_FORCE_INLINE void FlexibleUnblockedPivotFactor(M&& lu, Pvt&& pivot) {
   using Scalar = std::decay_t<decltype(lu(0, 0))>;
   int nRow = lu.Rows();
   for (int k = 0; k < nRow - 1; ++k) {
-    if (!pivot(lu, k))
-      MOCHI_UNLIKELY {
-        return;
-      }
+    if (!pivot(lu, k)) MOCHI_UNLIKELY {
+      return;
+    }
     int rRow = nRow - k - 1;
     auto diag = lu(k, k);
-    if (diag != Scalar{0})
-      MOCHI_LIKELY {
-        auto f = Scalar{1} / diag;
-        auto l = lu.Block(k + 1, k, rRow, 1);
-        auto u = lu.Block(k, k + 1, 1, rRow);
-        auto r = lu.Block(k + 1, k + 1, rRow, rRow);
-        for (int i = 0; i < l.Rows(); ++i) {
-          l(i, 0) /= diag;
-        }
-        lu(k, k) = f;
-        r -= l * u;
+    if (diag != Scalar{0}) MOCHI_LIKELY {
+      auto f = Scalar{1} / diag;
+      auto l = lu.Block(k + 1, k, rRow, 1);
+      auto u = lu.Block(k, k + 1, 1, rRow);
+      auto r = lu.Block(k + 1, k + 1, rRow, rRow);
+      for (int i = 0; i < l.Rows(); ++i) {
+        l(i, 0) /= diag;
       }
+      lu(k, k) = f;
+      r -= l * u;
+    }
   }
   if (pivot(lu, nRow - 1)) {
     auto diag = lu(nRow - 1, nRow - 1);
-    if (diag != Scalar{0})
-      MOCHI_LIKELY {
-        lu(nRow - 1, nRow - 1) = Scalar{1} / diag;
-      }
+    if (diag != Scalar{0}) MOCHI_LIKELY {
+      lu(nRow - 1, nRow - 1) = Scalar{1} / diag;
+    }
   }
 }
 

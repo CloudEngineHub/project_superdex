@@ -734,19 +734,18 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
       normal *= 1_r / norm;
 
       V isNearZero = norm < kNormalIsZeroThreshold;
-      if (AnyTrue(isNearZero))
-        MOCHI_UNLIKELY {
-          // TODO: Support member-wise Select with NdArray
-          if (config.validCollidingNormals) {
-            normal[0] = Select(isNearZero, -nColliding[0], normal[0]);
-            normal[1] = Select(isNearZero, -nColliding[1], normal[1]);
-            normal[2] = Select(isNearZero, -nColliding[2], normal[2]);
-          } else {
-            normal[0] = Select(isNearZero, V{0_r}, normal[0]);
-            normal[1] = Select(isNearZero, V{0_r}, normal[1]);
-            normal[2] = Select(isNearZero, V{0_r}, normal[2]);
-          }
+      if (AnyTrue(isNearZero)) MOCHI_UNLIKELY {
+        // TODO: Support member-wise Select with NdArray
+        if (config.validCollidingNormals) {
+          normal[0] = Select(isNearZero, -nColliding[0], normal[0]);
+          normal[1] = Select(isNearZero, -nColliding[1], normal[1]);
+          normal[2] = Select(isNearZero, -nColliding[2], normal[2]);
+        } else {
+          normal[0] = Select(isNearZero, V{0_r}, normal[0]);
+          normal[1] = Select(isNearZero, V{0_r}, normal[1]);
+          normal[2] = Select(isNearZero, V{0_r}, normal[2]);
         }
+      }
     }
     MOCHI_ASSERT_VERBOSE(
         (NearEqual<kBatchSize, real, V::kSize, real>(Norm(normal), V{1_r}, kNormalIsUnitThreshold)),

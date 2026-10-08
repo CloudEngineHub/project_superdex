@@ -602,12 +602,10 @@ void SceneImpl::SetSleepParams(experimental::SleepParams const& params, Error& e
 void SceneImpl::Step(double timeStepSec) {
   MOCHI_PROFILE_SCOPE();
 
-  if (!(timeStepSec >= 0.0))
-    MOCHI_UNLIKELY {
-      MOCHI_LOG_ERROR(
-          "The time-step size (%.3f s) is invalid. No step will be taken.", timeStepSec);
-      return;
-    }
+  if (!(timeStepSec >= 0.0)) MOCHI_UNLIKELY {
+    MOCHI_LOG_ERROR("The time-step size (%.3f s) is invalid. No step will be taken.", timeStepSec);
+    return;
+  }
 
   Timer totalStepTimer;
 

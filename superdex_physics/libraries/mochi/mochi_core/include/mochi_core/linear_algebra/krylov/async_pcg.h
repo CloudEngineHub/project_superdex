@@ -193,17 +193,14 @@ LinearSolverStatus AsyncPCG(
     betaPrev = beta;
 
     auto const pTAp = dot(p, Ap);
-    if (pTAp < 0 && verbosity >= VerbosityLevel::Warning)
-      MOCHI_UNLIKELY {
-        MOCHI_LOG_WARNING(
-            "Matrix A does not seem to be PSD (%e) at iteration %d.",
-            static_cast<double>(pTAp),
-            iter);
-      }
-    else if (pTAp == 0 && verbosity >= VerbosityLevel::Error)
-      MOCHI_UNLIKELY {
-        MOCHI_LOG_ERROR("Zero A-dot product at iteration %d.", iter);
-      }
+    if (pTAp < 0 && verbosity >= VerbosityLevel::Warning) MOCHI_UNLIKELY {
+      MOCHI_LOG_WARNING(
+          "Matrix A does not seem to be PSD (%e) at iteration %d.",
+          static_cast<double>(pTAp),
+          iter);
+    } else if (pTAp == 0 && verbosity >= VerbosityLevel::Error) MOCHI_UNLIKELY {
+      MOCHI_LOG_ERROR("Zero A-dot product at iteration %d.", iter);
+    }
 
     alpha = rTz / pTAp;
     x += alpha * p; // x_i = x_{i-1} + alpha_i p_i
@@ -251,15 +248,14 @@ LinearSolverStatus AsyncPCG(
           rTz = dot(r, z);
         }
 
-        if (rTz == 0)
-          MOCHI_UNLIKELY {
-            if (verbosity >= VerbosityLevel::Error) {
-              // The residual is not zero at this point. The preconditioner may be singular.
-              MOCHI_LOG_ERROR("Zero preconditioner-dot product at iteration %d.", iter);
-            }
-            isPrecDotZero = true;
-            return;
+        if (rTz == 0) MOCHI_UNLIKELY {
+          if (verbosity >= VerbosityLevel::Error) {
+            // The residual is not zero at this point. The preconditioner may be singular.
+            MOCHI_LOG_ERROR("Zero preconditioner-dot product at iteration %d.", iter);
           }
+          isPrecDotZero = true;
+          return;
+        }
 
         beta = (rTz - beta) / rTzPrev;
         p = z + beta * p;
@@ -300,15 +296,14 @@ LinearSolverStatus AsyncPCG(
           rTz = dot(r, z);
         }
 
-        if (rTz == 0)
-          MOCHI_UNLIKELY {
-            if (verbosity >= VerbosityLevel::Error) {
-              // The residual is not zero at this point. The preconditioner may be singular.
-              MOCHI_LOG_ERROR("Zero preconditioner-dot product at iteration %d.", iter);
-            }
-            isPrecDotZero = true;
-            return;
+        if (rTz == 0) MOCHI_UNLIKELY {
+          if (verbosity >= VerbosityLevel::Error) {
+            // The residual is not zero at this point. The preconditioner may be singular.
+            MOCHI_LOG_ERROR("Zero preconditioner-dot product at iteration %d.", iter);
           }
+          isPrecDotZero = true;
+          return;
+        }
 
         beta = 0;
         p = z;

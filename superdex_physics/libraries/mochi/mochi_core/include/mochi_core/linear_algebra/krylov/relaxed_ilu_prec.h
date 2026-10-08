@@ -448,11 +448,10 @@ void RelaxedILUPrec<BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>>:
     if (_alpha) {
       values[p] -= _alpha * sumDrops;
     }
-    if (colIdx[p] != ib)
-      MOCHI_UNLIKELY {
-        MOCHI_LOG_ERROR("Zero pivot at block row %d.", ib);
-        break;
-      }
+    if (colIdx[p] != ib) MOCHI_UNLIKELY {
+      MOCHI_LOG_ERROR("Zero pivot at block row %d.", ib);
+      break;
+    }
     _uStart[ib] = p;
     _invDiag[ib] = Inverse(values[p]);
     //--- Reset entries of iw
@@ -657,26 +656,22 @@ void RelaxedILUPrec<
     Factorize() {
   for (int i = 0; i < _lu.Rows(); ++i) {
     for (int k = 0; k < i; ++k) {
-      if (!_sparsityMask(i, k))
-        MOCHI_UNLIKELY {
-          continue;
-        }
+      if (!_sparsityMask(i, k)) MOCHI_UNLIKELY {
+        continue;
+      }
       _lu(i, k) *= _lu(k, k);
       for (int j = k + 1; j < _lu.Cols(); ++j) {
-        if (!_sparsityMask(i, j))
-          MOCHI_UNLIKELY {
-            _lu(i, i) -= _alpha * _lu(i, k) * _lu(k, j);
-          }
-        else {
+        if (!_sparsityMask(i, j)) MOCHI_UNLIKELY {
+          _lu(i, i) -= _alpha * _lu(i, k) * _lu(k, j);
+        } else {
           _lu(i, j) -= _lu(i, k) * _lu(k, j);
         }
       }
     }
-    if (_lu(i, i) == Scalar{0})
-      MOCHI_UNLIKELY {
-        MOCHI_LOG_ERROR("Zero pivot at row %d.", i);
-        break;
-      }
+    if (_lu(i, i) == Scalar{0}) MOCHI_UNLIKELY {
+      MOCHI_LOG_ERROR("Zero pivot at row %d.", i);
+      break;
+    }
     _lu(i, i) = Scalar(1) / _lu(i, i);
   } // for (int i = 0; i < _lu.Rows(); ++i)
 }
@@ -838,11 +833,10 @@ void RelaxedILUPrec<SparseMatrix<Scalar, CRIdx, Ptr, Storage>>::Factorize() {
     if (_alpha) {
       luVal[p] -= _alpha * sum;
     }
-    if (luVal[p] == Scalar{0})
-      MOCHI_UNLIKELY {
-        MOCHI_LOG_ERROR("Zero pivot at row %d.", i);
-        break;
-      }
+    if (luVal[p] == Scalar{0}) MOCHI_UNLIKELY {
+      MOCHI_LOG_ERROR("Zero pivot at row %d.", i);
+      break;
+    }
     luVal[p] = NonConstScalar(1) / luVal[p];
     //--- Reset entries of iw
     for (p = luPtr[i]; p < luPtr[i + 1]; ++p) {

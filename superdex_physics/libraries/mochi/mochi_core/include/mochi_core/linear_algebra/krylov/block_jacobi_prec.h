@@ -140,10 +140,9 @@ void BlockJacobiPrec<Scalar, kPrecBlockSize, kIsSymmetric>::ConcurrentSolve(
       rowBegin % kPrecBlockSize == 0 && rowEnd % kPrecBlockSize == 0,
       "The start and end rows must be a multiple of the preconditioner block size");
   auto const numRows = rowEnd - rowBegin;
-  if (numRows == 0)
-    MOCHI_UNLIKELY {
-      return;
-    }
+  if (numRows == 0) MOCHI_UNLIKELY {
+    return;
+  }
   Span<DiagType const> invD(
       &_inverseDiagBlocks[rowBegin / kPrecBlockSize], numRows / kPrecBlockSize);
   ApplyBlockDiagonal<Scalar>(

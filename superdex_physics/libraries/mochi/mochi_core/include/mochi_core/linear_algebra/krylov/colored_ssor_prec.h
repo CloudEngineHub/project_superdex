@@ -441,10 +441,9 @@ void ColoredSSORPrec<BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>>
               _coloredDiagBlock[newBlockRow] = aVal[k];
               for (int i = 0; i < kBlockSize; ++i) {
                 auto const dtmp = _coloredDiagBlock[newBlockRow](i, i);
-                if (dtmp != Scalar{0})
-                  MOCHI_LIKELY {
-                    _coloredDiagBlock[newBlockRow](i, i) = _omega_s / dtmp;
-                  }
+                if (dtmp != Scalar{0}) MOCHI_LIKELY {
+                  _coloredDiagBlock[newBlockRow](i, i) = _omega_s / dtmp;
+                }
               }
             }
           }
@@ -793,11 +792,9 @@ void ColoredSSORPrec<SparseMatrix<Scalar, CRIdx, Ptr, Storage>>::SetNumericalVal
               uVal[uPos++] = aVal[k];
             } else {
               //--- Treat diagonal term
-              if (aVal[k] == Scalar{0})
-                MOCHI_UNLIKELY {
-                  _coloredInvDiag[newRow] = 0;
-                }
-              else {
+              if (aVal[k] == Scalar{0}) MOCHI_UNLIKELY {
+                _coloredInvDiag[newRow] = 0;
+              } else {
                 _coloredInvDiag[newRow] = _omega_s / aVal[k];
               }
             }

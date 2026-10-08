@@ -611,10 +611,9 @@ void UpdateActorConvergenceWeights(
     outWeights.values = GetShellActorResidualWeights(reg, actor, aRef);
   } else if (reg.any_of<TagRodActor>(actor)) {
     outWeights.values = GetRodActorResidualWeights(reg, actor, aRef);
-  } else
-    MOCHI_UNLIKELY {
-      MOCHI_ASSERT(false, "Unexpected actor type.");
-    }
+  } else MOCHI_UNLIKELY {
+    MOCHI_ASSERT(false, "Unexpected actor type.");
+  }
   MOCHI_ASSERT_VERBOSE(IsFinite(MakeConstSpan(outWeights.values)), "Weights must be finite.");
 
   outWeights.isValid = true;

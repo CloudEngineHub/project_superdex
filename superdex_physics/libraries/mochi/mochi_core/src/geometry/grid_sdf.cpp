@@ -539,10 +539,9 @@ void GridSdf::FindPointContactsImpl(
     outputQueue.size += StoreSelected(
         &outputQueue.distancesInGridSpace[scratchBegin], hitMask, distancesInGridSpace);
 
-    if (outputQueue.size >= kQueueFlushThreshold)
-      MOCHI_UNLIKELY {
-        flushOutputQueue();
-      }
+    if (outputQueue.size >= kQueueFlushThreshold) MOCHI_UNLIKELY {
+      flushOutputQueue();
+    }
   };
 
   auto flushDistanceQueue = [&](int flushSize) MOCHI_FORCE_INLINE_LAMBDA {
@@ -642,10 +641,9 @@ void GridSdf::FindPointContactsImpl(
     distanceQueue.size +=
         StoreSelected(&distanceQueue.pointIndices[scratchBegin], hitMask, pointIndices);
 
-    if (distanceQueue.size >= kQueueFlushThreshold)
-      MOCHI_UNLIKELY {
-        flushDistanceQueue(kQueueFlushThreshold);
-      }
+    if (distanceQueue.size >= kQueueFlushThreshold) MOCHI_UNLIKELY {
+      flushDistanceQueue(kQueueFlushThreshold);
+    }
   };
 
   int i = 0;

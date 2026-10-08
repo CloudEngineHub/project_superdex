@@ -339,10 +339,9 @@ void ComputePointCloudContactDetectionFields(
     }
 
     int const numElements = isize(disc.femElements);
-    if (numElements == 0)
-      MOCHI_UNLIKELY {
-        return;
-      }
+    if (numElements == 0) MOCHI_UNLIKELY {
+      return;
+    }
 
     // Populate collider integration weights from element quadrature weights.
     if (outColliderIntegrationWeights != nullptr) {

@@ -338,27 +338,26 @@ LinearSolverStatus ParallelPCG(
         ApplyToRange(A, p, Ap, rowBegin, rowEnd);
 
         auto const pTAp = workerParDot.Dot(dot, p, Ap, rowBegin, rowEnd, workerIdx);
-        if (pTAp <= 0)
-          MOCHI_UNLIKELY {
-            if (!abortIfNotSpd) {
-              if (isMaster && verbosity >= VerbosityLevel::Warning) {
-                MOCHI_LOG_WARNING(
-                    "Matrix does not seem to be SPD at iteration %d. A-dot product: %e.",
-                    iter,
-                    static_cast<double>(pTAp));
-              }
-            } else {
-              if (isMaster) {
-                solverStatus = {
-                    .numIterDone = iter,
-                    .residualNorm = static_cast<double>(workerStatusCheck.GetLatestResidualNorm()),
-                    .relativeResidualNorm =
-                        static_cast<double>(workerStatusCheck.GetLatestRelativeResidualNorm()),
-                    .convergence = LinearSolverConvergenceStatus::Diverged};
-              }
-              return;
+        if (pTAp <= 0) MOCHI_UNLIKELY {
+          if (!abortIfNotSpd) {
+            if (isMaster && verbosity >= VerbosityLevel::Warning) {
+              MOCHI_LOG_WARNING(
+                  "Matrix does not seem to be SPD at iteration %d. A-dot product: %e.",
+                  iter,
+                  static_cast<double>(pTAp));
             }
+          } else {
+            if (isMaster) {
+              solverStatus = {
+                  .numIterDone = iter,
+                  .residualNorm = static_cast<double>(workerStatusCheck.GetLatestResidualNorm()),
+                  .relativeResidualNorm =
+                      static_cast<double>(workerStatusCheck.GetLatestRelativeResidualNorm()),
+                  .convergence = LinearSolverConvergenceStatus::Diverged};
+            }
+            return;
           }
+        }
 
         auto const alpha = rTz / pTAp;
         xWorker += alpha * pWorker; // x_i = x_{i-1} + alpha_i p_i
@@ -395,22 +394,21 @@ LinearSolverStatus ParallelPCG(
           rTz = workerParDot.Dot(dot, r, z, rowBegin, rowEnd, workerIdx);
         }
 
-        if (rTz == 0)
-          MOCHI_UNLIKELY {
-            if (isMaster) {
-              if (verbosity >= VerbosityLevel::Error) {
-                // The residual is not zero at this point. The preconditioner may be singular.
-                MOCHI_LOG_ERROR("Zero Preconditioner-dot product at iteration %d.", iter);
-              }
-              solverStatus = {
-                  .numIterDone = iter,
-                  .residualNorm = static_cast<double>(workerStatusCheck.GetLatestResidualNorm()),
-                  .relativeResidualNorm =
-                      static_cast<double>(workerStatusCheck.GetLatestRelativeResidualNorm()),
-                  .convergence = LinearSolverConvergenceStatus::Diverged};
+        if (rTz == 0) MOCHI_UNLIKELY {
+          if (isMaster) {
+            if (verbosity >= VerbosityLevel::Error) {
+              // The residual is not zero at this point. The preconditioner may be singular.
+              MOCHI_LOG_ERROR("Zero Preconditioner-dot product at iteration %d.", iter);
             }
-            return;
+            solverStatus = {
+                .numIterDone = iter,
+                .residualNorm = static_cast<double>(workerStatusCheck.GetLatestResidualNorm()),
+                .relativeResidualNorm =
+                    static_cast<double>(workerStatusCheck.GetLatestRelativeResidualNorm()),
+                .convergence = LinearSolverConvergenceStatus::Diverged};
           }
+          return;
+        }
 
         beta = (rTz - beta) / rTzPrev;
         pWorker = zWorker + beta * pWorker;
