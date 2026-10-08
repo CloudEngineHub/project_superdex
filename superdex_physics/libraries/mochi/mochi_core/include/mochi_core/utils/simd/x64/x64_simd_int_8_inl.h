@@ -256,24 +256,17 @@ class Simd<int, 8> {
     auto b = Simd::Load<kCount1>(kCount1 == 0 ? ptr : ptr + 8).raw;
     // [16, 17, 18, 19,  20, 21, 22, 23]
     auto c = Simd::Load<kCount2>(kCount2 == 0 ? ptr : ptr + 16).raw;
+    Deinterleave3(a, b, c, out0, out1, out2);
+  }
 
-    auto d = _mm256_blend_epi32(a, b, 0b10010010); // [0,9,_,3,  12,_,6,15]
-    auto e = _mm256_blend_epi32(d, c, 0b00100100); // [0,9,18,3, 12,21,6,15]
-    auto f = _mm256_permute2x128_si256(e, e, 0x01); // [12,21,6,15,  0,9,18,3]
-    auto g = _mm256_blend_epi32(e, f, 0b01000100); // [0,9,6,3, 12,21,18,15]
-    out0.raw = _mm256_shuffle_epi32(g, _MM_SHUFFLE(1, 2, 3, 0)); // [0,3,6,9, 12,15,18,21]
-
-    d = _mm256_blend_epi32(a, b, 0b00100100); // [_,1,10,_,  4,13,_,7]
-    e = _mm256_blend_epi32(d, c, 0b01001001); // [16,1,10,19  4,13,22,7]
-    f = _mm256_permute2x128_si256(e, e, 0x01); // [4,13,22,7  16,1,10,19]
-    g = _mm256_blend_epi32(e, f, 0b10011001); // [4,1,10,7,  16,13,22,19]
-    out1.raw = _mm256_shuffle_epi32(g, _MM_SHUFFLE(2, 3, 0, 1)); // [1,4,7,10,  13,16,19,22]
-
-    d = _mm256_blend_epi32(a, b, 0b01001001); // [8,_,2,11,  _,5,14,_]
-    e = _mm256_blend_epi32(d, c, 0b10010010); // [8,17,2,11,  20,5,14,23]
-    f = _mm256_permute2x128_si256(e, e, 0x01); // [20,5,14,23,  8,17,2,11]
-    g = _mm256_blend_epi32(e, f, 0b00100010); // [8,5,2,11,  20,17,14,23]
-    out2.raw = _mm256_shuffle_epi32(g, _MM_SHUFFLE(3, 0, 1, 2)); // [2,5,8,11,  14,17,20,23]
+  MOCHI_FORCE_INLINE static void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    int const n = count * 3;
+    auto a = Simd::Load(ptr, mochi::Min(n, 8)).raw;
+    auto b = Simd::Load(n > 8 ? ptr + 8 : ptr, Clamp(n - 8, 0, 8)).raw;
+    auto c = Simd::Load(n > 16 ? ptr + 16 : ptr, Clamp(n - 16, 0, 8)).raw;
+    Deinterleave3(a, b, c, out0, out1, out2);
   }
 
   template <int N = kSize>
@@ -323,32 +316,42 @@ class Simd<int, 8> {
   template <int kTupleCount = kSize>
   MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c) {
     static_assert(kTupleCount >= 1 && kTupleCount <= kSize, "Invalid kTupleCount");
-    // a = [0,3,6,9, 12,15,18,21]
-    // b = [1,4,7,10, 13,16,19,22]
-    // c = [2,5,8,11, 14,17,20,23]
-    auto d = _mm256_shuffle_epi32(a.raw, _MM_SHUFFLE(1, 2, 3, 0)); // [0,9,6,3, 12,21,18,15]
-    auto e = _mm256_shuffle_epi32(b.raw, _MM_SHUFFLE(2, 3, 0, 1)); // [4,1,10,7, 16,13,22,19]
-    auto f = _mm256_shuffle_epi32(c.raw, _MM_SHUFFLE(3, 0, 1, 2)); // [8,5,2,11, 20,17,14,23]
-    __m256i g = _mm256_blend_epi32(d, e, 0b00100010); // [0,1,_,3, 12,13,_,15]
-    g = _mm256_blend_epi32(g, f, 0b01000100); // [0,1,2,3, 12,13,14,15]
-    __m256i h = _mm256_blend_epi32(d, e, 0b10011001); // [4,_,6,7, 16,_,18,19]
-    h = _mm256_blend_epi32(h, f, 0b00100010); // [4,5,6,7, 16,17,18,19]
-    h = _mm256_permute2x128_si256(h, h, 0x01); // [16,17,18,19, 4,5,6,7]
-    __m256i i = _mm256_blend_epi32(d, e, 0b01000100); // [_,9,10,_, _,21,22,_]
-    i = _mm256_blend_epi32(i, f, 0b10011001); // [8,9,10,11, 20,21,22,23]
-    d = _mm256_blend_epi32(g, h, 0b11110000); // [0,1,2,3, 4,5,6,7]
-    e = _mm256_blend_epi32(i, g, 0b11110000); // [8,9,10,11, 12,13,14,15]
-    f = _mm256_blend_epi32(h, i, 0b11110000); // [16,17,18,19, 20,21,22,23]
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
     constexpr int kCount0 = Clamp(kTupleCount * 3 - 0, 0, 8);
     constexpr int kCount1 = Clamp(kTupleCount * 3 - 8, 0, 8);
     constexpr int kCount2 = Clamp(kTupleCount * 3 - 16, 0, 8);
-    Simd::Store<kCount0>(ptr, d);
+    Simd::Store<kCount0>(ptr, x0);
     if constexpr (kCount1 > 0) {
-      Simd::Store<kCount1>(ptr + 8, e);
+      Simd::Store<kCount1>(ptr + 8, x1);
     }
     if constexpr (kCount2 > 0) {
-      Simd::Store<kCount2>(ptr + 16, f);
+      Simd::Store<kCount2>(ptr + 16, x2);
     }
+  }
+
+  MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
+#if MOCHI_ARCH_X64_AVX512
+    // Bit i selects scalar i. Masks come from shifts, not clamped counts, which clang may turn
+    // back into branches. A zero mask stores nothing.
+    uint32_t const bits = (1u << (count * 3)) - 1;
+    _mm256_mask_storeu_epi32(ptr, static_cast<__mmask8>(bits), x0.raw); // AVX512VL
+    _mm256_mask_storeu_epi32(ptr + (count > 2 ? 8 : 0), static_cast<__mmask8>(bits >> 8), x1.raw);
+    _mm256_mask_storeu_epi32(ptr + (count > 5 ? 16 : 0), static_cast<__mmask8>(bits >> 16), x2.raw);
+#else
+    // Scalar i is stored if i < count * 3. Comparing against scalar indices avoids clamped
+    // counts, which clang may turn back into branches. A zero mask stores nothing.
+    auto const n = _mm256_set1_epi32(count * 3);
+    auto const mask0 = _mm256_cmpgt_epi32(n, _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7)); // AVX2
+    auto const mask1 = _mm256_cmpgt_epi32(n, _mm256_setr_epi32(8, 9, 10, 11, 12, 13, 14, 15));
+    auto const mask2 = _mm256_cmpgt_epi32(n, _mm256_setr_epi32(16, 17, 18, 19, 20, 21, 22, 23));
+    _mm256_maskstore_epi32(ptr, mask0, x0.raw); // AVX2
+    _mm256_maskstore_epi32(ptr + (count > 2 ? 8 : 0), mask1, x1.raw);
+    _mm256_maskstore_epi32(ptr + (count > 5 ? 16 : 0), mask2, x2.raw);
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Min(Simd a, Simd b) {
@@ -463,6 +466,49 @@ class Simd<int, 8> {
   // One bit per lane, from the lane's sign bit.
   [[nodiscard]] static MOCHI_FORCE_INLINE int ToMask(Simd a) {
     return _mm256_movemask_ps(_mm256_castsi256_ps(a.raw)); // AVX, AVX
+  }
+
+  // Splits 24 consecutive scalars {a, b, c} into 3 vectors of every third scalar.
+  MOCHI_FORCE_INLINE static void
+  Deinterleave3(__m256i a, __m256i b, __m256i c, Simd& out0, Simd& out1, Simd& out2) {
+    auto d = _mm256_blend_epi32(a, b, 0b10010010); // [0,9,_,3,  12,_,6,15]
+    auto e = _mm256_blend_epi32(d, c, 0b00100100); // [0,9,18,3, 12,21,6,15]
+    auto f = _mm256_permute2x128_si256(e, e, 0x01); // [12,21,6,15,  0,9,18,3]
+    auto g = _mm256_blend_epi32(e, f, 0b01000100); // [0,9,6,3, 12,21,18,15]
+    out0.raw = _mm256_shuffle_epi32(g, _MM_SHUFFLE(1, 2, 3, 0)); // [0,3,6,9, 12,15,18,21]
+
+    d = _mm256_blend_epi32(a, b, 0b00100100); // [_,1,10,_,  4,13,_,7]
+    e = _mm256_blend_epi32(d, c, 0b01001001); // [16,1,10,19  4,13,22,7]
+    f = _mm256_permute2x128_si256(e, e, 0x01); // [4,13,22,7  16,1,10,19]
+    g = _mm256_blend_epi32(e, f, 0b10011001); // [4,1,10,7,  16,13,22,19]
+    out1.raw = _mm256_shuffle_epi32(g, _MM_SHUFFLE(2, 3, 0, 1)); // [1,4,7,10,  13,16,19,22]
+
+    d = _mm256_blend_epi32(a, b, 0b01001001); // [8,_,2,11,  _,5,14,_]
+    e = _mm256_blend_epi32(d, c, 0b10010010); // [8,17,2,11,  20,5,14,23]
+    f = _mm256_permute2x128_si256(e, e, 0x01); // [20,5,14,23,  8,17,2,11]
+    g = _mm256_blend_epi32(e, f, 0b00100010); // [8,5,2,11,  20,17,14,23]
+    out2.raw = _mm256_shuffle_epi32(g, _MM_SHUFFLE(3, 0, 1, 2)); // [2,5,8,11,  14,17,20,23]
+  }
+
+  // Inverse of Deinterleave3: out0, out1, out2 are the 24 interleaved scalars in memory order.
+  MOCHI_FORCE_INLINE static void
+  Interleave3(Simd a, Simd b, Simd c, Simd& out0, Simd& out1, Simd& out2) {
+    // a = [0,3,6,9, 12,15,18,21]
+    // b = [1,4,7,10, 13,16,19,22]
+    // c = [2,5,8,11, 14,17,20,23]
+    auto d = _mm256_shuffle_epi32(a.raw, _MM_SHUFFLE(1, 2, 3, 0)); // [0,9,6,3, 12,21,18,15]
+    auto e = _mm256_shuffle_epi32(b.raw, _MM_SHUFFLE(2, 3, 0, 1)); // [4,1,10,7, 16,13,22,19]
+    auto f = _mm256_shuffle_epi32(c.raw, _MM_SHUFFLE(3, 0, 1, 2)); // [8,5,2,11, 20,17,14,23]
+    __m256i g = _mm256_blend_epi32(d, e, 0b00100010); // [0,1,_,3, 12,13,_,15]
+    g = _mm256_blend_epi32(g, f, 0b01000100); // [0,1,2,3, 12,13,14,15]
+    __m256i h = _mm256_blend_epi32(d, e, 0b10011001); // [4,_,6,7, 16,_,18,19]
+    h = _mm256_blend_epi32(h, f, 0b00100010); // [4,5,6,7, 16,17,18,19]
+    h = _mm256_permute2x128_si256(h, h, 0x01); // [16,17,18,19, 4,5,6,7]
+    __m256i i = _mm256_blend_epi32(d, e, 0b01000100); // [_,9,10,_, _,21,22,_]
+    i = _mm256_blend_epi32(i, f, 0b10011001); // [8,9,10,11, 20,21,22,23]
+    out0 = _mm256_blend_epi32(g, h, 0b11110000); // [0,1,2,3, 4,5,6,7]
+    out1 = _mm256_blend_epi32(i, g, 0b11110000); // [8,9,10,11, 12,13,14,15]
+    out2 = _mm256_blend_epi32(h, i, 0b11110000); // [16,17,18,19, 20,21,22,23]
   }
 };
 

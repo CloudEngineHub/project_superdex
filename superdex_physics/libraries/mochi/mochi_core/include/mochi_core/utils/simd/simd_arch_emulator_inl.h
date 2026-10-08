@@ -330,6 +330,19 @@ class Simd<T, N> {
     eval(std::make_index_sequence<kSize>{});
   }
 
+  MOCHI_ANY MOCHI_FORCE_INLINE static void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    for (int i = 0; i < count; ++i) {
+      out0.raw[i] = ptr[i * 3 + 0];
+      out1.raw[i] = ptr[i * 3 + 1];
+      out2.raw[i] = ptr[i * 3 + 2];
+    }
+    for (int i = count; i < kSize; ++i) {
+      out0.raw[i] = out1.raw[i] = out2.raw[i] = Scalar{0};
+    }
+  }
+
   template <int M = kSize>
   MOCHI_ANY MOCHI_FORCE_INLINE static void Store(
       [[maybe_unused]] Scalar* ptr,
@@ -372,6 +385,16 @@ class Simd<T, N> {
        ...);
     };
     eval(std::make_index_sequence<kSize>{});
+  }
+
+  MOCHI_ANY MOCHI_FORCE_INLINE static void
+  StoreTransposed(Scalar* ptr, Simd out0, Simd out1, Simd out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    for (int i = 0; i < count; ++i) {
+      ptr[i * 3 + 0] = out0.raw[i];
+      ptr[i * 3 + 1] = out1.raw[i];
+      ptr[i * 3 + 2] = out2.raw[i];
+    }
   }
 
   template <int M = kSize>

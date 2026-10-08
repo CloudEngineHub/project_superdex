@@ -18,9 +18,12 @@
 
 #include <mochi_core/utils/half.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -243,6 +246,68 @@ TEST_IF(
 }
 
 #undef MOCHI_TEST_USES_CUSTOM_FLOAT_SIN_COS_BACKEND
+
+// Expects LoadTransposed and StoreTransposed with a runtime count to read and write exactly
+// (count * 3) scalars, with zeros in the unused lanes.
+template <class T, int N>
+static void ExpectTransposedIOWithRuntimeCount() {
+  using V = Simd<T, N>;
+  T constexpr kSentinel = static_cast<T>(-911);
+  std::array<T, 3 * N + 2> tuples{};
+  tuples.fill(kSentinel);
+  T* const unaligned = tuples.data() + 1;
+  for (int i = 0; i < 3 * N; ++i) {
+    unaligned[i] = static_cast<T>(i + 1);
+  }
+  for (int count = 0; count <= N; ++count) {
+    SCOPED_TRACE(testing::Message() << "N=" << N << " count=" << count);
+    // `exact` ends after (count * 3) scalars, so ASan flags an over-read where loads are
+    // instrumented (not AVX2 masked or NEON lane loads). `unaligned` continues with non-zero
+    // data, so an over-read fails the zero-lane check on every backend.
+    auto const source = std::make_unique<T[]>(3 * count + 1);
+    T* const exact = source.get() + 1;
+    std::copy_n(unaligned, 3 * count, exact);
+    for (T const* src : {exact, unaligned}) {
+      SCOPED_TRACE(src == exact ? "source=exact" : "source=unaligned");
+      // Non-zero lanes before the load, so the zero check fails unless the load zeroes them.
+      V x(kSentinel), y(kSentinel), z(kSentinel);
+      LoadTransposed(src, x, y, z, count);
+      for (int i = 0; i < N; ++i) {
+        EXPECT_EQ(i < count ? unaligned[3 * i + 0] : T{}, x[i]);
+        EXPECT_EQ(i < count ? unaligned[3 * i + 1] : T{}, y[i]);
+        EXPECT_EQ(i < count ? unaligned[3 * i + 2] : T{}, z[i]);
+      }
+
+      std::array<T, 3 * N + 2> stored{};
+      stored.fill(kSentinel);
+      StoreTransposed(stored.data() + 1, x, y, z, count);
+      for (int i = 0; i < isize(stored); ++i) {
+        EXPECT_EQ(i >= 1 && i <= 3 * count ? tuples[i] : kSentinel, stored[i]);
+      }
+    }
+  }
+}
+
+TEST(Simd, TransposedIOWithRuntimeCount) {
+  ExpectTransposedIOWithRuntimeCount<float, 4>();
+  ExpectTransposedIOWithRuntimeCount<float, 8>();
+  ExpectTransposedIOWithRuntimeCount<float, 12>();
+  ExpectTransposedIOWithRuntimeCount<float, 16>();
+  ExpectTransposedIOWithRuntimeCount<double, 2>();
+  ExpectTransposedIOWithRuntimeCount<double, 4>();
+  ExpectTransposedIOWithRuntimeCount<double, 6>();
+  ExpectTransposedIOWithRuntimeCount<double, 8>();
+  ExpectTransposedIOWithRuntimeCount<double, 16>();
+  ExpectTransposedIOWithRuntimeCount<int, 4>();
+  ExpectTransposedIOWithRuntimeCount<int, 8>();
+  ExpectTransposedIOWithRuntimeCount<int, 12>();
+  ExpectTransposedIOWithRuntimeCount<int, 16>();
+  ExpectTransposedIOWithRuntimeCount<int64_t, 2>();
+  ExpectTransposedIOWithRuntimeCount<int64_t, 4>();
+  ExpectTransposedIOWithRuntimeCount<int64_t, 6>();
+  ExpectTransposedIOWithRuntimeCount<int64_t, 8>();
+  ExpectTransposedIOWithRuntimeCount<int64_t, 16>();
+}
 
 #if MOCHI_USE_SIMD
 

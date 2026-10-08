@@ -226,6 +226,18 @@ class Simd<float, 16> {
     }
   }
 
+  MOCHI_FORCE_INLINE static void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    int const n = count * 3;
+    auto const x0 = Load(ptr, mochi::Min(n, kSize)).raw;
+    auto const x1 = Load(n > kSize ? ptr + kSize : ptr, Clamp(n - kSize, 0, kSize)).raw;
+    auto const x2 = Load(n > 2 * kSize ? ptr + 2 * kSize : ptr, Clamp(n - 2 * kSize, 0, kSize)).raw;
+    out0.raw = DeinterleaveComponent<0>(x0, x1, x2);
+    out1.raw = DeinterleaveComponent<1>(x0, x1, x2);
+    out2.raw = DeinterleaveComponent<2>(x0, x1, x2);
+  }
+
   template <int N = kSize>
   static MOCHI_FORCE_INLINE void Store([[maybe_unused]] Scalar* ptr, [[maybe_unused]] Simd v) {
     static_assert(N >= 0 && N <= kSize);
@@ -273,27 +285,27 @@ class Simd<float, 16> {
       return;
     }
     constexpr int kTotalCount = kTupleCount * 3;
-    auto const ab0 = _mm512_permutex2var_ps(
-        a.raw, _mm512_setr_epi32(0, 16, 0, 1, 17, 0, 2, 18, 0, 3, 19, 0, 4, 20, 0, 5), b.raw);
-    auto const x0 = _mm512_permutex2var_ps(
-        ab0, _mm512_setr_epi32(0, 1, 16, 3, 4, 17, 6, 7, 18, 9, 10, 19, 12, 13, 20, 15), c.raw);
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
     Store<Clamp(kTotalCount, 0, kSize)>(ptr, x0);
     if constexpr (kTotalCount > kSize) {
-      auto const ab1 = _mm512_permutex2var_ps(
-          a.raw, _mm512_setr_epi32(21, 0, 6, 22, 0, 7, 23, 0, 8, 24, 0, 9, 25, 0, 10, 26), b.raw);
-      auto const x1 = _mm512_permutex2var_ps(
-          ab1, _mm512_setr_epi32(0, 21, 2, 3, 22, 5, 6, 23, 8, 9, 24, 11, 12, 25, 14, 15), c.raw);
       Store<Clamp(kTotalCount - kSize, 0, kSize)>(ptr + kSize, x1);
     }
     if constexpr (kTotalCount > 2 * kSize) {
-      auto const ab2 = _mm512_permutex2var_ps(
-          a.raw,
-          _mm512_setr_epi32(0, 11, 27, 0, 12, 28, 0, 13, 29, 0, 14, 30, 0, 15, 31, 0),
-          b.raw);
-      auto const x2 = _mm512_permutex2var_ps(
-          ab2, _mm512_setr_epi32(26, 1, 2, 27, 4, 5, 28, 7, 8, 29, 10, 11, 30, 13, 14, 31), c.raw);
       Store<kTotalCount - 2 * kSize>(ptr + 2 * kSize, x2);
     }
+  }
+
+  MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
+    // Bit i selects scalar i. Masks come from shifts, not clamped counts, which clang may turn
+    // back into branches. A zero mask stores nothing.
+    uint64_t const bits = (uint64_t{1} << (count * 3)) - 1;
+    _mm512_mask_storeu_ps(ptr, static_cast<__mmask16>(bits), x0.raw); // AVX512F
+    _mm512_mask_storeu_ps(ptr + (count > 5 ? 16 : 0), static_cast<__mmask16>(bits >> 16), x1.raw);
+    _mm512_mask_storeu_ps(ptr + (count > 10 ? 32 : 0), static_cast<__mmask16>(bits >> 32), x2.raw);
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Select(Simd mask, Simd a, Simd b) {
@@ -547,6 +559,38 @@ class Simd<float, 16> {
         kTupleCount > 13 ? 39 + kComponent : kZeroIndex,
         kTupleCount > 14 ? 42 + kComponent : kZeroIndex,
         kTupleCount > 15 ? 45 + kComponent : kZeroIndex);
+  }
+
+  // Returns every third scalar, starting at kComponent, of the 3 * kSize consecutive scalars
+  // {x0, x1, x2}.
+  template <int kComponent>
+  [[nodiscard]] static MOCHI_FORCE_INLINE __m512
+  DeinterleaveComponent(__m512 x0, __m512 x1, __m512 x2) {
+    auto const index = LoadTransposeIndices<kSize, kComponent>();
+    // Lanes whose index is at least 2 * kSize read from x2. permutexvar uses the index modulo
+    // kSize.
+    constexpr auto kLanesFromX2 =
+        static_cast<__mmask16>(~LaneMask<(2 * kSize - kComponent + 2) / 3>());
+    auto const fromX0X1 = _mm512_permutex2var_ps(x0, index, x1); // AVX512F
+    return _mm512_mask_permutexvar_ps(fromX0X1, kLanesFromX2, index, x2); // AVX512F
+  }
+
+  // Inverse of DeinterleaveComponent<0..2>: out0, out1, out2 are the 48 interleaved scalars in
+  // memory order.
+  MOCHI_FORCE_INLINE static void
+  Interleave3(Simd a, Simd b, Simd c, Simd& out0, Simd& out1, Simd& out2) {
+    auto const ab0 = _mm512_permutex2var_ps(
+        a.raw, _mm512_setr_epi32(0, 16, 0, 1, 17, 0, 2, 18, 0, 3, 19, 0, 4, 20, 0, 5), b.raw);
+    out0.raw = _mm512_permutex2var_ps(
+        ab0, _mm512_setr_epi32(0, 1, 16, 3, 4, 17, 6, 7, 18, 9, 10, 19, 12, 13, 20, 15), c.raw);
+    auto const ab1 = _mm512_permutex2var_ps(
+        a.raw, _mm512_setr_epi32(21, 0, 6, 22, 0, 7, 23, 0, 8, 24, 0, 9, 25, 0, 10, 26), b.raw);
+    out1.raw = _mm512_permutex2var_ps(
+        ab1, _mm512_setr_epi32(0, 21, 2, 3, 22, 5, 6, 23, 8, 9, 24, 11, 12, 25, 14, 15), c.raw);
+    auto const ab2 = _mm512_permutex2var_ps(
+        a.raw, _mm512_setr_epi32(0, 11, 27, 0, 12, 28, 0, 13, 29, 0, 14, 30, 0, 15, 31, 0), b.raw);
+    out2.raw = _mm512_permutex2var_ps(
+        ab2, _mm512_setr_epi32(26, 1, 2, 27, 4, 5, 28, 7, 8, 29, 10, 11, 30, 13, 14, 31), c.raw);
   }
 
   // Returns a mask selecting the lowest N lanes.

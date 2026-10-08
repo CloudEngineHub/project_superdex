@@ -137,9 +137,17 @@ class Simd<int64_t, 2> {
     auto a = _mm_castsi128_pd(Simd::Load<2>(ptr).raw); // [0,1]
     auto b = _mm_castsi128_pd(Simd::Load<kCount1>(kCount1 == 0 ? ptr : ptr + 2).raw); // [2,3]
     auto c = _mm_castsi128_pd(Simd::Load<kCount2>(kCount2 == 0 ? ptr : ptr + 4).raw); // [4,5]
-    out0.raw = _mm_castpd_si128(_mm_shuffle_pd(a, b, 0b0010)); // [0,3]
-    out1.raw = _mm_castpd_si128(_mm_shuffle_pd(a, c, 0b0001)); // [1,4]
-    out2.raw = _mm_castpd_si128(_mm_shuffle_pd(b, c, 0b0010)); // [2,5]
+    Deinterleave3(a, b, c, out0, out1, out2);
+  }
+
+  MOCHI_FORCE_INLINE static void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    int const n = count * 3;
+    auto a = _mm_castsi128_pd(Simd::Load(ptr, mochi::Min(n, 2)).raw); // [0,1]
+    auto b = _mm_castsi128_pd(Simd::Load(n > 2 ? ptr + 2 : ptr, Clamp(n - 2, 0, 2)).raw); // [2,3]
+    auto c = _mm_castsi128_pd(Simd::Load(n > 4 ? ptr + 4 : ptr, Clamp(n - 4, 0, 2)).raw); // [4,5]
+    Deinterleave3(a, b, c, out0, out1, out2);
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Min(Simd a, Simd b) {
@@ -220,19 +228,41 @@ class Simd<int64_t, 2> {
   template <int kTupleCount = kSize>
   MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c) {
     static_assert(kTupleCount >= 1 && kTupleCount <= kSize, "Invalid kTupleCount");
-    // a = [0,3], b = [1,4], c = [2,5]
-    auto d = _mm_shuffle_pd(_mm_castsi128_pd(a.raw), _mm_castsi128_pd(b.raw), 0b00); // [0,1]
-    auto e = _mm_shuffle_pd(_mm_castsi128_pd(c.raw), _mm_castsi128_pd(a.raw), 0b10); // [2,3]
-    auto f = _mm_shuffle_pd(_mm_castsi128_pd(b.raw), _mm_castsi128_pd(c.raw), 0b11); // [4,5]
-    Simd::Store<2>(ptr, _mm_castpd_si128(d));
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
+    Simd::Store<2>(ptr, x0);
     constexpr int kCount1 = Clamp(kTupleCount * 3 - 2, 0, 2);
     constexpr int kCount2 = Clamp(kTupleCount * 3 - 4, 0, 2);
     if constexpr (kCount1 > 0) {
-      Simd::Store<kCount1>(ptr + 2, _mm_castpd_si128(e));
+      Simd::Store<kCount1>(ptr + 2, x1);
     }
     if constexpr (kCount2 > 0) {
-      Simd::Store<kCount2>(ptr + 4, _mm_castpd_si128(f));
+      Simd::Store<kCount2>(ptr + 4, x2);
     }
+  }
+
+  MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
+#if MOCHI_ARCH_X64_AVX512
+    // Bit i selects scalar i. Masks come from shifts, not clamped counts, which clang may turn
+    // back into branches. A zero mask stores nothing.
+    uint32_t const bits = (1u << (count * 3)) - 1;
+    _mm_mask_storeu_epi64(ptr, static_cast<__mmask8>(bits), x0.raw); // AVX512VL
+    _mm_mask_storeu_epi64(ptr + (count > 0 ? 2 : 0), static_cast<__mmask8>(bits >> 2), x1.raw);
+    _mm_mask_storeu_epi64(ptr + (count > 1 ? 4 : 0), static_cast<__mmask8>(bits >> 4), x2.raw);
+#else
+    // Scalar i is stored if i < count * 3. Comparing against scalar indices avoids clamped
+    // counts, which clang may turn back into branches. A zero mask stores nothing.
+    auto const n = _mm_set1_epi64x(count * 3);
+    auto const mask0 = _mm_cmpgt_epi64(n, _mm_set_epi64x(1, 0)); // SSE4.2
+    auto const mask1 = _mm_cmpgt_epi64(n, _mm_set_epi64x(3, 2));
+    auto const mask2 = _mm_cmpgt_epi64(n, _mm_set_epi64x(5, 4));
+    _mm_maskstore_epi64(reinterpret_cast<long long*>(ptr), mask0, x0.raw); // AVX2
+    _mm_maskstore_epi64(reinterpret_cast<long long*>(ptr + (count > 0 ? 2 : 0)), mask1, x1.raw);
+    _mm_maskstore_epi64(reinterpret_cast<long long*>(ptr + (count > 1 ? 4 : 0)), mask2, x2.raw);
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Zero() {
@@ -346,6 +376,26 @@ class Simd<int64_t, 2> {
 #else
     return _mm_movemask_pd(_mm_castsi128_pd(a.raw)); // SSE2, SSE2
 #endif
+  }
+
+  // Splits 6 consecutive scalars {a, b, c} into 3 vectors of every third scalar.
+  MOCHI_FORCE_INLINE static void
+  Deinterleave3(__m128d a, __m128d b, __m128d c, Simd& out0, Simd& out1, Simd& out2) {
+    out0.raw = _mm_castpd_si128(_mm_shuffle_pd(a, b, 0b0010)); // [0,3]
+    out1.raw = _mm_castpd_si128(_mm_shuffle_pd(a, c, 0b0001)); // [1,4]
+    out2.raw = _mm_castpd_si128(_mm_shuffle_pd(b, c, 0b0010)); // [2,5]
+  }
+
+  // Inverse of Deinterleave3: out0, out1, out2 are the 6 interleaved scalars in memory order.
+  MOCHI_FORCE_INLINE static void
+  Interleave3(Simd a, Simd b, Simd c, Simd& out0, Simd& out1, Simd& out2) {
+    // a = [0,3], b = [1,4], c = [2,5]
+    auto const a_ = _mm_castsi128_pd(a.raw);
+    auto const b_ = _mm_castsi128_pd(b.raw);
+    auto const c_ = _mm_castsi128_pd(c.raw);
+    out0.raw = _mm_castpd_si128(_mm_shuffle_pd(a_, b_, 0b00)); // [0,1]
+    out1.raw = _mm_castpd_si128(_mm_shuffle_pd(c_, a_, 0b10)); // [2,3]
+    out2.raw = _mm_castpd_si128(_mm_shuffle_pd(b_, c_, 0b11)); // [4,5]
   }
 };
 

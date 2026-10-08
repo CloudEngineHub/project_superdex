@@ -241,22 +241,22 @@ inline void ArrayTransformPoints_MatT(
     auto const trans = Broadcast3<V>(matT[3]); // 3xN
     auto const transform = [&](NdArray<V, 3> const& pt)
                                MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt, rotT) + trans; };
+    // Local spans stay in registers. Reading them through the captures reloads them after stores.
+    auto const srcLocal = src;
+    auto const dstLocal = dst;
     int i = iBegin;
     for (; i + kBatchSize <= iEnd; i += kBatchSize) {
       NdArray<V, 3> pt;
-      LoadTransposed(&src[i][0], pt);
+      LoadTransposed(&srcLocal[i][0], pt);
       auto const result = transform(pt);
-      StoreTransposed(&dst[i][0], result);
+      StoreTransposed(&dstLocal[i][0], result);
     }
-    // Pad the tail to a full batch, so every point's result is independent of its index.
+    // Process the tail as a partial batch, so every point's result is independent of its index.
     if (i < iEnd) {
-      alignas(V) NdArray<T, 3> buf[kBatchSize] = {};
-      std::copy_n(&src[i], iEnd - i, buf);
       NdArray<V, 3> pt;
-      LoadTransposed(&buf[0][0], pt);
+      LoadTransposed(&srcLocal[i][0], pt, iEnd - i);
       auto const result = transform(pt);
-      StoreTransposed(&buf[0][0], result);
-      std::copy_n(buf, iEnd - i, &dst[i]);
+      StoreTransposed(&dstLocal[i][0], result, iEnd - i);
     }
   };
   if constexpr (kSingleThreaded) {
@@ -304,26 +304,25 @@ inline void ArrayTransformDisplacements_MatT(
     auto const transform =
         [&](NdArray<V, 3> const& pt, NdArray<V, 3> const& ref)
             MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt + ref, rotT) + trans - ref; };
+    // Local spans stay in registers. Reading them through the captures reloads them after stores.
+    auto const refLocal = refCoords;
+    auto const srcLocal = srcDisplacements;
+    auto const dstLocal = dstDisplacements;
     int i = iBegin;
     for (; i + kBatchSize <= iEnd; i += kBatchSize) {
       NdArray<V, 3> ref, pt;
-      LoadTransposed(&refCoords[i][0], ref);
-      LoadTransposed(&srcDisplacements[i][0], pt);
+      LoadTransposed(&refLocal[i][0], ref);
+      LoadTransposed(&srcLocal[i][0], pt);
       auto const result = transform(pt, ref);
-      StoreTransposed(&dstDisplacements[i][0], result);
+      StoreTransposed(&dstLocal[i][0], result);
     }
-    // Pad the tail to a full batch, so every point's result is independent of its index.
+    // Process the tail as a partial batch, so every point's result is independent of its index.
     if (i < iEnd) {
-      alignas(V) NdArray<T, 3> refBuf[kBatchSize] = {};
-      alignas(V) NdArray<T, 3> buf[kBatchSize] = {};
-      std::copy_n(&refCoords[i], iEnd - i, refBuf);
-      std::copy_n(&srcDisplacements[i], iEnd - i, buf);
       NdArray<V, 3> ref, pt;
-      LoadTransposed(&refBuf[0][0], ref);
-      LoadTransposed(&buf[0][0], pt);
+      LoadTransposed(&refLocal[i][0], ref, iEnd - i);
+      LoadTransposed(&srcLocal[i][0], pt, iEnd - i);
       auto const result = transform(pt, ref);
-      StoreTransposed(&buf[0][0], result);
-      std::copy_n(buf, iEnd - i, &dstDisplacements[i]);
+      StoreTransposed(&dstLocal[i][0], result, iEnd - i);
     }
   };
   if constexpr (kSingleThreaded) {
@@ -393,22 +392,22 @@ void ArrayRotateVectors_MatT(
     auto const rotT = Broadcast3x3<V>(matT); // 3x3xN
     auto const rotate = [&](NdArray<V, 3> const& pt)
                             MOCHI_FORCE_INLINE_LAMBDA { return DotVecMat(pt, rotT); };
+    // Local spans stay in registers. Reading them through the captures reloads them after stores.
+    auto const srcLocal = src;
+    auto const dstLocal = dst;
     int i = iBegin;
     for (; i + kBatchSize <= iEnd; i += kBatchSize) {
       NdArray<V, 3> pt;
-      LoadTransposed(&src[i][0], pt);
+      LoadTransposed(&srcLocal[i][0], pt);
       auto const result = rotate(pt);
-      StoreTransposed(&dst[i][0], result);
+      StoreTransposed(&dstLocal[i][0], result);
     }
-    // Pad the tail to a full batch, so every point's result is independent of its index.
+    // Process the tail as a partial batch, so every point's result is independent of its index.
     if (i < iEnd) {
-      alignas(V) NdArray<T, 3> buf[kBatchSize] = {};
-      std::copy_n(&src[i], iEnd - i, buf);
       NdArray<V, 3> pt;
-      LoadTransposed(&buf[0][0], pt);
+      LoadTransposed(&srcLocal[i][0], pt, iEnd - i);
       auto const result = rotate(pt);
-      StoreTransposed(&buf[0][0], result);
-      std::copy_n(buf, iEnd - i, &dst[i]);
+      StoreTransposed(&dstLocal[i][0], result, iEnd - i);
     }
   };
   if constexpr (kSingleThreaded) {

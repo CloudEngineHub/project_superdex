@@ -210,6 +210,12 @@ LoadTransposed(T const* ptr, Simd<T, N>& out0, Simd<T, N>& out1, Simd<T, N>& out
   Simd<T, N>::template LoadTransposed<kTupleCount_>(ptr, out0, out1, out2);
 }
 
+template <class T, int N>
+MOCHI_ANY MOCHI_FORCE_INLINE void
+LoadTransposed(T const* ptr, Simd<T, N>& out0, Simd<T, N>& out1, Simd<T, N>& out2, int count) {
+  Simd<T, N>::LoadTransposed(ptr, out0, out1, out2, count);
+}
+
 template <int COUNT, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE void Store(T* ptr, Simd<T, N> a) {
   constexpr int COUNT_ = (COUNT == -1) ? N : COUNT;
@@ -246,6 +252,12 @@ MOCHI_ANY MOCHI_FORCE_INLINE void
 StoreTransposed(T* ptr, Simd<T, N> a, Simd<T, N> b, Simd<T, N> c) {
   constexpr int kTupleCount_ = (kTupleCount == -1) ? N : kTupleCount;
   Simd<T, N>::template StoreTransposed<kTupleCount_>(ptr, a, b, c);
+}
+
+template <class T, int N>
+MOCHI_ANY MOCHI_FORCE_INLINE void
+StoreTransposed(T* ptr, Simd<T, N> a, Simd<T, N> b, Simd<T, N> c, int count) {
+  Simd<T, N>::StoreTransposed(ptr, a, b, c, count);
 }
 
 template <class T, int N, class MaskT>

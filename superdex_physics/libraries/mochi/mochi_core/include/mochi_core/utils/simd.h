@@ -383,6 +383,13 @@ template <int kTupleCount = -1, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE void
 LoadTransposed(T const* ptr, Simd<T, N>& out0, Simd<T, N>& out1, Simd<T, N>& out2);
 
+// Load (count * 3) values from memory, deinterleaved like LoadTransposed<kTupleCount>, for a
+// runtime count in [0, N]. Lanes [count, N) are zero. Prefer LoadTransposed<kTupleCount> if the
+// count is a constexpr.
+template <class T, int N>
+MOCHI_ANY MOCHI_FORCE_INLINE void
+LoadTransposed(T const* ptr, Simd<T, N>& out0, Simd<T, N>& out1, Simd<T, N>& out2, int count);
+
 // Return the first component of a vector (e.g. a[0])
 template <class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE T Get0(Simd<T, N> v);
@@ -446,6 +453,12 @@ MOCHI_ANY MOCHI_FORCE_INLINE int StoreSelected(T* ptr, Simd<MaskT, N> condition,
 //
 template <int kTupleCount = -1, class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE void StoreTransposed(T* ptr, Simd<T, N> a, Simd<T, N> b, Simd<T, N> c);
+
+// Store (count * 3) values to memory, interleaved like StoreTransposed<kTupleCount>, for a runtime
+// count in [0, N]. Prefer StoreTransposed<kTupleCount> if the count is a constexpr.
+template <class T, int N>
+MOCHI_ANY MOCHI_FORCE_INLINE void
+StoreTransposed(T* ptr, Simd<T, N> a, Simd<T, N> b, Simd<T, N> c, int count);
 
 // Return result[i] = conditionalMask[i] ? a[i] : b[i]
 // where conditionMask[i] is 0x00000000 (false) or 0xFFFFFFFF (true).

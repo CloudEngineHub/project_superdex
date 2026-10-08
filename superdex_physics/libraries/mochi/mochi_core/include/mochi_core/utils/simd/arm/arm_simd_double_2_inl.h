@@ -150,6 +150,18 @@ class Simd<double, 2> {
     }
   }
 
+  // Branchless: each lane loads one tuple from a selected address, inactive lanes from zeros.
+  MOCHI_FORCE_INLINE static void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    double const* const zero = arm_simd::kZeroTuple<double>;
+    float64x2x3_t r = vld3q_dup_f64(count > 0 ? ptr : zero);
+    r = vld3q_lane_f64(count > 1 ? ptr + 3 : zero, r, 1);
+    out0.raw = r.val[0];
+    out1.raw = r.val[1];
+    out2.raw = r.val[2];
+  }
+
   template <int N = kSize>
   static void Store([[maybe_unused]] double* ptr, [[maybe_unused]] Simd v) {
     static_assert(N >= 0 && N <= kSize);
@@ -193,6 +205,17 @@ class Simd<double, 2> {
     } else {
       vst3q_f64(ptr, float64x2x3_t({a.raw, b.raw, c.raw}));
     }
+  }
+
+  // Inactive lanes write tuple 0, which lane 0 stores last.
+  MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    if (count == 0) {
+      return;
+    }
+    float64x2x3_t const v = {a.raw, b.raw, c.raw};
+    vst3q_lane_f64(count > 1 ? ptr + 3 : ptr, v, 1);
+    vst3q_lane_f64(ptr, v, 0);
   }
 
   [[nodiscard]] MOCHI_FORCE_INLINE static Simd Select(Simd mask, Simd a, Simd b) {

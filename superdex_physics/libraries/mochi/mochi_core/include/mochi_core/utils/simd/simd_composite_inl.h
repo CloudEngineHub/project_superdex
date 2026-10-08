@@ -453,6 +453,19 @@ class Simd<T, N, std::enable_if_t<(details::kCompositeFirstSize<T, N> > 0), Simd
     }
   }
 
+  static MOCHI_ANY MOCHI_FORCE_INLINE void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    if (count <= kSizeFirst) {
+      First::LoadTransposed(ptr, out0.first, out1.first, out2.first, count);
+      out0.second = out1.second = out2.second = Second{};
+    } else {
+      First::LoadTransposed(ptr, out0.first, out1.first, out2.first);
+      Second::LoadTransposed(
+          ptr + 3 * kSizeFirst, out0.second, out1.second, out2.second, count - kSizeFirst);
+    }
+  }
+
   [[nodiscard]] static MOCHI_ANY MOCHI_FORCE_INLINE Simd Select(Simd mask, Simd a, Simd b) {
     return {
         First::Select(mask.first, a.first, b.first),
@@ -499,6 +512,18 @@ class Simd<T, N, std::enable_if_t<(details::kCompositeFirstSize<T, N> > 0), Simd
     if constexpr (kTupleCount > First::kSize) {
       Second::template StoreTransposed<kTupleCount - First::kSize>(
           ptr + sizeof...(InputVectors) * kSizeFirst, v.second...);
+    }
+  }
+
+  static MOCHI_ANY MOCHI_FORCE_INLINE void
+  StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    if (count <= kSizeFirst) {
+      First::StoreTransposed(ptr, a.first, b.first, c.first, count);
+    } else {
+      First::StoreTransposed(ptr, a.first, b.first, c.first);
+      Second::StoreTransposed(
+          ptr + 3 * kSizeFirst, a.second, b.second, c.second, count - kSizeFirst);
     }
   }
 

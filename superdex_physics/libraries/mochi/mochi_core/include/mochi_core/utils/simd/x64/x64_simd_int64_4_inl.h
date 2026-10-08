@@ -180,20 +180,19 @@ class Simd<int64_t, 4> {
         _mm256_castsi256_pd(Simd::Load<kCount1>(kCount1 == 0 ? ptr : ptr + 4).raw); // [4,5,6,7]
     auto c =
         _mm256_castsi256_pd(Simd::Load<kCount2>(kCount2 == 0 ? ptr : ptr + 8).raw); // [8,9,10,11]
+    Deinterleave3(a, b, c, out0, out1, out2);
+  }
 
-    auto d = _mm256_blend_pd(a, b, 0b0100); // [0,_,6,3]
-    d = _mm256_blend_pd(d, c, 0b0010); // [0,9,6,3]
-    auto e = _mm256_permute2f128_pd(d, d, 0x01); // [6,3,0,9]
-    out0.raw = _mm256_castpd_si256(_mm256_blend_pd(d, e, 0b1010)); // [0,3,6,9]
-
-    d = _mm256_blend_pd(a, b, 0b1001); // [4,1,_,7]
-    d = _mm256_blend_pd(d, c, 0b0100); // [4,1,10,7]
-    out1.raw = _mm256_castpd_si256(_mm256_shuffle_pd(d, d, 0b0101)); // [1,4,7,10]
-
-    d = _mm256_blend_pd(a, b, 0b0010); // [_,5,2,_]
-    d = _mm256_blend_pd(d, c, 0b1001); // [8,5,2,11]
-    e = _mm256_permute2f128_pd(d, d, 0x01); // [2,11,8,5]
-    out2.raw = _mm256_castpd_si256(_mm256_blend_pd(d, e, 0b0101)); // [2,5,8,11]
+  MOCHI_FORCE_INLINE static void
+  LoadTransposed(Scalar const* ptr, Simd& out0, Simd& out1, Simd& out2, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    int const n = count * 3;
+    auto a = _mm256_castsi256_pd(Simd::Load(ptr, mochi::Min(n, 4)).raw); // [0,1,2,3]
+    auto b =
+        _mm256_castsi256_pd(Simd::Load(n > 4 ? ptr + 4 : ptr, Clamp(n - 4, 0, 4)).raw); // [4,5,6,7]
+    auto c = _mm256_castsi256_pd(
+        Simd::Load(n > 8 ? ptr + 8 : ptr, Clamp(n - 8, 0, 4)).raw); // [8,9,10,11]
+    Deinterleave3(a, b, c, out0, out1, out2);
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Min(Simd a, Simd b) {
@@ -286,28 +285,42 @@ class Simd<int64_t, 4> {
   template <int kTupleCount = kSize>
   MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c) {
     static_assert(kTupleCount >= 1 && kTupleCount <= kSize, "Invalid kTupleCount");
-    // a = [0,3,6,9], b = [1,4,7,10], c = [2,5,8,11]
-    auto a_ = _mm256_castsi256_pd(a.raw);
-    auto b_ = _mm256_castsi256_pd(b.raw);
-    auto c_ = _mm256_castsi256_pd(c.raw);
-    auto d = _mm256_shuffle_pd(b_, b_, 0b0101); // [4,1,10,7]
-    auto e = _mm256_blend_pd(a_, c_, 0b0101); // [2,3,8,9]
-    e = _mm256_permute2f128_pd(e, e, 0x01); // [8,9,2,3]
-    auto f = _mm256_blend_pd(a_, d, 0b1010); // [0,1,6,7]
-    auto g = _mm256_blend_pd(d, c_, 0b1010); // [4,5,10,11]
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
     constexpr int kCount0 = Clamp(kTupleCount * 3 - 0, 0, 4);
     constexpr int kCount1 = Clamp(kTupleCount * 3 - 4, 0, 4);
     constexpr int kCount2 = Clamp(kTupleCount * 3 - 8, 0, 4);
-    Simd::Store<kCount0>(
-        ptr, Simd{_mm256_castpd_si256(_mm256_blend_pd(f, e, 0b1100))}); // [0,1,2,3]
+    Simd::Store<kCount0>(ptr, x0);
     if constexpr (kCount1 > 0) {
-      Simd::Store<kCount1>(
-          ptr + 4, Simd{_mm256_castpd_si256(_mm256_blend_pd(g, f, 0b1100))}); // [4,5,6,7]
+      Simd::Store<kCount1>(ptr + 4, x1);
     }
     if constexpr (kCount2 > 0) {
-      Simd::Store<kCount2>(
-          ptr + 8, Simd{_mm256_castpd_si256(_mm256_blend_pd(e, g, 0b1100))}); // [8,9,10,11]
+      Simd::Store<kCount2>(ptr + 8, x2);
     }
+  }
+
+  MOCHI_FORCE_INLINE static void StoreTransposed(Scalar* ptr, Simd a, Simd b, Simd c, int count) {
+    MOCHI_ASSERT_VERBOSE(count >= 0 && count <= kSize, "Invalid tuple count");
+    Simd x0, x1, x2;
+    Interleave3(a, b, c, x0, x1, x2);
+#if MOCHI_ARCH_X64_AVX512
+    // Bit i selects scalar i. Masks come from shifts, not clamped counts, which clang may turn
+    // back into branches. A zero mask stores nothing.
+    uint32_t const bits = (1u << (count * 3)) - 1;
+    _mm256_mask_storeu_epi64(ptr, static_cast<__mmask8>(bits), x0.raw); // AVX512VL
+    _mm256_mask_storeu_epi64(ptr + (count > 1 ? 4 : 0), static_cast<__mmask8>(bits >> 4), x1.raw);
+    _mm256_mask_storeu_epi64(ptr + (count > 2 ? 8 : 0), static_cast<__mmask8>(bits >> 8), x2.raw);
+#else
+    // Scalar i is stored if i < count * 3. Comparing against scalar indices avoids clamped
+    // counts, which clang may turn back into branches. A zero mask stores nothing.
+    auto const n = _mm256_set1_epi64x(count * 3);
+    auto const mask0 = _mm256_cmpgt_epi64(n, _mm256_setr_epi64x(0, 1, 2, 3)); // AVX2
+    auto const mask1 = _mm256_cmpgt_epi64(n, _mm256_setr_epi64x(4, 5, 6, 7));
+    auto const mask2 = _mm256_cmpgt_epi64(n, _mm256_setr_epi64x(8, 9, 10, 11));
+    _mm256_maskstore_epi64(reinterpret_cast<long long*>(ptr), mask0, x0.raw); // AVX2
+    _mm256_maskstore_epi64(reinterpret_cast<long long*>(ptr + (count > 1 ? 4 : 0)), mask1, x1.raw);
+    _mm256_maskstore_epi64(reinterpret_cast<long long*>(ptr + (count > 2 ? 8 : 0)), mask2, x2.raw);
+#endif
   }
 
   [[nodiscard]] static MOCHI_FORCE_INLINE Simd Zero() {
@@ -429,6 +442,41 @@ class Simd<int64_t, 4> {
 #else
     return _mm256_movemask_pd(_mm256_castsi256_pd(a.raw)); // AVX, AVX
 #endif
+  }
+
+  // Splits 12 consecutive scalars {a, b, c} into 3 vectors of every third scalar.
+  MOCHI_FORCE_INLINE static void
+  Deinterleave3(__m256d a, __m256d b, __m256d c, Simd& out0, Simd& out1, Simd& out2) {
+    auto d = _mm256_blend_pd(a, b, 0b0100); // [0,_,6,3]
+    d = _mm256_blend_pd(d, c, 0b0010); // [0,9,6,3]
+    auto e = _mm256_permute2f128_pd(d, d, 0x01); // [6,3,0,9]
+    out0.raw = _mm256_castpd_si256(_mm256_blend_pd(d, e, 0b1010)); // [0,3,6,9]
+
+    d = _mm256_blend_pd(a, b, 0b1001); // [4,1,_,7]
+    d = _mm256_blend_pd(d, c, 0b0100); // [4,1,10,7]
+    out1.raw = _mm256_castpd_si256(_mm256_shuffle_pd(d, d, 0b0101)); // [1,4,7,10]
+
+    d = _mm256_blend_pd(a, b, 0b0010); // [_,5,2,_]
+    d = _mm256_blend_pd(d, c, 0b1001); // [8,5,2,11]
+    e = _mm256_permute2f128_pd(d, d, 0x01); // [2,11,8,5]
+    out2.raw = _mm256_castpd_si256(_mm256_blend_pd(d, e, 0b0101)); // [2,5,8,11]
+  }
+
+  // Inverse of Deinterleave3: out0, out1, out2 are the 12 interleaved scalars in memory order.
+  MOCHI_FORCE_INLINE static void
+  Interleave3(Simd a, Simd b, Simd c, Simd& out0, Simd& out1, Simd& out2) {
+    // a = [0,3,6,9], b = [1,4,7,10], c = [2,5,8,11]
+    auto a_ = _mm256_castsi256_pd(a.raw);
+    auto b_ = _mm256_castsi256_pd(b.raw);
+    auto c_ = _mm256_castsi256_pd(c.raw);
+    auto d = _mm256_shuffle_pd(b_, b_, 0b0101); // [4,1,10,7]
+    auto e = _mm256_blend_pd(a_, c_, 0b0101); // [2,3,8,9]
+    e = _mm256_permute2f128_pd(e, e, 0x01); // [8,9,2,3]
+    auto f = _mm256_blend_pd(a_, d, 0b1010); // [0,1,6,7]
+    auto g = _mm256_blend_pd(d, c_, 0b1010); // [4,5,10,11]
+    out0.raw = _mm256_castpd_si256(_mm256_blend_pd(f, e, 0b1100)); // [0,1,2,3]
+    out1.raw = _mm256_castpd_si256(_mm256_blend_pd(g, f, 0b1100)); // [4,5,6,7]
+    out2.raw = _mm256_castpd_si256(_mm256_blend_pd(e, g, 0b1100)); // [8,9,10,11]
   }
 };
 
