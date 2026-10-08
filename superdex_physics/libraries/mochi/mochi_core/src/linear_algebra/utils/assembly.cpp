@@ -83,12 +83,12 @@ static int ComputeTargetNodesPerGroup(int numElements, int numReferencedNodes) {
 
 NodalBasedStructure::NodalBasedStructure(Graph<int, int> eToN, Graph<int, int> const& nToN)
     : _eToN(std::move(eToN)) {
-  _nToE = Reverse<int, int>(_eToN);
+  Graph<int, int> const nToE = Reverse<int, int>(_eToN);
 
 #if MOCHI_ASSERT_VERBOSE_ENABLED
   if (nToN.size() != 0) {
     MOCHI_ASSERT_VERBOSE(
-        nToN.size() >= _nToE.size(), "nToN must cover all nodes referenced by eToN.");
+        nToN.size() >= nToE.size(), "nToN must cover all nodes referenced by eToN.");
     for (auto const elemNodes : _eToN) {
       for (int ei : elemNodes.targets) {
         auto const row = nToN[ei];
@@ -102,7 +102,7 @@ NodalBasedStructure::NodalBasedStructure(Graph<int, int> eToN, Graph<int, int> c
   }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
 
-  _nToN = nToN.size() == 0 ? Traverse(_nToE, _eToN).SortTargets() : nToN;
+  _nToN = nToN.size() == 0 ? Traverse(nToE, _eToN).SortTargets() : nToN;
 
   int const numElements = isize(_eToN);
   // Find the maximum number of nodes per element first, for allocation and lookup purposes.
@@ -128,11 +128,11 @@ NodalBasedStructure::NodalBasedStructure(Graph<int, int> eToN, Graph<int, int> c
     }
   }
 
-  int const nodeGroupSize = ComputeTargetNodesPerGroup(numElements, CountReferencedNodes(_nToE));
+  int const nodeGroupSize = ComputeTargetNodesPerGroup(numElements, CountReferencedNodes(nToE));
   auto nDec = GreedyDecompose(
-      /*nToN without sorting targets*/ Traverse(_nToE, _eToN),
+      /*nToN without sorting targets*/ Traverse(nToE, _eToN),
       /*subdomainSize*/ nodeGroupSize);
-  _elemGroups = AggregateElements(nDec, _nToE, isize(_eToN));
+  _elemGroups = AggregateElements(nDec, nToE, isize(_eToN));
 
   CreateSubTasks();
   CreateDepMasks();

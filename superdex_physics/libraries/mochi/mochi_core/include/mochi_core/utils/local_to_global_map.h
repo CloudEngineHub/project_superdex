@@ -104,9 +104,9 @@ class Local2GlobalMap {
   [[nodiscard]] Span<int const> GetGlobalIndices(int eleIdx) const;
 
   /**
-   * @brief Returns the stencil indices of each local DoF for an element. In standard FEM, this is
-   * just [0, ..., (# of local DoFs) - 1] for each element, but it may be nontrivial for
-   * macro-element stencils (e.g., bending stiffness in shell/shells).
+   * @brief Returns the stencil indices of each local DoF for an element. Requires @ref
+   * InitializeStencilIndices, which macro-element stencils (e.g., bending stiffness in shells) use.
+   * Maps without them, as in standard FEM, implicitly use [0, ..., (# of local DoFs) - 1].
    */
   [[nodiscard]] Span<int const> GetStencilIndices(int eleIdx) const;
 
@@ -232,13 +232,9 @@ void Local2GlobalMap::InitializeFromMeshAndBasis(
   Span<int const> topology = mesh->GetFlatConnectivity();
   _globalRange = Interval<int>{0, numGloDofs};
   _indices.reserve(numLocDofs);
-  _stencilIndices.reserve(numLocDofs);
-  int dofCount = 0;
   for (int n : topology) {
     for (int f = 0; f < numFields; ++f) {
       _indices.push_back(n * numFields + f);
-      _stencilIndices.push_back(dofCount % numEleDofs);
-      dofCount++;
     }
   }
 }

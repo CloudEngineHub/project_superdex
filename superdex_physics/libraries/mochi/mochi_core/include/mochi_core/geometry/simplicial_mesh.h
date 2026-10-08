@@ -100,7 +100,9 @@ class SimplicialMesh {
     // NOTE: Performs dynamic memory allocation but cost seems negligible.
     std::vector<bool> seenNodes(GetNumNodes(), false);
     outNodes.clear();
-    outNodes.reserve(elementIndices.size() * _numNodesPerElement);
+    outNodes.reserve(
+        Min(elementIndices.size() * static_cast<size_t>(_numNodesPerElement),
+            static_cast<size_t>(GetNumActiveNodes())));
     Span<int const> connec = GetFlatConnectivity();
     for (int elemIdx : elementIndices) {
       MOCHI_ASSERT_VERBOSE(elemIdx >= 0 && elemIdx < GetNumElements(), "Element out of range.");

@@ -482,7 +482,7 @@ class CActiveVolumeElements : public NoCopy {
     int const meshNumVolElems = _mesh->GetNumElements();
 
     _indices.reserve(meshNumVolElems);
-    _uniqueNodeIds.reserve(meshNumVolElems * TetrahedralMesh::kNodesPerElement);
+    _uniqueNodeIds.reserve(_mesh->GetNumActiveNodes());
 
     // _isActive must be of the same size as the vol elements
     _isActive.resize(meshNumVolElems, false);
@@ -804,7 +804,7 @@ class CActiveUniqueNodes : public NoCopy {
       CActiveVolumeElements const& activeVolElem,
       CActiveBoundaryFaces const& activeBdFaces)
       : _mesh(tetMesh) {
-    _indices.reserve(_mesh->GetNumElements() * TetrahedralMesh::kNodesPerElement);
+    _indices.reserve(_mesh->GetNumActiveNodes());
     Recompute(activeVolElem, activeBdFaces);
   }
 
@@ -828,7 +828,7 @@ class CActiveUniqueNodes : public NoCopy {
     std::vector<bool> seenNodes(_mesh->GetNumNodes(), false);
 
     _indices.clear();
-    _indices.reserve(volNodes.size() + bdNodes.size());
+    _indices.reserve(Min(isize(volNodes) + isize(bdNodes), _mesh->GetNumActiveNodes()));
     for (auto nodeIdx : volNodes) {
       // No need to check seenNodes. volNodes are unique.
       _indices.push_back(nodeIdx);
