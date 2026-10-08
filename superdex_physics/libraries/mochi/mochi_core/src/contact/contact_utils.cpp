@@ -588,6 +588,19 @@ bool MeshColliderBvh<Bv>::QueryPoint(
 
 /*************************************************************************************************/
 
+// Call LoadTransposed for a partial batch without inlining. This is a work-around for a performance
+// issue with the Clang compiler. When inlined, this function changes the register allocation of the
+// whole function causing a significant performance regression to the hot loop even though this
+// function is called outside the hot loop.
+template <class V3>
+MOCHI_NO_INLINE static V3 LoadTransposedNoInline(Real3 const* points, int count) {
+  V3 pt MOCHI_NO_INIT;
+  LoadTransposed(&points[0][0], pt, count);
+  return pt;
+}
+
+/*************************************************************************************************/
+
 // Implementation of FindPointContactsT for a plane collider. Transform the collider to the space of
 // the points. Then transform active collisions to the collider's space.
 template <>
@@ -686,9 +699,7 @@ void mochi::FindPointContactsT<Plane>(
   // Process any trailing points
   auto numRemaining = static_cast<int>(numPoints - iSrc);
   if (numRemaining) {
-    Real3 temp[V::kSize] MOCHI_NO_INIT;
-    std::copy(points.begin() + iSrc, points.end(), temp);
-    LoadTransposed(&temp[0][0], pt);
+    pt = LoadTransposedNoInline<V3>(&points[iSrc], numRemaining);
     using I = std::conditional_t<(sizeof(real) == 4), int, int64_t>; // Integer same size as real
     using VI = Simd<I, V::kSize>;
     auto hitMask = StaticCast<VI>(sequence) < numRemaining; // Only consider numRemaining points.
@@ -815,9 +826,7 @@ void mochi::FindPointContactsT<Sphere>(
   // Process any trailing points
   auto numRemaining = static_cast<int>(numPoints - iSrc);
   if (numRemaining) {
-    Real3 temp[V::kSize] MOCHI_NO_INIT;
-    std::copy(points.begin() + iSrc, points.end(), temp);
-    LoadTransposed(&temp[0][0], pt);
+    pt = LoadTransposedNoInline<V3>(&points[iSrc], numRemaining);
     using I = std::conditional_t<(sizeof(real) == 4), int, int64_t>; // Integer same size as real
     using VI = Simd<I, V::kSize>;
     auto hitMask = StaticCast<VI>(sequence) < numRemaining; // Only consider numRemaining points.
@@ -996,9 +1005,7 @@ void mochi::FindPointContactsT<Obb>(
   auto numRemaining = static_cast<int>(numPoints - iSrc);
   if (numRemaining) {
     // Load remaining points into one last SIMD batch
-    Real3 temp[V::kSize] MOCHI_NO_INIT;
-    std::copy(points.begin() + iSrc, points.end(), temp);
-    LoadTransposed(&temp[0][0], pt);
+    LoadTransposed(&points[iSrc][0], pt, numRemaining);
     // Fill unused points with QNaN so they fail the AABB test.
     using I = std::conditional_t<(sizeof(real) == 4), int, int64_t>;
     using VI = Simd<I, V::kSize>;

@@ -466,13 +466,7 @@ void DenseGrid3D<T>::TrilinearSampleGradient(
         kExtrapolationType,
         /*kComputeValues*/ false,
         /*kComputeGradients*/ true>(pts, nullptr, &grad);
-    if (count == kBatchSize) {
-      StoreTransposed(&outGradients[i][0], grad[0], grad[1], grad[2]);
-    } else {
-      for (int ii = 0; ii < count; ++ii) {
-        outGradients[i + ii] = {grad[0][ii], grad[1][ii], grad[2][ii]};
-      }
-    }
+    StoreTransposed(&outGradients[i][0], grad[0], grad[1], grad[2], count);
   }
 }
 

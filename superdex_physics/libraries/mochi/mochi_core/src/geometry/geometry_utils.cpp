@@ -341,43 +341,43 @@ Obb mochi::CalcObb(Span<Vec4r const> coordinates) {
   return NormSqr<3>(farthestOffset);
 }
 
+// Find the farthest point from the center. Return the distance squared.
+[[nodiscard]] static real CalcMaxDistanceSqr(Span<Real3 const> points, Vec4r center) {
+  using V = Simd<real>;
+  using V3 = NdArray<V, 3>;
+  using I = std::conditional_t<sizeof(real) == 8, int64_t, int>;
+  using VI = Simd<I, V::kSize>;
+
+  V3 const vCenter = BroadcastEach<V>(ToReal3(center));
+  V maxDistSqr{};
+  size_t i = 0;
+  for (; i + V::kSize <= points.size(); i += V::kSize) {
+    V3 point MOCHI_NO_INIT;
+    LoadTransposed(&points[i][0], point);
+    maxDistSqr = Max(maxDistSqr, NormSqr(point - vCenter));
+  }
+
+  // Process the tail as a partial batch and mask its unused lanes.
+  if (i < points.size()) {
+    int const numRemaining = static_cast<int>(points.size() - i);
+    V3 point MOCHI_NO_INIT;
+    LoadTransposed(&points[i][0], point, numRemaining);
+    auto const mask = Sequence<VI>() < static_cast<I>(numRemaining);
+    maxDistSqr = Max(maxDistSqr, Select(mask, NormSqr(point - vCenter), V{}));
+  }
+  return HMax(maxDistSqr);
+}
+
 // Center on the AABB; Fast uses the farthest input point and Fastest the farthest AABB corner.
 static Sphere CalcBoundingSphere_FromAabb(Span<Real3 const> coordinates, bool shrinkFromCenter) {
   if (coordinates.empty()) {
     return {};
   }
 
-  using V = Simd<real>;
-  using V3 = NdArray<V, 3>;
-  size_t const count = coordinates.size();
-
   Aabb const aabb = CalcAabb(coordinates);
   Vec4r const center = CalcMidpoint(aabb.VGetMin(), aabb.VGetMax());
-  real radiusSqr = 0_r;
-
-  if (shrinkFromCenter) {
-    size_t i = 0;
-    V maxDistSqr = {};
-    V3 pt, vCenter = BroadcastEach<V>(ToReal3(center));
-    for (; i + V::kSize <= count; i += V::kSize) {
-      LoadTransposed(&coordinates[i][0], pt);
-      maxDistSqr = Max(maxDistSqr, NormSqr(pt - vCenter));
-    }
-
-    // Pad the tail to one SIMD batch and mask its unused lanes.
-    alignas(V) Real3 buf[V::kSize] = {};
-    std::copy(coordinates.begin() + i, coordinates.end(), buf);
-    LoadTransposed(&buf[0][0], pt);
-    using I = std::conditional_t<sizeof(real) == 8, int64_t, int>;
-    using VI = Simd<I, V::kSize>;
-    I const numRemaining = static_cast<I>(count - i);
-    auto const mask = Sequence<VI>() < numRemaining;
-    maxDistSqr = Max(maxDistSqr, Select(mask, NormSqr(pt - vCenter), V{}));
-
-    radiusSqr = HMax(maxDistSqr);
-  } else {
-    radiusSqr = CalcAabbRadiusSqr(aabb.VGetMin(), aabb.VGetMax(), center);
-  }
+  real radiusSqr = shrinkFromCenter ? CalcMaxDistanceSqr(coordinates, center)
+                                    : CalcAabbRadiusSqr(aabb.VGetMin(), aabb.VGetMax(), center);
 
   // Ensure both distance and squared-distance tests keep boundary points inside after rounding.
   real constexpr kPadding = 4_r * std::numeric_limits<real>::epsilon();
@@ -663,27 +663,6 @@ static void DeterministicallyShuffle(Span<Real3> points) {
         (static_cast<uint64_t>(random()) << 32) | static_cast<uint64_t>(random());
     std::swap(points[i - 1], points[static_cast<size_t>(randomValue % i)]);
   }
-}
-
-// Find the farthest input from the final, denormalized center.
-[[nodiscard]] static real CalcMaxDistanceSqr(Span<Real3 const> points, Vec4r center) {
-  using V = Simd<real>;
-  using V3 = NdArray<V, 3>;
-
-  V3 const vCenter = BroadcastEach<V>(ToReal3(center));
-  V maxDistSqr{};
-  size_t i = 0;
-  for (; i + V::kSize <= points.size(); i += V::kSize) {
-    V3 point;
-    LoadTransposed(&points[i][0], point);
-    maxDistSqr = Max(maxDistSqr, NormSqr(point - vCenter));
-  }
-
-  real result = HMax(maxDistSqr);
-  for (; i < points.size(); ++i) {
-    result = Max(result, NormSqr<3>(ToSimd(points[i]) - center));
-  }
-  return result;
 }
 
 // Solve in an AABB-centered, uniformly scaled frame, then recompute the radius in the input frame.
