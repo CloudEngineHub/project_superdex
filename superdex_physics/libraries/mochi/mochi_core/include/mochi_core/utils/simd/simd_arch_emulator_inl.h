@@ -486,10 +486,10 @@ class Simd<T, N> {
   }
 
   // Ternary functions.
-  static constexpr auto MulAdd = XYZapply<T, mochi::MulAdd<T, T, T>>;
-  static constexpr auto MulSub = XYZapply<T, mochi::MulSub<T, T, T>>;
-  static constexpr auto NegMulAdd = XYZapply<T, mochi::NegMulAdd<T, T, T>>;
-  static constexpr auto NegMulSub = XYZapply<T, mochi::NegMulSub<T, T, T>>;
+  static constexpr auto MulAdd = XYZapply<T, mochi::MulAdd<T>>;
+  static constexpr auto MulSub = XYZapply<T, mochi::MulSub<T>>;
+  static constexpr auto NegMulAdd = XYZapply<T, mochi::NegMulAdd<T>>;
+  static constexpr auto NegMulSub = XYZapply<T, mochi::NegMulSub<T>>;
 
   // Unary operators.
   [[nodiscard]] MOCHI_ANY MOCHI_FORCE_INLINE constexpr Simd operator-() const {

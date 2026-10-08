@@ -309,6 +309,33 @@ TEST(Simd, TransposedIOWithRuntimeCount) {
   ExpectTransposedIOWithRuntimeCount<int64_t, 16>();
 }
 
+// MulAdd and its variants must round once in every supported build, including SIMD emulation, so
+// that an explicit MulAdd sequence rounds the same with and without SIMD.
+template <class T, int N>
+static void ExpectMulAddIsFused() {
+  using V = Simd<T, N>;
+  // (1 + eps) * (1 - eps) = 1 - eps^2 rounds to 1, so only a fused operation keeps the eps^2.
+  T constexpr kEps = std::numeric_limits<T>::epsilon();
+  V const a{T(1) + kEps};
+  V const b{T(1) - kEps};
+  V const one{T(1)};
+  for (int i = 0; i < N; ++i) {
+    EXPECT_EQ(-kEps * kEps, MulAdd(a, b, -one)[i]);
+    EXPECT_EQ(-kEps * kEps, MulSub(a, b, one)[i]);
+    EXPECT_EQ(kEps * kEps, NegMulAdd(a, b, one)[i]);
+    EXPECT_EQ(kEps * kEps, NegMulSub(a, b, -one)[i]);
+  }
+}
+
+TEST(Simd, MulAddIsFused) {
+  ExpectMulAddIsFused<float, 4>();
+  ExpectMulAddIsFused<float, 8>();
+  ExpectMulAddIsFused<float, 16>();
+  ExpectMulAddIsFused<double, 2>();
+  ExpectMulAddIsFused<double, 4>();
+  ExpectMulAddIsFused<double, 8>();
+}
+
 #if MOCHI_USE_SIMD
 
 namespace {
