@@ -537,7 +537,7 @@ void TestPk3DElementTrace() {
 
   // Check that all areas for faces are correct
   for (int f = 0; f < kNumFaces; ++f) {
-    EXPECT_NEAR(areas[f], kExactArea[f], 1.e-6_r);
+    EXPECT_NEAR(areas[f], kExactArea[f], MOCHI_USE_DOUBLE_PRECISION ? 1.e-12_r : 1.e-6_r);
   }
 
   // Check that the basis functions are evaluated coorectly
