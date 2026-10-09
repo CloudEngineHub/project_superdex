@@ -137,8 +137,7 @@ class Simd<double, 4> {
     } else if constexpr (N == 1) {
       return Simd{*ptr, 0.0};
     } else if constexpr (N == 2) {
-      __m256i mask = _mm256_set_epi64x(0, 0, -1, -1); // AVX
-      return _mm256_maskload_pd(ptr, mask); // AVX
+      return _mm256_zextpd128_pd256(_mm_loadu_pd(ptr)); // AVX, SSE2
     } else if constexpr (N == 3) {
       __m256i mask = _mm256_set_epi64x(0, -1, -1, -1); // AVX
       return _mm256_maskload_pd(ptr, mask); // AVX

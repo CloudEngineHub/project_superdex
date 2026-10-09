@@ -127,14 +127,13 @@ class Simd<float, 8> {
     } else if constexpr (N == 1) {
       return Simd{*ptr, 0.0f};
     } else if constexpr (N == 2) {
-      __m256i mask = _mm256_set_epi32(0, 0, 0, 0, 0, 0, -1, -1); // AVX
-      return _mm256_maskload_ps(ptr, mask); // AVX2
+      auto const low = _mm_loadl_epi64(reinterpret_cast<__m128i const*>(ptr)); // SSE2
+      return _mm256_zextps128_ps256(_mm_castsi128_ps(low)); // AVX, SSE2
     } else if constexpr (N == 3) {
       __m256i mask = _mm256_set_epi32(0, 0, 0, 0, 0, -1, -1, -1); // AVX
       return _mm256_maskload_ps(ptr, mask); // AVX2
     } else if constexpr (N == 4) {
-      __m256i mask = _mm256_set_epi32(0, 0, 0, 0, -1, -1, -1, -1); // AVX
-      return _mm256_maskload_ps(ptr, mask); // AVX2
+      return _mm256_zextps128_ps256(_mm_loadu_ps(ptr)); // AVX, SSE
     } else if constexpr (N == 5) {
       __m256i mask = _mm256_set_epi32(0, 0, 0, -1, -1, -1, -1, -1); // AVX
       return _mm256_maskload_ps(ptr, mask); // AVX2

@@ -210,14 +210,14 @@ class Simd<int, 8> {
     } else if constexpr (N == 1) {
       return Simd{*ptr, 0};
     } else if constexpr (N == 2) {
-      __m256i mask = _mm256_set_epi32(0, 0, 0, 0, 0, 0, -1, -1); // AVX
-      return _mm256_maskload_epi32(ptr, mask); // AVX2
+      auto const low = _mm_loadl_epi64(reinterpret_cast<__m128i const*>(ptr)); // SSE2
+      return _mm256_zextsi128_si256(low); // AVX
     } else if constexpr (N == 3) {
       __m256i mask = _mm256_set_epi32(0, 0, 0, 0, 0, -1, -1, -1); // AVX
       return _mm256_maskload_epi32(ptr, mask); // AVX2
     } else if constexpr (N == 4) {
-      __m256i mask = _mm256_set_epi32(0, 0, 0, 0, -1, -1, -1, -1); // AVX
-      return _mm256_maskload_epi32(ptr, mask); // AVX2
+      auto const low = _mm_loadu_si128(reinterpret_cast<__m128i const*>(ptr)); // SSE2
+      return _mm256_zextsi128_si256(low); // AVX
     } else if constexpr (N == 5) {
       __m256i mask = _mm256_set_epi32(0, 0, 0, -1, -1, -1, -1, -1); // AVX
       return _mm256_maskload_epi32(ptr, mask); // AVX2

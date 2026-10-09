@@ -188,8 +188,7 @@ class Simd<int, 4> {
     } else if constexpr (N == 1) {
       return Simd{*ptr, 0};
     } else if constexpr (N == 2) {
-      __m128i mask = _mm_set_epi32(0, 0, -1, -1); // SSE2
-      return _mm_maskload_epi32(ptr, mask); // AVX2
+      return _mm_loadl_epi64(reinterpret_cast<__m128i const*>(ptr)); // SSE2
     } else if constexpr (N == 3) {
       __m128i mask = _mm_set_epi32(0, -1, -1, -1); // SSE2
       return _mm_maskload_epi32(ptr, mask); // AVX2
