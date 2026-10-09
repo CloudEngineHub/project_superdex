@@ -737,6 +737,17 @@ void skinned::EntityIncrementStep(
   currVel.value.SetZero(); // Effectively no-op. It will be recomputed before it's needed.
 }
 
+void skinned::EntityReconstructPreviousStep(
+    ecs::RequiredTag<TagNestedSoftActor>,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned> const& currVel,
+    CIntegrationVelocitySlices<DisplacementLayer::Skinned> const& intVels,
+    CVelocitySlice<real, TimeStep::Previous, DisplacementLayer::Skinned>& outPrevVel) {
+  // Skin velocity is the only differential variable.
+  auto const method = simParams->integrationMethod;
+  integration::ReconstructPreviousVelocityFromHistoryOrCopy(method, intVels, currVel, outPrevVel);
+}
+
 void skinned::PreStagePipeline(entt::registry& reg, Span<entt::entity const> entities) {
   if (entities.empty()) {
     return;

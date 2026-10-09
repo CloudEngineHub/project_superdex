@@ -283,6 +283,14 @@ void GetLinkTransforms(
     Span<TransformRT> outWorldFromLinks,
     Error& error);
 
+// Copy each active joint's velocity into the reduced-DoF layout, skipping cycle joints.
+void GetArticulatedJointVelocities(
+    Span<ArticulatedJointType const> jointTypes,
+    Span<Real3 const> jointAxes,
+    Span<ArticulatedDofInfo const> jointDofInfo,
+    Span<RigidBodyVel const> jointVels,
+    ColumnVectorView<real> outVel);
+
 // Get the time derivatives of the articulated body's dofs. Velocity is implicitly represented by
 // current and previous state, so it's computed by finite differences.
 void GetArticulatedJointVelocities(
@@ -709,6 +717,13 @@ void EntityAssemble(
 void PreStepPipeline(entt::registry& reg);
 
 /*
+ * Reconstructs the begin-of-step @ref TimeStep::Previous state from the integration history if
+ * history is present and the integration method allows, otherwise it estimates the state from
+ * constant velocity.
+ */
+void ReconstructPreviousStepPipeline(entt::registry& reg);
+
+/*
  * Executed before the first time integration stage of the time step.
  */
 void EntityPreFirstStage(
@@ -899,6 +914,18 @@ void EntityPreStep(
     CRigidVel<TimeStep::Current>& currVel,
     CRigidState<TimeStep::Previous>& prevPose,
     CRigidVel<TimeStep::Previous>& prevVel);
+
+/*
+ * Reconstructs the begin-of-step @ref TimeStep::Previous state from the integration history if
+ * history is present and the integration method allows, otherwise it estimates the state from
+ * constant velocity.
+ */
+void EntityReconstructPreviousStep(
+    ecs::RequiredTag<TagArticulatedLinkActor>,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CRigidVel<TimeStep::Current> const& currVel,
+    CIntegrationRigidVels const& intVels,
+    CRigidVel<TimeStep::Previous>& outPrevVel);
 
 void EntityPreFirstStage(
     ecs::RequiredTag<TagArticulatedLinkActor>,

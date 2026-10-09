@@ -210,6 +210,23 @@ void EntityIncrementStep(
   currVel.value.SetZero();
 }
 
+void EntityReconstructPreviousStep(
+    ecs::Included<TagRodActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CPolylineMesh const& mesh,
+    CRodPose<TimeStep::Current> const& currPose,
+    CVelocitySlice<real, TimeStep::Current> const& currVel,
+    CIntegrationRodPoses const& intPoses,
+    CIntegrationVelocitySlices<DisplacementLayer::Default> const& intVels,
+    CRodPose<TimeStep::Previous>& outPrevPose,
+    CVelocitySlice<real, TimeStep::Previous>& outPrevVel) {
+  auto const method = simParams->integrationMethod;
+  integration::ReconstructPreviousPoseFromHistoryOrExtrapolate(
+      mesh.nodes, method, time.value, intPoses, currPose, currVel, outPrevPose);
+  integration::ReconstructPreviousVelocityFromHistoryOrCopy(method, intVels, currVel, outPrevVel);
+}
+
 void EntityPreFirstStage(
     ecs::Included<TagRodActor>,
     CTimeIntegratorState const& intState,

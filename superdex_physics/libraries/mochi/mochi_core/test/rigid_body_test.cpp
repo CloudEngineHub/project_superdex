@@ -317,6 +317,29 @@ TEST(RigidBodyUtils, EvalFiniteDifferenceRotationVelocity) {
   test(EvalTimeSteppedRotationAccurate, EvalFiniteDifferenceRotationVelocityAccurate, dt, 1e-5_r);
 }
 
+TEST(RigidBodyUtils, GetFiniteStepRotationVector) {
+  real constexpr kDt = 1e-2_r;
+  Quaternion const qOld = Quaternion::FromRotationVector(Vec4r{0.8_r, -1.2_r, 0.5_r});
+
+  // Large step of 0.8 rad: finite-differencing the rotation and recovering the step round-trips,
+  // forward and backward.
+  Vec4r const step{0.48_r, 0_r, -0.64_r};
+  RigidBodyVel vel;
+  vel.SetFromFiniteDifferencePose(
+      TransformRT{qOld}, TransformRT{Quaternion::FromRotationVector(step) * qOld}, kDt);
+  EXPECT_TRUE(NearEqual(ToReal3(vel.GetFiniteStepRotationVector(kDt)), ToReal3(step), 1e-5_r));
+  EXPECT_TRUE(NearEqual(
+      ToReal3(vel.GetFiniteStepRotationVector(-kDt)), Real3{-0.48_r, 0_r, 0.64_r}, 1e-5_r));
+
+  // Small steps approach omega * dt, and zero velocity gives a zero step.
+  Vec4r const omega{1e-3_r, -2e-3_r, 1.5e-3_r};
+  vel.SetOmega(omega);
+  EXPECT_TRUE(
+      NearEqual(ToReal3(vel.GetFiniteStepRotationVector(kDt)), ToReal3(kDt * omega), 1e-12_r));
+  vel.SetZero();
+  EXPECT_TRUE(NearEqual(ToReal3(vel.GetFiniteStepRotationVector(kDt)), Real3{}, 0_r));
+}
+
 TEST(RigidBodyUtils, SetOmegaWithZeroVSym) {
   real constexpr kDt = 3e-1_r;
   RigidBodyVel vel;

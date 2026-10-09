@@ -55,6 +55,20 @@ Real3 ComputeRodElementTangent(
   return Normalize(x1 - x0);
 }
 
+Real3 TransportRodElementFrameAxis(
+    Span<Real3 const> meshNodes,
+    ColumnVectorView<real const> refDisplacement,
+    ColumnVectorView<real const> outDisplacement,
+    Real3 const& refAxis,
+    real twist,
+    int elementIndex) {
+  Vec4r const refTangent =
+      ToSimd(ComputeRodElementTangent(meshNodes, refDisplacement, elementIndex));
+  Vec4r const outTangent =
+      ToSimd(ComputeRodElementTangent(meshNodes, outDisplacement, elementIndex));
+  return ToReal3(fem::TransportFrameAxis(refTangent, outTangent, twist, ToSimd(refAxis)));
+}
+
 void ApplyLieDeltaToPose(
     Span<Real3 const> meshNodes,
     ColumnVectorView<real const> refDisplacement,
@@ -78,11 +92,9 @@ void ApplyLieDeltaToPose(
   outDisplacement = refDisplacement + dofDelta;
 
   for (int i = 0; i < numElements; ++i) {
-    Vec4r const refTangent = ToSimd(ComputeRodElementTangent(meshNodes, refDisplacement, i));
-    Vec4r const outTangent = ToSimd(ComputeRodElementTangent(meshNodes, outDisplacement, i));
     real const twist = dofDelta[i * fem::kNumRodFields + (fem::kNumRodFields - 1)];
-    outAxes[i] =
-        ToReal3(fem::TransportFrameAxis(refTangent, outTangent, twist, ToSimd(refAxes[i])));
+    outAxes[i] = TransportRodElementFrameAxis(
+        meshNodes, refDisplacement, outDisplacement, refAxes[i], twist, i);
   }
 }
 

@@ -219,24 +219,6 @@ static void AssembleRigidBodyAsyncContactResponse(
   ECS Dynamic Rigid-body Actor Utils
 */
 
-static void ComputePoseAtStepStart(
-    CTimeIntegratorState const& intState,
-    CRigidState<TimeStep::Previous> const& prevPose,
-    CIntegrationRigidStates& intPoses) {
-  // Pose is a differential variable. Use integration utilities to compute its value at the
-  // beginning of the step.
-  integration::ApplyTimeIntegrationStepStart(intState, intPoses, prevPose, intPoses.stepStart);
-}
-
-void mochi::rigid::ComputeVelocityAtStepStart(
-    CTimeIntegratorState const& intState,
-    CRigidVel<TimeStep::Previous> const& prevVel,
-    CIntegrationRigidVels& intVels) {
-  // Velocity is a differential variable. Use integration utilities to compute its value at the
-  // beginning of the step.
-  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
-}
-
 static void ComputePoseAtStageStart(
     CTimeIntegratorState const& intState,
     CIntegrationRigidStates& intPoses,
@@ -335,6 +317,30 @@ void mochi::rigid::EntityIncrementStep(
   currVel.value.SetZero();
 }
 
+void mochi::rigid::EntityReconstructPreviousStep(
+    ecs::Included<TagRigidActor>,
+    ecs::Excluded<TagArticulatedLinkActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CRigidBodyInertia const& rigidInertia,
+    CRigidState<TimeStep::Current> const& currPose,
+    CRigidVel<TimeStep::Current> const& currVel,
+    CIntegrationRigidStates const& intPoses,
+    CIntegrationRigidVels const& intVels,
+    CRigidState<TimeStep::Previous>& outPrevPose,
+    CRigidVel<TimeStep::Previous>& outPrevVel,
+    CRootTransform& outRootTransform) {
+  // Transform and velocity are both differential variables.
+  auto const method = simParams->integrationMethod;
+  integration::ReconstructPreviousPoseFromHistoryOrExtrapolate(
+      method, time.value, intPoses, currPose, currVel, outPrevPose);
+  integration::ReconstructPreviousVelocityFromHistoryOrCopy(method, intVels, currVel, outPrevVel);
+
+  // Keep worldFromLocalPrev root-transform consistent.
+  RigidStateToRootTransform(
+      rigidInertia.GetCenterOfMassLocal(), outPrevPose.value, outRootTransform.worldFromLocalPrev);
+}
+
 void mochi::rigid::EntityPreFirstStage(
     ecs::Included<TagRigidActor>,
     ecs::Excluded<TagArticulatedLinkActor>,
@@ -344,8 +350,8 @@ void mochi::rigid::EntityPreFirstStage(
     CIntegrationRigidStates& intPoses,
     CIntegrationRigidVels& intVels) {
   MOCHI_PROFILE_SCOPE();
-  ComputePoseAtStepStart(intState, prevPose, intPoses);
-  ComputeVelocityAtStepStart(intState, prevVel, intVels);
+  integration::ApplyTimeIntegrationStepStart(intState, intPoses, prevPose, intPoses.stepStart);
+  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
 }
 
 void mochi::rigid::EntityPreStage(

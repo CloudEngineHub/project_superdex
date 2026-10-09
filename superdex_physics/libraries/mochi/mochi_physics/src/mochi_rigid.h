@@ -111,11 +111,6 @@ void ComputeRootTransformCurrent(
     CRigidState<TimeStep::Current> const& currPose,
     CRootTransform& rootTransform);
 
-void ComputeVelocityAtStepStart(
-    CTimeIntegratorState const& intState,
-    CRigidVel<TimeStep::Previous> const& prevVel,
-    CIntegrationRigidVels& intVels);
-
 void ComputeVelocityAtStageStart(
     CTimeIntegratorState const& intState,
     CIntegrationRigidVels& intVels,
@@ -165,6 +160,25 @@ void EntityIncrementStep(
     CRigidVel<TimeStep::Current>& currVel,
     CRigidState<TimeStep::Previous>& prevPose,
     CRigidVel<TimeStep::Previous>& prevVel);
+
+/*
+ * Reconstructs the begin-of-step @ref TimeStep::Previous state from the integration history if
+ * history is present and the integration method allows, otherwise it estimates the state from
+ * constant velocity.
+ */
+void EntityReconstructPreviousStep(
+    ecs::Included<TagRigidActor>,
+    ecs::Excluded<TagArticulatedLinkActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CRigidBodyInertia const& rigidInertia,
+    CRigidState<TimeStep::Current> const& currPose,
+    CRigidVel<TimeStep::Current> const& currVel,
+    CIntegrationRigidStates const& intPoses,
+    CIntegrationRigidVels const& intVels,
+    CRigidState<TimeStep::Previous>& outPrevPose,
+    CRigidVel<TimeStep::Previous>& outPrevVel,
+    CRootTransform& outRootTransform);
 
 // Pre-first-stage callback.
 void EntityPreFirstStage(

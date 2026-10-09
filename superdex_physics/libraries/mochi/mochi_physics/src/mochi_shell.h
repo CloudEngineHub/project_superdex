@@ -267,6 +267,22 @@ void EntityIncrementStep(
     CDisplacementSlice<real, TimeStep::Previous>& prevDispl,
     CVelocitySlice<real, TimeStep::Previous>& prevVel);
 
+/*
+ * Reconstructs the begin-of-step @ref TimeStep::Previous state from the integration history if
+ * history is present and the integration method allows, otherwise it estimates the state from
+ * constant velocity.
+ */
+void EntityReconstructPreviousStep(
+    ecs::Included<TagShellActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CDisplacementSlice<real, TimeStep::Current> const& currDispl,
+    CVelocitySlice<real, TimeStep::Current> const& currVel,
+    CIntegrationDisplacementSlices const& intDispls,
+    CIntegrationVelocitySlices<DisplacementLayer::Default> const& intVels,
+    CDisplacementSlice<real, TimeStep::Previous>& outPrevDispl,
+    CVelocitySlice<real, TimeStep::Previous>& outPrevVel);
+
 void EntityPreFirstStage(
     ecs::Included<TagShellActor>,
     CTimeIntegratorState const& intState,

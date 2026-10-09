@@ -288,6 +288,23 @@ void EntityIncrementStep(
     CIntegrationRodPoses& intPoses);
 
 /*
+ * Reconstructs the begin-of-step @ref TimeStep::Previous state from the integration history if
+ * history is present and the integration method allows, otherwise it estimates the state from
+ * constant velocity.
+ */
+void EntityReconstructPreviousStep(
+    ecs::Included<TagRodActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CPolylineMesh const& mesh,
+    CRodPose<TimeStep::Current> const& currPose,
+    CVelocitySlice<real, TimeStep::Current> const& currVel,
+    CIntegrationRodPoses const& intPoses,
+    CIntegrationVelocitySlices<DisplacementLayer::Default> const& intVels,
+    CRodPose<TimeStep::Previous>& outPrevPose,
+    CVelocitySlice<real, TimeStep::Previous>& outPrevVel);
+
+/*
  * System executed before the first time integration stage of the time step.
  * Computes the differential variables at the beginning of the step.
  */

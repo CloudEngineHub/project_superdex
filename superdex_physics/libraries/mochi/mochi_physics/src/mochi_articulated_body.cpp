@@ -202,16 +202,18 @@ static void UpdateDerivedStateFromPose(
   }
 }
 
-// Copy the current velocity of active joints.
-static void GetArticulatedJointVelocitiesImpl(
-    CArticulatedProps const& props,
+// Copy each active joint's velocity into the reduced-DoF layout, skipping cycle joints.
+void articulated::compound::GetArticulatedJointVelocities(
     Span<ArticulatedJointType const> jointTypes,
     Span<Real3 const> jointAxes,
     Span<ArticulatedDofInfo const> jointDofInfo,
-    CArticulatedJointVels<TimeStep::Current> const& jointVels,
+    Span<RigidBodyVel const> jointVels,
     ColumnVectorView<real> outVel) {
-  for (int i = 0; i < props.numLinks; ++i) {
-    auto const& jointVel = jointVels.value[i];
+  for (int i = 0; i < isize(jointTypes); ++i) {
+    if (jointTypes[i] == ArticulatedJointType::Cycle) {
+      continue;
+    }
+    auto const& jointVel = jointVels[i];
     auto const& dofInfo = jointDofInfo[i];
     switch (jointTypes[i]) {
       case ArticulatedJointType::Free:
@@ -250,8 +252,8 @@ static void UpdateDerivedVelocityFromJointVelocities(
   MOCHI_FILO_STACK_ALLOCATOR(allocator, (512 + 256 * RigidSize::kDAll) * sizeof(real));
   auto const* joints = bodyShape.shape->GetJointsData();
   ColumnVector<real> velReduced(props.reducedDofsDim, &allocator);
-  GetArticulatedJointVelocitiesImpl(
-      props, joints->jointTypes, joints->jointAxes, joints->dofInfo, jointVels, velReduced);
+  articulated::compound::GetArticulatedJointVelocities(
+      joints->jointTypes, joints->jointAxes, joints->dofInfo, jointVels.value, velReduced);
 
   // Link velocities are differential variables, but they are invalidated after a pose reset.
   ColumnVector<real> velFull(props.fullDofsDim, &allocator);
@@ -505,8 +507,8 @@ void articulated::compound::GetArticulatedJointVelocities(
 
   auto const* joints = reg.get<CArticulatedBodyShape const>(e).shape->GetJointsData();
   auto const& jointVels = reg.get<CArticulatedJointVels<TimeStep::Current> const>(e);
-  GetArticulatedJointVelocitiesImpl(
-      props, joints->jointTypes, joints->jointAxes, joints->dofInfo, jointVels, AsView(outVel));
+  GetArticulatedJointVelocities(
+      joints->jointTypes, joints->jointAxes, joints->dofInfo, jointVels.value, AsView(outVel));
 }
 
 static void AddConstraints(
@@ -2802,7 +2804,7 @@ void articulated::compound::EntityPreFirstStage(
   MOCHI_PROFILE_SCOPE();
   auto const* joints = bodyShape.shape->GetJointsData();
   integration::ArticulatedIntegrationMetadata const metadata{
-      joints->jointTypes, joints->dofInfo, poseInfo};
+      joints->jointTypes, joints->jointAxes, joints->dofInfo, poseInfo};
 
   // Joint DoFs and joint velocities are differential variables. Use integration utilities to
   // compute their values at the beginning of the step.
@@ -2830,7 +2832,7 @@ static void ComputeStateAndVelocity(
     CArticulatedFullPose& outFullPose) {
   auto const* joints = bodyShape.shape->GetJointsData();
   integration::ArticulatedIntegrationMetadata const metadata{
-      joints->jointTypes, joints->dofInfo, poseInfo};
+      joints->jointTypes, joints->jointAxes, joints->dofInfo, poseInfo};
   // Joint DoFs are differential variables. Use integration utilities to compute their value.
   integration::ApplyTimeIntegration<kTargetTime>(metadata, intState, outIntDofs, outPose);
 
@@ -2949,6 +2951,35 @@ static void CompoundEntityPreStep(
 void articulated::compound::PreStepPipeline(entt::registry& reg) {
   ecs::InvokeForEachGlobal(&CompoundEntityPreStep, reg);
   ecs::InvokeForEachGlobal(&articulated::rigid::EntityPreStep, reg);
+}
+
+static void CompoundEntityReconstructPreviousStep(
+    ecs::Included<TagArticulatedActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CArticulatedBodyShape const& bodyShape,
+    CArticulatedJointPoseInfo const& poseInfo,
+    CArticulatedReducedPose<TimeStep::Current> const& currState,
+    CArticulatedJointVels<TimeStep::Current> const& currJointVels,
+    CIntegrationArticulatedReducedPose const& intPose,
+    CIntegrationArticulatedJointVels const& intJointVels,
+    CArticulatedReducedPose<TimeStep::Previous>& outPrevPose,
+    CArticulatedJointVels<TimeStep::Previous>& outPrevJointVels) {
+  auto const* joints = bodyShape.shape->GetJointsData();
+  integration::ArticulatedIntegrationMetadata const metadata{
+      joints->jointTypes, joints->jointAxes, joints->dofInfo, poseInfo};
+
+  // Joint pose and velocity are both differential variables.
+  auto const method = simParams->integrationMethod;
+  integration::ReconstructPreviousPoseFromHistoryOrExtrapolate(
+      metadata, method, time.value, intPose, currState, currJointVels, outPrevPose);
+  integration::ReconstructPreviousVelocityFromHistoryOrCopy(
+      method, intJointVels, currJointVels, outPrevJointVels);
+}
+
+void articulated::compound::ReconstructPreviousStepPipeline(entt::registry& reg) {
+  ecs::InvokeForEachGlobal(&CompoundEntityReconstructPreviousStep, reg);
+  ecs::InvokeForEachGlobal(&articulated::rigid::EntityReconstructPreviousStep, reg);
 }
 
 void articulated::compound::PreStagePipeline(
@@ -3295,6 +3326,17 @@ void articulated::rigid::EntityPreStep(
   mochi::rigid::EntityIncrementStep({}, {}, currPose, currVel, prevPose, prevVel);
 }
 
+void articulated::rigid::EntityReconstructPreviousStep(
+    ecs::RequiredTag<TagArticulatedLinkActor>,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CRigidVel<TimeStep::Current> const& currVel,
+    CIntegrationRigidVels const& intVels,
+    CRigidVel<TimeStep::Previous>& outPrevVel) {
+  // Link velocity is the only differential variable.
+  auto const method = simParams->integrationMethod;
+  integration::ReconstructPreviousVelocityFromHistoryOrCopy(method, intVels, currVel, outPrevVel);
+}
+
 void articulated::rigid::EntityPreFirstStage(
     ecs::RequiredTag<TagArticulatedLinkActor>,
     CTimeIntegratorState const& intState,
@@ -3302,7 +3344,7 @@ void articulated::rigid::EntityPreFirstStage(
     CIntegrationRigidVels& intVels) {
   MOCHI_PROFILE_SCOPE();
   // Compute differential variables (i.e. velocity) at the beginning of the step.
-  mochi::rigid::ComputeVelocityAtStepStart(intState, prevVel, intVels);
+  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
 }
 
 void articulated::rigid::EntityPreStage(

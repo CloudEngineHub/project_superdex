@@ -90,6 +90,16 @@ namespace rod {
     ColumnVectorView<real const> displacement,
     int elementIndex);
 
+// Parallel-transport an element's frame axis from the reference to the output centerline, then
+// rotate it by the element's twist increment. outDisplacement must not alias refDisplacement.
+[[nodiscard]] Real3 TransportRodElementFrameAxis(
+    Span<Real3 const> meshNodes,
+    ColumnVectorView<real const> refDisplacement,
+    ColumnVectorView<real const> outDisplacement,
+    Real3 const& refAxis,
+    real twist,
+    int elementIndex);
+
 // Apply a Lie-algebra increment to a rod pose: adds dofDelta to refDisplacement for all
 // 4 DOFs per node (including twist), and updates frame axes via parallel transport followed
 // by twist rotation.

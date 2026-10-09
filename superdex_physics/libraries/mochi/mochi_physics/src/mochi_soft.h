@@ -559,6 +559,23 @@ void EntityIncrementStep(
     CVelocitySlice<real, TimeStep::Previous>& prevVel);
 
 /*
+ * Reconstructs the begin-of-step @ref TimeStep::Previous state from the integration history if
+ * history is present and the integration method allows, otherwise it estimates the state from
+ * constant velocity.
+ */
+void EntityReconstructPreviousStep(
+    ecs::Included<TagSoftActor>,
+    ecs::Excluded<TagRomActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CDisplacementSlice<real, TimeStep::Current> const& currDispl,
+    CVelocitySlice<real, TimeStep::Current> const& currVel,
+    CIntegrationDisplacementSlices const& intDispls,
+    CIntegrationVelocitySlices<DisplacementLayer::Default> const& intVels,
+    CDisplacementSlice<real, TimeStep::Previous>& outPrevDispl,
+    CVelocitySlice<real, TimeStep::Previous>& outPrevVel);
+
+/*
  * System executed after the solution of the non-linear problem is updated. It MUST update the
  * position components of the soft actor state (aka position state) to make it
  * consistent with the new solution. It may OPTIONALLY update other quantities that are a function

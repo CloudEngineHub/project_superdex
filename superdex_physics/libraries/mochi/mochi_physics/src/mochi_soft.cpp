@@ -103,6 +103,24 @@ void mochi::soft::EntityIncrementStep(
   currVel.value.SetZero(); // Reset current velocity to zero
 }
 
+void mochi::soft::EntityReconstructPreviousStep(
+    ecs::Included<TagSoftActor>,
+    ecs::Excluded<TagRomActor>,
+    ecs::CtxGlobal<CSceneTime const> time,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CDisplacementSlice<real, TimeStep::Current> const& currDispl,
+    CVelocitySlice<real, TimeStep::Current> const& currVel,
+    CIntegrationDisplacementSlices const& intDispls,
+    CIntegrationVelocitySlices<DisplacementLayer::Default> const& intVels,
+    CDisplacementSlice<real, TimeStep::Previous>& outPrevDispl,
+    CVelocitySlice<real, TimeStep::Previous>& outPrevVel) {
+  // Displacements and velocities are both differential variables.
+  auto const method = simParams->integrationMethod;
+  integration::ReconstructPreviousPoseFromHistoryOrExtrapolate(
+      method, time.value, intDispls, currDispl, currVel, outPrevDispl);
+  integration::ReconstructPreviousVelocityFromHistoryOrCopy(method, intVels, currVel, outPrevVel);
+}
+
 void mochi::soft::EntityPreFirstStage(
     ecs::Included<TagSoftActor>,
     ecs::Excluded<TagRomActor>,

@@ -335,13 +335,23 @@ class RigidBodyVel {
     _isVSymDirty = false;
   }
 
-  // Evaluate rotation matrix by time-stepping the rotation velocity. The result is not really a
-  // rotation if dtStage is the same value used for estimating vsym.
+  // Evaluate rotation matrix by time-stepping the rotation velocity. The result is a rotation only
+  // if vsym was computed by UpdateVSymIfDirty() with the same dtStage.
   VMatrix3x3r EvalTimeSteppedRotation(VMatrix3x3r const& R, real dtStage) const {
     MOCHI_ASSERT_VERBOSE(!_isVSymDirty, "vsym needs to be updated");
     // Convert the rotation velocity to rotation-matrix derivative, and then integrate
     auto dRdt = Dot3x3(Skew3(_omega) + SimdSymToFull(_vsym), R);
     return R + dtStage * dRdt;
+  }
+
+  // Rotation vector of the finite rotation step that omega describes over dt: an angle
+  // asin(|omega| * dt) about omega, since a finite step by an angle theta has
+  // |omega| * dt = sin(theta). A negative dt gives the backward step. Only valid for 3D rotations
+  // and |omega| * |dt| <= 1.
+  Vec4r GetFiniteStepRotationVector(real dt) const {
+    real const angle = ASin(Clamp(dt * Sqrt(NormSqr<3>(_omega)), -1_r, 1_r));
+    // The step is dt * omega * angle / sin(angle).
+    return (dt / Sinc(angle)) * _omega;
   }
 
   MOCHI_STRUCT_BEGIN(mochi::RigidBodyVel)
