@@ -215,6 +215,55 @@ struct bots::BotPrefab [no_reflection] {
   DynamicArray<String> _skinBoneLinks [no_python, no_serialize_defaults, reflection_name("skinBoneLinks")];
 }
 
+// @brief Base fields shared by bot modification actions.
+struct bots::BotModBase [no_python, no_reflection] {
+  String name;
+  bool enabled = true;
+}
+
+// @brief Attach an external bot file to a parent link.
+struct bots::AttachBot(bots::BotModBase) [no_python, no_reflection] {
+  String parentLinkName;
+  bots::BotJointPrefab joint [no_serialize_defaults];
+  String prefix [no_serialize_defaults];
+  String path;
+}
+
+// @brief Attach a single link to a parent link.
+struct bots::AttachLink(bots::BotModBase) [no_python, no_reflection] {
+  String parentLinkName;
+  bots::BotJointPrefab joint [no_serialize_defaults];
+  bots::BotLinkPrefab link [no_serialize_defaults];
+}
+
+// @brief Replace a link and its descendants with a new link, preserving the joint.
+struct bots::ReplaceLink(bots::BotModBase) [no_python, no_reflection] {
+  String linkToReplace;
+  bots::BotLinkPrefab link [no_serialize_defaults];
+}
+
+// @brief Replace a link and its descendants with an external bot, preserving the joint.
+struct bots::ReplaceLinkWithBot(bots::BotModBase) [no_python, no_reflection] {
+  String linkToReplace;
+  String prefix [no_serialize_defaults];
+  String path;
+}
+
+// @brief Attach a deformable skin to a bot.
+struct bots::AttachSkin(bots::BotModBase) [no_python, no_reflection] {
+  prefab::ArticulatedSkinPrefab skin;
+}
+
+// @brief Metadata stored at the root of a bot archive.
+struct bots::BotArchiveMetadata [no_python, no_reflection] {
+  String date;
+  String botHash;
+  String commitHash;
+  String target;
+  Optional<String> comment;
+  DynamicArray<String> warnings;
+}
+
 // @brief Load bot parameters from a .superdex_bot file using the default file-based loader.
 // Automatically resolves ModBotPrefab files by building the final @ref BotPrefab.
 //
@@ -553,7 +602,7 @@ struct bots::ControllerBasicOscPdParams [no_reflection] {
   // @brief If true, renormalize the task-space error so translation and rotation errors stay below
   // their configured maximums, keeping the force direction consistent. Requires positive
   // maxTranslationError and maxRotationError.
-  bool bApplyMaxErrorMagnitudeNormalization;
+  bool bApplyMaxErrorMagnitudeNormalization = true;
   // @brief Max translation error for normalization in control space [m]. Must be positive when
   // enabled.
   real maxTranslationError [units("m")];
@@ -567,7 +616,7 @@ struct bots::ControllerBasicOscPdParams [no_reflection] {
   // the task-space force direction. Requires the controller to have been constructed with a
   // BotPrefab; only joints with a finite (positive) effortLimit constrain the scaling — unbounded
   // (negative) and non-actuated (zero) joints are ignored.
-  bool bApplyMaxOSCTorqueNormalization;
+  bool bApplyMaxOSCTorqueNormalization = true;
 
   // @brief Load controller parameters from a JSON file.
   // @param[in] path Path to a .superdex_controller JSON file.
@@ -577,6 +626,15 @@ struct bots::ControllerBasicOscPdParams [no_reflection] {
   // @brief Save controller parameters to a JSON file.
   // @param[in] path Destination file path.
   fn SaveToFile(StringView path) -> void [mochi_error, const];
+}
+
+// @brief Scene-entry initialization arguments for @ref ControllerBasicOscPd. Unrecognized keys
+// are ignored on load.
+struct bots::ControllerBasicOscPdInitArgs [no_python, no_reflection] {
+  // @brief Base link name (root of the control chain).
+  String baseLinkName;
+  // @brief End-effector link name.
+  String eeLinkName;
 }
 
 // @brief Observation state — robot state variables read each control step.

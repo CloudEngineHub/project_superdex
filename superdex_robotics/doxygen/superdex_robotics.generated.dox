@@ -502,6 +502,21 @@
 /// @brief If true, scale the output efforts down uniformly so that no controlled DOF exceeds the per-joint effort limit harvested from the controller's BotPrefab (see Initialize), preserving the task-space force direction. Requires the controller to have been constructed with a BotPrefab; only joints with a finite (positive) effortLimit constrain the scaling — unbounded (negative) and non-actuated (zero) joints are ignored.
 ///
 
+/// @struct superdex::robotics::ControllerBasicOscPdInitArgs
+///
+/// @brief Scene-entry initialization arguments for @ref superdex::robotics::ControllerBasicOscPd "ControllerBasicOscPd". Unrecognized keys are ignored on load.
+///
+
+/// @var superdex::robotics::ControllerBasicOscPdInitArgs::baseLinkName
+///
+/// @brief Base link name (root of the control chain).
+///
+
+/// @var superdex::robotics::ControllerBasicOscPdInitArgs::eeLinkName
+///
+/// @brief End-effector link name.
+///
+
 /// @struct superdex::robotics::ControllerBasicOscPdObsv
 ///
 /// @brief Observation state — robot state variables read each control step. Fill it with GetCurrentObservationsFromMochi to read the live simulation, or populate it directly from an external state source (e.g., a real robot).
