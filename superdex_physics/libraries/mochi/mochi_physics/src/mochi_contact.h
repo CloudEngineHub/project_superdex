@@ -659,6 +659,7 @@ using ContactAssemblyReg = ecs::PartialRegistry<
     CColliderInfo const,
     CFemSurfaceDiscretization const,
     TagStaticActor const,
+    TagRigidActor const,
     TagShellActor const,
     TagUseDeformableContactSkin const,
     TagRodActor const,

@@ -267,10 +267,10 @@ static void ComputeAsyncContactResponseImpl(
     int const numActiveSamples = isize(contactQuery.sampleIndices);
     collisionResponse.ResizeNoInit(numActiveSamples, evalEner, evalGrad, evalHess);
 
-    // Add the transformation between collider and world space.
-    auto const& rotColliderFromWorld = config.explicitNormals
-        ? contactQuery.jacColliderFromWorldStageStart
-        : contactQuery.jacColliderFromWorld;
+    // Add the transformation between collider and world space. The response is the gradient wrt the
+    // current contact points, so map it back through the current collider frame even when explicit
+    // normals take the friction plane from the stage-start frame.
+    auto const& rotColliderFromWorld = contactQuery.jacColliderFromWorld;
     MOCHI_ASSERT(
         isize(rotColliderFromWorld) == 1,
         "Collider transform must be shared by all sample points for async contact.");

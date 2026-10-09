@@ -28,6 +28,7 @@
 #include <mochi_physics/src/mochi_contact.h>
 #include <mochi_physics/src/mochi_context.h>
 #include <mochi_physics/src/mochi_deformable.h>
+#include <mochi_physics/src/mochi_differentiable.h>
 #include <mochi_physics/src/mochi_group.h>
 #include <mochi_physics/src/mochi_island.h>
 #include <mochi_physics/src/mochi_rigid.h>
@@ -844,6 +845,89 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"DampingPrevious", GradTarget::Previous, 0_r, 0_r, 1_r, true, 3e-3_r, {}}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
+class MochiRigidMovingStaticContact : public MochiRigidStaticContact {
+ public:
+  void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
+      override {
+    MochiRigidStaticContact::InitializeScene(
+        coulombCoefficient, viscousCoefficient, dampingCoefficient);
+    auto& rootTransform = GetRegistry().get<CRootTransform>(_collider);
+    rootTransform.worldFromLocalPrev = TransformRT(
+        Quaternion::FromRotationVector(Real3(0.05_r, -0.03_r, 0.04_r)) *
+            rootTransform.worldFromLocal.GetRotation(),
+        rootTransform.worldFromLocal.GetTranslation() + Real3(0.02_r, -0.01_r, 0.03_r));
+  }
+
+  void TestContactForceAdjoints() {
+    auto& reg = GetRegistry();
+    reg.emplace<TagQueryActiveContacts>(_colliding);
+    reg.emplace<CQueryActorContactForces>(_colliding);
+    EmplaceDifferentiableContactComponents(
+        reg, _colliding, reg.get<CActorDofInfo const>(_colliding));
+
+    InitState();
+    ComputeResponse(GradTarget::Current);
+    auto& collisions = reg.get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(_colliding);
+    Real3 const forceAdjoint{0.7_r, -0.4_r, 0.2_r};
+    int numContacts = 0;
+    for (auto& collision : collisions) {
+      numContacts += isize(collision.collisionResult.forcePerUnitArea);
+      for (auto& force : collision.collisionResult.forcePerUnitArea) {
+        force = forceAdjoint;
+      }
+    }
+    ASSERT_GT(numContacts, 0);
+    AccumulateContactForceAdjoints(reg);
+    ColumnVector<real> const analytical =
+        reg.get<CDiffContactGrad<GradTarget::Current> const>(_colliding);
+
+    auto const evaluateLoss = [&]() {
+      ComputeResponse(GradTarget::Current);
+      real loss = 0_r;
+      int count = 0;
+      for (auto const& collision : collisions) {
+        count += isize(collision.collisionResult.forcePerUnitArea);
+        for (auto const& force : collision.collisionResult.forcePerUnitArea) {
+          loss += Dot(forceAdjoint, force);
+        }
+      }
+      EXPECT_EQ(count, numContacts);
+      return loss;
+    };
+    ColumnVector<real> finiteDiff(_numDofs);
+    real const eps = GetParam().eps;
+    for (int i = 0; i < _numDofs; ++i) {
+      InitState();
+      AddToState(i, eps);
+      real const lossPlus = evaluateLoss();
+      InitState();
+      AddToState(i, -eps);
+      finiteDiff[i] = (lossPlus - evaluateLoss()) / (2_r * eps);
+    }
+    ColumnVector<real> const delta = analytical - finiteDiff;
+    EXPECT_NEAR(delta.Norm() / Max(analytical.Norm(), finiteDiff.Norm()), 0_r, GetParam().resTol);
+  }
+};
+
+TEST_P(MochiRigidMovingStaticContact, ContactAssembly) {
+  RunTest();
+  if (GetParam().gradTarget == GradTarget::Current && GetParam().explicitNormals) {
+    TestContactForceAdjoints();
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiRigidMovingStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 2e-3_r, 3e-2_r},
+        TestParams{"NoFrictionExplicit", GradTarget::Current, 0_r, 0_r, 0_r, true, 2e-3_r, 3e-2_r},
+        TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 2e-3_r, 3e-2_r},
+        // With GradTarget::Previous only dissipation responds, so friction is needed to check the
+        // stage-start collider frame.
+        TestParams{"ViscousPrevious", GradTarget::Previous, 0_r, 1_r, 0_r, true, 2e-3_r, {}}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
 class MochiRigidRigidContact : public MochiContactTestBase {
   TransformRT _posA{};
   TransformRT _posB{};
@@ -1021,6 +1105,38 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 1e-3_r, 1e-3_r},
         TestParams{"CoulombExplicit", GradTarget::Current, 0.5_r, 0_r, 0_r, true, 1e-3_r, 1e-3_r},
         TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 1_r, true, 1e-3_r, 1e-3_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// The static cube was moved by a prescribed transform, so its stage-start pose differs from its
+// current pose. Explicit normals take the friction plane from the stage-start pose, but the
+// response is the gradient wrt the current contact points, so it must be mapped back through the
+// current collider frame.
+class MochiSoftMovingStaticContact : public MochiSoftStaticContact {
+ public:
+  void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
+      override {
+    MochiSoftStaticContact::InitializeScene(
+        coulombCoefficient, viscousCoefficient, dampingCoefficient);
+    auto& rootTransform = GetRegistry().get<CRootTransform>(_collider);
+    rootTransform.worldFromLocalPrev = TransformRT(
+        Quaternion::FromRotationVector(Real3(0.05_r, -0.03_r, 0.04_r)) *
+            rootTransform.worldFromLocal.GetRotation(),
+        rootTransform.worldFromLocal.GetTranslation());
+  }
+};
+
+TEST_P(MochiSoftMovingStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiSoftMovingStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 1e-3_r, 1e-3_r},
+        TestParams{"Viscous", GradTarget::Current, 0_r, 1_r, 0_r, false, 1e-3_r, 1e-3_r},
+        TestParams{"NoFrictionExplicit", GradTarget::Current, 0_r, 0_r, 0_r, true, 1e-3_r, 1e-3_r},
+        TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 1e-3_r, 1e-3_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 class MochiSoftRigidContact : public MochiContactTestBase {

@@ -157,7 +157,8 @@ struct CRootTransform : public NoCopy {
 // CRootTransform.
 template <TimeStep kTimeStep>
 [[nodiscard]] TransformRT const& GetRootTransform(
-    [[maybe_unused]] entt::registry const& reg,
+    [[maybe_unused]] ecs::
+        PartialRegistry<CRootTransform const, TagStaticActor const, TagRigidActor const> reg,
     [[maybe_unused]] entt::entity entity,
     CRootTransform const& crt) {
   MOCHI_ASSERT_VERBOSE(
