@@ -1214,11 +1214,10 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
   ;
 
   registry.GetClass<mochi::RecordingParams>()
-    .def("__init__", [](mochi::RecordingParams* self, nb::object record_actor_meshes, nb::object record_actor_local_to_global_map, nb::object record_actor_mass_matrix, nb::object record_target_state, nb::object record_dynamic_actor_state, nb::object record_static_actor_state, nb::object record_contact_points, nb::object record_node_contact_forces, nb::object record_sdf_distances) {
+    .def("__init__", [](mochi::RecordingParams* self, nb::object record_actor_meshes, nb::object record_actor_local_to_global_map, nb::object record_target_state, nb::object record_dynamic_actor_state, nb::object record_static_actor_state, nb::object record_contact_points, nb::object record_node_contact_forces, nb::object record_sdf_distances) {
       mochi::RecordingParams result{};
       result.recordActorMeshes = nb::cast<bool>(record_actor_meshes);
       result.recordActorLocalToGlobalMap = nb::cast<bool>(record_actor_local_to_global_map);
-      result.recordActorMassMatrix = nb::cast<bool>(record_actor_mass_matrix);
       result.recordTargetState = nb::cast<bool>(record_target_state);
       result.recordDynamicActorState = nb::cast<bool>(record_dynamic_actor_state);
       result.recordStaticActorState = nb::cast<bool>(record_static_actor_state);
@@ -1230,7 +1229,6 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::kw_only()
       , nb::arg("record_actor_meshes") = mochi::RecordingParams{}.recordActorMeshes
       , nb::arg("record_actor_local_to_global_map") = mochi::RecordingParams{}.recordActorLocalToGlobalMap
-      , nb::arg("record_actor_mass_matrix") = mochi::RecordingParams{}.recordActorMassMatrix
       , nb::arg("record_target_state") = mochi::RecordingParams{}.recordTargetState
       , nb::arg("record_dynamic_actor_state") = mochi::RecordingParams{}.recordDynamicActorState
       , nb::arg("record_static_actor_state") = mochi::RecordingParams{}.recordStaticActorState
@@ -1243,7 +1241,6 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def("__deepcopy__", [](mochi::RecordingParams const& self, nb::dict) { return mochi::RecordingParams(self); })
     .def_rw("record_actor_meshes", &mochi::RecordingParams::recordActorMeshes, "Include the meshes (if any) when recording actor creation events.")
     .def_rw("record_actor_local_to_global_map", &mochi::RecordingParams::recordActorLocalToGlobalMap, "Include the local-to-global map (if any) when recording actor creation events.")
-    .def_rw("record_actor_mass_matrix", &mochi::RecordingParams::recordActorMassMatrix, "Include the mass matrix (if any) when recording actor creation events.")
     .def_rw("record_target_state", &mochi::RecordingParams::recordTargetState, "Record articulated pose controller targets and tracking parameters every step.")
     .def_rw("record_dynamic_actor_state", &mochi::RecordingParams::recordDynamicActorState, "Record the state of dynamic actors every step.\n\nThis includes position, rotation, and velocity. For soft actors, it includes the\nnode displacements and velocities.")
     .def_rw("record_static_actor_state", &mochi::RecordingParams::recordStaticActorState, "Record the state of static actors every step. This includes position and\nrotation.")

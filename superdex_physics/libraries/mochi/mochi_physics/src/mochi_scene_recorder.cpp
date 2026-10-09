@@ -42,8 +42,6 @@
 
 namespace mochi {
 
-static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& data, Error& error);
-
 SceneRecorder::SceneRecorder(
     std::unique_ptr<GroupWriter> writer,
     entt::registry& registry,
@@ -331,25 +329,6 @@ void SceneRecorder::AddCreateActorEvents() {
             "elementOffsets", local2Global->GetElementOffsets(), elementOffsetsDim, _error);
       }
     }
-
-    if (_params.recordActorMassMatrix) {
-      auto const* massMatrix = _registry.try_get<CMassMatrix const>(e);
-      auto const* fullSparsity = _registry.try_get<CFullSparsityPattern const>(e);
-      if (massMatrix && fullSparsity) {
-        int numRows = fullSparsity->graph.size();
-        int numCols = numRows;
-        CRecordingData massMatrixRecording;
-        RecordDatasetSparseMatrixCSR<real>(
-            "massMatrix",
-            numRows,
-            numCols,
-            fullSparsity->graph.GetPointers(),
-            fullSparsity->graph.GetTargets(),
-            MakeConstSpan(massMatrix->values),
-            massMatrixRecording);
-        WriteActorRecordingData(*_writer, massMatrixRecording, _error);
-      }
-    }
   }
 
   _createdActors.clear();
@@ -381,25 +360,23 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
   enum class DataPass { GlobalAttributes, Rest };
 
   // Returns true if we should write the given entry during the pass
-  auto passFilter = [](DataPass pass, std::string const& name, CRecordingData::Entry const& entry) {
-    bool isGlobalAttrib = entry.isAttribute && (name.find_first_of('/') == std::string::npos);
+  auto passFilter = [](DataPass pass, CRecordingData::Entry const& entry) {
     switch (pass) {
       case DataPass::GlobalAttributes: {
-        return isGlobalAttrib;
+        return entry.isAttribute;
       }
       default: {
-        return !isGlobalAttrib;
+        return !entry.isAttribute;
       }
     }
   };
 
   // Writes a single pass
   auto writeDataPass = [&](DataPass pass) {
-    std::string prevDatasetName;
     // Iterate over the entries in alphabetically sorted order.
     for (auto const& [name, entry] : data.entries) {
       // Only write things that we need to write during this pass
-      if (passFilter(pass, name, entry)) {
+      if (passFilter(pass, entry)) {
         // Get the value size from the type enum
         size_t valueSize = 0;
         switch (entry.type) {
@@ -432,22 +409,6 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
             (entry.dims.size() <= 1) || !entry.isAttribute,
             "Multi-dimensional attribute data not supported. Must be a data set instead.");
 
-        std::string datasetName = entry.isAttribute ? "" : name;
-        std::string attributeName = entry.isAttribute ? name : "";
-
-        // If the name contains a slash, then it must be of the form
-        // "<dataset_name>/<attribute_name>". Since entries are enumerated in sorted order, these
-        // attributes should come immediately after the dataset that they describe.
-        auto slash = name.find_first_of('/');
-        if (slash != std::string::npos) {
-          MOCHI_ASSERT(
-              entry.isAttribute,
-              "Only attributes are allowed to contains a forward slash character");
-          datasetName = name.substr(0, slash);
-          attributeName = name.substr(slash + 1);
-          MOCHI_ASSERT(prevDatasetName == datasetName, "Dataset not found for attribute");
-        }
-
         // The number of values stored in the byte array
         size_t const valueCount = isize(entry.data) / valueSize;
 
@@ -456,13 +417,10 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
           case CRecordingData::Type::Double:
             if (entry.isAttribute) {
               writer.AddAttribute(
-                  attributeName,
-                  reinterpret_cast<double const*>(entry.data.data()),
-                  valueCount,
-                  error);
+                  name, reinterpret_cast<double const*>(entry.data.data()), valueCount, error);
             } else {
               writer.AddDataSet(
-                  datasetName,
+                  name,
                   Span{reinterpret_cast<double const*>(entry.data.data()), valueCount},
                   Span{entry.dims.data(), entry.dims.size()},
                   error);
@@ -471,13 +429,10 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
           case CRecordingData::Type::Float:
             if (entry.isAttribute) {
               writer.AddAttribute(
-                  attributeName,
-                  reinterpret_cast<float const*>(entry.data.data()),
-                  valueCount,
-                  error);
+                  name, reinterpret_cast<float const*>(entry.data.data()), valueCount, error);
             } else {
               writer.AddDataSet(
-                  datasetName,
+                  name,
                   Span{reinterpret_cast<float const*>(entry.data.data()), valueCount},
                   Span{entry.dims.data(), entry.dims.size()},
                   error);
@@ -486,13 +441,10 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
           case CRecordingData::Type::Int:
             if (entry.isAttribute) {
               writer.AddAttribute(
-                  attributeName,
-                  reinterpret_cast<int const*>(entry.data.data()),
-                  valueCount,
-                  error);
+                  name, reinterpret_cast<int const*>(entry.data.data()), valueCount, error);
             } else {
               writer.AddDataSet(
-                  datasetName,
+                  name,
                   Span{reinterpret_cast<int const*>(entry.data.data()), valueCount},
                   Span{entry.dims.data(), entry.dims.size()},
                   error);
@@ -501,8 +453,6 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
           default:
             break;
         }
-
-        prevDatasetName = std::move(datasetName);
       }
     }
   };

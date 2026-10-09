@@ -3834,11 +3834,6 @@
 /// @brief Include the local-to-global map (if any) when recording actor creation events.
 ///
 
-/// @var mochi::RecordingParams::recordActorMassMatrix
-///
-/// @brief Include the mass matrix (if any) when recording actor creation events.
-///
-
 /// @var mochi::RecordingParams::recordTargetState
 ///
 /// @brief Record articulated pose controller targets and tracking parameters every step.

@@ -7614,8 +7614,6 @@ class RecordingParams:
     """Include the meshes (if any) when recording actor creation events."""
     record_actor_local_to_global_map: bool
     """Include the local-to-global map (if any) when recording actor creation events."""
-    record_actor_mass_matrix: bool
-    """Include the mass matrix (if any) when recording actor creation events."""
     record_target_state: bool
     """Record articulated pose controller targets and tracking parameters every step."""
     record_dynamic_actor_state: bool
@@ -7647,7 +7645,6 @@ class RecordingParams:
         self,
         record_actor_meshes: bool = ...,
         record_actor_local_to_global_map: bool = ...,
-        record_actor_mass_matrix: bool = ...,
         record_target_state: bool = ...,
         record_dynamic_actor_state: bool = ...,
         record_static_actor_state: bool = ...,

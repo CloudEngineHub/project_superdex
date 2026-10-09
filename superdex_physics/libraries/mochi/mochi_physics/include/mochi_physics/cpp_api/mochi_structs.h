@@ -556,8 +556,6 @@ struct RecordingParams {
 
   bool recordActorLocalToGlobalMap = false;
 
-  bool recordActorMassMatrix = false;
-
   // ------------------------------------------------------------------------------
   // Per-Step Information
   // ------------------------------------------------------------------------------
@@ -582,7 +580,6 @@ struct RecordingParams {
     RecordingParams params;
     params.recordActorMeshes = enabled;
     params.recordActorLocalToGlobalMap = enabled;
-    params.recordActorMassMatrix = enabled;
     params.recordTargetState = enabled;
     params.recordDynamicActorState = enabled;
     params.recordStaticActorState = enabled;

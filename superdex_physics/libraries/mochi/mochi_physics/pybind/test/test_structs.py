@@ -690,7 +690,6 @@ class TestStructs(MochiTestBase):
         params = mochi.RecordingParams()
         self.assertTrue(params.record_actor_meshes)
         self.assertFalse(params.record_actor_local_to_global_map)
-        self.assertFalse(params.record_actor_mass_matrix)
 
         # Test keyword argument constructor with all fields in shuffled order.
         params_kw_all = mochi.RecordingParams(
@@ -698,7 +697,6 @@ class TestStructs(MochiTestBase):
             record_dynamic_actor_state=False,
             record_contact_points=True,
             record_actor_local_to_global_map=True,
-            record_actor_mass_matrix=True,
             record_target_state=False,
             record_static_actor_state=True,
             record_sdf_distances=True,
@@ -706,7 +704,6 @@ class TestStructs(MochiTestBase):
         )
         self.assertFalse(params_kw_all.record_actor_meshes)
         self.assertTrue(params_kw_all.record_actor_local_to_global_map)
-        self.assertTrue(params_kw_all.record_actor_mass_matrix)
         self.assertFalse(params_kw_all.record_target_state)
         self.assertFalse(params_kw_all.record_dynamic_actor_state)
         self.assertTrue(params_kw_all.record_static_actor_state)
@@ -728,7 +725,6 @@ class TestStructs(MochiTestBase):
         # Assign every field (to show we can)
         params.record_actor_meshes = True
         params.record_actor_local_to_global_map = False
-        params.record_actor_mass_matrix = False
         params.record_target_state = True
         params.record_dynamic_actor_state = True
         params.record_static_actor_state = False

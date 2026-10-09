@@ -1606,9 +1606,6 @@ struct RecordingParams {
   // @brief Include the local-to-global map (if any) when recording actor creation events.
   bool recordActorLocalToGlobalMap = false;
 
-  // @brief Include the mass matrix (if any) when recording actor creation events.
-  bool recordActorMassMatrix = false;
-
   # Per-Step Information
   // @brief Record articulated pose controller targets and tracking parameters every step.
   bool recordTargetState = true;
