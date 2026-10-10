@@ -252,7 +252,7 @@ bool BotAsset::IsSavable() const {
   return !IsReadOnly();
 }
 
-bool BotAsset::Save() const {
+bool BotAsset::Save() {
   mochi::ErrorLog e;
   if (IsReadOnly()) {
     MOCHI_LOG_ERROR("Attempting to save read-only Mochi Bot");

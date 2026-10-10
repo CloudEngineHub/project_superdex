@@ -120,6 +120,8 @@ class BotSceneEditor : public AssetEditor {
   // Bot prefabs rebuilt and copied from the AssetManager by OnStartPhysics, keyed by bot path, for
   // CreatePhysicsActors. Rebuilding mutates the asset, so it must happen on the UI thread.
   std::unordered_map<std::string, superdex::robotics::BotPrefab> _physicsBotPrefabs;
+  // The scene copied by OnStartPhysics, with unsaved file-backed controller params inlined.
+  superdex::robotics::BotScenePrefab _physicsScenePrefab;
   struct TaskRuntimeSpawn {
     std::optional<mochi::ActorHandle> primaryActor;
     mochi::TransformRT spawnFromPrimary = {};

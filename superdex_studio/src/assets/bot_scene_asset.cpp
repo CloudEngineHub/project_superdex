@@ -17,6 +17,7 @@
 #if MOCHI_INTERNAL
 
 #include "assets/bot_scene_asset.h"
+#include "app/app.h"
 #include "assets/asset.h"
 #include "assets/asset_manager.h"
 #include "assets/bot_asset.h"
@@ -450,9 +451,12 @@ bool BotSceneAsset::IsSavable() const {
   return !IsReadOnly();
 }
 
-bool BotSceneAsset::Save() const {
+bool BotSceneAsset::Save() {
   if (IsReadOnly()) {
     MOCHI_LOG_ERROR("Attempting to save read-only BotSceneAsset");
+    return false;
+  }
+  if (!SaveControllerParams((_isArchive ? _archiveTargetPath : _path).GetParentPath())) {
     return false;
   }
   if (_isArchive) {
@@ -484,6 +488,11 @@ void BotSceneAsset::ForEachReferencedPath(
   }
   for (auto const& bot : _prefab.bots) {
     visit(bot.path);
+    for (auto const& controller : bot.controllers) {
+      if (!superdex::robotics::IsInlineJson(controller.params)) {
+        visit(controller.params);
+      }
+    }
   }
   for (auto const& sensor : _prefab.sensors) {
     if (!superdex::robotics::IsInlineJson(sensor.params)) {
@@ -518,6 +527,11 @@ bool BotSceneAsset::RewriteReferencedPath(mochi::Path const& oldPath, mochi::Pat
   }
   for (auto& bot : _prefab.bots) {
     changed |= MaybeRewrite(bot.path, oldPath, newPath);
+    for (auto& controller : bot.controllers) {
+      if (!superdex::robotics::IsInlineJson(controller.params)) {
+        changed |= MaybeRewrite(controller.params, oldPath, newPath);
+      }
+    }
   }
   for (auto& sensor : _prefab.sensors) {
     if (!superdex::robotics::IsInlineJson(sensor.params)) {
@@ -538,6 +552,10 @@ superdex::robotics::BotScenePrefab& BotSceneAsset::GetPrefab() {
   return _prefab;
 }
 
+ControllerParamsCache& BotSceneAsset::GetControllerParams() {
+  return _controllerParams;
+}
+
 std::string const& BotSceneAsset::GetBotsRootPath() const {
   return _botsRootPath;
 }
@@ -546,11 +564,48 @@ bool BotSceneAsset::IsArchive() const {
   return _isArchive;
 }
 
+bool BotSceneAsset::SaveControllerParams(mochi::Path const& sceneDirectory) {
+  auto const choosePath = [&](superdex::robotics::BotEntry const& bot,
+                              superdex::robotics::ControllerEntry const& controller) {
+    std::array<char const*, 1> const filters{{"*.superdex_controller"}};
+#if MOCHI_PLATFORM_MACOS
+    // Custom extensions without a registered UTI are disabled when the native filter is set.
+    int constexpr numFilters = 0;
+#else
+    int constexpr numFilters = static_cast<int>(filters.size());
+#endif
+    return SuperDexStudio::GetFileDialogPath(
+               "Save Controller Parameters",
+               filters.data(),
+               numFilters,
+               "SuperDex Controller (*.superdex_controller)",
+               true,
+               sceneDirectory /
+                   (std::string(bot.name) + "_" + std::string(controller.name) +
+                    ".superdex_controller"))
+        .ToString();
+  };
+  std::string paramsError;
+  bool const externalized =
+      ExternalizeInlineParams(_prefab, _controllerParams, choosePath, paramsError);
+  if (externalized) {
+    _manager->ResyncReferencer(this);
+  }
+  if (!externalized || !_controllerParams.SaveModified(paramsError)) {
+    MOCHI_LOG_ERROR("Failed to save controller parameters: %s", paramsError.c_str());
+    return false;
+  }
+  return true;
+}
+
 bool BotSceneAsset::SupportsSaveAs() const {
   return true;
 }
 
-bool BotSceneAsset::SaveAs(mochi::Path const& path) const {
+bool BotSceneAsset::SaveAs(mochi::Path const& path) {
+  if (!SaveControllerParams((_isArchive ? _archiveTargetPath : path).GetParentPath())) {
+    return false;
+  }
   if (_isArchive) {
     return SaveArchiveCopy(path);
   }

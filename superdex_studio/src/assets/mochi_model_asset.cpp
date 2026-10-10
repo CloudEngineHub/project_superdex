@@ -408,7 +408,7 @@ bool MochiModelAsset::IsSavable() const {
   return !IsReadOnly();
 }
 
-bool MochiModelAsset::Save() const {
+bool MochiModelAsset::Save() {
   if (IsReadOnly()) {
     MOCHI_LOG_ERROR("Attempting to save read-only MochiModelAsset");
     return false;

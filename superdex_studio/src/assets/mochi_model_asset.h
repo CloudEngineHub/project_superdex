@@ -91,7 +91,7 @@ class MochiModelAsset : public Asset {
   char const* GetTypeLabel() const override;
   bool RendersThumbnail() const override;
   bool IsSavable() const override;
-  bool Save() const override;
+  bool Save() override;
   bool ReloadFromDisk() override;
   void StageThumbnailScene(mochi_renderer::Scene& scene) override;
   void ShowAssetTileTooltipItems() const override;

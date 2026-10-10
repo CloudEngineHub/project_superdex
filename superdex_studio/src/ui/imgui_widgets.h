@@ -176,6 +176,14 @@ bool InputText(
     ImGuiInputTextCallback callback = nullptr,
     void* user_data = nullptr);
 
+bool InputTextMultiline(
+    char const* label,
+    mochi::DynamicString* str,
+    ImVec2 const& size = ImVec2(0, 0),
+    ImGuiInputTextFlags flags = 0,
+    ImGuiInputTextCallback callback = nullptr,
+    void* user_data = nullptr);
+
 // Name InputText that highlights (kNameConflictColor) and shows a "name already used" tooltip when
 // @p collides is true. Returns true if the text changed. Shared by the actor detail panels.
 bool NameInputWithCollisionCheck(char const* label, mochi::DynamicString& name, bool collides);

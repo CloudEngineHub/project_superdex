@@ -483,6 +483,30 @@ bool ImGui::InputText(
   }
 }
 
+bool ImGui::InputTextMultiline(
+    char const* label,
+    mochi::DynamicString* str,
+    ImVec2 const& size,
+    ImGuiInputTextFlags flags,
+    ImGuiInputTextCallback callback,
+    void* user_data) {
+  IM_ASSERT((flags & ImGuiInputTextFlags_CallbackResize) == 0);
+  flags |= ImGuiInputTextFlags_CallbackResize;
+
+  InputTextCallback_UserData cb_user_data{};
+  cb_user_data.Str = str;
+  cb_user_data.ChainCallback = callback;
+  cb_user_data.ChainCallbackUserData = user_data;
+  return InputTextMultiline(
+      label,
+      (char*)str->c_str(),
+      str->capacity() + 1,
+      size,
+      flags,
+      InputTextCallback,
+      &cb_user_data);
+}
+
 bool ImGui::NameInputWithCollisionCheck(
     char const* label,
     mochi::DynamicString& name,

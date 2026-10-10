@@ -90,7 +90,7 @@ bool Asset::IsSavable() const {
   return false;
 }
 
-bool Asset::Save() const {
+bool Asset::Save() {
   return false;
 }
 
@@ -98,7 +98,7 @@ bool Asset::SupportsSaveAs() const {
   return false;
 }
 
-bool Asset::SaveAs(mochi::Path const& /*path*/) const {
+bool Asset::SaveAs(mochi::Path const& /*path*/) {
   return false;
 }
 

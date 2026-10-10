@@ -21,6 +21,7 @@
 #include "assets/asset_manager.h"
 #include "assets/bot_asset.h"
 #include "assets/bot_scene_asset.h"
+#include "assets/controller_params.h"
 #include "assets/mochi_prefab_asset.h"
 #include "rendering/measure_tool.h"
 #include "ui/imgui_widgets.h"
@@ -37,11 +38,15 @@
 #include <mochi_physics/utils/mochi_prefab.h>
 
 #include <imguios/fonts/icons_font_awesome5.h>
+#include <misc/cpp/imgui_stdlib.h>
+#include <picojson/picojson.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <set>
 #include <string>
 #include <string_view>
@@ -72,6 +77,147 @@ std::string MakeUniqueName(std::string_view base, std::set<std::string> const& e
       return candidate;
     }
   }
+}
+
+std::string ValidateJson(std::string_view text, bool requireObject) {
+  picojson::value value;
+  std::string json{text};
+  std::string error;
+  picojson::parse(value, json.begin(), json.end(), &error);
+  if (!error.empty()) {
+    return error;
+  }
+  if (requireObject && !value.is<picojson::object>()) {
+    return "Expected a JSON object";
+  }
+  return {};
+}
+
+bool IsOscControllerType(std::string_view type) {
+  type = CanonicalControllerType(type);
+  return type == superdex::robotics::ControllerBasicOscPd::TypeName() ||
+      type == superdex::robotics::ControllerOscV1::TypeName() ||
+      type == superdex::robotics::ControllerOscV2::TypeName();
+}
+
+bool ParseJsonObject(std::string_view text, picojson::object& object, std::string& error) {
+  picojson::value value;
+  std::string json{text};
+  picojson::parse(value, json.begin(), json.end(), &error);
+  if (!error.empty()) {
+    return false;
+  }
+  if (!value.is<picojson::object>()) {
+    error = "Expected a JSON object";
+    return false;
+  }
+  object = value.get<picojson::object>();
+  return true;
+}
+
+std::string GetJsonString(picojson::object const& object, char const* key) {
+  auto const it = object.find(key);
+  if (it == object.end() || !it->second.is<std::string>()) {
+    return {};
+  }
+  return it->second.get<std::string>();
+}
+
+void SetJsonString(
+    mochi::DynamicString& json,
+    picojson::object& object,
+    char const* key,
+    std::string const& value) {
+  object[key] = picojson::value(value);
+  json = picojson::value(object).serialize();
+}
+
+bool LinkNameCombo(
+    char const* label,
+    superdex::robotics::BotPrefab const& prefab,
+    std::string& selectedName) {
+  bool changed = false;
+  char const* preview = selectedName.empty() ? "Select a link" : selectedName.c_str();
+  if (ImGui::BeginCombo(label, preview)) {
+    for (auto const& link : prefab.links) {
+      bool const selected = selectedName == link.name;
+      if (ImGui::Selectable(link.name.c_str(), selected)) {
+        selectedName = link.name;
+        changed = true;
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  return changed;
+}
+
+void ShowControllerWarning(std::string_view warning) {
+  ImGui::TextColored(
+      ImVec4(1.0f, 0.65f, 0.15f, 1.0f),
+      "%s %.*s",
+      ICON_FA_EXCLAMATION_TRIANGLE,
+      static_cast<int>(warning.size()),
+      warning.data());
+}
+
+// Edits normalized params JSON: typed fields for built-in controller types, raw JSON otherwise.
+bool EditParamsJson(std::string_view type, std::string& json) {
+  bool changed = false;
+  bool const builtin = ForEachBuiltinController([&]<typename T>() {
+    if (T::TypeName() != CanonicalControllerType(type)) {
+      return false;
+    }
+    typename T::Params params;
+    SReflect::FromJsonString(params, json);
+    if (ImGui::SimpleReflectionStruct(params)) {
+      json = SReflect::ToJsonString(params, true);
+      changed = true;
+    }
+    return true;
+  });
+  if (!builtin) {
+    changed =
+        ImGui::InputTextMultiline("Params JSON", &json, ImVec2(-1, ImGui::GetTextLineHeight() * 6));
+    std::string normalized;
+    std::string error;
+    if (!NormalizeParamsJson(type, json, normalized, error)) {
+      ShowControllerWarning(error);
+    }
+  }
+  return changed;
+}
+
+mochi::Path
+GetControllerParamsPath(char const* title, bool isSaveDialog, mochi::Path const& initial) {
+  std::array<char const*, 1> const filters{{"*.superdex_controller"}};
+#if MOCHI_PLATFORM_MACOS
+  // Custom extensions without a registered UTI are disabled when the native filter is set.
+  int constexpr numFilters = 0;
+#else
+  int constexpr numFilters = static_cast<int>(filters.size());
+#endif
+  return SuperDexStudio::GetFileDialogPath(
+      title,
+      filters.data(),
+      numFilters,
+      "SuperDex Controller (*.superdex_controller)",
+      isSaveDialog,
+      initial);
+}
+
+int CountControllersUsingParams(
+    superdex::robotics::BotScenePrefab const& scene,
+    std::string_view paramsPath) {
+  int count = 0;
+  for (auto const& bot : scene.bots) {
+    for (auto const& controller : bot.controllers) {
+      count += std::string_view(controller.params) == paramsPath ? 1 : 0;
+    }
+  }
+  return count;
 }
 
 bool ResolveTaskSpawns(
@@ -153,12 +299,320 @@ bool ResolveTaskSpawns(
   return true;
 }
 
+struct ControllerEditResult {
+  bool changed = false;
+  bool structural = false;
+  bool referencesChanged = false;
+};
+
+ControllerEditResult ShowControllers(
+    superdex::robotics::BotEntry& bot,
+    BotAsset const* botAsset,
+    SuperDexStudio* studio,
+    BotSceneAsset* sceneAsset) {
+  ControllerEditResult result;
+  auto& controllers = bot.controllers;
+  int controllerToDelete = -1;
+  int controllerToMoveUp = -1;
+  int controllerToMoveDown = -1;
+
+  ImGui::PushID("Controllers");
+  for (int i = 0; i < static_cast<int>(controllers.size()); ++i) {
+    auto& controller = controllers[i];
+    ImGui::PushID(i);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1, 0));
+    if (ImGui::Button(ICON_FA_TRASH)) {
+      controllerToDelete = i;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(i == 0);
+    if (ImGui::Button(ICON_FA_CARET_UP)) {
+      controllerToMoveUp = i;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(i == static_cast<int>(controllers.size()) - 1);
+    if (ImGui::Button(ICON_FA_CARET_DOWN)) {
+      controllerToMoveDown = i;
+    }
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+    ImGui::SameLine();
+
+    std::string const label =
+        (controller.name.empty() ? std::string("(unnamed)") : std::string(controller.name)) + " (" +
+        (controller.type.empty() ? std::string("no type") : std::string(controller.type)) +
+        ")###controller";
+    if (ImGui::CollapsingHeader(label.c_str())) {
+      int matchingNames = 0;
+      for (auto const& candidate : controllers) {
+        matchingNames += !controller.name.empty() && candidate.name == controller.name ? 1 : 0;
+      }
+      bool const nameCollides = matchingNames > 1;
+      if (nameCollides) {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, kNameConflictColor);
+      }
+      result.changed |=
+          ImGui::InputText("Name", &controller.name, ImGuiInputTextFlags_CharsNoBlank);
+      if (nameCollides) {
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("Another controller already uses this name.");
+        }
+      }
+      if (controller.name.empty()) {
+        ShowControllerWarning("Controller name is required");
+      }
+
+      std::string const previousType{controller.type};
+      char const* presetLabel = "Custom";
+      for (auto const type : kBuiltinControllerTypes) {
+        if (type == std::string_view(controller.type)) {
+          presetLabel = type.data();
+          break;
+        }
+      }
+      if (ImGui::BeginCombo("Type Preset", presetLabel)) {
+        for (auto const type : kBuiltinControllerTypes) {
+          bool const selected = type == std::string_view(controller.type);
+          if (ImGui::Selectable(type.data(), selected)) {
+            controller.type = type;
+            result.changed = true;
+          }
+          if (selected) {
+            ImGui::SetItemDefaultFocus();
+          }
+        }
+        ImGui::EndCombo();
+      }
+      result.changed |=
+          ImGui::InputText("Type", &controller.type, ImGuiInputTextFlags_CharsNoBlank);
+      if (controller.type.empty()) {
+        ShowControllerWarning("Controller type is required");
+      } else if (!studio->GetRoboticsContext()->IsControllerTypeRegistered(
+                     std::string_view(controller.type))) {
+        ShowControllerWarning("Controller type is not registered in this build");
+      }
+      // Params belong to a type, so another type starts from its own defaults.
+      if (std::string_view(controller.type) != previousType && !controller.params.empty()) {
+        controller.params.clear();
+        result.referencesChanged = true;
+      }
+
+      std::string const type{controller.type};
+      std::string const paramsValue{controller.params};
+      bool const inlineParams = superdex::robotics::IsInlineJson(paramsValue);
+      auto& paramsCache = sceneAsset->GetControllerParams();
+      ControllerParamsCache::Entry* const entry =
+          paramsValue.empty() || inlineParams ? nullptr : &paramsCache.GetOrLoad(paramsValue, type);
+      mochi::Path const sceneDirectory = sceneAsset->GetPath().GetParentPath();
+
+      ImGui::HoverableSeparatorText("Parameters");
+      if (paramsValue.empty()) {
+        ImGui::TextUnformatted("Defaults");
+      } else if (inlineParams) {
+        ImGui::TextUnformatted("Unsaved (a file is chosen when the scene is saved)");
+      } else {
+        std::string const shown = std::filesystem::path(paramsValue)
+                                      .lexically_relative(sceneDirectory.AsFilesystemPath())
+                                      .generic_string();
+        ImGui::Text(
+            "%s%s",
+            shown.empty() ? paramsValue.c_str() : shown.c_str(),
+            ControllerParamsCache::IsModified(*entry) ? " *" : "");
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("%s", paramsValue.c_str());
+        }
+      }
+      if (ImGui::Button("Open...")) {
+        auto const selected = GetControllerParamsPath(
+            "Open Controller Parameters",
+            false,
+            entry != nullptr ? mochi::Path{paramsValue} : sceneDirectory);
+        if (!selected.IsEmpty()) {
+          controller.params = selected.ToString();
+          result.changed = true;
+          result.referencesChanged = true;
+        }
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Save As...")) {
+        auto const selected = GetControllerParamsPath(
+            "Save Controller Parameters As",
+            true,
+            entry != nullptr ? mochi::Path{paramsValue}
+                             : sceneDirectory /
+                    (std::string(bot.name) + "_" + std::string(controller.name) +
+                     ".superdex_controller"));
+        if (!selected.IsEmpty()) {
+          if (entry != nullptr && entry->error.empty()) {
+            paramsCache.SaveAs(paramsValue, selected.ToString());
+          } else {
+            std::string json;
+            std::string error;
+            if (!inlineParams || !NormalizeParamsJson(type, paramsValue, json, error)) {
+              json = DefaultParamsJson(type);
+            }
+            paramsCache.Adopt(selected.ToString(), type, std::move(json));
+          }
+          controller.params = selected.ToString();
+          result.changed = true;
+          result.referencesChanged = true;
+        }
+      }
+      ImGui::SameLine();
+      ImGui::BeginDisabled(paramsValue.empty());
+      if (ImGui::Button("Use Defaults")) {
+        controller.params.clear();
+        result.changed = true;
+        result.referencesChanged = true;
+      }
+      ImGui::EndDisabled();
+
+      if (entry != nullptr) {
+        if (int const users = CountControllersUsingParams(sceneAsset->GetPrefab(), paramsValue);
+            users > 1) {
+          ImGui::TextDisabled("Shared with %d other controller(s)", users - 1);
+        }
+        if (!entry->error.empty()) {
+          ShowControllerWarning(entry->error);
+          if (ImGui::Button("Reset to Defaults")) {
+            paramsCache.Adopt(paramsValue, type, DefaultParamsJson(type));
+            result.changed = true;
+          }
+        } else if (entry->type != type) {
+          ShowControllerWarning(
+              "This file is used by a '" + entry->type + "' controller in this scene");
+        } else {
+          result.changed |= EditParamsJson(type, entry->json);
+        }
+      } else {
+        std::string json = paramsValue.empty() ? DefaultParamsJson(type) : paramsValue;
+        if (inlineParams) {
+          std::string error;
+          if (!NormalizeParamsJson(type, paramsValue, json, error)) {
+            ShowControllerWarning(error);
+            json = paramsValue;
+          }
+        }
+        if (EditParamsJson(type, json)) {
+          if (json == DefaultParamsJson(type)) {
+            controller.params.clear();
+          } else {
+            controller.params = json;
+          }
+          result.changed = true;
+        }
+      }
+
+      std::string const initArgsError = ValidateJson(controller.initArgs, true);
+      if (IsOscControllerType(controller.type) && initArgsError.empty()) {
+        if (botAsset == nullptr) {
+          ImGui::TextDisabled("Load the referenced bot to select controller links");
+        } else {
+          picojson::object initArgs;
+          std::string parseError;
+          if (ParseJsonObject(controller.initArgs, initArgs, parseError)) {
+            auto const& botPrefab = botAsset->GetBotPrefab();
+            std::string baseLinkName = GetJsonString(initArgs, "baseLinkName");
+            if (LinkNameCombo("Base Link", botPrefab, baseLinkName)) {
+              SetJsonString(controller.initArgs, initArgs, "baseLinkName", baseLinkName);
+              result.changed = true;
+            }
+            if (baseLinkName.empty()) {
+              ShowControllerWarning("Base link is required");
+            } else if (superdex::robotics::FindLinkIndexByName(botPrefab, baseLinkName) < 0) {
+              ShowControllerWarning("Base link does not exist on the selected bot");
+            }
+
+            std::string eeLinkName = GetJsonString(initArgs, "eeLinkName");
+            if (LinkNameCombo("End Effector Link", botPrefab, eeLinkName)) {
+              SetJsonString(controller.initArgs, initArgs, "eeLinkName", eeLinkName);
+              result.changed = true;
+            }
+            if (eeLinkName.empty()) {
+              ShowControllerWarning("End effector link is required");
+            } else if (superdex::robotics::FindLinkIndexByName(botPrefab, eeLinkName) < 0) {
+              ShowControllerWarning("End effector link does not exist on the selected bot");
+            }
+          }
+        }
+      }
+
+      result.changed |= ImGui::InputTextMultiline(
+          "Init Args JSON", &controller.initArgs, ImVec2(-1, ImGui::GetTextLineHeight() * 4));
+      if (!initArgsError.empty()) {
+        ShowControllerWarning(initArgsError);
+      }
+    }
+    ImGui::PopID();
+  }
+  ImGui::PopID();
+
+  if (controllerToMoveUp > 0) {
+    std::swap(controllers[controllerToMoveUp], controllers[controllerToMoveUp - 1]);
+    result.structural = true;
+  }
+  if (controllerToMoveDown >= 0 &&
+      controllerToMoveDown < static_cast<int>(controllers.size()) - 1) {
+    std::swap(controllers[controllerToMoveDown], controllers[controllerToMoveDown + 1]);
+    result.structural = true;
+  }
+  if (controllerToDelete >= 0) {
+    controllers.erase(controllers.begin() + controllerToDelete);
+    result.structural = true;
+    result.referencesChanged = true;
+  }
+
+  if (ImGui::Button(ICON_FA_PLUS "###AddController")) {
+    ImGui::OpenPopup("AddControllerPopup");
+  }
+  ImGui::SameLine();
+  ImGui::TextUnformatted("Add Controller");
+  if (ImGui::BeginPopup("AddControllerPopup")) {
+    auto addController = [&](std::string_view type) {
+      std::set<std::string> existingNames;
+      for (auto const& controller : controllers) {
+        existingNames.insert(std::string(controller.name));
+      }
+      superdex::robotics::ControllerEntry entry;
+      entry.name = MakeUniqueName("Controller", existingNames);
+      entry.type = type;
+      controllers.push_back(std::move(entry));
+      result.structural = true;
+      ImGui::CloseCurrentPopup();
+    };
+    for (auto const type : kBuiltinControllerTypes) {
+      if (ImGui::MenuItem(type.data())) {
+        addController(type);
+      }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Custom...")) {
+      addController({});
+    }
+    ImGui::EndPopup();
+  }
+
+  return result;
+}
+
 } // namespace
 
 BotSceneEditor::BotSceneEditor(SuperDexStudio* studio, BotSceneAsset* asset)
     : AssetEditor(studio, asset), _sceneAsset(asset), _stage(studio, "BotSceneEditorStage") {}
 
 void BotSceneEditor::Initialize() {
+  // Load referenced params files before the first undo snapshot so it records their values.
+  auto& paramsCache = _sceneAsset->GetControllerParams();
+  for (auto const& bot : _sceneAsset->GetPrefab().bots) {
+    for (auto const& controller : bot.controllers) {
+      if (!controller.params.empty() && !superdex::robotics::IsInlineJson(controller.params)) {
+        paramsCache.GetOrLoad(std::string(controller.params), std::string(controller.type));
+      }
+    }
+  }
+
   // Initialize _undoStack for every writable scene or archive.
   if (!_sceneAsset->IsReadOnly()) {
     _undoStack.Initialize(
@@ -397,15 +851,45 @@ void BotSceneEditor::OnAppSettingsChanged(AppSettings const& settings) {
 //--------------------------------------------------------------------------------------------------
 
 std::string BotSceneEditor::TakeUndoSnapshot() const {
-  return SReflect::ToJsonString(_sceneAsset->GetPrefab(), false);
+  picojson::object params;
+  for (auto const& [path, json] : _sceneAsset->GetControllerParams().CaptureValues()) {
+    params[path] = picojson::value(json);
+  }
+  picojson::object snapshot;
+  snapshot["scene"] = picojson::value(SReflect::ToJsonString(_sceneAsset->GetPrefab(), false));
+  snapshot["params"] = picojson::value(params);
+  return picojson::value(snapshot).serialize();
 }
 
 void BotSceneEditor::RestoreUndoSnapshot(std::string const& json, int /*selectionIndex*/) {
+  picojson::value snapshot;
+  std::string parseError;
+  picojson::parse(snapshot, json.begin(), json.end(), &parseError);
+  picojson::object const empty;
+  auto const& fields = snapshot.is<picojson::object>() ? snapshot.get<picojson::object>() : empty;
+  auto const sceneField = fields.find("scene");
+  auto const paramsField = fields.find("params");
+  if (!parseError.empty() || sceneField == fields.end() || !sceneField->second.is<std::string>() ||
+      paramsField == fields.end() || !paramsField->second.is<picojson::object>()) {
+    MOCHI_LOG_ERROR("Failed to parse bot scene undo snapshot: %s", parseError.c_str());
+    return;
+  }
+  std::map<std::string, std::string> params;
+  for (auto const& [path, value] : paramsField->second.get<picojson::object>()) {
+    if (value.is<std::string>()) {
+      params.emplace(path, value.get<std::string>());
+    }
+  }
+  _sceneAsset->GetControllerParams().RestoreValues(params);
+
   // Reset to defaults before deserializing — NoSerializeDefaults omits default-valued fields from
   // the JSON, so without a reset those fields would retain the current (edited) values instead of
   // reverting to defaults.
   _sceneAsset->GetPrefab() = superdex::robotics::BotScenePrefab{};
-  SReflect::FromJsonString(_sceneAsset->GetPrefab(), json, SReflect::DeserializeFlags::Default);
+  SReflect::FromJsonString(
+      _sceneAsset->GetPrefab(),
+      sceneField->second.get<std::string>(),
+      SReflect::DeserializeFlags::Default);
 
   // Reload referenced assets and refresh reference tracking, then re-stage the viewport.
   _studio->GetAssetManager().ResyncReferencer(_sceneAsset);
@@ -524,7 +1008,7 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
   mochi::ErrorLog e;
   _botScene = superdex::robotics::LoadBotScene(
       scene,
-      _sceneAsset->GetPrefab(),
+      _physicsScenePrefab,
       _sceneAsset->GetBotsRootPath(),
       mochiContext,
       botsContext,
@@ -537,7 +1021,7 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
     return;
   }
 
-  auto const& prefab = _sceneAsset->GetPrefab();
+  auto const& prefab = _physicsScenePrefab;
 
   // Physics actor order must match SceneStage: base actors, spawnables/task instances, then bots.
   _physicsActors.clear();
@@ -693,6 +1177,17 @@ mochi::CallbackHandle BotSceneEditor::RegisterPostStepCallback(mochi::AsyncScene
 }
 
 void BotSceneEditor::OnStartPhysics() {
+  _physicsScenePrefab = _sceneAsset->GetPrefab();
+  auto& paramsCache = _sceneAsset->GetControllerParams();
+  for (auto& bot : _physicsScenePrefab.bots) {
+    for (auto& controller : bot.controllers) {
+      auto const* entry = paramsCache.Find(std::string(controller.params));
+      if (entry != nullptr && entry->error.empty() && ControllerParamsCache::IsModified(*entry)) {
+        controller.params = entry->json;
+      }
+    }
+  }
+
   _physicsBotPrefabs.clear();
   auto& assetManager = _studio->GetAssetManager();
   auto const copyBotPrefab = [&](std::string const& path) {
@@ -869,9 +1364,11 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
   // (add/remove/reorder — pushed immediately). Applied together in the epilogue below.
   bool changed = false;
   bool structural = false;
+  bool referencesChanged = false;
 
   ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32_BLACK_TRANS);
   ImGui::BeginChild("BotSceneInfoChild", ImVec2(0, 0));
+  ImGui::BeginDisabled(_sceneAsset->IsReadOnly() || _mochiScene.IsSimulating());
 
   // ---- Metadata ----
   if (ImGui::CollapsingHeader("Metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1026,15 +1523,11 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
           ImGui::TextDisabled("Referenced bot not loaded");
         }
 
-        // Controllers: read-only summary ("name (type)").
-        if (!bot.controllers.empty()) {
-          ImGui::HoverableSeparatorText("Controllers");
-          ImGui::BeginDisabled(true);
-          for (auto const& ctrl : bot.controllers) {
-            ImGui::BulletText("%s (%s)", ctrl.name.c_str(), ctrl.type.c_str());
-          }
-          ImGui::EndDisabled();
-        }
+        ImGui::HoverableSeparatorText("Controllers");
+        auto const controllerResult = ShowControllers(bot, botAsset, _studio, _sceneAsset);
+        changed |= controllerResult.changed;
+        structural |= controllerResult.structural;
+        referencesChanged |= controllerResult.referencesChanged;
       }
       ImGui::PopID();
     }
@@ -1066,12 +1559,16 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
     ImGui::TextUnformatted("Add Bot");
   }
 
+  ImGui::EndDisabled();
   ImGui::EndChild();
   ImGui::PopStyleColor(); // ImGuiCol_ChildBg
 
   // Edit epilogue: reflect edits in the viewport, mark dirty, and record undo state. A bot scene
   // needs no derived "build" step — references resolve live during staging.
   if (changed || structural) {
+    if (referencesChanged) {
+      assetManager.ResyncReferencer(_sceneAsset);
+    }
     RestageBotScene();
     _sceneAsset->SetDirty(true);
     _sceneAsset->MarkThumbnailDirty();

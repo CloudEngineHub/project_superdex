@@ -335,7 +335,7 @@ bool MochiPrefabAsset::IsSavable() const {
   return !IsReadOnly();
 }
 
-bool MochiPrefabAsset::Save() const {
+bool MochiPrefabAsset::Save() {
   if (IsReadOnly()) {
     MOCHI_LOG_ERROR("Attempting to save read-only MochiPrefabAsset");
     return false;
