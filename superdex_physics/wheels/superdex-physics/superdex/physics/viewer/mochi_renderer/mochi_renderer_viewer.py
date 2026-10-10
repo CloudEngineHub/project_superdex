@@ -32,6 +32,12 @@ import numpy.typing as npt
 import superdex.physics as sdp
 from scipy.spatial.transform import Rotation
 from superdex.physics import Actor, ActorHandle, ActorType, Scene
+from superdex.physics.utils.coordinate_systems import (
+    COORDINATE_SYSTEMS,
+    CoordinateSystem,
+    CoordinateTransform,
+    DEFAULT_COORDINATE_SYSTEM,
+)
 from superdex.physics.viewer.utils.aabb import AABB
 
 from .actor_palette import actor_color, srgb_to_linear
@@ -66,6 +72,10 @@ _DEFAULT_VERTICAL_FOV_DEG = 45.0
 """Vertical field of view assumed when a camera does not configure one. The server
 offers no readback, so framing has to assume its default."""
 
+_MIN_FOV_DEG = 5.0
+_MAX_FOV_DEG = 120.0
+"""Bounds for interactive FOV zoom."""
+
 _MIN_SCENE_EXTENT = 1e-3
 """Floor on each AABB axis when computing a framing distance, so a planar scene
 does not collapse the enclosing radius."""
@@ -73,8 +83,25 @@ does not collapse the enclosing radius."""
 _MAX_FRAME_DEFER_RENDERS = 120
 """Renders a deferred framing request waits for actors before giving up."""
 
-_DEFAULT_LOOK_DIR: npt.NDArray = np.array([0.0, 0.0, -1.0])
-"""Look direction assumed before any camera pose has been set."""
+_DEFAULT_LOOK_FROM: npt.NDArray = np.ones(3)
+"""Eye of the client's default camera pose, in the server's coordinates, used when the
+capture camera configures none. It looks at the origin. The server's initial camera
+poses differ, so the viewer sends this pose with the first render."""
+
+_DEFAULT_LOOK_DIR: npt.NDArray = -_DEFAULT_LOOK_FROM / math.sqrt(3.0)
+"""Look direction of the default camera pose, in the server's coordinates, and the
+fallback when the cached pose has no direction."""
+
+_DEFAULT_UP: npt.NDArray = np.array([0.0, 1.0, 0.0])
+"""Up of the default camera pose, in the server's coordinates, matching the server's Y-up
+scene (render space, ground plane and window manipulator)."""
+
+_CAMERA_FORWARD: npt.NDArray = np.array([0.0, 0.0, -1.0])
+"""View direction of a camera in its own frame: cameras look along their -Z axis."""
+
+_RENDER_COORDINATE_SYSTEM = DEFAULT_COORDINATE_SYSTEM
+"""Convention the server renders in: its render space, ground and window camera are
+Y-up."""
 
 _LOCAL_BOUNDS_ACTOR_TYPES = (ActorType.RIGID, ActorType.SOFT, ActorType.SHELL)
 """Actor types whose surface positions fully determine their bounds in the local
@@ -141,14 +168,24 @@ class MochiRendererViewer:
     ####################################################################################
 
     _cfg: MochiRendererViewerCfg
+    _coordinate_system: CoordinateSystem
+    _coordinate_transform: CoordinateTransform
+    _render_from_source: npt.NDArray | None
+    _default_look_dir: npt.NDArray
     _client: MochiRendererClient
     _scene: Scene | None
     _paused: bool
     _actor_handles: dict[ActorHandle, _ActorInfo]
     _grid_objects: dict[str, list[str]]
     _plane_objects: dict[ActorHandle, list[str]]
+    _hidden: set[ActorHandle]
     _scene_aabb: AABB | None
     _camera: CameraState
+    _vertical_fov_deg: float
+    _initial_vertical_fov_deg: float
+    _capture_size: tuple[int, int]
+    _background_color: tuple[float, float, float] | None
+    _initial_look_dir: npt.NDArray | None
     _app_process: ViewerAppProcess | None
 
     ####################################################################################
@@ -163,16 +200,56 @@ class MochiRendererViewer:
             cfg: Configuration for the viewer.
 
         Raises:
+            ValueError: If the coordinate system is invalid, or mirrors the scene while
+                glTF assets are configured.
             RuntimeError: If connection to the mochi_renderer server fails.
         """
         self._cfg = cfg
+        self._coordinate_system = self._resolve_coordinate_system(cfg.coordinate_system)
+        self._coordinate_transform = CoordinateTransform(
+            self._coordinate_system, _RENDER_COORDINATE_SYSTEM
+        )
+        render_from_source = self._coordinate_transform.source_to_target[:3, :3]
+        # None marks the identity, so per-frame vertex buffers skip the conversion.
+        self._render_from_source = (
+            None
+            if np.array_equal(render_from_source, np.eye(3))
+            else render_from_source.astype(np.float64)
+        )
+        self._default_look_dir = self._from_render(_DEFAULT_LOOK_DIR)
+        if self._coordinate_transform.encodes_reflection and (
+            cfg.actor_gltfs or cfg.environment_gltf
+        ):
+            raise ValueError(
+                f"glTF assets cannot be mirrored into the renderer's coordinate system, "
+                f"so they require a right-handed one, not {self._coordinate_system}."
+            )
         self._scene = None
+        # Bumped on every set_scene so observers can detect a scene swap without relying
+        # on object identity, whose address CPython may reuse for the replacement.
+        self._scene_generation = 0
         self._paused = False
         self._actor_handles = {}
         self._grid_objects = {}
         self._plane_objects = {}
+        self._hidden = set()
         self._scene_aabb = None
         self._camera = CameraState()
+        # The server has no camera readback, so track the capture camera's size and FOV
+        # here, seeded from its config.
+        capture = (cfg.cameras or {}).get(cfg.camera_name)
+        self._capture_size = (
+            cfg.size if capture is None else (capture.width, capture.height)
+        )
+        self._initial_vertical_fov_deg = (
+            _DEFAULT_VERTICAL_FOV_DEG
+            if capture is None or capture.horizontal_fov_deg is None
+            else _vertical_fov_deg(
+                capture.horizontal_fov_deg, capture.width / capture.height
+            )
+        )
+        self._vertical_fov_deg = self._initial_vertical_fov_deg
+        self._background_color = None
         self._app_process = None
 
         port = cfg.port
@@ -196,11 +273,60 @@ class MochiRendererViewer:
         self._create_cameras(cfg)
         self._apply_camera_settings(cfg)
         self._seed_cached_camera_pose(cfg)
+        # Set by the first rendered frame, once the environment has set its camera.
+        self._initial_look_dir = None
         self._load_environment_ibl(cfg)
 
         # NOTE: environment glTF is loaded in set_scene(), not here.
         # Loading it here would cause a redundant load since set_scene()
         # destroys and re-creates it anyway.
+
+    @staticmethod
+    def _resolve_coordinate_system(
+        coordinate_system: CoordinateSystem | str | None,
+    ) -> CoordinateSystem:
+        """Resolve the configured coordinate system, preset name or None (default)."""
+        if coordinate_system is None:
+            return DEFAULT_COORDINATE_SYSTEM
+        if isinstance(coordinate_system, str):
+            if coordinate_system not in COORDINATE_SYSTEMS:
+                available_presets = ", ".join(f'"{cs}"' for cs in COORDINATE_SYSTEMS)
+                raise ValueError(
+                    f'Invalid coordinate system "{coordinate_system}". '
+                    "You must provide a valid coordinate system object, or a "
+                    "valid coordinate system preset, or None to use the default "
+                    f"coordinate system. Available presets are: {available_presets}."
+                )
+            return COORDINATE_SYSTEMS[coordinate_system]
+        return coordinate_system
+
+    def get_coordinate_system(self) -> CoordinateSystem:
+        """Returns the coordinate system the scene is expressed in. It can only be set at
+        initialization time, through the config."""
+        return self._coordinate_system
+
+    def _to_render(self, vectors: npt.ArrayLike) -> npt.NDArray:
+        """Map points or directions, a single triple or a flat/stacked buffer of them,
+        from the scene's coordinate system to the server's."""
+        vectors = np.asarray(vectors)
+        if self._render_from_source is None:
+            return vectors
+        mapped = vectors.reshape(-1, 3) @ self._render_from_source.T
+        return mapped.astype(vectors.dtype, copy=False).reshape(vectors.shape)
+
+    def _from_render(self, vector: npt.NDArray) -> npt.NDArray:
+        """Map a point or direction from the server's coordinate system to the scene's,
+        as a new array."""
+        if self._render_from_source is None:
+            return vector.copy()
+        return vector @ self._render_from_source
+
+    def _indices_to_render(self, indices: npt.NDArray) -> npt.NDArray:
+        """Triangle indices for the server, with the winding reversed when the conversion
+        mirrors the scene, so faces keep pointing outwards."""
+        if not self._coordinate_transform.encodes_reflection:
+            return indices
+        return indices.reshape(-1, 3)[:, ::-1]
 
     def _create_cameras(self, cfg: MochiRendererViewerCfg) -> None:
         """Create the capture camera and any cameras named in the config.
@@ -214,6 +340,13 @@ class MochiRendererViewer:
             w, h = cfg.size
             commands.append(
                 CommandEntry(text=f"vset /camera/{cfg.camera_name}/create {w} {h}")
+            )
+            # Pin the default camera's FOV to the value framing assumes, so it is known
+            # and can be adjusted for interactive zoom.
+            commands.append(
+                CommandEntry(
+                    text=f"vset /camera/{cfg.camera_name}/fov {self._vertical_fov_deg}"
+                )
             )
 
         if cameras is not None:
@@ -235,27 +368,14 @@ class MochiRendererViewer:
         for cam_name, cam_cfg in cfg.cameras.items():
             # A full transform is preferred over a look-at when both are given.
             if cam_cfg.position is not None and cam_cfg.rotation is not None:
-                p = cam_cfg.position
-                r = cam_cfg.rotation
                 commands.append(
-                    CommandEntry(
-                        text=(
-                            f"vset /camera/{cam_name}/transform "
-                            f"{p[0]} {p[1]} {p[2]} "
-                            f"{r[0]} {r[1]} {r[2]} {r[3]}"
-                        )
+                    self._camera_transform_command(
+                        cam_name, cam_cfg.position, cam_cfg.rotation
                     )
                 )
             elif cam_cfg.look_from is not None and cam_cfg.look_at is not None:
-                ef = cam_cfg.look_from
-                et = cam_cfg.look_at
                 commands.append(
-                    CommandEntry(
-                        text=(
-                            f"vset /camera/{cam_name}/lookat "
-                            f"{ef[0]} {ef[1]} {ef[2]} {et[0]} {et[1]} {et[2]}"
-                        )
-                    )
+                    self._lookat_command(cam_name, cam_cfg.look_from, cam_cfg.look_at)
                 )
 
             if cam_cfg.horizontal_fov_deg is not None:
@@ -272,14 +392,31 @@ class MochiRendererViewer:
     def _seed_cached_camera_pose(self, cfg: MochiRendererViewerCfg) -> None:
         """Seed the cached pose from the capture camera's configuration.
 
-        Framing and the follow camera derive the look direction from this cache,
-        because the server offers no camera readback.
+        Framing, the follow camera and the trackball derive the camera from this cache,
+        because the server offers no camera readback. Without a configured pose, the
+        default pose is cached and sent with the first render.
         """
         camera = (cfg.cameras or {}).get(cfg.camera_name)
-        if camera is None or camera.look_from is None or camera.look_at is None:
-            return
-        self._camera.look_from = np.asarray(camera.look_from, dtype=np.float64)
-        self._camera.look_at = np.asarray(camera.look_at, dtype=np.float64)
+        if (
+            camera is not None
+            and camera.position is not None
+            and camera.rotation is not None
+        ):
+            # A full transform wins, as in _apply_camera_settings.
+            position = np.asarray(camera.position, dtype=np.float64)
+            forward = Rotation.from_quat(camera.rotation).apply(_CAMERA_FORWARD)
+            self._camera.look_from = position
+            self._camera.look_at = position + forward
+        elif (
+            camera is not None
+            and camera.look_from is not None
+            and camera.look_at is not None
+        ):
+            self._camera.look_from = np.asarray(camera.look_from, dtype=np.float64)
+            self._camera.look_at = np.asarray(camera.look_at, dtype=np.float64)
+        else:
+            self._camera.up = self._from_render(_DEFAULT_UP)
+            self._set_camera_pose(self._from_render(_DEFAULT_LOOK_FROM), np.zeros(3))
 
     def _load_environment_ibl(self, cfg: MochiRendererViewerCfg) -> None:
         """Load the image-based lighting environment, if one is configured."""
@@ -377,6 +514,12 @@ class MochiRendererViewer:
         # Camera commands must precede the captures: _decode_capture indexes images
         # off the tail of the response list.
         commands.extend(self._build_camera_commands())
+        if (
+            self._initial_look_dir is None
+            and not self._camera.frame_camera_on_next_update
+        ):
+            # The first view the user sees, so "reset camera" can return to it.
+            self._initial_look_dir = self.get_camera_look_dir()
 
         if camera_names is None and not self._cfg.offscreen:
             # The window presents itself, so a readback would only buy a blocking
@@ -404,14 +547,18 @@ class MochiRendererViewer:
         """Detect added/removed/updated actors and append commands."""
         current_handles: dict[ActorHandle, Actor] = {}
         current_planes: dict[ActorHandle, Actor] = {}
+        live_handles: set[ActorHandle] = set()
 
         def _gather(actor: Actor) -> None:
+            live_handles.add(actor.get_handle())
             if not actor.get_surface_mesh().is_empty():
                 current_handles[actor.get_handle()] = actor
             elif is_plane_actor(actor):
                 current_planes[actor.get_handle()] = actor
 
         scene.for_each_actor(_gather)
+        # Forget departed actors, so an actor that later reuses a handle starts visible.
+        self._hidden &= live_handles
 
         self._sync_planes(current_planes, commands)
 
@@ -475,6 +622,11 @@ class MochiRendererViewer:
             commands.extend(self._upload_grid_mesh(object_name, mesh))
 
         self._plane_objects[handle] = object_names
+        # Preserve a hidden state if this plane was toggled off before being recreated.
+        if handle in self._hidden:
+            commands.extend(
+                CommandEntry(text=f"vset /object/{name}/hide") for name in object_names
+            )
         return commands
 
     def _destroy_plane_commands(self, handle: ActorHandle) -> list[CommandEntry]:
@@ -558,7 +710,9 @@ class MochiRendererViewer:
             look_from: World-space eye position.
             look_at: World-space point to look at.
             up_dir: Up direction fixing the camera's roll. Sticky: it is reused by
-                framing and the follow camera until changed. None leaves it as is.
+                framing and the follow camera until changed. None leaves it as is; if
+                none was ever set, the coordinate system's up is used, or its right
+                when looking along up.
         """
         if up_dir is not None:
             self._camera.up = np.asarray(up_dir, dtype=np.float64)
@@ -582,6 +736,12 @@ class MochiRendererViewer:
         """
         r, g, b = srgb_to_linear(color)
         self._client.request(f"vset /scene/background {r:.6f} {g:.6f} {b:.6f}")
+        self._background_color = (color[0], color[1], color[2])
+
+    def get_background_color(self) -> tuple[float, float, float] | None:
+        """Return the background color last set, in sRGB, or None if none was set (the
+        IBL or the server's default is shown)."""
+        return self._background_color
 
     ####################################################################################
     # Camera framing and follow camera
@@ -591,16 +751,69 @@ class MochiRendererViewer:
         """Returns the normalized direction the camera is pointing in.
 
         The server has no camera readback, so this derives from the locally cached
-        pose and falls back to -Z before any pose has been set.
+        pose, falling back to the default pose's direction if it has none.
         """
         state = self._camera
         if state.look_from is None or state.look_at is None:
-            return _DEFAULT_LOOK_DIR.copy()
+            return self._default_look_dir.copy()
         look_dir = state.look_at - state.look_from
         norm = float(np.linalg.norm(look_dir))
         if norm == 0.0:
-            return _DEFAULT_LOOK_DIR.copy()
+            return self._default_look_dir.copy()
         return look_dir / norm
+
+    def get_camera_pose(
+        self,
+    ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray | None] | None:
+        """Return the current ``(look_from, look_at, up)`` pose, or None if unset.
+
+        The server has no camera readback, so this returns copies of the locally cached
+        pose. ``up`` is None if no roll has been fixed yet.
+        """
+        state = self._camera
+        if state.look_from is None or state.look_at is None:
+            return None
+        up = None if state.up is None else state.up.copy()
+        return state.look_from.copy(), state.look_at.copy(), up
+
+    def get_vertical_fov(self) -> float:
+        """Return the observation camera's vertical field of view, in degrees."""
+        return self._vertical_fov_deg
+
+    def set_vertical_fov(self, degrees: float) -> None:
+        """Set the observation camera's vertical field of view (clamped), in degrees.
+
+        The server's look-at command controls only the view direction (not the eye
+        distance), so interactive zoom is done by narrowing/widening the FOV.
+        """
+        self._vertical_fov_deg = float(np.clip(degrees, _MIN_FOV_DEG, _MAX_FOV_DEG))
+        self._client.request(
+            f"vset /camera/{self._cfg.camera_name}/fov {self._vertical_fov_deg}"
+        )
+
+    def set_capture_size(self, width: int, height: int) -> None:
+        """Resize the observation (capture) camera; the next render returns this size.
+
+        Also updates the cached capture size so scene framing keeps the correct aspect
+        ratio. Used by the interactive window to make the render resolution follow the
+        window size.
+        """
+        width = max(1, int(width))
+        height = max(1, int(height))
+        self._capture_size = (width, height)
+        self._client.request(
+            f"vset /camera/{self._cfg.camera_name}/size {width} {height}"
+        )
+
+    def reset_camera(self) -> None:
+        """Reset zoom (FOV) and orientation to their initial values and reframe.
+
+        Restores the configured field of view (or the default one) and reframes from
+        the look direction of the first rendered frame, so both the zoom and the
+        orientation return to their initial state.
+        """
+        self.set_vertical_fov(self._initial_vertical_fov_deg)
+        self.frame_scene(look_dir=self._initial_look_dir)
 
     def frame_scene(
         self,
@@ -700,17 +913,65 @@ class MochiRendererViewer:
         if state.look_from is None or state.look_at is None:
             return []
 
-        f = state.look_from
-        t = state.look_at
-        pose = f"{f[0]} {f[1]} {f[2]} {t[0]} {t[1]} {t[2]}"
-        up = "" if state.up is None else f" {state.up[0]} {state.up[1]} {state.up[2]}"
-        # A single observation-camera pose (optionally with an up vector). In
-        # windowed mode the server also steers the interactive window from this
-        # command (see the presented-camera-moved hook), so no separate
-        # presentation command is needed.
+        # A single observation-camera pose. In windowed mode the server also steers the
+        # interactive window from this command (see the presented-camera-moved hook), so
+        # no separate presentation command is needed.
         return [
-            CommandEntry(text=f"vset /camera/{self._cfg.camera_name}/lookat {pose}{up}")
+            self._lookat_command(
+                self._cfg.camera_name, state.look_from, state.look_at, state.up
+            )
         ]
+
+    def _lookat_command(
+        self,
+        camera_name: str,
+        look_from: npt.ArrayLike,
+        look_at: npt.ArrayLike,
+        up: npt.ArrayLike | None = None,
+    ) -> CommandEntry:
+        """Look-at command in the server's coordinates. Without an up direction, the
+        coordinate system's up is used, or its right when looking along up."""
+        look_from = np.asarray(look_from, dtype=np.float64)
+        look_at = np.asarray(look_at, dtype=np.float64)
+        if up is None:
+            up = self._coordinate_system.up.to_vector().astype(np.float64)
+            look_dir = look_at - look_from
+            if abs(np.dot(up, look_dir)) > 0.99 * np.linalg.norm(look_dir):
+                up = self._coordinate_system.right.to_vector().astype(np.float64)
+        f = self._to_render(look_from)
+        t = self._to_render(look_at)
+        u = self._to_render(np.asarray(up, dtype=np.float64))
+        return CommandEntry(
+            text=(
+                f"vset /camera/{camera_name}/lookat "
+                f"{f[0]} {f[1]} {f[2]} {t[0]} {t[1]} {t[2]} {u[0]} {u[1]} {u[2]}"
+            )
+        )
+
+    def _camera_transform_command(
+        self,
+        camera_name: str,
+        position: npt.ArrayLike,
+        rotation: npt.ArrayLike,
+    ) -> CommandEntry:
+        """Transform command for a camera pose in the server's coordinates."""
+        p = self._to_render(np.asarray(position, dtype=np.float64))
+        r = np.asarray(rotation, dtype=np.float64)
+        if self._render_from_source is not None:
+            # The camera frame stays right-handed, so a mirroring conversion keeps the
+            # view and up axes and flips the camera's right axis instead.
+            handedness = np.diag([np.linalg.det(self._render_from_source), 1.0, 1.0])
+            r = Rotation.from_matrix(
+                self._render_from_source
+                @ Rotation.from_quat(r).as_matrix()
+                @ handedness
+            ).as_quat()
+        return CommandEntry(
+            text=(
+                f"vset /camera/{camera_name}/transform "
+                f"{p[0]} {p[1]} {p[2]} {r[0]} {r[1]} {r[2]} {r[3]}"
+            )
+        )
 
     def _build_camera_commands(self) -> list[CommandEntry]:
         """Resolve pending framing and follow-camera updates into commands.
@@ -799,21 +1060,10 @@ class MochiRendererViewer:
 
     def _capture_camera_frustum(self) -> tuple[float, float]:
         """Vertical half field of view in radians, and aspect ratio, of the capture
-        camera. Both come from the config: the server has no readback."""
-        camera = (self._cfg.cameras or {}).get(self._cfg.camera_name)
-        if camera is not None:
-            width, height = camera.width, camera.height
-            horizontal_fov_deg = camera.horizontal_fov_deg
-        else:
-            width, height = self._cfg.size
-            horizontal_fov_deg = None
-
-        aspect = width / height
-        if horizontal_fov_deg is None:
-            vertical_fov_deg = _DEFAULT_VERTICAL_FOV_DEG
-        else:
-            vertical_fov_deg = _vertical_fov_deg(horizontal_fov_deg, aspect)
-        return math.radians(vertical_fov_deg) / 2, aspect
+        camera, tracked locally since the server has no readback. Uses the initial FOV,
+        not the zoomed one, so framing does not undo interactive zoom."""
+        width, height = self._capture_size
+        return math.radians(self._initial_vertical_fov_deg) / 2, width / height
 
     def _update_scene_aabb(self) -> None:
         """Recompute the scene AABB from the tracked actors.
@@ -880,8 +1130,7 @@ class MochiRendererViewer:
         self._grid_objects[name] = object_names
         self._client.request_batch(commands)
 
-    @staticmethod
-    def _upload_grid_mesh(object_name: str, mesh: GridMesh) -> list[CommandEntry]:
+    def _upload_grid_mesh(self, object_name: str, mesh: GridMesh) -> list[CommandEntry]:
         """Mesh-create and show commands for one tessellated grid piece."""
         r, g, b = srgb_to_linear(mesh.color)
         return [
@@ -892,9 +1141,9 @@ class MochiRendererViewer:
                     f"{r:.6f} {g:.6f} {b:.6f}"
                 ),
                 binary_data=(
-                    mesh.positions.tobytes()
-                    + mesh.normals.tobytes()
-                    + mesh.indices.tobytes()
+                    self._to_render(mesh.positions).tobytes()
+                    + self._to_render(mesh.normals).tobytes()
+                    + self._indices_to_render(mesh.indices).tobytes()
                 ),
             ),
             CommandEntry(text=f"vset /object/{object_name}/show"),
@@ -911,6 +1160,14 @@ class MochiRendererViewer:
     def add_ui_tab(self, name: str, builder: Callable[[], None]) -> None:
         """No-op ΓÇö the mochi_renderer server has no UI subsystem."""
         pass
+
+    def consume_reset_request(self) -> bool:
+        """Return False -- this viewer has no UI, so it can never request a reset."""
+        return False
+
+    def user_requested_close(self) -> bool:
+        """Return False -- this viewer has no window the user can close."""
+        return False
 
     def create_camera(self, name: str, width: int, height: int) -> None:
         """Create a named camera on the renderer server.
@@ -935,11 +1192,8 @@ class MochiRendererViewer:
             position: Camera position (x, y, z).
             rotation: Camera orientation as an XYZW quaternion.
         """
-        p = [float(v) for v in position]
-        r = [float(v) for v in rotation]
         self._client.request(
-            f"vset /camera/{name}/transform "
-            f"{p[0]} {p[1]} {p[2]} {r[0]} {r[1]} {r[2]} {r[3]}"
+            self._camera_transform_command(name, position, rotation).text
         )
 
     def set_camera_lookat(
@@ -955,12 +1209,7 @@ class MochiRendererViewer:
             look_from: Eye position (x, y, z).
             look_at: Target position (x, y, z).
         """
-        ef = [float(v) for v in look_from]
-        et = [float(v) for v in look_at]
-        self._client.request(
-            f"vset /camera/{name}/lookat "
-            f"{ef[0]} {ef[1]} {ef[2]} {et[0]} {et[1]} {et[2]}"
-        )
+        self._client.request(self._lookat_command(name, look_from, look_at).text)
 
     ####################################################################################
     # Scene management
@@ -969,6 +1218,14 @@ class MochiRendererViewer:
     def get_scene(self) -> Scene | None:
         """Returns the mochi scene associated with the viewer."""
         return self._scene
+
+    def get_scene_generation(self) -> int:
+        """Returns a counter incremented on every :meth:`set_scene` call.
+
+        Lets callers detect that the scene was replaced. Prefer this over ``id(scene)``,
+        which can repeat when a collected scene's address is reused by its replacement.
+        """
+        return self._scene_generation
 
     def set_scene(self, scene: Scene | None) -> None:
         """
@@ -981,6 +1238,9 @@ class MochiRendererViewer:
         Args:
             scene: The mochi scene to render, or None to clear.
         """
+        # Visibility overrides are keyed by the outgoing scene's handles; drop them.
+        self._hidden.clear()
+
         # Clean up previous scene actors and environment
         cleanup_commands: list[CommandEntry] = []
         if self._actor_handles:
@@ -1004,6 +1264,7 @@ class MochiRendererViewer:
                 pass
 
         self._scene = scene
+        self._scene_generation += 1
 
         if scene is None:
             self._scene_aabb = None
@@ -1013,12 +1274,7 @@ class MochiRendererViewer:
         commands: list[CommandEntry] = []
 
         # Load environment glTF if configured
-        if self._cfg.environment_gltf:
-            commands.append(
-                CommandEntry(
-                    text=f"vset /object/__environment__/gltf {self._cfg.environment_gltf}"
-                )
-            )
+        commands.extend(self._environment_gltf_commands())
 
         def _create(actor: Actor) -> None:
             if not actor.get_surface_mesh().is_empty():
@@ -1032,6 +1288,56 @@ class MochiRendererViewer:
 
         if commands:
             self._client.request_batch(commands)
+
+    def _environment_gltf_commands(self) -> list[CommandEntry]:
+        """Commands loading the environment glTF, if configured, rotated into the
+        server's coordinate system."""
+        if not self._cfg.environment_gltf:
+            return []
+        commands = [
+            CommandEntry(
+                text=f"vset /object/__environment__/gltf {self._cfg.environment_gltf}"
+            )
+        ]
+        if self._render_from_source is not None:
+            x, y, z, w = Rotation.from_matrix(self._render_from_source).as_quat()
+            commands.append(
+                CommandEntry(
+                    text=f"vset /object/__environment__/xform 0 0 0 {x} {y} {z} {w}"
+                )
+            )
+        return commands
+
+    def set_actor_visible(self, handle: ActorHandle, visible: bool) -> None:
+        """Show or hide an actor's rendered object(s).
+
+        Keyed by ``ActorHandle`` because actor names are not unique. A ground-plane actor
+        maps to several generated grid objects; all of them are toggled together. This is a
+        no-op for a handle with no render object (e.g. an articulated root that has no
+        surface mesh of its own).
+        """
+        if visible:
+            self._hidden.discard(handle)
+        else:
+            self._hidden.add(handle)
+        names = self._object_names_for_handle(handle)
+        if not names:
+            return
+        action = "show" if visible else "hide"
+        self._client.request_batch(
+            [CommandEntry(text=f"vset /object/{name}/{action}") for name in names]
+        )
+
+    def is_actor_visible(self, handle: ActorHandle) -> bool:
+        """Return whether the actor is currently shown (actors are shown by default)."""
+        return handle not in self._hidden
+
+    def _object_names_for_handle(self, handle: ActorHandle) -> list[str]:
+        """Server object name(s) backing an actor handle, or empty if it has none."""
+        info = self._actor_handles.get(handle)
+        if info is not None:
+            return [info.name]
+        return list(self._plane_objects.get(handle, []))
 
     ####################################################################################
     # Actor helpers
@@ -1094,7 +1400,11 @@ class MochiRendererViewer:
             num_indices = len(indices)
 
             # Build binary payload: [positions] [normals] [indices]
-            binary_data = positions.tobytes() + normals.tobytes() + indices.tobytes()
+            binary_data = (
+                self._to_render(positions).tobytes()
+                + self._to_render(normals).tobytes()
+                + self._indices_to_render(indices).tobytes()
+            )
 
             # Color actors so the links of a robot stay distinguishable; the server
             # otherwise renders every mesh in the same grey.
@@ -1126,6 +1436,10 @@ class MochiRendererViewer:
             self._actor_handles[actor.get_handle()] = info
             self._refresh_actor_aabb(actor, info)
 
+        # Preserve a hidden state if this actor was toggled off before being recreated.
+        if actor.get_handle() in self._hidden:
+            commands.append(CommandEntry(text=f"vset /object/{name}/hide"))
+
         return commands
 
     def _update_actor(self, actor: Actor, info: _ActorInfo) -> list[CommandEntry]:
@@ -1150,7 +1464,10 @@ class MochiRendererViewer:
             ).ravel()
 
             num_verts = len(positions) // 3
-            binary_data = positions.tobytes() + normals.tobytes()
+            binary_data = (
+                self._to_render(positions).tobytes()
+                + self._to_render(normals).tobytes()
+            )
             info.local_aabb = _local_aabb_from_positions(positions)
 
             commands.append(
@@ -1182,18 +1499,27 @@ class MochiRendererViewer:
         )
         info.world_aabb = world_aabb
 
-    @staticmethod
-    def _build_xform_command(actor: Actor, name: str) -> CommandEntry | None:
+    def _build_xform_command(self, actor: Actor, name: str) -> CommandEntry | None:
         """Build a transform command for an actor, or None if it has no transform.
 
-        The server handles Y-up ΓåÆ Z-up correction for glTF objects.
+        The server handles Y-up → Z-up correction for glTF objects.
         """
         if not actor.has_root_transform():
             return None
 
         xform = actor.get_root_transform()
-        pos = np.asarray(xform.translation, dtype=np.float64)
+        pos = self._to_render(np.asarray(xform.translation, dtype=np.float64))
         quat = np.asarray(xform.rotation, dtype=np.float64)
+        if self._render_from_source is not None:
+            if name in (self._cfg.actor_gltfs or {}):
+                # The asset's own frame is not converted, so rotate it into the server's.
+                quat = (
+                    Rotation.from_matrix(self._render_from_source)
+                    * Rotation.from_quat(quat)
+                ).as_quat()
+            else:
+                # Physics meshes are uploaded converted, so conjugate the rotation.
+                quat = self._coordinate_transform.rotation_to_target(quat)
 
         return CommandEntry(
             text=(

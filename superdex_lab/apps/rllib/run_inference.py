@@ -16,6 +16,8 @@ import argparse
 import json
 import pathlib
 
+from superdex.lab.gym.envs.mochi_env import MochiEnv
+from superdex.lab.gym.viewer import is_interactive_viewer_available
 from superdex.physics.viewer.mochi_renderer import MOCHI_RENDERER_VIEWER_AVAILABLE
 from superdex.physics.viewer.utils import AnimationWriter
 
@@ -74,6 +76,12 @@ def run_inference(
                 output_path=video_path, fps=30, fmt="mp4"
             )
             env_cfg["render_mode"] = "rgb_array"
+        elif is_superdex_environment and not is_interactive_viewer_available():
+            print(
+                "Interactive viewing is not supported in this build, setting render "
+                "mode to None. Pass --video to record offscreen..."
+            )
+            env_cfg["render_mode"] = None
     else:
         print("Renderer not available, setting render mode to None...")
         env_cfg["render_mode"] = None
@@ -81,6 +89,7 @@ def run_inference(
     # Create the exact registered environment and do inference with it. The helper merges
     # SuperDex spec defaults with persisted overrides and handles ordinary Gymnasium envs.
     env = make_checkpoint_env(env_id, env_cfg)
+    mochi_env = env.unwrapped if isinstance(env.unwrapped, MochiEnv) else None
     obs, info = env.reset()
     episode = policy.new_episode(
         obs,
@@ -91,7 +100,10 @@ def run_inference(
     episode_index = 0
     episode_return = 0.0
 
-    while episode_index != num_episodes:
+    # Also stop early if the user closes the interactive window (render_mode="human").
+    while episode_index != num_episodes and not (
+        mochi_env is not None and mochi_env.user_requested_close()
+    ):
         # The connector pipelines operate on lists of episodes, so B=1 here.
         raw_actions, env_actions, extra_outs = policy.compute_actions(
             [episode], explore=explore_during_inference

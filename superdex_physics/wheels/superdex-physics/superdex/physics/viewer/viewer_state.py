@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Callable, List, Tuple, Union
+from typing import Callable, List, Union
 
 import numpy.typing as npt
 from superdex.physics import Actor, ActorHandle, Scene, SceneHandle, StateHandle
@@ -25,6 +25,10 @@ from superdex.physics.utils.coordinate_systems import (
 )
 from superdex.physics.viewer.backend import polyscope as ps
 from superdex.physics.viewer.logging_handler import LoggingHandler, LogLevel
+
+# PlotAxisInfo and PlotState are defined in the backend-neutral plotting module and
+# re-exported here for backward compatibility with existing importers.
+from superdex.physics.viewer.plotting import PlotAxisInfo, PlotState  # noqa: F401
 from superdex.physics.viewer.renderers.actor_renderer import ActorRenderer
 from superdex.physics.viewer.renderers.curve_network_renderer import (
     CurveNetworkRenderer,
@@ -142,49 +146,6 @@ class UiState:
     """User-defined builders appended to the Settings tab."""
     active_tab: str | None = None
     """Tab to select on the next frame (consumed after use)."""
-
-
-@dataclasses.dataclass
-class PlotAxisInfo:
-    """Structure holding the axis information of a plot."""
-
-    limit: Tuple[float, float] | None = None
-    """Range of data to show."""
-
-    name: str | None = None
-    """Name and unit of the data along this axis"""
-
-
-@dataclasses.dataclass
-class PlotState:
-    """Structure holding the state of a plot."""
-
-    name: str | None = None
-    """Name of the plot."""
-
-    legend: str | None = None
-    """If this is a grouped plot, this is the legend for this plot."""
-
-    x: npt.NDArray[float] | None = None
-    """Data for x-axis."""
-
-    y: npt.NDArray[float] | None = None
-    """Data for y-axis."""
-
-    lower: npt.NDArray[float] | None = None
-    """Data for y-axis shaded plot lower bound."""
-
-    upper: npt.NDArray[float] | None = None
-    """Data for y-axis shaded plot upper bound."""
-
-    shaded_legend_name: str | None = None
-    """Custom name for the shaded plot."""
-
-    x_axis_info: PlotAxisInfo | None = None
-    """Information of the x-axis data."""
-
-    y_axis_info: PlotAxisInfo | None = None
-    """Information of the y-axis data."""
 
 
 @dataclasses.dataclass

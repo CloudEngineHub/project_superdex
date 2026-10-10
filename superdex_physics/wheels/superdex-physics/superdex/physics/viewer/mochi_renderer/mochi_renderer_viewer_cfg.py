@@ -19,6 +19,7 @@ Configuration dataclass for the MochiRenderer viewer.
 from __future__ import annotations
 
 from superdex.physics.utils.configclasses import configclass
+from superdex.physics.utils.coordinate_systems import CoordinateSystem
 
 ########################################################################################
 
@@ -137,3 +138,11 @@ class MochiRendererViewerCfg:
     viewer overrides it with a neutral tone. Set to None to leave the server's default
     alone. Ignored when ``environment_ibl`` is set, since the IBL supplies the
     background."""
+
+    coordinate_system: CoordinateSystem | str | None = None
+    """Convention of the scene's coordinates, including camera poses, grids and camera
+    configs. If None, the default coordinate system (right-handed, Y-up, -Z-forward) is
+    used, which the server renders as is. You can specify a custom coordinate system
+    using the CoordinateSystem class or use named presets like "unity", "unreal", etc.
+    glTF assets cannot be mirrored, so they require a right-handed one. The IBL and sun
+    are not rotated."""

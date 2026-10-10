@@ -63,12 +63,25 @@ from superdex.physics.utils.profiling import Profiler
 from superdex.physics.viewer import RenderFrame
 
 if TYPE_CHECKING:
+    from superdex.lab.gym.viewer.internal import InteractiveWindow
     from superdex.physics.viewer.mochi_renderer import (
         MochiRendererViewer,
         MochiRendererViewerCfg,
     )
 
 logger = logging.getLogger(__name__)
+
+#######################################################################################
+
+
+def _format_info_value(value: Any) -> str:
+    """Format a value for the viewer's Environment tab: as JSON when it can be, else
+    with ``repr``, since a gym info dict may hold any type."""
+    try:
+        return json.dumps(value, cls=ExtendedJSONEncoder)
+    except (TypeError, ValueError):
+        return repr(value)
+
 
 #######################################################################################
 
@@ -256,7 +269,10 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
     _terminated: bool
     _observation_space_structure: ObservationSpaceStructure
     _action_space_structure: ActionSpaceStructure
-    _renderer: MochiRendererViewer | None
+    _renderer: MochiRendererViewer | InteractiveWindow | None
+    _environment_info_cache: (
+        tuple[tuple[int, int], dict[str, str | dict[str, str]]] | None
+    )
     _render_size: tuple[int, int] | None
     _render_start_paused: bool
     _render_scene_dirty: bool
@@ -308,6 +324,7 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
         self._state_snapshot = None
         self._scene_cleanup_callbacks: list[Callable[[], None]] = []
         self._renderer = None
+        self._environment_info_cache = None
 
         # Gym-related variables
         self._control_frequency = cfg.control_frequency
@@ -422,6 +439,11 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
                 self._render_scene_dirty = True
                 if self.render_mode == "human":
                     self.render()
+                    # This render pumps the window, so it is the only point at which a
+                    # UI Reset can be requested during reset(). The reset the user asked
+                    # for is the one already in progress, so drop the request instead of
+                    # letting it survive to truncate the new episode's first step.
+                    self._renderer.consume_reset_request()
 
         # Append profiled section to info.
         if self._profiler.enabled and self._dump_timings_to_info:
@@ -480,6 +502,13 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
             # Update the renderer.
             if self.render_mode == "human":
                 self.render()
+                # A UI Reset ends the current episode through the standard gym contract:
+                # the driver's terminated/truncated handling then calls reset(), so the
+                # real env reset (noise, _reset_renderer, counters) runs -- no direct
+                # physics-state manipulation. Only the interactive window offers this.
+                if self._renderer.consume_reset_request():
+                    self._truncated = True
+                    info["truncated_reason"] = "ui_reset"
 
         # Append profiled section to info.
         if self._profiler.enabled and self._dump_timings_to_info:
@@ -943,9 +972,72 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
             else MochiRendererViewerCfg(auto_launch=True)
         )
         renderer_cfg.size = self._render_size or renderer_cfg.size
-        renderer_cfg.offscreen = self.render_mode == "rgb_array"
-        self._renderer = MochiRendererViewer(renderer_cfg)
+
+        if self.render_mode == "human":
+            # The interactive window is internal only: external/OSS builds ship neither
+            # the internal package nor the GUI dependencies it needs.
+            try:
+                from superdex.lab.gym.viewer.internal import InteractiveWindow
+            except ImportError as e:
+                raise RuntimeError(
+                    'render_mode="human" requires the internal interactive viewer '
+                    "(superdex.lab.gym.viewer.internal), which is available in "
+                    'internal builds only. Use render_mode="rgb_array" or None.'
+                ) from e
+            # The window renders the scene offscreen and blits it into its own client
+            # window; the server never opens a window of its own.
+            renderer_cfg.offscreen = True
+            window = InteractiveWindow(renderer_cfg)
+            window.add_info_tab("Environment", self._environment_info)
+            self._renderer = window
+        else:
+            renderer_cfg.offscreen = self.render_mode == "rgb_array"
+            self._renderer = MochiRendererViewer(renderer_cfg)
+
         self._renderer.set_paused(self._render_start_paused)
+
+    def _environment_info(self) -> dict[str, str | dict[str, str]]:
+        """Live values shown in the interactive viewer's Environment tab.
+
+        Returns a label -> value mapping (polled every frame by the viewer), so the
+        environment needs no dependency on the viewer's UI toolkit. Dict-valued entries
+        (the last observation/action/reward/info) are returned as ``sub_key -> string``
+        maps so the viewer can show each on its own line under a collapsible section.
+        The result is cached until the episode or step count advances, so the JSON
+        serialization runs once per step rather than once per rendered frame.
+        """
+        stamp = (self._episode, self._step_count)
+        if (
+            self._environment_info_cache is not None
+            and self._environment_info_cache[0] == stamp
+        ):
+            return self._environment_info_cache[1]
+
+        steps = (
+            str(self._step_count)
+            if self._steps_per_episode < 0
+            else f"{self._step_count}/{self._steps_per_episode}"
+        )
+        info: dict[str, str | dict[str, str]] = {
+            "Episode": str(self._episode),
+            "Step": steps,
+            "Simulation freq (Hz)": str(self._simulation_frequency),
+            "Control freq (Hz)": str(self._control_frequency),
+        }
+        for label, value in (
+            ("Observation", self._last_observation),
+            ("Action", self._last_action),
+            ("Reward", self._last_reward),
+            ("Info", self._last_info),
+        ):
+            if value is None:
+                info[label] = "-"
+            else:
+                info[label] = {
+                    str(key): _format_info_value(item) for key, item in value.items()
+                }
+        self._environment_info_cache = (stamp, info)
+        return info
 
     def _reset_renderer(self):
         """
@@ -971,10 +1063,18 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
         """
         pass
 
-    def get_renderer(self) -> MochiRendererViewer | None:
+    def get_renderer(self) -> MochiRendererViewer | InteractiveWindow | None:
         """Returns the object handling environment rendering. If the environment is not
         being rendered, None will be returned instead."""
         return self._renderer
+
+    def user_requested_close(self) -> bool:
+        """Returns whether the user closed the interactive window (``render_mode="human"``).
+
+        The window stays open until :meth:`close` is called; drivers should check this
+        after each step and stop. Always False without an interactive window.
+        """
+        return self._renderer is not None and self._renderer.user_requested_close()
 
     ####################################################################################
     # Helper functions converting between structured observations/actions to flattened

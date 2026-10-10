@@ -14,86 +14,19 @@
 
 from __future__ import annotations
 
-import dataclasses
 import logging
-from typing import Dict, List, Optional
+from typing import Dict
 
 from superdex.physics.viewer.backend import (
     polyscope_imgui as psim,
     polyscope_implot as psimp,
 )
-from superdex.physics.viewer.viewer_state import PlotAxisInfo, PlotState, ViewerState
+from superdex.physics.viewer.plotting import group_plots, PlotGroup
+from superdex.physics.viewer.viewer_state import ViewerState
 
 logger = logging.getLogger(__name__)
 
 _implot_warning_logged = False
-
-
-@dataclasses.dataclass
-class PlotGroup:
-    name: Optional[str] = None
-    """Name of all plots in this group"""
-
-    plots: Optional[List[PlotState]] = None
-    """List of plots in this group"""
-
-    x_axis_info: Optional[PlotAxisInfo] = None
-    """Information about the x-axis of all plots in this group"""
-
-    y_axis_info: Optional[PlotAxisInfo] = None
-    """Information about the y-axis of all plots in this group"""
-
-    def add_plot(self, plot: PlotState):  # noqa: C901
-        if plot.name != self.name:
-            logger.error("Plot name does not match group name")
-            return
-        if plot.x is None or plot.y is None:
-            logger.warn("Plot has no data")
-            return
-        if plot.x.shape != plot.y.shape:
-            logger.error("Plot x and y data have different sizes")
-            return
-        if plot.lower is not None and plot.upper is not None:
-            assert plot.lower is not None, "Plot lower bound data is None"
-            assert plot.x is not None, "Plot x data is None"
-            if plot.lower.shape != plot.x.shape:
-                logger.error("Plot x and lower bound data have different sizes")
-                return
-            assert plot.upper is not None, "Plot upper bound data is None"
-            assert plot.x is not None, "Plot x data is None"
-            if plot.upper.shape != plot.x.shape:
-                logger.error("Plot x and upper bound data have different sizes")
-                return
-
-        if self.plots is None:
-            self.plots = []
-        self.plots.append(plot)
-
-        if self.x_axis_info is None:
-            self.x_axis_info = plot.x_axis_info
-            if self.x_axis_info is not None and self.x_axis_info.limit is not None:
-                assert self.x_axis_info is not None
-                info = self.x_axis_info
-                assert info.limit is not None
-                limit = info.limit
-                if limit[0] >= limit[1]:
-                    logger.warn("Invalid x-axis limit")
-                    self.x_axis_info.limit = None
-        elif plot.x_axis_info is not None:
-            logger.warn("Only one plot can have x-axis info")
-
-        if self.y_axis_info is None:
-            self.y_axis_info = plot.y_axis_info
-            if self.y_axis_info is not None and self.y_axis_info.limit is not None:
-                assert self.y_axis_info is not None
-                info = self.y_axis_info
-                assert info.limit is not None
-                limit = info.limit
-                if limit[0] >= limit[1]:
-                    logger.warn("Invalid y-axis limit")
-                    self.y_axis_info.limit = None
-        elif plot.y_axis_info is not None:
-            logger.warn("Only one plot can have y-axis info")
 
 
 def build_plot_panel(state: ViewerState):
@@ -124,15 +57,7 @@ def build_plot_panel(state: ViewerState):
         return
 
     """ Group plots by names """
-    plot_groups: Dict[str, PlotGroup] = {}
-    plots = state.plots
-    assert plots is not None
-    for plot in plots:
-        name = plot.name
-        assert name is not None, "Plot name is None"
-        if name not in plot_groups:
-            plot_groups[name] = PlotGroup(name=name)
-        plot_groups[name].add_plot(plot)
+    plot_groups: Dict[str, PlotGroup] = group_plots(state.plots)
 
     """ Create a plot for each group """
     for plot_group in plot_groups.values():

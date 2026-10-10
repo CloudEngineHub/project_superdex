@@ -21,8 +21,10 @@ These only construct configs, never environments, so no renderer is started.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from superdex.lab.gym.envs.mochi_env import MochiEnvCfg
+import numpy as np
+from superdex.lab.gym.envs.mochi_env import _format_info_value, MochiEnvCfg
 from superdex.physics.viewer.mochi_renderer import MochiRendererViewerCfg
 
 
@@ -43,3 +45,14 @@ class MochiEnvCfgTest(unittest.TestCase):
     def test_rejects_an_unknown_render_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid render_mode"):
             _cfg(render_mode="hologram")
+
+
+class FormatInfoValueTest(unittest.TestCase):
+    def test_json_values_are_formatted_as_json(self) -> None:
+        self.assertEqual("[1.0, 2.0]", _format_info_value(np.array([1.0, 2.0])))
+
+    def test_other_values_fall_back_to_repr(self) -> None:
+        # A gym info dict may hold any type; the Environment tab must not raise.
+        for value in (Path("a/b"), {1, 2}, object()):
+            with self.subTest(value=value):
+                self.assertEqual(repr(value), _format_info_value(value))

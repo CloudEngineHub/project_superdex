@@ -31,6 +31,7 @@ from typing import Any
 import gymnasium as gym
 from superdex.lab.gym.registration import get_env_specs
 from superdex.lab.gym.utils.registry import MochiGymEnv, unwrap_mochi_env
+from superdex.lab.gym.viewer import is_interactive_viewer_available
 from superdex.physics.utils.logging import configure_logger
 from superdex.physics.viewer.mochi_renderer import MOCHI_RENDERER_VIEWER_AVAILABLE
 from superdex.physics.viewer.utils import AnimationWriter
@@ -52,21 +53,30 @@ def make_env(env_id: str, common_env_cfg: dict[str, Any]) -> MochiGymEnv:
 def _resolve_render_mode(requested: str, video_recording: bool) -> str | None:
     """Map the --render-mode selection to a Mochi ``render_mode`` value.
 
-    ``none`` runs headless. ``auto`` keeps the historical behavior: use the viewer when
-    available (``rgb_array`` when recording, otherwise ``human``) and fall back to no
-    rendering otherwise. ``human``/``rgb_array`` are explicit and require the viewer,
-    failing with an actionable error when it is unavailable.
+    ``none`` runs headless. ``auto`` uses the viewer when available (``rgb_array`` when
+    recording, otherwise ``human`` if this build ships the interactive window) and falls
+    back to no rendering otherwise. ``human``/``rgb_array`` are explicit and require the
+    viewer, failing with an actionable error when it is unavailable.
     ``MOCHI_RENDERER_VIEWER_AVAILABLE`` only confirms that the mochi_viewer binary was
     found, not that the display backend will start.
     """
     if requested == "none":
         return None
     if requested == "auto":
-        if MOCHI_RENDERER_VIEWER_AVAILABLE:
-            return "rgb_array" if video_recording else "human"
+        if not MOCHI_RENDERER_VIEWER_AVAILABLE:
+            warnings.warn(
+                "mochi_viewer_app was not found; build it or set its path env var to "
+                "enable rendering. Falling back to render mode None...",
+                stacklevel=2,
+            )
+            return None
+        if video_recording:
+            return "rgb_array"
+        if is_interactive_viewer_available():
+            return "human"
         warnings.warn(
-            "mochi_viewer_app was not found; build it or set its path env var to "
-            "enable rendering. Falling back to render mode None...",
+            "Interactive viewing is not supported in this build. Falling back to "
+            "render mode None; pass --video to record offscreen.",
             stacklevel=2,
         )
         return None
@@ -75,6 +85,11 @@ def _resolve_render_mode(requested: str, video_recording: bool) -> str | None:
             f"--render-mode {requested} requires the mochi_viewer backend, whose binary "
             "was not found. Build mochi_viewer_app or set its path env var, or rerun "
             "with --render-mode none for headless use."
+        )
+    if requested == "human" and not is_interactive_viewer_available():
+        raise SystemExit(
+            "--render-mode human is not supported in this build. Use --video to "
+            "record offscreen, or --render-mode none for headless use."
         )
     return requested
 
@@ -236,9 +251,9 @@ def main():
         default="auto",
         choices=("auto", "human", "rgb_array", "none"),
         help="Renderer mode. 'auto' (default) uses the viewer when available "
-        "('human', or 'rgb_array' with --video) and falls back to 'none' otherwise; "
-        "'none' runs headless (no display backend required); 'human'/'rgb_array' "
-        "require the viewer.",
+        "('rgb_array' with --video, otherwise 'human' if this build ships the "
+        "interactive window) and falls back to 'none' otherwise; 'none' runs headless "
+        "(no display backend required); 'human'/'rgb_array' require the viewer.",
     )
     parser.add_argument(
         "--video",

@@ -83,7 +83,8 @@ def sample_runner(
     if animation_writer:
         animation_writer.add(env.render())
 
-    while episode < num_episodes:
+    # Also stop early if the user closes the interactive window (render_mode="human").
+    while episode < num_episodes and not mochi_env.user_requested_close():
         # Sample an action from the given action sampler.
         action = action_sampler(env, mochi_env)
 
@@ -110,6 +111,8 @@ def sample_runner(
                 animation_writer.write(f"video_{episode:03d}")
                 animation_writer.add(env.render())
 
+    if mochi_env.user_requested_close():
+        logger.info("Viewer window closed by the user; stopping early.")
     logger.info(f"Done running {episode} episodes.")
     env.close()
 
