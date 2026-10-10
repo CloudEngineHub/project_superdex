@@ -36,22 +36,22 @@
 namespace mochi::simd_test {
 
 // Short hand
-static constexpr real kEps = kDefaultNearEqualEpsilon<real>;
+inline constexpr real kEps = kDefaultNearEqualEpsilon<real>;
 
 // Return true if (a == b) or if a and b have the same bits (in case of nan)
 template <class T>
-static bool EqualValueOrBits(T a, T b) {
+bool EqualValueOrBits(T a, T b) {
   return (a == b) || (0 == memcmp(&a, &b, sizeof(T)));
 }
 
 // Return true if NearEqual(a, b, eps) or if a and b have the same bits (in case of nan)
 template <class T>
-static bool NearEqualValueOrBits(T a, T b, T eps) {
+bool NearEqualValueOrBits(T a, T b, T eps) {
   return NearEqual(a, b, eps) || (0 == memcmp(&a, &b, sizeof(T)));
 }
 
 template <class T, class VecType>
-static void TestUnaryFunction(
+void TestUnaryFunction(
     std::function<T(T)> scalarFn,
     std::function<VecType(VecType)> vectorFn,
     std::function<bool(T, T)> compareFn,
@@ -123,7 +123,7 @@ inline void TestSimdTrigFunction(
 }
 
 template <class T, class VecType>
-static void TestBinaryFunction(
+void TestBinaryFunction(
     std::function<T(T, T)> const& scalarFn,
     std::function<VecType(VecType, VecType)> vectorFn,
     std::function<bool(T, T)> compareFn) {
@@ -144,7 +144,7 @@ static void TestBinaryFunction(
 }
 
 template <class T, class VecType>
-static void TestTernaryFunction(
+void TestTernaryFunction(
     std::function<T(T, T, T)> const& scalarFn,
     std::function<VecType(VecType, VecType, VecType)> vectorFn,
     std::function<bool(T, T)> compareFn) {
@@ -358,7 +358,7 @@ static void TestTernaryFunction(
 // `requires` SFINAE check cannot detect it. Use an explicit scalar-type gate that matches the
 // original int64x2/int64x4 special-case.
 template <int N, class V>
-static void ExpectEqual(bool expect, V a, V b) {
+void ExpectEqual(bool expect, V a, V b) {
   EXPECT_EQ(expect, Equal<N>(a, b));
   if constexpr (N == 1 || !std::is_same_v<typename V::Scalar, int64_t>) {
     EXPECT_EQ(!expect, NotEqual<N>(a, b));
@@ -372,32 +372,32 @@ static void ExpectEqual(bool expect, V a, V b) {
 // Expects store(ptr), with ptr in a buffer of 911s, to write 1, 2, ..., n to the first n
 // elements of ptr and nothing else.
 template <class V, class StoreFn>
-static void ExpectStoresFirstLanes(int n, StoreFn store) {
+void ExpectStoresFirstLanes(int n, StoreFn store) {
   using Scalar = typename V::Scalar;
   // NOTE: A vector rather than an array on the stack, to work around an MSVC optimizer bug.
   std::vector<Scalar> result(V::kSize + 2, Scalar(911));
   auto expected = result;
-  for (int i = 0; i < n; ++i) {
-    expected[i + 1] = Scalar(i + 1);
+  for (int i = 1; i <= n; ++i) {
+    expected[i] = Scalar(i);
   }
   store(result.data() + 1);
   EXPECT_EQ(expected, result);
 }
 
 template <int N, class V>
-static void ExpectStoreN(V v) {
+void ExpectStoreN(V v) {
   ExpectStoresFirstLanes<V>(N, [&](auto* ptr) { Store<N>(ptr, v); });
 }
 
 template <class V, size_t... Is>
-static void ExpectStoreNForEachN(V v, std::index_sequence<Is...>) {
+void ExpectStoreNForEachN(V v, std::index_sequence<Is...>) {
   (ExpectStoreN<static_cast<int>(Is)>(v), ...);
 }
 
 // Tests Store<N> for every N, Store with a runtime count, and the full Store, on a vector v that
 // holds 1, 2, 3, ...
 template <class V>
-static void TestStore(V v) {
+void TestStore(V v) {
   Store<0>(static_cast<typename V::Scalar*>(nullptr), v);
   ExpectStoreNForEachN(v, std::make_index_sequence<V::kSize + 1>{});
   for (int n = 0; n <= V::kSize; ++n) {
