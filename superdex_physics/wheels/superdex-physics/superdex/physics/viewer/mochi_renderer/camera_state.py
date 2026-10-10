@@ -37,6 +37,8 @@ class CameraState:
     """Cached eye position. None until a pose has been set."""
     look_at: npt.NDArray | None = None
     """Cached target position. None until a pose has been set."""
+    up: npt.NDArray | None = None
+    """Up direction fixing the camera's roll. None leaves the server default."""
     dirty: bool = False
     """Whether the cached pose still has to be sent to the server."""
 

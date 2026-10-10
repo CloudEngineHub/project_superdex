@@ -36,7 +36,14 @@ from superdex.physics.viewer.utils.aabb import AABB
 
 from .actor_palette import actor_color, srgb_to_linear
 from .camera_state import CameraState
-from .grid_mesh import build_grid_meshes
+from .grid_mesh import build_grid_meshes, GridMesh
+from .ground_plane import (
+    is_plane_actor,
+    plane_center_and_axes,
+    PLANE_COLOR_1,
+    PLANE_COLOR_2,
+    PLANE_PERIOD,
+)
 from .mochi_renderer_client import CommandEntry, MochiRendererClient
 from .mochi_renderer_viewer_cfg import MochiRendererViewerCfg
 from .viewer_app_process import find_viewer_app_executable, ViewerAppProcess
@@ -51,6 +58,9 @@ RenderFrame = npt.NDArray[np.uint8]
 _GRID_OBJECT_PREFIX = "__grid__"
 """Reserved server-object namespace for grids, so a grid named "Floor" cannot
 collide with an actor of the same name."""
+
+_PLANE_OBJECT_PREFIX = "__plane__"
+"""Reserved server-object namespace for auto-generated ground planes."""
 
 _DEFAULT_VERTICAL_FOV_DEG = 45.0
 """Vertical field of view assumed when a camera does not configure one. The server
@@ -136,6 +146,7 @@ class MochiRendererViewer:
     _paused: bool
     _actor_handles: dict[ActorHandle, _ActorInfo]
     _grid_objects: dict[str, list[str]]
+    _plane_objects: dict[ActorHandle, list[str]]
     _scene_aabb: AABB | None
     _camera: CameraState
     _app_process: ViewerAppProcess | None
@@ -159,6 +170,7 @@ class MochiRendererViewer:
         self._paused = False
         self._actor_handles = {}
         self._grid_objects = {}
+        self._plane_objects = {}
         self._scene_aabb = None
         self._camera = CameraState()
         self._app_process = None
@@ -273,6 +285,8 @@ class MochiRendererViewer:
         """Load the image-based lighting environment, if one is configured."""
         if not cfg.environment_ibl:
             logger.debug("No IBL configured (environment_ibl is None)")
+            if cfg.background_color is not None:
+                self.set_background_color(cfg.background_color)
             return
 
         logger.info(f"Loading IBL: {cfg.environment_ibl}")
@@ -389,12 +403,17 @@ class MochiRendererViewer:
     def _sync_actors(self, scene: Scene, commands: list[CommandEntry]) -> None:
         """Detect added/removed/updated actors and append commands."""
         current_handles: dict[ActorHandle, Actor] = {}
+        current_planes: dict[ActorHandle, Actor] = {}
 
         def _gather(actor: Actor) -> None:
             if not actor.get_surface_mesh().is_empty():
                 current_handles[actor.get_handle()] = actor
+            elif is_plane_actor(actor):
+                current_planes[actor.get_handle()] = actor
 
         scene.for_each_actor(_gather)
+
+        self._sync_planes(current_planes, commands)
 
         current_set = set(current_handles.keys())
         known_set = set(self._actor_handles.keys())
@@ -412,6 +431,58 @@ class MochiRendererViewer:
                 commands.extend(self._update_actor(actor, info))
 
         self._update_scene_aabb()
+
+    def _sync_planes(
+        self, current: dict[ActorHandle, Actor], commands: list[CommandEntry]
+    ) -> None:
+        """Create grids for new ground planes and drop grids for departed ones.
+
+        Planes are static, so their grids are built once and never updated.
+        """
+        for handle in set(self._plane_objects) - set(current):
+            commands.extend(self._destroy_plane_commands(handle))
+
+        for handle in set(current) - set(self._plane_objects):
+            commands.extend(self._create_plane_grid(handle, current[handle]))
+
+    def _create_plane_grid(
+        self, handle: ActorHandle, actor: Actor
+    ) -> list[CommandEntry]:
+        """Build the checker grid standing in for a plane collision shape."""
+        pose = plane_center_and_axes(actor)
+        if pose is None:
+            return []
+        center, axes = pose
+
+        meshes = build_grid_meshes(
+            size=np.inf,
+            center=center,
+            period=PLANE_PERIOD,
+            axes=axes,
+            style="checker",
+            color_1=PLANE_COLOR_1,
+            color_2=PLANE_COLOR_2,
+            # The inferred normal's sign is irrelevant when both sides are drawn.
+            double_sided=True,
+        )
+
+        commands: list[CommandEntry] = []
+        object_names: list[str] = []
+        unique_name = f"{actor.get_name()}_h{handle.value}"
+        for index, mesh in enumerate(meshes):
+            object_name = f"{_PLANE_OBJECT_PREFIX}/{unique_name}/{index}"
+            object_names.append(object_name)
+            commands.extend(self._upload_grid_mesh(object_name, mesh))
+
+        self._plane_objects[handle] = object_names
+        return commands
+
+    def _destroy_plane_commands(self, handle: ActorHandle) -> list[CommandEntry]:
+        """Destroy commands for a previously uploaded ground plane, if any."""
+        return [
+            CommandEntry(text=f"vset /object/{object_name}/destroy")
+            for object_name in self._plane_objects.pop(handle, [])
+        ]
 
     def _decode_capture(
         self,
@@ -451,6 +522,8 @@ class MochiRendererViewer:
             commands.append(CommandEntry(text=f"vset /object/{info.name}/destroy"))
         for name in list(self._grid_objects):
             commands.extend(self._destroy_grid_commands(name))
+        for handle in list(self._plane_objects):
+            commands.extend(self._destroy_plane_commands(handle))
         if self._cfg.environment_gltf:
             commands.append(CommandEntry(text="vset /object/__environment__/destroy"))
         if commands:
@@ -476,9 +549,19 @@ class MochiRendererViewer:
         self,
         look_from: list[float] | npt.NDArray | None = None,
         look_at: list[float] | npt.NDArray | None = None,
+        up_dir: list[float] | npt.NDArray | None = None,
         **kwargs,
     ) -> None:
-        """Set the camera position and target via a look-at command."""
+        """Set the camera position and target via a look-at command.
+
+        Args:
+            look_from: World-space eye position.
+            look_at: World-space point to look at.
+            up_dir: Up direction fixing the camera's roll. Sticky: it is reused by
+                framing and the follow camera until changed. None leaves it as is.
+        """
+        if up_dir is not None:
+            self._camera.up = np.asarray(up_dir, dtype=np.float64)
         if look_from is None or look_at is None:
             return
         self._set_camera_pose(
@@ -487,6 +570,18 @@ class MochiRendererViewer:
         )
         self._client.request_batch(self._camera_pose_commands())
         self._camera.dirty = False
+
+    def set_background_color(self, color: tuple[float, float, float]) -> None:
+        """Set the color rendered behind the scene.
+
+        Args:
+            color: Red, green and blue in [0, 1], in sRGB space.
+
+        Note:
+            This replaces any IBL environment, since the skybox carries both.
+        """
+        r, g, b = srgb_to_linear(color)
+        self._client.request(f"vset /scene/background {r:.6f} {g:.6f} {b:.6f}")
 
     ####################################################################################
     # Camera framing and follow camera
@@ -608,11 +703,13 @@ class MochiRendererViewer:
         f = state.look_from
         t = state.look_at
         pose = f"{f[0]} {f[1]} {f[2]} {t[0]} {t[1]} {t[2]}"
-        # A single observation-camera pose. In windowed mode the server also
-        # steers the interactive window from this command (see the presented-
-        # camera-moved hook), so no separate presentation command is needed.
+        up = "" if state.up is None else f" {state.up[0]} {state.up[1]} {state.up[2]}"
+        # A single observation-camera pose (optionally with an up vector). In
+        # windowed mode the server also steers the interactive window from this
+        # command (see the presented-camera-moved hook), so no separate
+        # presentation command is needed.
         return [
-            CommandEntry(text=f"vset /camera/{self._cfg.camera_name}/lookat {pose}")
+            CommandEntry(text=f"vset /camera/{self._cfg.camera_name}/lookat {pose}{up}")
         ]
 
     def _build_camera_commands(self) -> list[CommandEntry]:
@@ -778,25 +875,30 @@ class MochiRendererViewer:
         for index, mesh in enumerate(meshes):
             object_name = f"{_GRID_OBJECT_PREFIX}/{name}/{index}"
             object_names.append(object_name)
-            r, g, b = srgb_to_linear(mesh.color)
-            commands.append(
-                CommandEntry(
-                    text=(
-                        f"vset /object/{object_name}/mesh "
-                        f"{len(mesh.positions)} {mesh.indices.size} 0 "
-                        f"{r:.6f} {g:.6f} {b:.6f}"
-                    ),
-                    binary_data=(
-                        mesh.positions.tobytes()
-                        + mesh.normals.tobytes()
-                        + mesh.indices.tobytes()
-                    ),
-                )
-            )
-            commands.append(CommandEntry(text=f"vset /object/{object_name}/show"))
+            commands.extend(self._upload_grid_mesh(object_name, mesh))
 
         self._grid_objects[name] = object_names
         self._client.request_batch(commands)
+
+    @staticmethod
+    def _upload_grid_mesh(object_name: str, mesh: GridMesh) -> list[CommandEntry]:
+        """Mesh-create and show commands for one tessellated grid piece."""
+        r, g, b = srgb_to_linear(mesh.color)
+        return [
+            CommandEntry(
+                text=(
+                    f"vset /object/{object_name}/mesh "
+                    f"{len(mesh.positions)} {mesh.indices.size} 0 "
+                    f"{r:.6f} {g:.6f} {b:.6f}"
+                ),
+                binary_data=(
+                    mesh.positions.tobytes()
+                    + mesh.normals.tobytes()
+                    + mesh.indices.tobytes()
+                ),
+            ),
+            CommandEntry(text=f"vset /object/{object_name}/show"),
+        ]
 
     def _destroy_grid_commands(self, name: str) -> list[CommandEntry]:
         """Destroy commands for a previously uploaded grid, if any."""
@@ -887,6 +989,9 @@ class MochiRendererViewer:
                     CommandEntry(text=f"vset /object/{info.name}/destroy")
                 )
             self._actor_handles.clear()
+        # Ground planes belong to the outgoing scene's actors.
+        for handle in list(self._plane_objects):
+            cleanup_commands.extend(self._destroy_plane_commands(handle))
         if self._cfg.environment_gltf:
             logger.info("[env_gltf] destroying environment gltf")
             cleanup_commands.append(
@@ -919,6 +1024,8 @@ class MochiRendererViewer:
             if not actor.get_surface_mesh().is_empty():
                 cmds = self._create_actor_mesh(actor)
                 commands.extend(cmds)
+            elif is_plane_actor(actor):
+                commands.extend(self._create_plane_grid(actor.get_handle(), actor))
 
         scene.for_each_actor(_create)
         self._update_scene_aabb()

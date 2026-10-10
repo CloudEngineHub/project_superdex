@@ -176,7 +176,9 @@ class CartPoleEnv(MochiEnv):
 
         # Setup preferred renderer settings.
         if self._renderer:
-            self._renderer.set_camera_view(look_from=[0, 0, 8], look_at=[0, 0, 0])
+            self._renderer.set_camera_view(
+                look_from=[0, 0, 8], look_at=[0, 0, 0], up_dir=[0, 1, 0]
+            )
             self._renderer.add_grid(
                 "Reference",
                 size=6,

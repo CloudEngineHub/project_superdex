@@ -129,3 +129,11 @@ class MochiRendererViewerCfg:
     """Whether the IBL skybox is visible in the background. When False
     (default), the IBL still provides indirect lighting but the
     background remains the solid-color skybox."""
+
+    background_color: tuple[float, float, float] | None = (0.92, 0.92, 0.94)
+    """sRGB color rendered behind the scene, applied on connection.
+
+    The server's own default is pure green, which is meant for chroma keying, so the
+    viewer overrides it with a neutral tone. Set to None to leave the server's default
+    alone. Ignored when ``environment_ibl`` is set, since the IBL supplies the
+    background."""

@@ -98,6 +98,11 @@ class Scene {
   bool GetSkyboxVisible() const;
   void SetIbl(IBL* ibl);
 
+  // True when the scene's skybox comes from an IBL environment rather than the
+  // solid color skybox created by @ref CreateSkybox. Lets callers avoid
+  // overwriting an IBL background with a solid color.
+  bool HasIblSkybox() const;
+
   void CreateGroundPlane(float y = 0, filament::math::float3 planeExtent = {10.0f, 0.0f, 10.0f});
   void DestroyGroundPlane();
   void SetGroundPlaneHeight(float y);

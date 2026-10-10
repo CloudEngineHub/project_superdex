@@ -132,6 +132,11 @@ void Scene::CreateSkybox(filament::math::float4 color) {
   _scene->setSkybox(_skybox);
 }
 
+bool Scene::HasIblSkybox() const {
+  filament::Skybox* const current = _scene->getSkybox();
+  return current != nullptr && current != _skybox;
+}
+
 void Scene::CreateIndirectLight(float intensity) {
   if (_indirectLight) {
     _engine->destroy(_indirectLight);

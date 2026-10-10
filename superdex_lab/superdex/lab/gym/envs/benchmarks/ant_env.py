@@ -251,7 +251,9 @@ class AntEnv(MochiEnv):
 
         # Setup preferred renderer settings.
         if self._renderer:
-            self._renderer.set_camera_view(look_from=[-2, 3, 2], look_at=[0, 1, 0])
+            self._renderer.set_camera_view(
+                look_from=[-2, 3, 2], look_at=[0, 1, 0], up_dir=[0, 1, 0]
+            )
             self._renderer.set_enable_follow_camera(True)
             self._renderer.set_follow_camera_smoothness(0.8)
             self._renderer.set_compute_automatic_distance(True)

@@ -120,6 +120,20 @@ TEST(MochiRendererTest, CreateAndDestroy) {
   EXPECT_FALSE(renderer->HasPresentationTarget());
 }
 
+TEST(MochiRendererTest, HasIblSkyboxDistinguishesColorSkybox) {
+  SKIP_IF_NO_GPU();
+  auto renderer = MochiRenderer::Create();
+  ASSERT_NE(renderer, nullptr);
+  auto* scene = renderer->GetScene();
+  ASSERT_NE(scene, nullptr);
+
+  // A solid-color background skybox is not an IBL skybox, so a /scene/background
+  // request must not be treated as overwriting an IBL environment.
+  EXPECT_FALSE(scene->HasIblSkybox());
+  scene->CreateSkybox({0.92f, 0.92f, 0.94f, 1.0f});
+  EXPECT_FALSE(scene->HasIblSkybox());
+}
+
 TEST(MochiRendererTest, CreateObservationCamera) {
   SKIP_IF_NO_GPU();
   auto renderer = MochiRenderer::Create();
