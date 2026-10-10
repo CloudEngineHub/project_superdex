@@ -28,6 +28,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace superdex::studio {
@@ -94,6 +95,7 @@ class BotSceneEditor : public AssetEditor {
   void CreatePhysicsActors(mochi::Scene* scene);
   void DestroyPhysicsActors(mochi::Scene* scene);
   mochi::CallbackHandle RegisterPostStepCallback(mochi::AsyncScene* scene);
+  void OnStartPhysics();
   void OnStopPhysics();
   void SyncFromPhysics();
 
@@ -115,6 +117,9 @@ class BotSceneEditor : public AssetEditor {
   MochiAsyncScene _mochiScene;
   std::optional<superdex::robotics::BotScene> _botScene;
   std::vector<mochi::ActorHandle> _physicsActors;
+  // Bot prefabs rebuilt and copied from the AssetManager by OnStartPhysics, keyed by bot path, for
+  // CreatePhysicsActors. Rebuilding mutates the asset, so it must happen on the UI thread.
+  std::unordered_map<std::string, superdex::robotics::BotPrefab> _physicsBotPrefabs;
   struct TaskRuntimeSpawn {
     std::optional<mochi::ActorHandle> primaryActor;
     mochi::TransformRT spawnFromPrimary = {};

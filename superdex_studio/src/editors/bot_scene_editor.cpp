@@ -219,6 +219,7 @@ void BotSceneEditor::Initialize() {
         _studio->GetRendererToEditorSpaceConverter());
     return mochi::CallbackHandle{};
   };
+  _mochiScene.onStartPhysics = [this]() { OnStartPhysics(); };
   _mochiScene.onStopPhysics = [this]() { OnStopPhysics(); };
   // Force-drag (left-drag) of simulated rigid bodies / articulated links. The controller only
   // exists while a session is running, so the hooks read the slot on each event.
@@ -508,6 +509,11 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
   auto* mochiContext = _studio->GetMochiContext();
   auto* botsContext = _studio->GetRoboticsContext();
 
+  auto const findBotPrefab = [this](std::string_view path) -> superdex::robotics::BotPrefab const* {
+    auto const it = _physicsBotPrefabs.find(std::string(path));
+    return it != _physicsBotPrefabs.end() ? &it->second : nullptr;
+  };
+
   mochi::ErrorLog e;
   _botScene = superdex::robotics::LoadBotScene(
       scene,
@@ -515,7 +521,9 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
       _sceneAsset->GetBotsRootPath(),
       mochiContext,
       botsContext,
-      e);
+      e,
+      findBotPrefab,
+      &_studio->GetBotLoader());
   if (!e.IsOK()) {
     MOCHI_LOG_ERROR("Failed to load bot scene physics");
     _botScene.reset();
@@ -543,8 +551,10 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
       mochi::ErrorLog spawnError;
       if (superdex::robotics::IsBotArchivePath(spawn.prefabPath.ToString()) ||
           superdex::robotics::IsBotPath(spawn.prefabPath.ToString())) {
-        auto botPrefab =
-            superdex::robotics::LoadBotPrefabFromFile(spawn.prefabPath.ToString(), spawnError);
+        auto const* loadedPrefab = findBotPrefab(spawn.prefabPath.ToString());
+        auto botPrefab = loadedPrefab != nullptr
+            ? *loadedPrefab
+            : superdex::robotics::LoadBotPrefabFromFile(spawn.prefabPath.ToString(), spawnError);
         if (!spawnError.IsOK()) {
           MOCHI_LOG_ERROR("Failed to load task bot '%s'", spawn.name.c_str());
           DestroyPhysicsActors(scene);
@@ -552,7 +562,7 @@ void BotSceneEditor::CreatePhysicsActors(mochi::Scene* scene) {
         }
         botPrefab.name = spawn.name;
         botPrefab.worldFromRoot = spawn.worldFromSpawn;
-        auto* bot = superdex::robotics::CreateBot(scene, botPrefab, botsContext, spawnError);
+        auto* bot = botsContext->CreateBot(scene, botPrefab, _studio->GetBotLoader(), spawnError);
         if (bot != nullptr) {
           _taskBots.push_back(bot);
         }
@@ -675,12 +685,33 @@ mochi::CallbackHandle BotSceneEditor::RegisterPostStepCallback(mochi::AsyncScene
       });
 }
 
+void BotSceneEditor::OnStartPhysics() {
+  _physicsBotPrefabs.clear();
+  auto& assetManager = _studio->GetAssetManager();
+  auto const copyBotPrefab = [&](std::string const& path) {
+    if (path.empty() || _physicsBotPrefabs.contains(path)) {
+      return;
+    }
+    if (auto* botAsset = assetManager.FindAssetByPath<BotAsset>(mochi::Path{path})) {
+      botAsset->Rebuild(_studio->GetBotLoader());
+      _physicsBotPrefabs.emplace(path, botAsset->GetBotPrefab());
+    }
+  };
+  for (auto const& bot : _sceneAsset->GetPrefab().bots) {
+    copyBotPrefab(std::string(bot.path));
+  }
+  for (auto const& spawn : _taskSpawns) {
+    copyBotPrefab(spawn.prefabPath.ToString());
+  }
+}
+
 void BotSceneEditor::OnStopPhysics() {
   // Tear down the per-session force-drag controller (its callback is already gone with the scene).
   _dragController.reset();
   _stage.ResetWorldTransforms(_studio->GetEditorToRendererSpaceConverter());
   _simData.Consume();
   _physicsActors.clear();
+  _physicsBotPrefabs.clear();
   _showCurrentTaskTransforms = false;
 }
 

@@ -285,6 +285,9 @@ void MochiAsyncScene::CreateScene(std::string_view name, bool startPaused) {
   // gravity/solver (prefab::AddToScene) applies them from createPhysicsActors, and wins.
   ApplySceneSettings();
 
+  if (onStartPhysics) {
+    onStartPhysics();
+  }
   _asyncScene->QueueCommand([this,
                              addGroundPlane = _settings.studio.groundPlane,
                              groundHeight = _groundPlaneHeight](mochi::Scene* physicsScene) {

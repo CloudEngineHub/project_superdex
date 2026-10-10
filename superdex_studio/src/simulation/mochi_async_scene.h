@@ -120,6 +120,9 @@ class MochiAsyncScene {
   std::function<void(mochi::Scene* scene)> destroyPhysicsActors;
   std::function<mochi::CallbackHandle(mochi::AsyncScene* asyncScene)> registerPreStepCallback;
   std::function<mochi::CallbackHandle(mochi::AsyncScene* asyncScene)> registerPostStepCallback;
+  // Called on the calling (UI) thread before createPhysicsActors is queued to the physics thread,
+  // so editor state can be snapshotted for it.
+  std::function<void()> onStartPhysics;
   std::function<void()> onStopPhysics;
 
   ~MochiAsyncScene();
