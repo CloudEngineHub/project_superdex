@@ -993,6 +993,56 @@ void SuperDexStudio::SaveActiveAssetEditorAs() {
   OpenFile(selected);
 }
 
+#if MOCHI_INTERNAL
+void SuperDexStudio::CreateSceneArchive(mochi::Path const& scenePath) {
+  if (auto const* scene = _assetManager->FindAssetByPath(scenePath);
+      scene != nullptr && scene->IsDirty()) {
+    MOCHI_LOG_ERROR("Save '%s' before archiving it.", scenePath.ToString().c_str());
+    return;
+  }
+  std::string const extension{superdex::robotics::kSceneArchiveExtension};
+  std::string const filter = "*" + extension;
+  std::array<char const*, 1> const filters{{filter.c_str()}};
+#if MOCHI_PLATFORM_MACOS
+  // Custom extensions without a registered UTI are disabled when the native filter is set.
+  int constexpr numFilters = 0;
+#else
+  int constexpr numFilters = static_cast<int>(filters.size());
+#endif
+  mochi::Path selected = GetFileDialogPath(
+      "Create Scene Archive",
+      filters.data(),
+      numFilters,
+      "Bot Scene Archive (*.mochi_bot_scene_archive)",
+      true,
+      scenePath.GetParentPath() / (GetAssetNameFromPath(scenePath) + extension));
+  if (selected.IsEmpty()) {
+    return;
+  }
+  if (!selected.GetFilename().ends_with(extension)) {
+    selected = mochi::Path{selected.ToString() + extension};
+  }
+  // A loaded archive's in-memory state would no longer match its file.
+  if (_assetManager->FindAssetByPath(selected) != nullptr) {
+    MOCHI_LOG_ERROR(
+        "Cannot write '%s' while it is loaded; close it first.", selected.ToString().c_str());
+    return;
+  }
+  superdex::robotics::ArchiveParams params;
+  params.src = scenePath.ToString();
+  params.dst = selected.ToString();
+  params.comment = "Archived from SuperDex Studio";
+  mochi::ErrorLog error;
+  superdex::robotics::ArchiveBotScene(params, error);
+  if (!error.IsOK()) {
+    MOCHI_LOG_ERROR("Failed to create scene archive '%s'.", selected.ToString().c_str());
+    return;
+  }
+  MOCHI_LOG("Created scene archive '%s'.", selected.ToString().c_str());
+  AddRecentFile(selected);
+}
+#endif // MOCHI_INTERNAL
+
 void SuperDexStudio::SaveAllAssetEditors() {
   for (auto& editor : _assetEditors) {
     if (editor->GetAsset()->IsDirty()) {

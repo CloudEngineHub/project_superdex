@@ -95,6 +95,11 @@ class SuperDexStudio : public ImGuios::Application {
   // the editor to that file. The original file is left as it was on disk.
   void SaveActiveAssetEditorAs();
   void SaveAllAssetEditors();
+#if MOCHI_INTERNAL
+  // Archives a saved .mochi_bot_scene and the files it references into a .mochi_bot_scene_archive
+  // chosen with a save dialog.
+  void CreateSceneArchive(mochi::Path const& scenePath);
+#endif // MOCHI_INTERNAL
 
   //------------------------------------------------------------------------------------------------
   // Screenshots

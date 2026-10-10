@@ -34,6 +34,7 @@
 #include <chrono>
 #include <ctime>
 #include <map>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
@@ -810,6 +811,40 @@ std::set<std::filesystem::path> superdex::robotics::CollectPrefabFiles(
   return files;
 }
 
+namespace {
+
+// Where the archive of a raw bot would sit: beside it, with the bot archive extension.
+std::filesystem::path ToBotArchivePath(std::filesystem::path botPath) {
+  return botPath.replace_extension(kBotArchiveExtension);
+}
+
+// Points every raw bot path in a .mochi_bot_scene JSON document at its archive (see
+// ToBotArchivePath), keeping the path's relative or tagged form.
+void RewriteRawBotPaths(picojson::value& sceneJson) {
+  if (!sceneJson.is<picojson::object>()) {
+    return;
+  }
+  auto& scene = sceneJson.get<picojson::object>();
+  auto const bots = scene.find("bots");
+  if (bots == scene.end() || !bots->second.is<picojson::array>()) {
+    return;
+  }
+  for (auto& bot : bots->second.get<picojson::array>()) {
+    if (!bot.is<picojson::object>()) {
+      continue;
+    }
+    auto& entry = bot.get<picojson::object>();
+    auto const path = entry.find("path");
+    if (path != entry.end() && path->second.is<std::string>() &&
+        !IsBotArchivePath(path->second.get<std::string>())) {
+      path->second =
+          picojson::value(ToBotArchivePath(path->second.get<std::string>()).generic_string());
+    }
+  }
+}
+
+} // namespace
+
 void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& error) {
   MOCHI_ERROR_RETURN(error);
   MOCHI_ERROR_IF(
@@ -833,17 +868,38 @@ void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& err
   auto const prefab = LoadBotScenePrefabFromFile(sceneCanonical.generic_string(), error);
   MOCHI_ERROR_RETURN(error);
 
-  // Validate all bot paths are bot archives (reject raw .superdex_bot/.mochi_bot).
+  // Raw bots are archived on the fly. Each generated archive is stored where it would sit beside
+  // its raw bot, so the archived scene only changes those bots' path extensions and every relative
+  // or tagged path still resolves after extraction. Nothing is written beside the sources.
+  std::optional<mochi::TempDirCleanup> generatedDir;
+  std::map<std::filesystem::path, std::filesystem::path> generatedArchives;
   for (auto const& bot : prefab.bots) {
-    if (!IsBotArchivePath(bot.path)) {
-      MOCHI_LOG_ERROR(
-          "Bot '%s' path '%s' is not a bot archive. "
-          "ArchiveBotScene requires all bots to be pre-archived.",
-          bot.name.c_str(),
-          bot.path.c_str());
-      MOCHI_ERROR_SET(error, "All bots[].path entries must be .superdex_bot_archive files.");
-      return;
+    if (IsBotArchivePath(bot.path)) {
+      continue;
     }
+    MOCHI_ERROR_IF(
+        !IsBotPath(bot.path),
+        error,
+        "bots[].path entries must be .superdex_bot or .superdex_bot_archive files.");
+    MOCHI_ERROR_RETURN(error);
+    auto const botPath = NormalizeBotPath(std::string(bot.path));
+    auto const botArchivePath = ToBotArchivePath(botPath);
+    if (generatedArchives.contains(botArchivePath)) {
+      continue;
+    }
+    if (!generatedDir.has_value()) {
+      generatedDir.emplace(mochi::CreateTempDirectory("superdex_scene_archive", error));
+      MOCHI_ERROR_RETURN(error);
+    }
+    auto const generated = generatedDir->Path() /
+        (std::to_string(generatedArchives.size()) + std::string(kBotArchiveExtension));
+    ArchiveParams botParams;
+    botParams.src = botPath.generic_string();
+    botParams.dst = generated.generic_string();
+    botParams.comment = params.comment;
+    ArchiveBot(botParams, error);
+    MOCHI_ERROR_RETURN(error);
+    generatedArchives.emplace(botArchivePath, generated);
   }
 
   auto const dstPath = std::filesystem::path(std::string(params.dst));
@@ -878,7 +934,7 @@ void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& err
   // 4. Bot archive files (opaque blobs — we do not walk their dependency trees).
   for (auto const& bot : prefab.bots) {
     auto const botPath = NormalizeBotPath(std::string(bot.path));
-    collectedFiles.insert(botPath);
+    collectedFiles.insert(IsBotArchivePath(bot.path) ? botPath : ToBotArchivePath(botPath));
   }
 
   // 5. Controller param files.
@@ -982,17 +1038,28 @@ void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& err
     AddDataEntry(JoinArchivePath(thisArchiveRel, kRootMarkerFile), std::move(rootJson));
   }
 
-  // Add every collected file at its root-relative position inside the archive.
-  for (auto const& [file, root] : fileToRoot) {
-    auto const rel = file.lexically_relative(root).generic_string();
-    AddFileEntry(JoinArchivePath(rootToArchiveRel.at(root), rel), file);
-  }
-
-  // Compute the archive-relative path of the source .mochi_bot_scene for metadata.
+  // Compute the archive-relative path of the source .mochi_bot_scene.
   auto const& srcRoot = fileToRoot.at(sceneCanonical);
   auto const srcArchivePath = JoinArchivePath(
       rootToArchiveRel.at(srcRoot),
       std::filesystem::relative(sceneCanonical, srcRoot).generic_string());
+
+  // Added before the collected files so it takes the scene file's place.
+  if (!generatedArchives.empty()) {
+    auto sceneJson = mochi::ParseJsonFromFile(sceneCanonical.generic_string(), error);
+    MOCHI_ERROR_RETURN(error);
+    RewriteRawBotPaths(sceneJson);
+    AddDataEntry(srcArchivePath, sceneJson.serialize(true));
+  }
+
+  // Add every collected file at its root-relative position inside the archive.
+  for (auto const& [file, root] : fileToRoot) {
+    auto const rel = file.lexically_relative(root).generic_string();
+    auto const generated = generatedArchives.find(file);
+    AddFileEntry(
+        JoinArchivePath(rootToArchiveRel.at(root), rel),
+        generated != generatedArchives.end() ? generated->second : file);
+  }
 
   // Write metadata.
   BotSceneArchiveMetadata metadata;

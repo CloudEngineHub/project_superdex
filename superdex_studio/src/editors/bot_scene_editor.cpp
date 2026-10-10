@@ -352,7 +352,14 @@ void BotSceneEditor::ShowMainMenuItems() {
 
   _mochiScene.ShowExportSimulationPrefabMenuItem(_sceneAsset->GetName());
 
-  if (_sceneAsset->IsArchive()) {
+  if (!_sceneAsset->IsArchive()) {
+    if (ImGui::MenuItem("Create Scene Archive...", nullptr, false, !_sceneAsset->IsDirty())) {
+      _studio->CreateSceneArchive(_sceneAsset->GetPath());
+    }
+    if (_sceneAsset->IsDirty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("Save the scene before archiving it.");
+    }
+  } else {
     if (ImGui::MenuItem("Extract Archive to Loose Files...")) {
       auto const outputDirectory = SuperDexStudio::GetFolderDialogPath(
           "Select an Empty Folder for the Extracted Files", _sceneAsset->GetPath().GetParentPath());

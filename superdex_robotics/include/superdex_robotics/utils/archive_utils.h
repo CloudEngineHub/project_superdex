@@ -195,8 +195,12 @@ struct BotSceneArchiveMetadata {
  * multi-root topology (identical to the strategy used by @ref ArchiveBot) so that path
  * resolution works identically after extraction.
  *
+ * Bots given as raw .superdex_bot files are archived with @ref ArchiveBot into the scene archive,
+ * beside where the raw bot sits, and the archived scene file points at those archives. No files
+ * are written beside the sources.
+ *
  * Requirements:
- *  - Every bots[].path must reference a .superdex_bot_archive (raw .superdex_bot is rejected).
+ *  - Every bots[].path must reference a .superdex_bot or .superdex_bot_archive.
  *  - params.src must end with .mochi_bot_scene.
  *  - params.dst must end with .mochi_bot_scene_archive.
  *

@@ -812,6 +812,21 @@ void AssetBrowser::ShowItemContextMenuContents(TileItem const& item, Asset const
     }
     showedAssetActions = true;
   }
+#if MOCHI_INTERNAL
+  if (selectedCount == 1 && folderCount == 0 &&
+      item.fullPath.GetFilename().ends_with(superdex::robotics::kBotSceneExtension)) {
+    bool const unsaved = asset != nullptr && asset->IsDirty();
+    ImGui::BeginDisabled(unsaved);
+    if (ImGui::IconSelectable("Create Scene Archive...", ICON_FA_FILE_ARCHIVE)) {
+      _studio->CreateSceneArchive(item.fullPath);
+    }
+    ImGui::EndDisabled();
+    if (unsaved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("Save the scene before archiving it.");
+    }
+    showedAssetActions = true;
+  }
+#endif // MOCHI_INTERNAL
   if (showedAssetActions) {
     ImGui::Separator(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
   }
