@@ -56,6 +56,7 @@
 #include <exception>
 #include <filesystem>
 #include <system_error>
+#include <utility>
 
 #include "editors/bot_scene_editor.h"
 #include "editors/mochi_prefab_editor.h"
@@ -523,6 +524,12 @@ void SuperDexStudio::MaybeRaiseLogConsole() {
 }
 
 void SuperDexStudio::OnUpdate() {
+  // Runs before anything is drawn this frame: Save As closes an editor and unloads an asset, which
+  // frees textures (viewport, thumbnail) that would otherwise already be in this frame's draw
+  // lists.
+  if (std::exchange(_saveAsRequested, false)) {
+    SaveActiveAssetEditorAs();
+  }
   ImGuizmo::BeginFrame();
   // pump async resource loading
   GetResourceManager().PumpAsyncLoad();
@@ -928,6 +935,62 @@ void SuperDexStudio::SaveActiveAssetEditor() {
   if (auto* editor = GetActiveAssetEditor()) {
     editor->Save();
   }
+}
+
+void SuperDexStudio::SaveActiveAssetEditorAs() {
+  auto* editor = GetActiveAssetEditor();
+  if (editor == nullptr || !editor->GetAsset()->SupportsSaveAs()) {
+    return;
+  }
+  Asset* const asset = editor->GetAsset();
+  mochi::Path const original = asset->GetPath();
+  std::string const filename = original.GetFilename();
+  std::string const extension = filename.substr(GetAssetNameFromPath(original).size());
+  std::string const filter = "*" + extension;
+  std::array<char const*, 1> const filters{{filter.c_str()}};
+#if MOCHI_PLATFORM_MACOS
+  // Custom extensions without a registered UTI are disabled when the native filter is set.
+  int constexpr numFilters = 0;
+#else
+  int constexpr numFilters = static_cast<int>(filters.size());
+#endif
+  mochi::Path selected = GetFileDialogPath(
+      "Save As",
+      filters.data(),
+      numFilters,
+      filter.c_str(),
+      true,
+      original.GetParentPath() / (GetAssetNameFromPath(original) + "_copy" + extension));
+  if (selected.IsEmpty()) {
+    return;
+  }
+  if (!selected.GetFilename().ends_with(extension)) {
+    selected = mochi::Path{selected.ToString() + extension};
+  }
+  if (selected == original) {
+    editor->Save();
+    return;
+  }
+  // Another loaded asset's in-memory state would no longer match its file.
+  if (_assetManager->FindAssetByPath(selected) != nullptr) {
+    MOCHI_LOG_ERROR(
+        "Cannot save over '%s' while it is loaded; close it first.", selected.ToString().c_str());
+    return;
+  }
+  if (!asset->SaveAs(selected)) {
+    MOCHI_LOG_ERROR("Failed to save '%s'.", selected.ToString().c_str());
+    return;
+  }
+
+  // Unloading the original discards its unsaved edits, which now live in the new file.
+  CloseAssetEditor(FindAssetEditorIndex(asset));
+  if (!_assetManager->UnloadAssetByPath(original) && !asset->ReloadFromDisk()) {
+    MOCHI_LOG_WARNING(
+        "'%s' still has unsaved edits in memory; they were saved to '%s'.",
+        original.ToString().c_str(),
+        selected.ToString().c_str());
+  }
+  OpenFile(selected);
 }
 
 void SuperDexStudio::SaveAllAssetEditors() {
@@ -1702,6 +1765,12 @@ void SuperDexStudio::ShowMainMenu() {
       ImGui::BeginDisabled(!editor || !editor->GetAsset()->IsDirty());
       if (ImGui::MenuItem("Save", "Ctrl+S")) {
         SaveActiveAssetEditor();
+      }
+      ImGui::EndDisabled();
+      ImGui::BeginDisabled(!editor || !editor->GetAsset()->SupportsSaveAs());
+      if (ImGui::MenuItem("Save As...")) {
+        // Deferred to the start of the next frame (see OnUpdate).
+        _saveAsRequested = true;
       }
       ImGui::EndDisabled();
       if (ImGui::MenuItem("Save All", "Ctrl+Shift+S")) {

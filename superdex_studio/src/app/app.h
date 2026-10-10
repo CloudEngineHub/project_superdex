@@ -91,6 +91,9 @@ class SuperDexStudio : public ImGuios::Application {
   void SelectAssetEditor(int index);
   void RefreshEditors(std::vector<IAssetReferencer*> const& referencers);
   void SaveActiveAssetEditor();
+  // Writes the active asset, including unsaved edits, to a new file of the same type and switches
+  // the editor to that file. The original file is left as it was on disk.
+  void SaveActiveAssetEditorAs();
   void SaveAllAssetEditors();
 
   //------------------------------------------------------------------------------------------------
@@ -231,6 +234,7 @@ class SuperDexStudio : public ImGuios::Application {
     bool save = true;
   };
   bool _openUnsavedChangesModal = false;
+  bool _saveAsRequested = false;
   char const* _unsavedPrompt = nullptr;
   std::vector<UnsavedAssetEntry> _unsavedEntries;
   std::function<void()> _onUnsavedProceed;

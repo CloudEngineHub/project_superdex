@@ -23,6 +23,8 @@
 
 #include <superdex_robotics/internal/bot_scene.h>
 
+#include <optional>
+
 namespace superdex::studio {
 
 class AssetManager;
@@ -37,6 +39,8 @@ class BotSceneAsset : public Asset, public IAssetReferencer {
   void StageThumbnailScene(mochi_renderer::Scene& scene) override;
   bool IsSavable() const override;
   bool Save() const override;
+  [[nodiscard]] bool SupportsSaveAs() const override;
+  [[nodiscard]] bool SaveAs(mochi::Path const& path) const override;
   std::unique_ptr<AssetEditor> CreateEditor(SuperDexStudio* studio) override;
 
   // IAssetReferencer
@@ -48,6 +52,9 @@ class BotSceneAsset : public Asset, public IAssetReferencer {
   superdex::robotics::BotScenePrefab const& GetPrefab() const;
   superdex::robotics::BotScenePrefab& GetPrefab();
   std::string const& GetBotsRootPath() const;
+  [[nodiscard]] bool IsArchive() const;
+  [[nodiscard]] bool SaveArchiveCopy(mochi::Path const& path) const;
+  bool ExtractArchiveToLooseFiles(mochi::Path const& directory, mochi::Path& scenePath) const;
 
  private:
   friend class AssetManager;
@@ -58,6 +65,9 @@ class BotSceneAsset : public Asset, public IAssetReferencer {
  private:
   superdex::robotics::BotScenePrefab _prefab;
   std::string _botsRootPath;
+  mochi::Path _archiveExtractedDir;
+  mochi::Path _archiveTargetPath;
+  std::optional<mochi::DynamicString> _archiveComment;
   bool _isArchive = false;
 };
 

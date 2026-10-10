@@ -81,6 +81,11 @@ class Asset {
   void SetReadOnly(bool readOnly);
   virtual bool IsSavable() const;
   virtual bool Save() const;
+  // Whether SaveAs can write this asset's current state to another file of the same type.
+  [[nodiscard]] virtual bool SupportsSaveAs() const;
+  // Writes the current state, including unsaved edits, to @p path. Leaves this asset and its own
+  // file unchanged.
+  [[nodiscard]] virtual bool SaveAs(mochi::Path const& path) const;
   virtual bool ReloadFromDisk();
 
   // References

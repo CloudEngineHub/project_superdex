@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <functional>
 #include <set>
 #include <string>
@@ -158,7 +159,7 @@ BotSceneEditor::BotSceneEditor(SuperDexStudio* studio, BotSceneAsset* asset)
     : AssetEditor(studio, asset), _sceneAsset(asset), _stage(studio, "BotSceneEditorStage") {}
 
 void BotSceneEditor::Initialize() {
-  // Initialize _undoStack (edits are only possible on non-archive scenes).
+  // Initialize _undoStack for every writable scene or archive.
   if (!_sceneAsset->IsReadOnly()) {
     _undoStack.Initialize(
         [this] { return TakeUndoSnapshot(); },
@@ -343,15 +344,32 @@ void BotSceneEditor::ShowAuxiliaryWindows() {
   }
 }
 
-bool BotSceneEditor::CanUndoRedo() const {
-  return !_mochiScene.IsSimulating();
+void BotSceneEditor::ShowMainMenuItems() {
+  if (!ImGui::BeginMenu("Bot Scene")) {
+    return;
+  }
+
+  _mochiScene.ShowExportSimulationPrefabMenuItem(_sceneAsset->GetName());
+
+  if (_sceneAsset->IsArchive()) {
+    if (ImGui::MenuItem("Extract Archive to Loose Files...")) {
+      auto const outputDirectory = SuperDexStudio::GetFolderDialogPath(
+          "Select an Empty Folder for the Extracted Files", _sceneAsset->GetPath().GetParentPath());
+      if (!outputDirectory.IsEmpty()) {
+        mochi::Path scenePath;
+        if (_sceneAsset->ExtractArchiveToLooseFiles(outputDirectory, scenePath)) {
+          _studio->AddFolderToWorkspace(outputDirectory);
+          _studio->OpenFile(scenePath);
+        }
+      }
+    }
+  }
+
+  ImGui::EndMenu();
 }
 
-void BotSceneEditor::ShowMainMenuItems() {
-  if (ImGui::BeginMenu("Bot Scene")) {
-    _mochiScene.ShowExportSimulationPrefabMenuItem(_sceneAsset->GetName());
-    ImGui::EndMenu();
-  }
+bool BotSceneEditor::CanUndoRedo() const {
+  return !_mochiScene.IsSimulating();
 }
 
 void BotSceneEditor::ApplySceneViewSettings(mochi_renderer::SceneViewSettings const& viewSettings) {
@@ -802,6 +820,11 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted(_sceneAsset->GetName().c_str());
   ImGui::PopFont();
+  if (_sceneAsset->IsArchive()) {
+    ImGui::TextWrapped(
+        "Editing an archive. Save overwrites the source archive; use the Bot Scene menu to save an "
+        "archive copy or extract an editable scene tree.");
+  }
   ImGui::Separator();
 
   // Continuous edits (debounced into a single undo entry) vs. discrete structural edits

@@ -94,6 +94,14 @@ bool Asset::Save() const {
   return false;
 }
 
+bool Asset::SupportsSaveAs() const {
+  return false;
+}
+
+bool Asset::SaveAs(mochi::Path const& /*path*/) const {
+  return false;
+}
+
 bool Asset::ReloadFromDisk() {
   return false;
 }

@@ -840,6 +840,9 @@ void superdex::robotics::SaveToFile(
       MakeParamsPathRelative(ctrl.params, basePath, error);
     }
   }
+  for (auto& sensor : temp.sensors) {
+    MakeParamsPathRelative(sensor.params, basePath, error);
+  }
   MOCHI_ERROR_RETURN(error);
   // Each controller's initArgs is a JsonString-tagged field, so plain SReflect serialization emits
   // it as a nested "initArgs" object (empty ones omitted via NoSerializeDefaults). No bespoke

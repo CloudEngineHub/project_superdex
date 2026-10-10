@@ -20,6 +20,7 @@
 #include <superdex_robotics/utils/file_utils.h>
 
 #include <filesystem>
+#include <set>
 
 namespace superdex::robotics {
 
@@ -204,6 +205,17 @@ struct BotSceneArchiveMetadata {
  * @param[in,out] error Error status. Check @ref Error::IsOK for success. */
 MOCHI_API void ArchiveBotScene(ArchiveParams const& params, superdex::Error& error);
 
+/* @brief Collect a .mochi_scene/.mochi_prefab file and every file it references -- shapes, render
+ * models, flow files, and nested prefabs, transitively -- as canonical absolute paths. These are
+ * the files @ref ArchiveBotScene archives for a base scene or spawnable prefab.
+ *
+ * @param[in] prefabPath The .mochi_scene or .mochi_prefab file.
+ * @param[in,out] error Error status. Check @ref Error::IsOK for success.
+ * @return The prefab file and its dependencies, or an empty set on failure. */
+[[nodiscard]] MOCHI_API std::set<std::filesystem::path> CollectPrefabFiles(
+    std::filesystem::path const& prefabPath,
+    superdex::Error& error);
+
 /* @brief Extract a .mochi_bot_scene_archive to a content-hash-keyed cache directory.
  *
  * @param[in] archiveFile Path to the .mochi_bot_scene_archive file.
@@ -219,6 +231,14 @@ ExtractBotSceneArchiveToCache(std::string_view archiveFile, superdex::Error& err
  * @return Absolute path to the target .mochi_bot_scene file, or empty on failure. */
 [[nodiscard]] MOCHI_API DynamicString
 GetExtractedBotSceneArchiveTarget(std::string_view extractedDir, superdex::Error& error);
+
+/* @brief Read metadata from an extracted bot scene archive.
+ *
+ * @param[in] extractedDir Directory produced by ExtractBotSceneArchiveToCache.
+ * @param[in,out] error Error status.
+ * @return The archive metadata, or default-constructed on failure. */
+[[nodiscard]] MOCHI_API BotSceneArchiveMetadata
+ReadBotSceneArchiveMetadata(std::string_view extractedDir, superdex::Error& error);
 #endif // SUPERDEXROBOTICS_WITH_BOT_SCENE
 
 } // namespace superdex::robotics

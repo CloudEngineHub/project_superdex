@@ -799,6 +799,17 @@ static void CollectScenePrefabDependencies(
   }
 }
 
+std::set<std::filesystem::path> superdex::robotics::CollectPrefabFiles(
+    std::filesystem::path const& prefabPath,
+    Error& error) {
+  std::set<std::filesystem::path> files;
+  CollectScenePrefabDependencies(prefabPath, files, error);
+  if (!error.IsOK()) {
+    files.clear();
+  }
+  return files;
+}
+
 void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& error) {
   MOCHI_ERROR_RETURN(error);
   MOCHI_ERROR_IF(
@@ -846,7 +857,7 @@ void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& err
   collectedFiles.insert(sceneCanonical);
 
   // 2. Base scene and its transitive shape/prefab dependencies.
-  {
+  if (!prefab.scene.baseScene.empty()) {
     auto const baseScenePath = NormalizeBotPath(std::string(prefab.scene.baseScene));
     CollectScenePrefabDependencies(baseScenePath, collectedFiles, error);
     MOCHI_ERROR_RETURN(error);
@@ -883,6 +894,26 @@ void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& err
         collectedFiles.insert(paramsPath);
       }
     }
+  }
+
+  // 6. Scene-level sensor param files and their companion assets, handled like link sensors.
+  DynamicArray<DynamicString> sensorWarnings;
+  for (auto const& sensor : prefab.sensors) {
+    if (sensor.params.empty() ||
+        IsInlineJson(std::string_view(sensor.params.c_str(), sensor.params.size()))) {
+      continue;
+    }
+    auto const paramsPath = NormalizeBotPath(std::string(sensor.params));
+    if (!std::filesystem::exists(paramsPath)) {
+      NoteMissingAsset(
+          sensorWarnings,
+          "scene sensor params '" + paramsPath.generic_string() + "' on sensor '" +
+              std::string(sensor.name) + "' do not exist; archived without them");
+      continue;
+    }
+    collectedFiles.insert(paramsPath);
+    CollectSensorParamsReferences(paramsPath, collectedFiles, sensorWarnings, error);
+    MOCHI_ERROR_RETURN(error);
   }
 
   // Map files to roots and compute deepest common ancestor (same logic as ArchiveBot).
@@ -990,5 +1021,20 @@ DynamicString superdex::robotics::GetExtractedBotSceneArchiveTarget(
     Error& error) {
   return GetExtractedArchiveTargetImpl<BotSceneArchiveMetadata>(
       extractedDir, kSceneArchiveMetadataFile, error);
+}
+
+BotSceneArchiveMetadata superdex::robotics::ReadBotSceneArchiveMetadata(
+    std::string_view extractedDir,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  auto const metadataPath =
+      (std::filesystem::path(extractedDir) / kSceneArchiveMetadataFile).string();
+  BotSceneArchiveMetadata metadata;
+  int numIssues = 0;
+  bool const parsed = SReflect::LoadFromJsonFile(
+      metadata, metadataPath.c_str(), SReflect::DeserializeFlags::Default, numIssues);
+  MOCHI_ERROR_IF(!parsed, error, "Failed to load scene archive metadata file.");
+  MOCHI_ERROR_RETURN(error, {});
+  return metadata;
 }
 #endif // SUPERDEXROBOTICS_WITH_BOT_SCENE
