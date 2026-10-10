@@ -16,7 +16,7 @@ import argparse
 import json
 import pathlib
 
-from superdex.physics.viewer import VIEWER_AVAILABLE
+from superdex.physics.viewer.mochi_renderer import MOCHI_RENDERER_VIEWER_AVAILABLE
 from superdex.physics.viewer.utils import AnimationWriter
 
 try:
@@ -61,7 +61,9 @@ def run_inference(
     # other than those based in MochiEnv.
     env_spec = resolve_checkpoint_env_spec(env_id)
     is_superdex_environment = env_spec.namespace == "superdex_gym"
-    is_renderer_available = not is_superdex_environment or VIEWER_AVAILABLE
+    is_renderer_available = (
+        not is_superdex_environment or MOCHI_RENDERER_VIEWER_AVAILABLE
+    )
     animation_writer = None
 
     if is_renderer_available:

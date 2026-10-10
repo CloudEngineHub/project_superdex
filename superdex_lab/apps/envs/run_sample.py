@@ -32,7 +32,7 @@ import gymnasium as gym
 from superdex.lab.gym.registration import get_env_specs
 from superdex.lab.gym.utils.registry import MochiGymEnv, unwrap_mochi_env
 from superdex.physics.utils.logging import configure_logger
-from superdex.physics.viewer import VIEWER_AVAILABLE
+from superdex.physics.viewer.mochi_renderer import MOCHI_RENDERER_VIEWER_AVAILABLE
 from superdex.physics.viewer.utils import AnimationWriter
 
 # Support both direct-script and package-module execution.
@@ -55,26 +55,26 @@ def _resolve_render_mode(requested: str, video_recording: bool) -> str | None:
     ``none`` runs headless. ``auto`` keeps the historical behavior: use the viewer when
     available (``rgb_array`` when recording, otherwise ``human``) and fall back to no
     rendering otherwise. ``human``/``rgb_array`` are explicit and require the viewer,
-    failing with an actionable error when it is unavailable. ``VIEWER_AVAILABLE`` only
-    confirms a compatible Polyscope import, not that the display backend will start.
+    failing with an actionable error when it is unavailable.
+    ``MOCHI_RENDERER_VIEWER_AVAILABLE`` only confirms that the mochi_viewer binary was
+    found, not that the display backend will start.
     """
     if requested == "none":
         return None
     if requested == "auto":
-        if VIEWER_AVAILABLE:
+        if MOCHI_RENDERER_VIEWER_AVAILABLE:
             return "rgb_array" if video_recording else "human"
         warnings.warn(
-            "Polyscope is not installed in the current environment, or it's an "
-            "incompatible version. Please install Polyscope >= 2.5.0 to enable the "
-            "renderer. Falling back to render mode none...",
+            "mochi_viewer_app was not found; build it or set its path env var to "
+            "enable rendering. Falling back to render mode None...",
             stacklevel=2,
         )
         return None
-    if not VIEWER_AVAILABLE:
+    if not MOCHI_RENDERER_VIEWER_AVAILABLE:
         raise SystemExit(
-            f"--render-mode {requested} requires the Polyscope viewer (>= 2.5.0), which "
-            "is not available in this environment. Rerun with --render-mode none for "
-            "headless use."
+            f"--render-mode {requested} requires the mochi_viewer backend, whose binary "
+            "was not found. Build mochi_viewer_app or set its path env var, or rerun "
+            "with --render-mode none for headless use."
         )
     return requested
 
@@ -163,8 +163,8 @@ def run_sample(
         raise ValueError(f"Unknown action sampler: {action_sampler}")
 
     # Building the env initializes the viewer backend when a render mode is active; that
-    # can still fail on a host without a usable display even when VIEWER_AVAILABLE is
-    # True, so turn it into an actionable message.
+    # can still fail on a host without a usable display even when the mochi_viewer
+    # binary is present, so turn it into an actionable message.
     try:
         env = make_env(env_id, common_env_cfg)
     except Exception as error:  # noqa: BLE001 -- surface an actionable renderer message

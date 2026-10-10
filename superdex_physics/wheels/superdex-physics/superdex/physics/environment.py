@@ -29,6 +29,12 @@ DEBUGGER_PATH_ENV_VAR = "SUPERDEX_DEBUGGER_PATH"
 LEGACY_DEBUGGER_PATH_ENV_VAR = "MOCHI_DEBUGGER_PATH"
 """Deprecated environment variable alias for the debugger executable path."""
 
+VIEWER_APP_PATH_ENV_VAR = "SUPERDEX_VIEWER_APP_PATH"
+"""Environment variable used to specify the mochi_viewer_app executable path."""
+
+LEGACY_VIEWER_APP_PATH_ENV_VAR = "MOCHI_VIEWER_APP_PATH"
+"""Deprecated environment variable alias for the viewer app executable path."""
+
 # Logging-related settings.
 LOG_LEVEL_ENV_VAR = "SUPERDEX_PYTHON_LOG_LEVEL"
 """Environment variable used to specify the Python logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)."""

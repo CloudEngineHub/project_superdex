@@ -30,7 +30,7 @@ import json
 import logging
 import os
 import warnings
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
@@ -55,15 +55,18 @@ from superdex.lab.gym.envs.types import (
 )
 from superdex.lab.gym.utils import mochi_helpers
 from superdex.physics.utils.configclasses import configclass
-from superdex.physics.utils.coordinate_systems import CoordinateSystem
 from superdex.physics.utils.decorators import override_from
 from superdex.physics.utils.deprecation import deprecated
 from superdex.physics.utils.json import ExtendedJSONEncoder
 from superdex.physics.utils.logging import forward_mochi_logs_to_logger
 from superdex.physics.utils.profiling import Profiler
-from superdex.physics.viewer import RenderFrame, Viewer, ViewerCfg
-from superdex.physics.viewer.backend import polyscope_imgui as psim
-from superdex.physics.viewer.ui import widgets
+from superdex.physics.viewer import RenderFrame
+
+if TYPE_CHECKING:
+    from superdex.physics.viewer.mochi_renderer import (
+        MochiRendererViewer,
+        MochiRendererViewerCfg,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ VALID_RENDER_MODES: tuple[str | None, ...] = (None, "human", "rgb_array")
 """Valid render mode values accepted by MochiEnv.
 
 - ``None``: No rendering.
-- ``"human"``: Render the environment in a human-readable format (Polyscope viewer).
+- ``"human"``: Render the environment in an interactive window.
 - ``"rgb_array"``: Render the environment as an RGB array.
 """
 
@@ -127,18 +130,18 @@ class MochiEnvCfg:
 
     # Rendering options
     render_mode: str | None = None
-    """Render mode. Use ``None`` (no rendering), ``"human"`` (Polyscope viewer),
+    """Render mode. Use ``None`` (no rendering), ``"human"`` (interactive window),
     or ``"rgb_array"`` (offscreen rendering)."""
     render_size: tuple[int, int] | None = None
     """Width and height of the renderer window. If None, the default size will be used."""
-    render_coordinate_system: CoordinateSystem | str | None = None
-    """Coordinate system to use for visualization. If None, the default coordinate system
-    (Polyscope convention: right-handed, Y-up, -Z-forward) will be used. You can specify
-    a custom coordinate system using CoordinateSystem class or use named presets like
-    "unity", "unreal", etc."""
     start_paused: bool = False
     """If the environment is being rendered in human rendering mode, start the viewer
     with the simulation paused."""
+    mochi_renderer_cfg: MochiRendererViewerCfg | None = None
+    """Settings for the mochi_viewer backend. When None, a default configuration that
+    auto-launches the viewer server is used. The ``size`` and ``offscreen`` fields are
+    filled in automatically from ``render_size`` and ``render_mode``."""
+
     # Other options
     profile: bool = False
     """If True, wall-clock timings for different aspects of the environment will be
@@ -223,11 +226,6 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
     aiding the understanding of the environment state, like force vectors). It is
     guaranteed that this function will be called only if the renderer is available, and
     after the environment has been stepped.
-
-    - `_init_ui`: Initializes the user interface. This function is called only once at
-    the start of the environment. Derived environments can override this function to
-    register additional user interface tabs. It is guaranteed that this function will
-    be called only if the renderer is available.
     """
 
     ####################################################################################
@@ -258,7 +256,7 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
     _terminated: bool
     _observation_space_structure: ObservationSpaceStructure
     _action_space_structure: ActionSpaceStructure
-    _renderer: Viewer | None
+    _renderer: MochiRendererViewer | None
     _render_size: tuple[int, int] | None
     _render_start_paused: bool
     _render_scene_dirty: bool
@@ -349,9 +347,11 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
         # Initialize renderer.
         self.render_mode = cfg.render_mode
         self._render_size = cfg.render_size
-        self._render_coordinate_system = cfg.render_coordinate_system
+
         self._render_start_paused = cfg.start_paused
         self._render_scene_dirty = False
+
+        self._mochi_renderer_cfg = cfg.mochi_renderer_cfg
         if self.render_mode is not None:
             self._init_renderer()
 
@@ -928,14 +928,24 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
         """
         logger.info("Initializing renderer...")
 
-        cfg = ViewerCfg(
-            size=self._render_size,
-            coordinate_system=self._render_coordinate_system,
-            offscreen=self.render_mode == "rgb_array",
+        import copy
+
+        from superdex.physics.viewer.mochi_renderer import (
+            MochiRendererViewer,
+            MochiRendererViewerCfg,
         )
-        self._renderer = Viewer(cfg)
+
+        # Without an explicit config, bring up our own server so rendering needs
+        # no manual pre-step.
+        renderer_cfg = (
+            copy.copy(self._mochi_renderer_cfg)
+            if self._mochi_renderer_cfg is not None
+            else MochiRendererViewerCfg(auto_launch=True)
+        )
+        renderer_cfg.size = self._render_size or renderer_cfg.size
+        renderer_cfg.offscreen = self.render_mode == "rgb_array"
+        self._renderer = MochiRendererViewer(renderer_cfg)
         self._renderer.set_paused(self._render_start_paused)
-        self._init_ui()
 
     def _reset_renderer(self):
         """
@@ -961,108 +971,10 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
         """
         pass
 
-    def get_renderer(self) -> Viewer | None:
+    def get_renderer(self) -> MochiRendererViewer | None:
         """Returns the object handling environment rendering. If the environment is not
         being rendered, None will be returned instead."""
         return self._renderer
-
-    ####################################################################################
-    # Functions customizing the renderer UI.
-    ####################################################################################
-
-    def _init_ui(self):
-        """
-        Initializes a custom UI tab for the environment. This function is called only if
-        the renderer is available, and after the renderer has been initialized. Derived
-        environments can override this function to prevent the default environment UI
-        from being displayed, or to add additional UI tabs.
-        """
-        self._renderer.add_ui_tab("Environment", self._build_environment_panel)
-
-    def _build_environment_panel(self):
-        """
-        Builds the default environment UI panel. This function is called only if the
-        renderer is available, and after the renderer has been initialized. Derived
-        environments can override this function to customize the default environment UI
-        panel.
-        """
-        # Show the current episode and step count.
-        psim.TextDisabled("ENVIRONMENT")
-        # - Episode count.
-        psim.InputInt("Episode", self._episode, flags=psim.ImGuiInputTextFlags_ReadOnly)
-        # - Step count.
-        progress = self._step_count / self._steps_per_episode
-        psim.ProgressBar(progress, (0, 0))
-        psim.SameLine()
-        psim.Text(f"{self._step_count}/{self._steps_per_episode}")
-        # - Simulation frequency.
-        psim.InputFloat(
-            "Simulation Freq.",
-            self._simulation_frequency,
-            flags=psim.ImGuiInputTextFlags_ReadOnly,
-        )
-        # - Control frequency.
-        psim.InputFloat(
-            "Control Freq.",
-            self._control_frequency,
-            flags=psim.ImGuiInputTextFlags_ReadOnly,
-        )
-        # - Simulation to control ratio.
-        psim.InputInt(
-            "Ratio",
-            self._sim_substeps,
-            flags=psim.ImGuiInputTextFlags_ReadOnly,
-        )
-        widgets.vertical_block_spacing()
-
-        # Build UI for the last observation, action, reward and info.
-        psim.TextDisabled("LAST STEP")
-        if psim.CollapsingHeader("Observation"):
-            if self._last_observation is None:
-                psim.TextDisabled("No observation available")
-            else:
-                psim.PushID("Observation")
-                for key, values in self._last_observation.items():
-                    lower_limits = self._observation_space_structure[key].low
-                    upper_limits = self._observation_space_structure[key].high
-                    widgets.ndarray_inspector(
-                        key, values, lower_limits, upper_limits, read_only=True
-                    )
-                psim.PopID()
-        if psim.CollapsingHeader("Action"):
-            if self._last_action is None:
-                psim.TextDisabled("No action available")
-            else:
-                psim.PushID("Action")
-                for key, values in self._last_action.items():
-                    lower_limits = self._action_space_structure[key].low
-                    upper_limits = self._action_space_structure[key].high
-                    widgets.ndarray_inspector(
-                        key, values, lower_limits, upper_limits, read_only=True
-                    )
-                psim.PopID()
-        if psim.CollapsingHeader("Reward"):
-            if self._last_action is None:
-                psim.TextDisabled("No action available")
-            else:
-                psim.PushID("Reward")
-                widgets.dict_inspector(self._last_reward, read_only=True)
-                psim.PopID()
-        if psim.CollapsingHeader("Info"):
-            if self._last_info is None:
-                psim.TextDisabled("No info available")
-            else:
-                psim.PushID("Info")
-                widgets.dict_inspector(self._last_info, read_only=True)
-                psim.PopID()
-        if psim.Button("Copy to Clipboard"):
-            contents = {
-                "observations": self._last_observation,
-                "actions": self._last_action,
-                "rewards": self._last_reward,
-                "info": self._last_info,
-            }
-            psim.SetClipboardText(json.dumps(contents, cls=ExtendedJSONEncoder))
 
     ####################################################################################
     # Helper functions converting between structured observations/actions to flattened

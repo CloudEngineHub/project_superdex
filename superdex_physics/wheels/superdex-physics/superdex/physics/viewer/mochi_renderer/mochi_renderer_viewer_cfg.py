@@ -28,8 +28,8 @@ class CameraCfg:
     """Configuration for a single named camera.
 
     Camera pose can be specified in two ways (checked in this order):
-      1. ``position`` + ``rotation`` — full 6-DOF transform (preferred).
-      2. ``look_from`` + ``look_at`` — classic look-at (fallback).
+      1. ``position`` + ``rotation`` ΓÇö full 6-DOF transform (preferred).
+      2. ``look_from`` + ``look_at`` ΓÇö classic look-at (fallback).
     If neither pair is set the server default is used.
     """
 
@@ -66,10 +66,30 @@ class MochiRendererViewerCfg:
     """Configuration options for the MochiRenderer viewer."""
 
     host: str = "localhost"
-    """Hostname of the mochi_renderer server."""
+    """Hostname of the mochi_renderer server. Must resolve to loopback: the
+    server only binds 127.0.0.1."""
 
     port: int = 9000
-    """Port for the mochi_renderer TCP connection."""
+    """Port for the mochi_renderer TCP connection. Ignored when ``auto_launch``
+    is enabled, since the launched server picks its own free port."""
+
+    auto_launch: bool = False
+    """Whether to spawn a mochi_viewer_app server instead of connecting to one
+    that is already running. The spawned server is shut down by ``close()``."""
+
+    viewer_app_path: str | None = None
+    """Explicit path to the mochi_viewer_app executable. When None, the
+    executable is discovered automatically (``MOCHI_VIEWER_APP_PATH``, next to
+    the native extension, the packaged ``superdex/physics/bin`` directory, then
+    the working directory). Only used when ``auto_launch`` is enabled."""
+
+    windowed: bool | None = None
+    """Whether the launched server opens an interactive window. When None, a
+    window is opened unless ``offscreen`` is set. Only used when ``auto_launch``
+    is enabled."""
+
+    launch_timeout: float = 30.0
+    """Seconds to wait for a launched server to report its listening port."""
 
     size: tuple[int, int] = (640, 480)
     """Width and height of captured images."""

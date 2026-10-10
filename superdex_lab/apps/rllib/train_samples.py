@@ -50,7 +50,7 @@ from ray.train import CheckpointConfig
 from ray.tune.experiment import Experiment, Trial
 from ray.tune.utils.log import Verbosity
 from superdex.lab.gym.utils.train_cfg import TrainCfg
-from superdex.physics.viewer import VIEWER_AVAILABLE
+from superdex.physics.viewer.mochi_renderer import MOCHI_RENDERER_VIEWER_AVAILABLE
 
 try:
     from .callbacks import CheckpointVideoGeneratorCallback, LogRewardAndInfoCallbacks
@@ -128,7 +128,7 @@ def train_samples(
     # Generate Tune callbacks.
     callbacks = []
     if train_cfg.video_on_checkpoint:
-        if not VIEWER_AVAILABLE:
+        if not MOCHI_RENDERER_VIEWER_AVAILABLE:
             warnings.warn(
                 "Renderer for SuperDex Gym environments is not available. The training "
                 "script will fail on checkpoint if a SuperDex Gym environment is used. "

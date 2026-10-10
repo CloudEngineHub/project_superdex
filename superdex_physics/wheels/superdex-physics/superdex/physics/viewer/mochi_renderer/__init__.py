@@ -20,10 +20,22 @@ the client connects.
 
 from __future__ import annotations
 
-# This flag reports only that the Python client and its import dependencies are
-# available. It does not check whether a mochi_viewer TCP server is installed or
-# running.
-MOCHI_RENDERER_VIEWER_AVAILABLE = True
+
+def _detect_mochi_viewer_available() -> bool:
+    """True when the ``mochi_viewer_app`` binary can be located.
+
+    Reports whether the standalone TCP server the client drives is installed, so
+    callers can degrade gracefully instead of hard-failing when it is absent.
+    """
+    try:
+        from .viewer_app_process import find_viewer_app_executable
+
+        return find_viewer_app_executable() is not None
+    except Exception:
+        return False
+
+
+MOCHI_RENDERER_VIEWER_AVAILABLE = _detect_mochi_viewer_available()
 
 from .mochi_renderer_client import CommandEntry, MochiRendererClient, ResponseEntry
 from .mochi_renderer_viewer import MochiRendererViewer
