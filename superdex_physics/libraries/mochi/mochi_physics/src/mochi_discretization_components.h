@@ -100,9 +100,8 @@ struct CVisualMesh : public NoCopy {
 };
 
 /*
-  Stores the shape's contact skin whenever it has usable skinning data, regardless of whether the
-  actor uses it for contact. The embedding is null for rods, which store it in
-  CRodContactSkinEmbedding instead.
+  Stores the shape's contact skin, regardless of whether the actor uses it for contact. The
+  embedding is null for rods, which store it in CRodContactSkinEmbedding instead.
 */
 struct CContactSkinMesh : public NoCopy {
   explicit CContactSkinMesh(

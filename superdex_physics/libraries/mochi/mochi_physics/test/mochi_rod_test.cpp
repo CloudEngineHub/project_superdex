@@ -1328,8 +1328,7 @@ class MochiRodSurfaceMeshes : public test::MochiSceneTestBase {
   }
   ShapeHandle CreateRodShapeWithContactSkin(
       bool includeVisualMesh = true,
-      bool isClosedLoop = false,
-      bool includeContactSkinning = true) {
+      bool isClosedLoop = false) {
     ModelData model = CreateRodModelWithVisualMesh(isClosedLoop);
     model.contactSkinMesh.emplace();
     model.contactSkinMesh->nodesPerElement = 3;
@@ -1347,9 +1346,6 @@ class MochiRodSurfaceMeshes : public test::MochiSceneTestBase {
     for (int i = 0; i < _weightsPerNode; ++i) {
       model.contactSkinMesh->skinning->indices.push_back(_elementIndices[i]);
       model.contactSkinMesh->skinning->weights.push_back(_weights[i]);
-    }
-    if (!includeContactSkinning) {
-      model.contactSkinMesh->skinning.reset();
     }
     if (!includeVisualMesh) {
       model.visualMesh = std::nullopt;
@@ -2119,17 +2115,6 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_MissingContactSkinFails) {
   RodActorParams params;
   params.shape = shape;
   params.useContactSkin = true;
-  EXPECT_EQ(nullptr, CreateRodActor(_scene, params, test::ExpectNotOK{}));
-}
-
-TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_UnskinnedContactSkinFails) {
-  ShapeHandle shape = CreateRodShapeWithContactSkin(
-      /*includeVisualMesh=*/true,
-      /*isClosedLoop=*/false,
-      /*includeContactSkinning=*/false);
-  RodActorParams params = GetRodActorParams(shape);
-  params.useContactSkin = true;
-
   EXPECT_EQ(nullptr, CreateRodActor(_scene, params, test::ExpectNotOK{}));
 }
 

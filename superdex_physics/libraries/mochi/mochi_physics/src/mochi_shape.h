@@ -329,7 +329,9 @@ class TetrahedralMeshShape final : public GridSdfShape {
         _romData(std::move(roms)),
         _sampleMeshes(std::move(sampleMeshes)),
         _bshs(std::move(bshs)),
-        _materialParamsField(std::move(materialParamsField)) {}
+        _materialParamsField(std::move(materialParamsField)) {
+    MOCHI_ASSERT_VERBOSE(!_contactSkin == !_contactSkinEmbedding);
+  }
 
   AnyShape GetBoundingVolume(Error& error) const override {
     MOCHI_ERROR_RETURN(error, {});
@@ -440,7 +442,9 @@ class TriangularMeshShape final : public GridSdfShape {
         _visualMesh(std::move(visualMesh)),
         _visualEmbedding(std::move(visualEmbedding)),
         _contactSkin(std::move(contactSkin)),
-        _contactSkinEmbedding(std::move(contactSkinEmbedding)) {}
+        _contactSkinEmbedding(std::move(contactSkinEmbedding)) {
+    MOCHI_ASSERT_VERBOSE(!_contactSkin == !_contactSkinEmbedding);
+  }
 
   AnyShape GetBoundingVolume(Error& error) const override {
     MOCHI_ERROR_RETURN(error, {});

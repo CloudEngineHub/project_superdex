@@ -2554,10 +2554,11 @@ class ModelData:
     """Optional triangular mesh exposed through the contact-skin queries and, when
     selected as a deformable actor's contact geometry, for contact quadrature.
 
-    For triangular and tetrahedral primary meshes, the skinning data is a node-based
-    linear embedding whose indices reference primary-mesh nodes. For polylines, the
-    indices reference primary-mesh elements and define the rod's element-based
-    embedding. Every contact-skin node must be referenced by at least one triangle.
+    Skinning data is required. For triangular and tetrahedral primary meshes, it is
+    a node-based linear embedding whose indices reference primary-mesh nodes. For
+    polylines, the indices reference primary-mesh elements and define the rod's
+    element-based embedding. Every contact-skin node must be referenced by at least
+    one triangle.
     """
     @property
     def blending(self) -> Optional[DynamicArrayBlendingData]: ...
@@ -2622,10 +2623,11 @@ class ModelDataView:
     """Optional triangular mesh exposed through the contact-skin queries and, when
     selected as a deformable actor's contact geometry, for contact quadrature.
 
-    For triangular and tetrahedral primary meshes, the skinning data is a node-based
-    linear embedding whose indices reference primary-mesh nodes. For polylines, the
-    indices reference primary-mesh elements and define the rod's element-based
-    embedding. Every contact-skin node must be referenced by at least one triangle.
+    Skinning data is required. For triangular and tetrahedral primary meshes, it is
+    a node-based linear embedding whose indices reference primary-mesh nodes. For
+    polylines, the indices reference primary-mesh elements and define the rod's
+    element-based embedding. Every contact-skin node must be referenced by at least
+    one triangle.
     """
     @property
     def blending(self) -> Optional[DynamicArrayBlendingDataView]: ...
@@ -4781,9 +4783,8 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_positions_local`.
 
     Note:
-        Only supported for deformable actors whose shape has a contact skin with
-        skinning data, regardless of
-        :attr:`~superdex.physics.SoftActorParams.use_contact_skin` /
+        Only supported for deformable actors whose shape has a contact skin,
+        regardless of :attr:`~superdex.physics.SoftActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.RodActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.ShellActorParams.use_contact_skin`.
     """
@@ -4792,9 +4793,8 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_contact_skin_mesh_node_normals_local`.
 
     Note:
-        Only supported for deformable actors whose shape has a contact skin with
-        skinning data, regardless of
-        :attr:`~superdex.physics.SoftActorParams.use_contact_skin` /
+        Only supported for deformable actors whose shape has a contact skin,
+        regardless of :attr:`~superdex.physics.SoftActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.RodActorParams.use_contact_skin` /
         :attr:`~superdex.physics.experimental.ShellActorParams.use_contact_skin`.
     """
@@ -5650,12 +5650,12 @@ class SoftActorParams:
     """[Experimental] Use the shape's authored contact skin for colliding contact
     samples.
 
-    The contact skin must be triangular and have node-based linear skinning data.
-    The tetrahedral boundary remains the collider geometry when an SDF or Deep Flow
-    collider is enabled. This option is not supported for ROM or nested soft actors.
+    Actor creation fails unless the shape has a contact skin. The tetrahedral
+    boundary remains the collider geometry when an SDF or Deep Flow collider is
+    enabled. This option is not supported for ROM or nested soft actors.
 
     Note:
-        A contact skin with linear skinning data is exposed through
+        The contact skin is exposed through
         :meth:`~superdex.physics.Actor.get_contact_skin_mesh` and
         :class:`CONTACT_SKIN_NODE_POSITIONS <superdex.physics.QueryType>` /
         :class:`CONTACT_SKIN_NODE_NORMALS <superdex.physics.QueryType>`
@@ -8938,15 +8938,14 @@ def get_shape_surface_mesh(shape: ShapeHandle) -> MeshDataView:
     """
 
 def get_shape_contact_skin_mesh(shape: ShapeHandle) -> MeshDataView:
-    """Get a view of the shape's contact-skin mesh data, including skinning data if
-    available.
+    """Get a view of the shape's contact-skin mesh data, including its skinning data.
 
     Returns a triangle mesh (3 nodes per element). Every contact-skin node is
     referenced by the contact-skin connectivity, so
     :meth:`~superdex.physics.Actor.get_contact_skin_mesh` has the same node
-    ordering. The mesh includes the authored skinning data when available, in the
-    format of :attr:`~superdex.physics.ModelData.contact_skin_mesh`. For shapes
-    without a contact skin, returns an empty view.
+    ordering. The mesh includes the authored skinning data, in the format of
+    :attr:`~superdex.physics.ModelData.contact_skin_mesh`. For shapes without a
+    contact skin, returns an empty view.
 
     Args:
         shape (ShapeHandle): Handle to a valid shape.
@@ -10007,9 +10006,9 @@ class Actor:
 
         Returns the :attr:`~superdex.physics.ModelData.contact_skin_mesh` of the actor's
         shape, regardless of whether the actor selected it as its collision
-        representation. Only deformable actors whose shape's contact skin has skinning
-        data expose it. Other actors return an empty view. For soft and shell actors,
-        the mesh includes the linear contact-skin skinning data.
+        representation. Only deformable actors expose it. Other actors return an empty
+        view. For soft and shell actors, the mesh includes the linear contact-skin
+        skinning data.
 
         Returns:
             A non-owning view of the actor's reference contact skin mesh, or an empty

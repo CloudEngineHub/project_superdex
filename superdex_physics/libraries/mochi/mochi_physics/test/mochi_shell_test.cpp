@@ -956,10 +956,7 @@ class MochiShellContactSkinTest : public test::MochiSceneTestBase {
   };
   static constexpr std::array<Int3, 1> kSkinTriangles = {Int3{0, 1, 2}};
 
-  ShapeHandle CreateShape(
-      bool includeContactSkin = true,
-      bool includeEmbedding = true,
-      bool extrapolateContactSkin = false) {
+  ShapeHandle CreateShape(bool includeContactSkin = true, bool extrapolateContactSkin = false) {
     ModelData model;
     model.mesh.emplace();
     model.mesh->nodesPerElement = 3;
@@ -976,21 +973,19 @@ class MochiShellContactSkinTest : public test::MochiSceneTestBase {
       model.contactSkinMesh->coordinates = DynamicArray<real>{Flatten(MakeConstSpan(skinNodes))};
       model.contactSkinMesh->connectivity =
           DynamicArray<int>{Flatten(MakeConstSpan(kSkinTriangles))};
-      if (includeEmbedding) {
-        model.contactSkinMesh->skinning.emplace();
-        model.contactSkinMesh->skinning->weightsPerNode = 3;
-        model.contactSkinMesh->skinning->indices = DynamicArray<int>{0, 0, 1, 1, 1, 2, 2, 3, 3};
-        model.contactSkinMesh->skinning->weights = DynamicArray<real>{
-            extrapolateContactSkin ? -0.5_r : 0.25_r,
-            extrapolateContactSkin ? -0.5_r : 0.25_r,
-            extrapolateContactSkin ? 2_r : 0.5_r,
-            0.25_r,
-            0.5_r,
-            0.25_r,
-            0.5_r,
-            0.25_r,
-            0.25_r};
-      }
+      model.contactSkinMesh->skinning.emplace();
+      model.contactSkinMesh->skinning->weightsPerNode = 3;
+      model.contactSkinMesh->skinning->indices = DynamicArray<int>{0, 0, 1, 1, 1, 2, 2, 3, 3};
+      model.contactSkinMesh->skinning->weights = DynamicArray<real>{
+          extrapolateContactSkin ? -0.5_r : 0.25_r,
+          extrapolateContactSkin ? -0.5_r : 0.25_r,
+          extrapolateContactSkin ? 2_r : 0.5_r,
+          0.25_r,
+          0.5_r,
+          0.25_r,
+          0.5_r,
+          0.25_r,
+          0.25_r};
     }
     return _mochiContext->CreateModelShape(model, test::ExpectOK{});
   }
@@ -1010,15 +1005,11 @@ class MochiShellContactSkinTest : public test::MochiSceneTestBase {
   }
 };
 
-TEST_F(MochiShellContactSkinTest, ContactSkinSelectionRequiresGeometryAndEmbedding) {
-  for (ShapeHandle const& shape :
-       {CreateShape(/*includeContactSkin=*/false),
-        CreateShape(/*includeContactSkin=*/true, /*includeEmbedding=*/false)}) {
-    ShellActorParams params;
-    params.shape = shape;
-    params.useContactSkin = true;
-    EXPECT_EQ(nullptr, experimental::CreateShellActor(_scene, params, test::ExpectNotOK{}));
-  }
+TEST_F(MochiShellContactSkinTest, ContactSkinSelectionRequiresContactSkin) {
+  ShellActorParams params;
+  params.shape = CreateShape(/*includeContactSkin=*/false);
+  params.useContactSkin = true;
+  EXPECT_EQ(nullptr, experimental::CreateShellActor(_scene, params, test::ExpectNotOK{}));
 }
 
 TEST_F(MochiShellContactSkinTest, AuthoredSkinIsExposedIndependentlyOfContactSelection) {
@@ -1413,10 +1404,8 @@ TEST_F(MochiShellContactSkinTest, ContactSkinQuadratureDoesNotChangePointCloudCo
 }
 
 TEST_F(MochiShellContactSkinTest, ContactSkinBoundsUseSkinAndColliderGeometryForBothStates) {
-  ShapeHandle const shape = CreateShape(
-      /*includeContactSkin=*/true,
-      /*includeEmbedding=*/true,
-      /*extrapolateContactSkin=*/true);
+  ShapeHandle const shape =
+      CreateShape(/*includeContactSkin=*/true, /*extrapolateContactSkin=*/true);
   Actor* const skinOnlyActor = CreateActor(shape, /*useContactSkin=*/true);
   Actor* const pointCloudActor = CreateActor(
       shape,
@@ -1474,10 +1463,7 @@ TEST_F(MochiShellContactSkinTest, ContactSkinBoundsUseSkinAndColliderGeometryFor
 
 TEST_F(MochiShellContactSkinTest, MaxGeometrySpeedUsesContactSkinThroughEcsDispatch) {
   Actor* const actor = CreateActor(
-      CreateShape(
-          /*includeContactSkin=*/true,
-          /*includeEmbedding=*/true,
-          /*extrapolateContactSkin=*/true),
+      CreateShape(/*includeContactSkin=*/true, /*extrapolateContactSkin=*/true),
       /*useContactSkin=*/true);
   auto& reg = GetRegistry();
   entt::entity const entity = GetEntity(actor);
@@ -1519,22 +1505,19 @@ TEST_F(MochiShellContactSkinTest, PhysicsNodeConsumersIgnoreAuthoredSkinOrdering
 }
 
 TEST_F(MochiShellContactSkinTest, ShellWithoutContactSkinKeepsDefaultRepresentation) {
-  for (bool const includeContactSkin : {false, true}) {
-    SCOPED_TRACE(includeContactSkin);
-    Actor* const actor = CreateActor(CreateShape(includeContactSkin, /*includeEmbedding=*/false));
-    auto& reg = GetRegistry();
-    entt::entity const entity = GetEntity(actor);
+  Actor* const actor = CreateActor(CreateShape(/*includeContactSkin=*/false));
+  auto& reg = GetRegistry();
+  entt::entity const entity = GetEntity(actor);
 
-    EXPECT_EQ(isize(kPhysicsNodes), actor->GetMesh().GetNumNodes());
-    EXPECT_EQ(isize(kPhysicsNodes), actor->GetSurfaceMesh().GetNumNodes());
-    EXPECT_EQ(MeshDataView{}, actor->GetContactSkinMesh());
-    EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodePositions));
-    EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodeNormals));
-    EXPECT_FALSE((reg.any_of<
-                  CContactSkinMesh,
-                  TagUseDeformableContactSkin,
-                  CContactSkinningData,
-                  CDeformedContactSkinNodes>(entity)));
-    EXPECT_TRUE((reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
-  }
+  EXPECT_EQ(isize(kPhysicsNodes), actor->GetMesh().GetNumNodes());
+  EXPECT_EQ(isize(kPhysicsNodes), actor->GetSurfaceMesh().GetNumNodes());
+  EXPECT_EQ(MeshDataView{}, actor->GetContactSkinMesh());
+  EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodePositions));
+  EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodeNormals));
+  EXPECT_FALSE((reg.any_of<
+                CContactSkinMesh,
+                TagUseDeformableContactSkin,
+                CContactSkinningData,
+                CDeformedContactSkinNodes>(entity)));
+  EXPECT_TRUE((reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
 }

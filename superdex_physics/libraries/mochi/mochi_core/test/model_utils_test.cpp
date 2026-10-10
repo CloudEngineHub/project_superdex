@@ -2397,7 +2397,7 @@ TEST(ModelUtils, Validate_ContactSkin) {
   {
     ModelData model = srcModel;
     model.contactSkinMesh->skinning = std::nullopt;
-    model::Validate(model, test::ExpectOK{});
+    model::Validate(model, test::ExpectNotOK{});
   }
 }
 

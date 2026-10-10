@@ -1364,12 +1364,10 @@ void mochi::InitRodActor(
   auto const& visualEmbedding = shapePtr->GetRodVisualEmbedding();
   bool const hasUsableVisualMesh = visualMesh && visualEmbedding;
   auto const& shapeContactSkinMesh = shapePtr->GetContactSkin();
-  auto const& shapeContactSkinEmbedding = shapePtr->GetRodContactSkinEmbedding();
-  bool const hasUsableContactSkin = shapeContactSkinMesh && shapeContactSkinEmbedding;
   MOCHI_ERROR_IF(
-      params.useContactSkin && !hasUsableContactSkin,
+      params.useContactSkin && !shapeContactSkinMesh,
       error,
-      "useContactSkin requires a rod shape with contact skin and embedding data.");
+      "useContactSkin requires a rod shape with a contact skin.");
   MOCHI_ERROR_RETURN(error);
 
   // Get nodes and element frame axes from the shape
@@ -1397,9 +1395,9 @@ void mochi::InitRodActor(
   reg.emplace<CShape>(e, shapePtr);
 
   // The contact skin is exposed independently of which geometry is selected for contact.
-  if (hasUsableContactSkin) {
+  if (shapeContactSkinMesh) {
     reg.emplace<CContactSkinMesh>(e, shapeContactSkinMesh);
-    reg.emplace<CRodContactSkinEmbedding>(e, shapeContactSkinEmbedding);
+    reg.emplace<CRodContactSkinEmbedding>(e, shapePtr->GetRodContactSkinEmbedding());
   }
 
   // Set up DoF information

@@ -311,8 +311,8 @@ enum QueryType {
   // @brief Positions of contact skin mesh nodes. Available via @ref
   // Actor::GetContactSkinMeshNodePositionsLocal.
   //
-  // @note Only supported for deformable actors whose shape has a contact skin with skinning data,
-  // regardless of @ref SoftActorParams::useContactSkin / @ref
+  // @note Only supported for deformable actors whose shape has a contact skin, regardless of @ref
+  // SoftActorParams::useContactSkin / @ref
   // experimental::RodActorParams::useContactSkin / @ref
   // experimental::ShellActorParams::useContactSkin.
   ContactSkinNodePositions,
@@ -320,8 +320,8 @@ enum QueryType {
   // @brief Normals of contact skin mesh nodes. Available via @ref
   // Actor::GetContactSkinMeshNodeNormalsLocal.
   //
-  // @note Only supported for deformable actors whose shape has a contact skin with skinning data,
-  // regardless of @ref SoftActorParams::useContactSkin / @ref
+  // @note Only supported for deformable actors whose shape has a contact skin, regardless of @ref
+  // SoftActorParams::useContactSkin / @ref
   // experimental::RodActorParams::useContactSkin / @ref
   // experimental::ShellActorParams::useContactSkin.
   ContactSkinNodeNormals,

@@ -84,8 +84,7 @@ struct CRodVisualMeshEmbedding : public NoCopy {
 };
 
 // ECS component holding the nonlinear rod embedding of the contact skin stored in CContactSkinMesh.
-// Present whenever the shape has a usable contact skin, regardless of whether it is used for
-// contact.
+// Present whenever the shape has a contact skin, regardless of whether it is used for contact.
 struct CRodContactSkinEmbedding : public NoCopy {
   explicit CRodContactSkinEmbedding(std::shared_ptr<RodSurfaceEmbeddingData const> dataIn)
       : data(std::move(dataIn)) {

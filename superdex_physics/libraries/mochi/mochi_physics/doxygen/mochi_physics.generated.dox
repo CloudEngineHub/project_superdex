@@ -1987,14 +1987,14 @@
 ///
 /// @brief Positions of contact skin mesh nodes. Available via @ref mochi::Actor::GetContactSkinMeshNodePositionsLocal "Actor::GetContactSkinMeshNodePositionsLocal".
 ///
-/// @note Only supported for deformable actors whose shape has a contact skin with skinning data, regardless of @ref mochi::SoftActorParams::useContactSkin "SoftActorParams::useContactSkin" / `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
+/// @note Only supported for deformable actors whose shape has a contact skin, regardless of @ref mochi::SoftActorParams::useContactSkin "SoftActorParams::useContactSkin" / `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
 ///
 
 /// @var mochi::QueryType::ContactSkinNodeNormals
 ///
 /// @brief Normals of contact skin mesh nodes. Available via @ref mochi::Actor::GetContactSkinMeshNodeNormalsLocal "Actor::GetContactSkinMeshNodeNormalsLocal".
 ///
-/// @note Only supported for deformable actors whose shape has a contact skin with skinning data, regardless of @ref mochi::SoftActorParams::useContactSkin "SoftActorParams::useContactSkin" / `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
+/// @note Only supported for deformable actors whose shape has a contact skin, regardless of @ref mochi::SoftActorParams::useContactSkin "SoftActorParams::useContactSkin" / `experimental::RodActorParams::useContactSkin` / `experimental::ShellActorParams::useContactSkin`.
 ///
 
 /// @var mochi::QueryType::ContactPoints
@@ -2568,9 +2568,9 @@
 ///
 /// @brief [Experimental] Use the shape's authored contact skin for colliding contact samples.
 ///
-/// @details The contact skin must be triangular and have node-based linear skinning data. The tetrahedral boundary remains the collider geometry when an SDF or Deep Flow collider is enabled. This option is not supported for ROM or nested soft actors.
+/// @details Actor creation fails unless the shape has a contact skin. The tetrahedral boundary remains the collider geometry when an SDF or Deep Flow collider is enabled. This option is not supported for ROM or nested soft actors.
 ///
-/// @note A contact skin with linear skinning data is exposed through @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" and @ref mochi::QueryType::ContactSkinNodePositions "QueryType::ContactSkinNodePositions" / @ref mochi::QueryType::ContactSkinNodeNormals "QueryType::ContactSkinNodeNormals" independently of this flag.
+/// @note The contact skin is exposed through @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" and @ref mochi::QueryType::ContactSkinNodePositions "QueryType::ContactSkinNodePositions" / @ref mochi::QueryType::ContactSkinNodeNormals "QueryType::ContactSkinNodeNormals" independently of this flag.
 ///
 /// @warning This is an experimental feature. It may be changed or removed in the future. Use at your own risk.
 ///
@@ -4549,9 +4549,9 @@
 
 /// @fn MeshDataView mochi::Context::GetShapeContactSkinMesh(ShapeHandle shape, Error& error) const
 ///
-/// @brief Get a view of the shape's contact-skin mesh data, including skinning data if available.
+/// @brief Get a view of the shape's contact-skin mesh data, including its skinning data.
 ///
-/// @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced by the contact-skin connectivity, so @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" has the same node ordering. The mesh includes the authored skinning data when available, in the format of @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh". For shapes without a contact skin, returns an empty view.
+/// @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced by the contact-skin connectivity, so @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" has the same node ordering. The mesh includes the authored skinning data, in the format of @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh". For shapes without a contact skin, returns an empty view.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -5299,7 +5299,7 @@
 ///
 /// @brief Get a view of the actor's reference contact skin mesh.
 ///
-/// @details Returns the @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh" of the actor's shape, regardless of whether the actor selected it as its collision representation. Only deformable actors whose shape's contact skin has skinning data expose it. Other actors return an empty view. For soft and shell actors, the mesh includes the linear contact-skin skinning data.
+/// @details Returns the @ref mochi::ModelData::contactSkinMesh "ModelData::contactSkinMesh" of the actor's shape, regardless of whether the actor selected it as its collision representation. Only deformable actors expose it. Other actors return an empty view. For soft and shell actors, the mesh includes the linear contact-skin skinning data.
 ///
 /// @return A non-owning view of the actor's reference contact skin mesh, or an empty view if the actor has no contact skin.
 ///

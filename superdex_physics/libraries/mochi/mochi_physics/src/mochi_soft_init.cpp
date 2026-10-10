@@ -60,7 +60,7 @@ static void EmplaceSoftActorDiscretization(
     reg.emplace<CVisualMesh>(e, shape->GetVisualMesh(), shape->GetVisualEmbedding());
   }
 
-  if (shape->GetContactSkin() && shape->GetContactSkinEmbedding()) {
+  if (shape->GetContactSkin()) {
     reg.emplace<CContactSkinMesh>(e, shape->GetContactSkin(), shape->GetContactSkinEmbedding());
   }
 }
@@ -235,12 +235,10 @@ void mochi::InitSoftActor(
       params.useContactSkin && isNestedSoft,
       error,
       "useContactSkin is not supported for nested soft actors.");
-  bool const hasUsableContactSkin =
-      shapePtr->GetContactSkin() && shapePtr->GetContactSkinEmbedding();
   MOCHI_ERROR_IF(
-      params.useContactSkin && !hasUsableContactSkin,
+      params.useContactSkin && !shapePtr->GetContactSkin(),
       error,
-      "useContactSkin requires a soft shape with triangular contact skin and linear embedding data.");
+      "useContactSkin requires a soft shape with a contact skin.");
   MOCHI_ERROR_RETURN(error);
   if (!params.hasInertia && params.material.massDampingCoefficient > 0_r) {
     MOCHI_LOG_WARNING("Nonzero soft mass damping inactive because hasInertia is false.");

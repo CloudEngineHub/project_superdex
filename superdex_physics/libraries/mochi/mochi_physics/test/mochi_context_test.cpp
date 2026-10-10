@@ -2856,18 +2856,13 @@ static void ExpectAuxiliaryMeshesRoundTrip(Context* context, ModelData const& ex
 }
 
 TEST_P(MochiContextTest, GetModelData_PreservesTetAndTriAuxiliaryMeshes) {
-  for (bool includeContactSkinning : {false, true}) {
-    for (bool useTrianglePrimaryMesh : {false, true}) {
-      ModelData model = CreateModelWithVisualMesh();
-      if (useTrianglePrimaryMesh) {
-        model.mesh = model.visualMesh;
-      }
-      AddContactSkin(model);
-      if (!includeContactSkinning) {
-        model.contactSkinMesh->skinning.reset();
-      }
-      ExpectAuxiliaryMeshesRoundTrip(_mochiContext, model);
+  for (bool useTrianglePrimaryMesh : {false, true}) {
+    ModelData model = CreateModelWithVisualMesh();
+    if (useTrianglePrimaryMesh) {
+      model.mesh = model.visualMesh;
     }
+    AddContactSkin(model);
+    ExpectAuxiliaryMeshesRoundTrip(_mochiContext, model);
   }
 }
 
@@ -3035,14 +3030,9 @@ static ModelData CreatePolylineModelWithVisualMesh(bool includeSkinning = true) 
   return model;
 }
 TEST_P(MochiContextTest, GetModelData_PreservesPolylineAuxiliaryMeshes) {
-  for (bool includeContactSkinning : {false, true}) {
-    ModelData model = CreatePolylineModelWithVisualMesh();
-    AddContactSkin(model);
-    if (!includeContactSkinning) {
-      model.contactSkinMesh->skinning.reset();
-    }
-    ExpectAuxiliaryMeshesRoundTrip(_mochiContext, model);
-  }
+  ModelData model = CreatePolylineModelWithVisualMesh();
+  AddContactSkin(model);
+  ExpectAuxiliaryMeshesRoundTrip(_mochiContext, model);
 }
 
 // Verify GetShapeVisualMesh returns the authored visual mesh and element-based skinning for a

@@ -137,7 +137,7 @@ static void EmplaceShellActorDiscretization(
         "Shell shape has a visual mesh but no embedding. The visual mesh will be ignored.");
   }
 
-  if (shape->GetContactSkin() && shape->GetContactSkinEmbedding()) {
+  if (shape->GetContactSkin()) {
     reg.emplace<CContactSkinMesh>(e, shape->GetContactSkin(), shape->GetContactSkinEmbedding());
   }
 }
@@ -238,12 +238,10 @@ void mochi::InitShellActor(
   shell::ValidateShellMaterialParams(params.material, error);
   MOCHI_ERROR_RETURN(error);
   auto const& shapeContactSkinMesh = shapePtr->GetContactSkin();
-  auto const& shapeContactSkinEmbedding = shapePtr->GetContactSkinEmbedding();
-  bool const hasUsableContactSkin = shapeContactSkinMesh && shapeContactSkinEmbedding;
   MOCHI_ERROR_IF(
-      params.useContactSkin && !hasUsableContactSkin,
+      params.useContactSkin && !shapeContactSkinMesh,
       error,
-      "useContactSkin requires a shell shape with triangular contact skin and linear embedding data.");
+      "useContactSkin requires a shell shape with a contact skin.");
   MOCHI_ERROR_RETURN(error);
 
   // Identification
@@ -372,7 +370,7 @@ void mochi::InitShellActor(
         e,
         contactDisc,
         *shapeContactSkinMesh,
-        *shapeContactSkinEmbedding,
+        *shapePtr->GetContactSkinEmbedding(),
         actorTriMesh.GetNodeCoordinates());
   } else {
     // Direct contact assembles shell triangles into the actor's body matrix.

@@ -678,12 +678,12 @@ class Context [no_init, no_destruct, singleton] {
   // Actor::GetSurfaceMesh
   fn GetShapeSurfaceMesh(ShapeHandle shape) -> MeshDataView [pure, virtual, const, mochi_error, no_capi];
 
-  // @brief Get a view of the shape's contact-skin mesh data, including skinning data if available.
+  // @brief Get a view of the shape's contact-skin mesh data, including its skinning data.
   //
   // @details Returns a triangle mesh (3 nodes per element). Every contact-skin node is referenced
   // by the contact-skin connectivity, so @ref Actor::GetContactSkinMesh has the same node
-  // ordering. The mesh includes the authored skinning data when available, in the
-  // format of @ref ModelData::contactSkinMesh. For shapes without a contact skin, returns an
+  // ordering. The mesh includes the authored skinning data, in the format of
+  // @ref ModelData::contactSkinMesh. For shapes without a contact skin, returns an
   // empty view.
   //
   // @param[in] shape Handle to a valid shape.

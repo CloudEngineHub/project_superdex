@@ -538,6 +538,7 @@ PolylineShape::PolylineShape(
       _rodVisualEmbedding(std::move(rodVisualEmbedding)),
       _contactSkin(std::move(contactSkin)),
       _rodContactSkinEmbedding(std::move(rodContactSkinEmbedding)) {
+  MOCHI_ASSERT_VERBOSE(!_contactSkin == !_rodContactSkinEmbedding);
   // Validate polyline geometry defensively so direct callers of this constructor cannot trigger
   // a division by zero or undefined parallel-transport rotation in GenerateDiscreteBishopFrame
   // below. Factory paths (e.g. CreatePolylineShape, CreateShapeFromModelData) validate upstream

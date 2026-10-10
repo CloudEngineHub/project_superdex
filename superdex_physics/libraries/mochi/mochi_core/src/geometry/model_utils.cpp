@@ -760,6 +760,8 @@ void mochi::model::Validate(ModelDataView const& data, Error& error) {
 
   if (data.contactSkinMesh) {
     MOCHI_ERROR_IF_NOT(data.mesh, error, "Model has a contact skin but no primary mesh.");
+    MOCHI_ERROR_IF_NOT(
+        data.contactSkinMesh->skinning, error, "Contact skin mesh requires skinning data.");
     MOCHI_ERROR_RETURN(error);
     ValidateMesh(*data.contactSkinMesh, GetAuxiliaryMeshNumSkinningSources(data.mesh), error);
     MOCHI_ERROR_IF(

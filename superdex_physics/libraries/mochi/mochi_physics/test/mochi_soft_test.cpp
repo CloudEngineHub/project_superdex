@@ -543,17 +543,13 @@ class MochiSoftContactSkin : public test::MochiSceneTestBase {
   }
 };
 
-TEST_F(MochiSoftContactSkin, RejectsMissingMeshOrEmbedding) {
-  ModelData missingMesh = MakeModel();
-  missingMesh.contactSkinMesh.reset();
-  ModelData missingEmbedding = MakeModel();
-  missingEmbedding.contactSkinMesh->skinning.reset();
-  for (ModelData const& model : {missingMesh, missingEmbedding}) {
-    SoftActorParams params;
-    params.shape = _mochiContext->CreateModelShape(model, test::ExpectOK{});
-    params.useContactSkin = true;
-    EXPECT_EQ(nullptr, _scene->CreateSoftActor(params, test::ExpectNotOK{}));
-  }
+TEST_F(MochiSoftContactSkin, RejectsMissingContactSkin) {
+  ModelData model = MakeModel();
+  model.contactSkinMesh.reset();
+  SoftActorParams params;
+  params.shape = _mochiContext->CreateModelShape(model, test::ExpectOK{});
+  params.useContactSkin = true;
+  EXPECT_EQ(nullptr, _scene->CreateSoftActor(params, test::ExpectNotOK{}));
 }
 
 TEST_IF_F(MOCHI_ENABLE_ROM_ACTORS, MochiSoftContactSkin, RejectsRom) {
@@ -624,19 +620,6 @@ TEST_F(MochiSoftContactSkin, AuthoredSkinIsExposedIndependentlyOfContactSelectio
       EXPECT_NEAR_EQ(expectedSkinPositions[node], skinPositions[node]);
     }
   }
-}
-
-TEST_F(MochiSoftContactSkin, SkinWithoutSkinningIsNotExposed) {
-  ModelData model = MakeModel();
-  model.contactSkinMesh->skinning.reset();
-  SoftActorParams params;
-  params.shape = _mochiContext->CreateModelShape(model, test::ExpectOK{});
-  Actor* const actor = _scene->CreateSoftActor(params, test::ExpectOK{});
-
-  EXPECT_EQ(MeshDataView{}, actor->GetContactSkinMesh());
-  EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodePositions));
-  EXPECT_FALSE(actor->IsQuerySupported(QueryType::ContactSkinNodeNormals));
-  EXPECT_FALSE(GetRegistry().all_of<CContactSkinMesh>(GetEntity(actor)));
 }
 
 TEST_F(MochiSoftContactSkin, BoundsIncludeColliderGeometry) {

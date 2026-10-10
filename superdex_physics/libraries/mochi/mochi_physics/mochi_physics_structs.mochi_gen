@@ -453,13 +453,13 @@ struct SoftActorParams [equality] {
   // @warning This is an experimental feature. It may be changed or removed in the future. Use at
   // your own risk.
   //
-  // @details The contact skin must be triangular and have node-based linear skinning data. The
-  // tetrahedral boundary remains the collider geometry when an SDF or Deep Flow collider is
-  // enabled. This option is not supported for ROM or nested soft actors.
+  // @details Actor creation fails unless the shape has a contact skin. The tetrahedral boundary
+  // remains the collider geometry when an SDF or Deep Flow collider is enabled. This option is not
+  // supported for ROM or nested soft actors.
   //
-  // @note A contact skin with linear skinning data is exposed through @ref
-  // Actor::GetContactSkinMesh and @ref QueryType::ContactSkinNodePositions / @ref
-  // QueryType::ContactSkinNodeNormals independently of this flag.
+  // @note The contact skin is exposed through @ref Actor::GetContactSkinMesh and @ref
+  // QueryType::ContactSkinNodePositions / @ref QueryType::ContactSkinNodeNormals independently of
+  // this flag.
   bool useContactSkin = false;
 
   // @brief Finite element type for contact discretization.

@@ -431,8 +431,7 @@ struct experimental::RodActorParams {
   // returns the shape's visual mesh, but the rod actor ignores it: @ref Actor::GetVisualMesh returns
   // an empty view, and @ref QueryType::VisualNodePositions and @ref QueryType::VisualNodeNormals are
   // unsupported.
-  // @note Setting @ref useContactSkin to true requires @ref ModelData::contactSkinMesh and its
-  // skinning data.
+  // @note Setting @ref useContactSkin to true requires @ref ModelData::contactSkinMesh.
   ShapeHandle shape [no_reflection];  # REFLECTION TODO: shape handles do not serialize yet.
 
   // @brief Contact properties for interactions with volume actors.
@@ -455,12 +454,11 @@ struct experimental::RodActorParams {
 
   // @brief Use the rod shape's contact skin for contact instead of its centerline.
   //
-  // @details Actor creation fails if the shape does not have a triangular contact skin with rod
-  // embedding data.
+  // @details Actor creation fails if the shape does not have a contact skin.
   //
-  // @note A contact skin with rod embedding data is exposed through @ref Actor::GetContactSkinMesh
-  // and @ref QueryType::ContactSkinNodePositions / @ref QueryType::ContactSkinNodeNormals
-  // independently of this flag.
+  // @note The contact skin is exposed through @ref Actor::GetContactSkinMesh and @ref
+  // QueryType::ContactSkinNodePositions / @ref QueryType::ContactSkinNodeNormals independently of
+  // this flag.
   bool useContactSkin = false;
 
   // @brief Triangle element type for contact-skin quadrature.
@@ -522,13 +520,13 @@ struct experimental::ShellActorParams {
 
   // @brief Use the shape's authored contact skin for colliding contact samples.
   //
-  // @details Actor creation fails unless the shape has a triangular contact skin with node-based
-  // linear skinning data. This changes the shell's colliding contact samples. The point-cloud
-  // collider, when enabled, remains discretized on the physics mesh.
+  // @details Actor creation fails unless the shape has a contact skin. This changes the shell's
+  // colliding contact samples. The point-cloud collider, when enabled, remains discretized on the
+  // physics mesh.
   //
-  // @note A contact skin with linear skinning data is exposed through @ref
-  // Actor::GetContactSkinMesh and @ref QueryType::ContactSkinNodePositions / @ref
-  // QueryType::ContactSkinNodeNormals independently of this flag.
+  // @note The contact skin is exposed through @ref Actor::GetContactSkinMesh and @ref
+  // QueryType::ContactSkinNodePositions / @ref QueryType::ContactSkinNodeNormals independently of
+  // this flag.
   bool useContactSkin = false;
 }
 
