@@ -154,13 +154,34 @@ bool LinkNameCombo(
   return changed;
 }
 
-void ShowControllerWarning(std::string_view warning) {
-  ImGui::TextColored(
-      ImVec4(1.0f, 0.65f, 0.15f, 1.0f),
-      "%s %.*s",
-      ICON_FA_EXCLAMATION_TRIANGLE,
-      static_cast<int>(warning.size()),
-      warning.data());
+// Why @p target cannot be stored in @p sceneFile, or empty if it can. Scenes store references only
+// as descendants of their folder, `//` paths under their .superdex_root, or `@tag` paths, so a file
+// under another root needs a tag in the scene's root.
+std::string DescribeReferenceProblem(
+    std::filesystem::path const& target,
+    std::filesystem::path const& sceneFile) {
+  mochi::Error error;
+  (void)superdex::robotics::UnresolveBotPath(
+      target, sceneFile, superdex::robotics::kBotPathMaxParentDepth, error);
+  if (error.IsOK()) {
+    return {};
+  }
+  auto const sceneRoot = superdex::robotics::FindBotsRoot(sceneFile);
+  auto const targetRoot = superdex::robotics::FindBotsRoot(target);
+  if (!sceneRoot.has_value() || !targetRoot.has_value()) {
+    return "This scene cannot save a reference to this file: they are not under a .superdex_root";
+  }
+  return "This scene cannot save a reference to this file. Add \"@" +
+      targetRoot->filename().string() + "\": \"" +
+      std::filesystem::relative(*targetRoot, *sceneRoot).generic_string() + "\" to " +
+      (*sceneRoot / superdex::robotics::kRootMarkerFile).generic_string();
+}
+
+void ShowWarning(std::string_view warning) {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
+  ImGui::TextWrapped(
+      "%s %.*s", ICON_FA_EXCLAMATION_TRIANGLE, static_cast<int>(warning.size()), warning.data());
+  ImGui::PopStyleColor();
 }
 
 // Edits normalized params JSON: typed fields for built-in controller types, raw JSON otherwise.
@@ -184,7 +205,7 @@ bool EditParamsJson(std::string_view type, std::string& json) {
     std::string normalized;
     std::string error;
     if (!NormalizeParamsJson(type, json, normalized, error)) {
-      ShowControllerWarning(error);
+      ShowWarning(error);
     }
   }
   return changed;
@@ -309,7 +330,8 @@ ControllerEditResult ShowControllers(
     superdex::robotics::BotEntry& bot,
     BotAsset const* botAsset,
     SuperDexStudio* studio,
-    BotSceneAsset* sceneAsset) {
+    BotSceneAsset* sceneAsset,
+    std::function<std::string const&(std::string_view)> const& referenceProblem) {
   ControllerEditResult result;
   auto& controllers = bot.controllers;
   int controllerToDelete = -1;
@@ -361,7 +383,7 @@ ControllerEditResult ShowControllers(
         }
       }
       if (controller.name.empty()) {
-        ShowControllerWarning("Controller name is required");
+        ShowWarning("Controller name is required");
       }
 
       std::string const previousType{controller.type};
@@ -388,10 +410,10 @@ ControllerEditResult ShowControllers(
       result.changed |=
           ImGui::InputText("Type", &controller.type, ImGuiInputTextFlags_CharsNoBlank);
       if (controller.type.empty()) {
-        ShowControllerWarning("Controller type is required");
+        ShowWarning("Controller type is required");
       } else if (!studio->GetRoboticsContext()->IsControllerTypeRegistered(
                      std::string_view(controller.type))) {
-        ShowControllerWarning("Controller type is not registered in this build");
+        ShowWarning("Controller type is not registered in this build");
       }
       // Params belong to a type, so another type starts from its own defaults.
       if (std::string_view(controller.type) != previousType && !controller.params.empty()) {
@@ -468,6 +490,11 @@ ControllerEditResult ShowControllers(
         result.referencesChanged = true;
       }
       ImGui::EndDisabled();
+      if (entry != nullptr) {
+        if (auto const& problem = referenceProblem(paramsValue); !problem.empty()) {
+          ShowWarning(problem);
+        }
+      }
 
       if (entry != nullptr) {
         if (int const users = CountControllersUsingParams(sceneAsset->GetPrefab(), paramsValue);
@@ -475,14 +502,13 @@ ControllerEditResult ShowControllers(
           ImGui::TextDisabled("Shared with %d other controller(s)", users - 1);
         }
         if (!entry->error.empty()) {
-          ShowControllerWarning(entry->error);
+          ShowWarning(entry->error);
           if (ImGui::Button("Reset to Defaults")) {
             paramsCache.Adopt(paramsValue, type, DefaultParamsJson(type));
             result.changed = true;
           }
         } else if (entry->type != type) {
-          ShowControllerWarning(
-              "This file is used by a '" + entry->type + "' controller in this scene");
+          ShowWarning("This file is used by a '" + entry->type + "' controller in this scene");
         } else {
           result.changed |= EditParamsJson(type, entry->json);
         }
@@ -491,7 +517,7 @@ ControllerEditResult ShowControllers(
         if (inlineParams) {
           std::string error;
           if (!NormalizeParamsJson(type, paramsValue, json, error)) {
-            ShowControllerWarning(error);
+            ShowWarning(error);
             json = paramsValue;
           }
         }
@@ -520,9 +546,9 @@ ControllerEditResult ShowControllers(
               result.changed = true;
             }
             if (baseLinkName.empty()) {
-              ShowControllerWarning("Base link is required");
+              ShowWarning("Base link is required");
             } else if (superdex::robotics::FindLinkIndexByName(botPrefab, baseLinkName) < 0) {
-              ShowControllerWarning("Base link does not exist on the selected bot");
+              ShowWarning("Base link does not exist on the selected bot");
             }
 
             std::string eeLinkName = GetJsonString(initArgs, "eeLinkName");
@@ -531,9 +557,9 @@ ControllerEditResult ShowControllers(
               result.changed = true;
             }
             if (eeLinkName.empty()) {
-              ShowControllerWarning("End effector link is required");
+              ShowWarning("End effector link is required");
             } else if (superdex::robotics::FindLinkIndexByName(botPrefab, eeLinkName) < 0) {
-              ShowControllerWarning("End effector link does not exist on the selected bot");
+              ShowWarning("End effector link does not exist on the selected bot");
             }
           }
         }
@@ -542,7 +568,7 @@ ControllerEditResult ShowControllers(
       result.changed |= ImGui::InputTextMultiline(
           "Init Args JSON", &controller.initArgs, ImVec2(-1, ImGui::GetTextLineHeight() * 4));
       if (!initArgsError.empty()) {
-        ShowControllerWarning(initArgsError);
+        ShowWarning(initArgsError);
       }
     }
     ImGui::PopID();
@@ -725,6 +751,7 @@ void BotSceneEditor::Shutdown() {
 }
 
 void BotSceneEditor::OnActivate() {
+  _referenceProblems.clear();
   // A referenced base scene, spawnable prefab, or bot may have been edited (and saved) in another
   // tab while we were inactive. RestageBotScene reloads referenced assets and re-stages, so their
   // changes appear automatically when returning to this editor.
@@ -1176,6 +1203,21 @@ mochi::CallbackHandle BotSceneEditor::RegisterPostStepCallback(mochi::AsyncScene
       });
 }
 
+std::string const& BotSceneEditor::GetReferenceProblem(std::string_view path) {
+  static std::string const kNone;
+  // Archives import external files when saved, so any reference works.
+  if (path.empty() || _sceneAsset->IsArchive() || superdex::robotics::IsInlineJson(path) ||
+      !std::filesystem::path(path).is_absolute()) {
+    return kNone;
+  }
+  auto const [it, inserted] = _referenceProblems.try_emplace(std::string(path));
+  if (inserted) {
+    it->second = DescribeReferenceProblem(
+        std::filesystem::path(path), _sceneAsset->GetPath().AsFilesystemPath());
+  }
+  return it->second;
+}
+
 void BotSceneEditor::OnStartPhysics() {
   _physicsScenePrefab = _sceneAsset->GetPrefab();
   auto& paramsCache = _sceneAsset->GetControllerParams();
@@ -1391,6 +1433,9 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
       assetManager.ResyncReferencer(_sceneAsset);
       changed = true;
     }
+    if (auto const& problem = GetReferenceProblem(prefab.scene.baseScene); !problem.empty()) {
+      ShowWarning(problem);
+    }
 
     // Spawnable prefabs (add / remove / reorder).
     ImGui::HoverableSeparatorText("Spawnable Prefabs");
@@ -1434,6 +1479,9 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
           }
           assetManager.ResyncReferencer(_sceneAsset);
           changed = true;
+        }
+        if (auto const& problem = GetReferenceProblem(entry.path); !problem.empty()) {
+          ShowWarning(problem);
         }
       }
       ImGui::PopID();
@@ -1512,6 +1560,9 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
           assetManager.ResyncReferencer(_sceneAsset);
           changed = true;
         }
+        if (auto const& problem = GetReferenceProblem(bot.path); !problem.empty()) {
+          ShowWarning(problem);
+        }
         changed |= ImGui::DragTransformRT("Spawn Transform", bot.parentFromBot);
 
         // Initial pose: limit-aware sliders identical to the bot editor's "Default Pose".
@@ -1524,7 +1575,14 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
         }
 
         ImGui::HoverableSeparatorText("Controllers");
-        auto const controllerResult = ShowControllers(bot, botAsset, _studio, _sceneAsset);
+        auto const controllerResult = ShowControllers(
+            bot,
+            botAsset,
+            _studio,
+            _sceneAsset,
+            [this](std::string_view path) -> std::string const& {
+              return GetReferenceProblem(path);
+            });
         changed |= controllerResult.changed;
         structural |= controllerResult.structural;
         referencesChanged |= controllerResult.referencesChanged;
