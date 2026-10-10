@@ -113,7 +113,7 @@ void skinned::EntityAssembleBody(
       intState,
       currDispl.value,
       stageStartDispl.value,
-      stageStartVel ? stageStartVel->value : ColumnVector<real>{},
+      stageStartVel ? AsConstView(stageStartVel->value) : ColumnVectorView<real const>{},
       massMatrix,
       outSoftSkinnedSnle,
       activeVolElems);
