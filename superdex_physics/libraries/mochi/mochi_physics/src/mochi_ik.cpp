@@ -126,6 +126,8 @@ void IKSolverImpl::SetSolverParams(experimental::IKSolverParams const& ikParams)
   // rough gradient computation under low precisions
   params.nonLinearSolver.lineSearchType = LineSearchType::Armijo;
   params.nonLinearSolver.lineSearchMaxIter = ikParams.lineSearchMaxIter;
+  // TODO: Make IK robust near kinematic singularities, such as out-of-reach targets, where Newton
+  // steps grow huge and can push links into obstacles.
   _scene->SetSolverParams(params, ErrorAssert{});
 
   _positionErrorThres = ikParams.positionErrorThres;
