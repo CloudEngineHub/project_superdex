@@ -1326,13 +1326,10 @@ TEST_IF_F(MOCHI_HDF5_AND_INTERNAL, ActorQueryTest, ElementsGradients) {
   }
 }
 
-// TODO[T143757849] Add unit tests for the following:
-//    QueryType::VisualNodePositions (rigid actors)
-//    QueryType::VisualNodeNormals
-
 // Test that visual node position and normal queries work for shell actors with a visual mesh
-// embedding.
-TEST_F(ActorQueryTest, ShellVisualNodePositionsAndNormals) {
+// embedding, and for static rigid actors, which report the visual mesh's reference coordinates.
+// TODO: Test visual node position and normal queries on dynamic rigid actors.
+TEST_F(ActorQueryTest, VisualNodePositionsAndNormals) {
   // Sim mesh: a square made of 2 triangles with 4 nodes.
   //   node 0: (0, 0, 0)
   //   node 1: (1, 0, 0)
@@ -1400,55 +1397,67 @@ TEST_F(ActorQueryTest, ShellVisualNodePositionsAndNormals) {
 
   ShapeHandle shape = _mochiContext->CreateModelShape(modelData, test::ExpectOK{});
 
-  ShellActorParams params;
-  params.shape = shape;
-  params.material.density = 1_r;
-  params.layer = kDefaultLayer;
-  auto* actor = CreateShellActor(_scene, params, test::ExpectOK{});
-  MOCHI_DEFER(_scene->DestroyActor(actor));
-
-  auto const actorVisualMesh = actor->GetVisualMesh();
-  EXPECT_EQ(4, actorVisualMesh.GetNumNodes());
-  EXPECT_SPAN_EQ(MakeConstSpan(visCoords), actorVisualMesh.coordinates);
-  EXPECT_SPAN_EQ(MakeConstSpan(visConn), actorVisualMesh.connectivity);
-
   MeshDataView shapeVisualMesh = _mochiContext->GetShapeVisualMesh(shape, test::ExpectOK{});
   EXPECT_EQ(4, shapeVisualMesh.GetNumNodes());
   EXPECT_SPAN_EQ(MakeConstSpan(visCoords), shapeVisualMesh.coordinates);
   EXPECT_SPAN_EQ(MakeConstSpan(visConn), shapeVisualMesh.connectivity);
+
+  ShellActorParams shellParams;
+  shellParams.shape = shape;
+  shellParams.material.density = 1_r;
+  shellParams.layer = kDefaultLayer;
+
+  RigidActorParams staticParams;
+  staticParams.shape = shape;
+  staticParams.isStatic = true;
+  staticParams.colliderType = ColliderType::None;
+  // The results are in the local frame, so the pose must not change them.
+  staticParams.worldFromLocal = TransformRT{Real3{1_r, 2_r, 3_r}};
 
   Real3 constexpr kExpected0{0_r, 0_r, 0_r};
   Real3 constexpr kExpected1{0.5_r, 0_r, 0_r};
   Real3 constexpr kExpected2{2_r / 3_r, 1_r / 3_r, 0_r};
   Real3 constexpr kExpected3{0_r, 1_r, 0_r};
 
-  auto positionsQuery =
-      actor->RegisterQueryAndCompute(QueryType::VisualNodePositions, test::ExpectOK{});
-  {
-    MOCHI_DEFER(actor->CancelQuery(positionsQuery));
-    auto visPositions =
-        Unflatten<Real3 const>(actor->GetVisualMeshNodePositionsLocal(test::ExpectOK{}));
-    ASSERT_EQ(4, isize(visPositions));
+  for (Actor* actor :
+       {CreateShellActor(_scene, shellParams, test::ExpectOK{}),
+        _scene->CreateRigidActor(staticParams, test::ExpectOK{})}) {
+    MOCHI_DEFER(_scene->DestroyActor(actor));
 
-    // Verify: at the reference configuration, visual positions should match
-    // the barycentric interpolation of the sim mesh positions.
-    EXPECT_NEAR_EQ(visPositions[0], kExpected0);
-    EXPECT_NEAR_EQ(visPositions[1], kExpected1);
-    EXPECT_NEAR_EQ(visPositions[2], kExpected2);
-    EXPECT_NEAR_EQ(visPositions[3], kExpected3);
+    auto const actorVisualMesh = actor->GetVisualMesh();
+    EXPECT_EQ(4, actorVisualMesh.GetNumNodes());
+    EXPECT_SPAN_EQ(MakeConstSpan(visCoords), actorVisualMesh.coordinates);
+    EXPECT_SPAN_EQ(MakeConstSpan(visConn), actorVisualMesh.connectivity);
+
+    auto positionsQuery =
+        actor->RegisterQueryAndCompute(QueryType::VisualNodePositions, test::ExpectOK{});
+    {
+      MOCHI_DEFER(actor->CancelQuery(positionsQuery));
+      auto visPositions =
+          Unflatten<Real3 const>(actor->GetVisualMeshNodePositionsLocal(test::ExpectOK{}));
+      ASSERT_EQ(4, isize(visPositions));
+
+      // Verify: at the reference configuration, visual positions should match
+      // the barycentric interpolation of the sim mesh positions.
+      EXPECT_NEAR_EQ(visPositions[0], kExpected0);
+      EXPECT_NEAR_EQ(visPositions[1], kExpected1);
+      EXPECT_NEAR_EQ(visPositions[2], kExpected2);
+      EXPECT_NEAR_EQ(visPositions[3], kExpected3);
+    }
+
+    auto normalsQuery =
+        actor->RegisterQueryAndCompute(QueryType::VisualNodeNormals, test::ExpectOK{});
+    MOCHI_DEFER(actor->CancelQuery(normalsQuery));
+
+    auto visNormals =
+        Unflatten<Real3 const>(actor->GetVisualMeshNodeNormalsLocal(test::ExpectOK{}));
+    ASSERT_EQ(4, isize(visNormals));
+    Real3 constexpr kExpectedReferencedNormal{0_r, 0_r, 1_r};
+    EXPECT_NEAR_EQ(visNormals[0], Real3{});
+    EXPECT_NEAR_EQ(visNormals[1], kExpectedReferencedNormal);
+    EXPECT_NEAR_EQ(visNormals[2], kExpectedReferencedNormal);
+    EXPECT_NEAR_EQ(visNormals[3], kExpectedReferencedNormal);
   }
-
-  auto normalsQuery =
-      actor->RegisterQueryAndCompute(QueryType::VisualNodeNormals, test::ExpectOK{});
-  MOCHI_DEFER(actor->CancelQuery(normalsQuery));
-
-  auto visNormals = Unflatten<Real3 const>(actor->GetVisualMeshNodeNormalsLocal(test::ExpectOK{}));
-  ASSERT_EQ(4, isize(visNormals));
-  Real3 constexpr kExpectedReferencedNormal{0_r, 0_r, 1_r};
-  EXPECT_NEAR_EQ(visNormals[0], Real3{});
-  EXPECT_NEAR_EQ(visNormals[1], kExpectedReferencedNormal);
-  EXPECT_NEAR_EQ(visNormals[2], kExpectedReferencedNormal);
-  EXPECT_NEAR_EQ(visNormals[3], kExpectedReferencedNormal);
 }
 
 // Shell whose unit-square physics mesh embeds a 3-node, 1-triangle contact skin.

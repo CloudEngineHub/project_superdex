@@ -51,7 +51,7 @@ void AddRemoveOrRefAuxiliaryMeshQuery(
     bool computeImmediately,
     RodSystemT rodSystem,
     SystemT system) {
-  if (!reg.any_of<TagRigidActor, TagRodActor>(e)) {
+  if (!reg.any_of<TagRigidActor, TagStaticActor, TagRodActor>(e)) {
     // Prerequisite for deformable actors (rods don't have CSimplicialMesh).
     AddRemoveOrRefComponentsForQuery(reg, e, QueryType::NodePositions, add, computeImmediately);
   }
@@ -230,7 +230,8 @@ void mochi::SetErrorIfQueryNotSupported(
     case QueryType::VisualNodeNormals:
       MOCHI_ERROR_IF_NOT(
           reg.all_of<CVisualMesh const>(e) &&
-              (reg.any_of<TagRigidActor const, CRodVisualMeshEmbedding const>(e) ||
+              (reg.any_of<TagRigidActor const, TagStaticActor const, CRodVisualMeshEmbedding const>(
+                   e) ||
                reg.get<CVisualMesh>(e).embedding),
           error,
           "Visual node queries are only supported for actors with a visual mesh. "
