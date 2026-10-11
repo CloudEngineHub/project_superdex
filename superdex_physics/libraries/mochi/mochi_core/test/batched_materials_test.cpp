@@ -311,8 +311,11 @@ static void VerifySmithNeoHookeanGoldenData(MaterialPsdOracle oracle) {
 // by relative margins of 512 eps to sqrt(eps), of either sign, times (alpha + 1) / (alpha - 1)
 // over its value 17/3 at nu = 0.3, since rounding errors scale with it. F is formed in double, so
 // that rounding it moves the margins by a few eps times that factor. A quarter of the lanes are at
-// rest, F = I or a rotation, on the threshold, which must not count as indefinite. With the Fast
-// strategy, the oracle drops the d^2J term in exactly the lanes it finds indefinite.
+// or near rest, and none may count as indefinite: F = I or a rotation, on the threshold, or, in
+// odd batches, F = s * I instead of I, with s placing its margin at
+// 12 eps * (alpha + 1) / (alpha - 1), 3/4 of the largest margin Correct exempts, unless Correct's
+// cap binds, where s = 1. With the Fast strategy, the oracle drops the d^2J term in exactly the
+// lanes it finds indefinite.
 template <int kBS>
 static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, real poissonRatio) {
   SmithNeoHookeanMaterialParams params;
@@ -325,7 +328,11 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, 
   double const lambdaHat = lambda + 5.0 / 6.0 * mu;
   double const alpha = 1.0 + 0.75 * muHat / lambdaHat;
   double const eps = std::numeric_limits<real>::epsilon();
-  double const minMargin = 512.0 * eps * 3.0 / 17.0 * (alpha + 1.0) / (alpha - 1.0);
+  double const jmaCondition = (alpha + 1.0) / (alpha - 1.0);
+  double const minMargin = 512.0 * eps * 3.0 / 17.0 * jmaCondition;
+  // F = s * I has the margin (1 - s) * (6 / (alpha - 1) - 1) to first order.
+  double const restMargin = 16.0 * jmaCondition < 8192.0 ? 12.0 * eps * jmaCondition : 0.0;
+  real const restScale = static_cast<real>(1.0 - restMargin / (6.0 / (alpha - 1.0) - 1.0));
   auto generator = RandomGenerator(42);
   for (int batch = 0; batch < 64; ++batch) {
     std::array<Matrix3x3r, kBS> Fs{};
@@ -333,7 +340,7 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, 
     for (int lane = 0; lane < kBS; ++lane) {
       if (RandomUniformValue(generator, 0, 3) == 0) {
         Fs[lane] = RandomUniformValue(generator, 0, 1) == 0
-            ? Eye<3, real>()
+            ? (batch % 2 == 0 ? 1_r : restScale) * Eye<3, real>()
             : ToNdArray3x3(ToSimdMatrix(GetRandomRotationMatrix(generator)));
         continue;
       }

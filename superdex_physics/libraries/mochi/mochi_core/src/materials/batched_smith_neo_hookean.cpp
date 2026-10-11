@@ -145,23 +145,22 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
     // necessary but does not miss required projections.
     //
     // At rest and at rotations, J = 1, Ic = 3 and max_i(sigma_i^2) = 1, so the two sides are equal
-    // and rounding decides the comparison, whose relative error there is a few
-    // eps * (alpha + 1) / (alpha - 1), the condition number of J - alpha. So that Correct counts
-    // such lanes as positive semidefinite, its rhs is scaled by 1 + delta, with
-    // delta = min(8 * eps * (alpha + 1) / (alpha - 1), 8192 * eps). The first term is about 1.5
-    // times what F = I and rotations computed in real arithmetic, such as U * V^T, need for any
-    // material. A lane this exempts can keep a twist or flip eigenvalue negative by up to about
-    // delta / 2 * muHatK, which is less than eps * (4 * muHat + 11 * lambdaHat), a few times the
-    // eigenvalue's rounding error, and at most 4096 * eps * muHatK. The cap binds only for
-    // Poisson's ratios above about 0.499, where the rounding error at rest can exceed delta, so
-    // rounding decides such lanes, as it did without the scaling. Conservative flags rest states
-    // anyway, since Ic = 3 there, so it keeps the unscaled rhs.
+    // and rounding decides the comparison: (alpha + 1) / (alpha - 1), the condition number of
+    // J - alpha, amplifies relative errors in J, such as those from rounding in F, and in alpha.
+    // So that Correct counts such lanes as positive semidefinite, its rhs is scaled by 1 + delta,
+    // with delta = min(16 * eps * (alpha + 1) / (alpha - 1), 8192 * eps). A lane this exempts can
+    // keep a twist or flip eigenvalue negative by up to about delta / 2 * muHatK, which at rest is
+    // at most eps * (16 * lambdaHat + 6 * muHat), under 6 eps times the tangent's Frobenius norm
+    // there, and in any case at most 4096 * eps * muHatK. The cap binds for Poisson's ratios
+    // above about 0.498; above about 0.499, the rounding error at rest and at rotations can exceed
+    // delta, so rounding decides such lanes. Conservative flags rest states anyway, since Ic = 3
+    // there, so it keeps the unscaled rhs.
     V const lhsBase = Sqr(V{3_r / 4_r} * Jma);
 
     if (oracle == MaterialPsdOracle::Correct) {
       constexpr real kEps = std::numeric_limits<real>::epsilon();
       V const rhs = alphaMinusOne *
-          (alphaMinusOne + Min(V{8_r * kEps} * (alpha + one), V{8192_r * kEps} * alphaMinusOne)) *
+          (alphaMinusOne + Min(V{16_r * kEps} * (alpha + one), V{8192_r * kEps} * alphaMinusOne)) *
           Sqr(one - IcPlus1Inv);
       // max_i(sigma_i^2) lies between the largest diagonal entry of F^T * F and the smaller of its
       // trace and largest absolute row sum. Lanes these bounds leave open count as indefinite
