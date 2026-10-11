@@ -1017,6 +1017,32 @@ TEST_F(MochiRodRotationalInertiaTest, FreeSpinningRodWithBDF3) {
       << "Max twist DoF: " << maxTwistDoF << ", Expected total twist: " << kExpectedTotalTwist;
 }
 
+TEST_F(MochiRodRotationalInertiaTest, SetZeroDisplacementsAndVelocitiesRestoresRestPose) {
+  _scene->SetGravity({0_r, 0_r, 0_r});
+  SolverParams solverParams = _scene->GetSolverParams();
+  solverParams.integrationMethod = IntegrationMethod::BDF3;
+  _scene->SetSolverParams(solverParams, ErrorAssert{});
+
+  // Swing and twist the rod for long enough to fill the BDF3 history.
+  DynamicArray<real> const velocities = {0_r, 0_r, 0_r, 2_r, 0_r, 1_r, 0_r, 0_r};
+  _actor->SetNodeVelocitiesLocal(MakeConstSpan(velocities), ErrorAssert{});
+  real constexpr kTimeStep = 0.1_r;
+  for (int step = 0; step < 4; ++step) {
+    _scene->Step(kTimeStep);
+  }
+
+  // The reset returns the rod to its rest pose, where it stays.
+  _actor->SetZeroDisplacementsAndVelocities(test::ExpectOK{});
+  _scene->Step(kTimeStep);
+  EXPECT_TRUE(
+      test::NearEqualSpan(
+          DynamicArray<real>(4 * kNumNodes, 0_r), _actor->GetDisplacements(test::ExpectOK{})));
+  auto& reg = GetRegistry();
+  auto const entity = mochi::GetEntity(reg, _actor->GetHandle(), test::ExpectOK{});
+  EXPECT_NEAR_EQ(
+      (Real3{0_r, 1_r, 0_r}), reg.get<CRodPose<TimeStep::Current>>(entity).value.frameAxes[0]);
+}
+
 // ============================================================================
 // AddWeightedDifferences tests for RodPose
 // ============================================================================

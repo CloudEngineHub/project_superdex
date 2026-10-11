@@ -420,7 +420,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
         throw MochiErrorException(error);
       }
     }
-      , "Set all local displacement and velocity DoFs to zero.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for standalone soft actors, nested soft actors, shell actors,\n    and rod actors.\n\nNote:\n    For nested soft actors, it zeroes only elastic displacement and velocity.\n    Skeleton-driven displacement and velocity are preserved.\n\nNote:\n    For rod actors, it zeroes both the translational displacement DoFs and the\n    twist-angle DoFs.\n\nNote:\n    Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler\n    in the first time step after this method is called."
+      , "Set all local displacement and velocity DoFs to zero.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for standalone soft actors, nested soft actors, shell actors,\n    and rod actors.\n\nNote:\n    For nested soft actors, it zeroes only elastic displacement and velocity.\n    Skeleton-driven displacement and velocity are preserved.\n\nNote:\n    For rod actors, it zeroes both the translational displacement DoFs and the\n    twist-angle DoFs, and returns each element's cross-section to its rest\n    orientation.\n\nNote:\n    Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler\n    in the first time step after this method is called."
     )
     .def("get_elements_deformation_gradient", [](mochi::Actor& self) {
       mochi::Error error;

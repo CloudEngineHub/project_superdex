@@ -873,7 +873,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
          c.actor->SetNodePositionsLocal(MakeConstSpan(positions), test::ExpectOK{});
        }},
       {"SetZeroDisplacementsAndVelocities",
-       {ActorType::Soft, ActorType::Shell},
+       kDeformables,
        OnRepeat::WakeUp,
        [](WakeContext& c) { c.actor->SetZeroDisplacementsAndVelocities(test::ExpectOK{}); }},
       {"SetArticulatedPoseFromJoints",

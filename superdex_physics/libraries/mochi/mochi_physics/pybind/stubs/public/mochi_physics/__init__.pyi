@@ -10401,7 +10401,8 @@ class Actor:
 
         Note:
             For rod actors, it zeroes both the translational displacement DoFs and the
-            twist-angle DoFs.
+            twist-angle DoFs, and returns each element's cross-section to its rest
+            orientation.
 
         Note:
             Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler

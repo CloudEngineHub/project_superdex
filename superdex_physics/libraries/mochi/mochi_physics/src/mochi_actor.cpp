@@ -1935,21 +1935,33 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN(error);
     MOCHI_PROFILE_SCOPE();
 
-    auto* currDispl = reg.try_get<CDisplacementSlice<real, TimeStep::Current>>(e);
-    MOCHI_ERROR_IF(
-        currDispl == nullptr, error, "CDisplacementSlice<real, TimeStep::Current> required.");
-    auto* prevDispl = reg.try_get<CDisplacementSlice<real, TimeStep::Previous>>(e);
-    MOCHI_ERROR_IF(
-        prevDispl == nullptr, error, "CDisplacementSlice<real, TimeStep::Previous> required.");
-    auto* currVel = reg.try_get<CVelocitySlice<real, TimeStep::Current>>(e);
-    MOCHI_ERROR_IF(currVel == nullptr, error, "CVelocitySlice<real, TimeStep::Current> required.");
-    auto* prevVel = reg.try_get<CVelocitySlice<real, TimeStep::Previous>>(e);
-    MOCHI_ERROR_IF(prevVel == nullptr, error, "CVelocitySlice<real, TimeStep::Previous> required.");
-    MOCHI_ERROR_RETURN(error);
-    currDispl->value.SetZero();
-    prevDispl->value.SetZero();
-    currVel->value.SetZero();
-    prevVel->value.SetZero();
+    if (reg.all_of<TagRodActor>(e)) {
+      // The frame axes hold the accumulated twist, so reset them along with the twist DoFs.
+      auto& currPose = reg.get<CRodPose<TimeStep::Current>>(e).value;
+      currPose.displacements.SetZero();
+      currPose.frameAxes = reg.get<CReferenceElementFrameAxes const>(e).axes;
+      reg.get<CRodPose<TimeStep::Previous>>(e).value = currPose;
+      reg.get<CVelocitySlice<real, TimeStep::Current>>(e).value.SetZero();
+      reg.get<CVelocitySlice<real, TimeStep::Previous>>(e).value.SetZero();
+    } else {
+      auto* currDispl = reg.try_get<CDisplacementSlice<real, TimeStep::Current>>(e);
+      MOCHI_ERROR_IF(
+          currDispl == nullptr, error, "CDisplacementSlice<real, TimeStep::Current> required.");
+      auto* prevDispl = reg.try_get<CDisplacementSlice<real, TimeStep::Previous>>(e);
+      MOCHI_ERROR_IF(
+          prevDispl == nullptr, error, "CDisplacementSlice<real, TimeStep::Previous> required.");
+      auto* currVel = reg.try_get<CVelocitySlice<real, TimeStep::Current>>(e);
+      MOCHI_ERROR_IF(
+          currVel == nullptr, error, "CVelocitySlice<real, TimeStep::Current> required.");
+      auto* prevVel = reg.try_get<CVelocitySlice<real, TimeStep::Previous>>(e);
+      MOCHI_ERROR_IF(
+          prevVel == nullptr, error, "CVelocitySlice<real, TimeStep::Previous> required.");
+      MOCHI_ERROR_RETURN(error);
+      currDispl->value.SetZero();
+      prevDispl->value.SetZero();
+      currVel->value.SetZero();
+      prevVel->value.SetZero();
+    }
 
     if (reg.all_of<TagNestedSoftActor>(e)) {
       ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
