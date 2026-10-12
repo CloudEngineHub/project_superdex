@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <superdex_recorder/contact_collector.h>
 #include <superdex_recorder/recorder.h>
 
 #include <mochi_core/utils/dynamic_array.h>
@@ -24,7 +25,7 @@
 #include <mochi_physics/cpp_api/mochi_scene.h>
 
 #include <cstddef>
-#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,7 +33,7 @@ namespace superdex::recorder {
 
 /* @brief Optional physics channels recorded alongside kinematics. */
 struct PhysicsRecorderConfig {
-  /* @brief Record contact-point forces and Rerun force arrows. */
+  /* @brief Record contact-point forces, in the layout of ContactColumns, and Rerun force arrows. */
   bool recordContactForces = false;
   /* @brief Arrow length per newton [m/N]. */
   mochi::real contactForceVisualizationScaleMetersPerNewton = static_cast<mochi::real>(0.002);
@@ -73,14 +74,6 @@ class SUPERDEX_RECORDER_API PhysicsRecorder final {
     mochi::DynamicArray<mochi::TransformRT> worldFromLinks;
   };
 
-  struct ContactBody {
-    ContactBody(std::string path, mochi::ActorHandle handle, mochi::QueryHandle query);
-
-    std::string path;
-    mochi::ActorHandle handle;
-    mochi::QueryHandle query;
-  };
-
  public:
   PhysicsRecorder(Episode& episode, mochi::Scene& scene, mochi::Error& error);
   PhysicsRecorder(
@@ -94,8 +87,7 @@ class SUPERDEX_RECORDER_API PhysicsRecorder final {
 
  private:
   void RegisterActor(std::string id, mochi::Actor& actor, mochi::Error& error);
-  void RegisterContactBody(std::string path, mochi::Actor& actor, mochi::Error& error);
-  size_t FindContactBody(mochi::ActorHandle handle, mochi::Error& error) const;
+  void RegisterContactBody(std::string path, mochi::Actor& actor);
   void RecordContacts(SampleTime time, mochi::Error& error);
   void WriteGeometry(std::string_view entityPath, mochi::Actor const& actor, mochi::Error& error);
   void
@@ -110,7 +102,8 @@ class SUPERDEX_RECORDER_API PhysicsRecorder final {
   Arrow3DSeries* _contactArrowSeries = nullptr;
   std::vector<Actor> _actors;
   std::vector<ContactBody> _contactBodies;
-  std::map<mochi::ActorHandle, size_t> _contactBodyIndices;
+  std::unique_ptr<ContactCollector> _contactCollector;
+  ContactColumns _contactColumns;
 };
 
 } // namespace superdex::recorder

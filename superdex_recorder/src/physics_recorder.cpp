@@ -34,14 +34,6 @@ constexpr std::string_view kActorArchetype = "superdex.archetypes.PhysicsActor";
 constexpr std::string_view kContactArchetype = "superdex.archetypes.PhysicsContacts";
 constexpr std::string_view kFrameArchetype = "superdex.archetypes.PhysicsFrame";
 
-struct ContactSample {
-  size_t bodyA;
-  size_t bodyB;
-  mochi::Real3 positionA;
-  mochi::Real3 positionB;
-  mochi::Real3 forceOnA;
-};
-
 ComponentField ActorField(std::string component) {
   return {std::string{kActorArchetype}, std::move(component)};
 }
@@ -189,12 +181,6 @@ PhysicsRecorder::Actor::Actor(
       stateSeries{stateSeries},
       transformSeries{transformSeries} {}
 
-PhysicsRecorder::ContactBody::ContactBody(
-    std::string path,
-    mochi::ActorHandle handle,
-    mochi::QueryHandle query)
-    : path{std::move(path)}, handle{handle}, query{query} {}
-
 PhysicsRecorder::PhysicsRecorder(Episode& episode, mochi::Scene& scene, mochi::Error& error)
     : PhysicsRecorder{episode, scene, PhysicsRecorderConfig{}, error} {}
 
@@ -244,13 +230,8 @@ PhysicsRecorder::PhysicsRecorder(
   MOCHI_ERROR_RETURN(error);
 
   if (_config.recordContactForces) {
-    std::sort(
-        _contactBodies.begin(),
-        _contactBodies.end(),
-        [](ContactBody const& lhs, ContactBody const& rhs) { return lhs.path < rhs.path; });
-    for (size_t i = 0; i < _contactBodies.size(); ++i) {
-      _contactBodyIndices.emplace(_contactBodies[i].handle, i);
-    }
+    _contactCollector = std::make_unique<ContactCollector>(scene, std::move(_contactBodies), error);
+    MOCHI_ERROR_RETURN(error);
     _contactSeries = _episode.CreateScalarSeries(
         "data/physics/contacts",
         {
@@ -263,8 +244,7 @@ PhysicsRecorder::PhysicsRecorder(
         error);
     _contactArrowSeries = _episode.CreateArrow3DSeries("world/contact_forces", error);
     std::vector<std::string> bodyPaths;
-    bodyPaths.reserve(_contactBodies.size());
-    for (auto const& body : _contactBodies) {
+    for (auto const& body : _contactCollector->GetBodies()) {
       bodyPaths.push_back(body.path);
     }
     _episode.WriteConstantTexts(
@@ -287,14 +267,7 @@ PhysicsRecorder::PhysicsRecorder(
   }
 }
 
-PhysicsRecorder::~PhysicsRecorder() {
-  for (auto const& body : _contactBodies) {
-    mochi::Actor* const actor = _scene.GetActor(body.handle);
-    if (actor != nullptr && body.query.IsValid()) {
-      actor->CancelQuery(body.query);
-    }
-  }
-}
+PhysicsRecorder::~PhysicsRecorder() = default;
 
 void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
@@ -363,7 +336,7 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
       WriteGeometry(linkPath, *linkActor, error);
       WritePhysicalParameters(linkPath, *linkActor, error);
       MOCHI_ERROR_RETURN(error);
-      RegisterContactBody(linkPath, *linkActor, error);
+      RegisterContactBody(linkPath, *linkActor);
       MOCHI_ERROR_RETURN(error);
       registered.links.emplace_back(linkName, *linkSeries);
     }
@@ -439,7 +412,7 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
   } else {
     WriteGeometry(entityPath, actor, error);
     WritePhysicalParameters(dataPath, actor, error);
-    RegisterContactBody(entityPath, actor, error);
+    RegisterContactBody(entityPath, actor);
   }
   MOCHI_ERROR_RETURN(error);
 
@@ -488,97 +461,39 @@ void PhysicsRecorder::WritePhysicalParameters(
   }
 }
 
-void PhysicsRecorder::RegisterContactBody(
-    std::string path,
-    mochi::Actor& actor,
-    mochi::Error& error) {
-  MOCHI_ERROR_RETURN(error);
-  if (!_config.recordContactForces) {
-    return;
+void PhysicsRecorder::RegisterContactBody(std::string path, mochi::Actor& actor) {
+  if (_config.recordContactForces) {
+    _contactBodies.push_back({std::move(path), actor.GetHandle()});
   }
-  mochi::QueryHandle query;
-  if (actor.IsQuerySupported(mochi::QueryType::ContactPoints)) {
-    query = actor.RegisterQuery(mochi::QueryType::ContactPoints, error);
-    MOCHI_ERROR_RETURN(error);
-  }
-  _contactBodies.emplace_back(std::move(path), actor.GetHandle(), query);
-}
-
-size_t PhysicsRecorder::FindContactBody(mochi::ActorHandle handle, mochi::Error& error) const {
-  auto const index = _contactBodyIndices.find(handle);
-  if (index == _contactBodyIndices.end()) {
-    MOCHI_ERROR_SET(error, "Contact references an actor outside the recorded rigid body layout.");
-    return 0;
-  }
-  return index->second;
 }
 
 void PhysicsRecorder::RecordContacts(SampleTime time, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
-  if (_contactSeries == nullptr || _contactArrowSeries == nullptr ||
+  if (_contactCollector == nullptr || _contactSeries == nullptr || _contactArrowSeries == nullptr ||
       time.simulationTimeSec <= _contactRegistrationTimeSec) {
     return;
   }
 
-  std::vector<mochi::real> bodyAIndices;
-  std::vector<mochi::real> bodyBIndices;
-  std::vector<mochi::real> positionsA;
-  std::vector<mochi::real> positionsB;
-  std::vector<mochi::real> forcesOnA;
-  std::vector<mochi::Real3> arrowOrigins;
-  std::vector<mochi::Real3> arrowVectors;
-  std::vector<ContactSample> contacts;
-  for (size_t bodyIndex = 0; bodyIndex < _contactBodies.size(); ++bodyIndex) {
-    auto& body = _contactBodies[bodyIndex];
-    if (!body.query.IsValid()) {
-      continue;
+  _contactColumns.Clear();
+  _contactCollector->Collect(_contactColumns, error);
+  MOCHI_ERROR_RETURN(error);
+  size_t const numContacts = _contactColumns.bodyA.size();
+  std::vector<mochi::Real3> arrowOrigins(numContacts);
+  std::vector<mochi::Real3> arrowVectors(numContacts);
+  for (size_t i = 0; i < numContacts; ++i) {
+    for (size_t axis = 0; axis < 3; ++axis) {
+      arrowOrigins[i][axis] = _contactColumns.positionA[3 * i + axis];
+      arrowVectors[i][axis] = _contactColumns.forceOnA[3 * i + axis] *
+          _config.contactForceVisualizationScaleMetersPerNewton;
     }
-    mochi::Actor* const actor = ResolveActor(_scene, body.handle, error);
-    MOCHI_ERROR_RETURN(error);
-    for (auto const& contact : actor->GetContactPointsWorld(error)) {
-      MOCHI_ERROR_RETURN(error);
-      size_t const bodyAIndex = FindContactBody(contact.actorA, error);
-      size_t const bodyBIndex = FindContactBody(contact.actorB, error);
-      MOCHI_ERROR_RETURN(error);
-      size_t ownerIndex = bodyAIndex;
-      if (!_contactBodies[ownerIndex].query.IsValid() ||
-          (_contactBodies[bodyBIndex].query.IsValid() && bodyBIndex < ownerIndex)) {
-        ownerIndex = bodyBIndex;
-      }
-      if (bodyIndex != ownerIndex) {
-        continue;
-      }
-
-      bool const preservesOrientation = bodyAIndex <= bodyBIndex;
-      size_t const canonicalA = preservesOrientation ? bodyAIndex : bodyBIndex;
-      size_t const canonicalB = preservesOrientation ? bodyBIndex : bodyAIndex;
-      mochi::Real3 const positionA = preservesOrientation ? contact.posA : contact.posB;
-      mochi::Real3 const positionB = preservesOrientation ? contact.posB : contact.posA;
-      mochi::Real3 const forceOnA = preservesOrientation ? contact.force : -contact.force;
-      contacts.push_back({canonicalA, canonicalB, positionA, positionB, forceOnA});
-    }
-  }
-  std::stable_sort(
-      contacts.begin(), contacts.end(), [](ContactSample const& lhs, ContactSample const& rhs) {
-        return std::pair{lhs.bodyA, lhs.bodyB} < std::pair{rhs.bodyA, rhs.bodyB};
-      });
-  for (auto const& contact : contacts) {
-    bodyAIndices.push_back(static_cast<mochi::real>(contact.bodyA));
-    bodyBIndices.push_back(static_cast<mochi::real>(contact.bodyB));
-    positionsA.insert(positionsA.end(), contact.positionA.begin(), contact.positionA.end());
-    positionsB.insert(positionsB.end(), contact.positionB.begin(), contact.positionB.end());
-    forcesOnA.insert(forcesOnA.end(), contact.forceOnA.begin(), contact.forceOnA.end());
-    arrowOrigins.push_back(contact.positionA);
-    arrowVectors.push_back(
-        contact.forceOnA * _config.contactForceVisualizationScaleMetersPerNewton);
   }
 
   std::array<mochi::Span<mochi::real const>, 5> const fields{
-      AsSpan(bodyAIndices),
-      AsSpan(bodyBIndices),
-      AsSpan(positionsA),
-      AsSpan(positionsB),
-      AsSpan(forcesOnA),
+      AsSpan(_contactColumns.bodyA),
+      AsSpan(_contactColumns.bodyB),
+      AsSpan(_contactColumns.positionA),
+      AsSpan(_contactColumns.positionB),
+      AsSpan(_contactColumns.forceOnA),
   };
   _contactSeries->Append(time, fields, error);
   _contactArrowSeries->Append(time, arrowOrigins, arrowVectors, error);
