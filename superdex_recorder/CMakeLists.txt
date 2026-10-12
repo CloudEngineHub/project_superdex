@@ -37,10 +37,20 @@ target_compile_features(superdex_recorder_core PUBLIC cxx_std_17)
 mochi_set_compiler_options(superdex_recorder_core)
 set_target_properties(superdex_recorder_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(superdex_recorder_physics STATIC
+    src/physics_recorder.cpp
+    include/superdex_recorder/physics_recorder.h
+)
+target_include_directories(superdex_recorder_physics PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(superdex_recorder_physics PUBLIC superdex_recorder_core mochi_physics)
+target_compile_features(superdex_recorder_physics PUBLIC cxx_std_17)
+mochi_set_compiler_options(superdex_recorder_physics)
+set_target_properties(superdex_recorder_physics PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(superdex_recorder INTERFACE)
 target_sources(superdex_recorder INTERFACE include/superdex_recorder/superdex_recorder.h)
 target_include_directories(superdex_recorder INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(superdex_recorder INTERFACE superdex_recorder_core)
+target_link_libraries(superdex_recorder INTERFACE superdex_recorder_physics)
 
 if (MOCHI_BUILD_TESTS)
     add_executable(superdex_recorder_core_test test/superdex_recorder_test.cpp)

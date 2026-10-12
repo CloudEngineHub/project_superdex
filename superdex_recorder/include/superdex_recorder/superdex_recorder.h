@@ -16,4 +16,5 @@
 
 #pragma once
 
+#include <superdex_recorder/physics_recorder.h>
 #include <superdex_recorder/recorder.h>

@@ -1,0 +1,79 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <superdex_recorder/recorder.h>
+
+#include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/transform_rt.h>
+#include <mochi_physics/cpp_api/mochi_actor.h>
+#include <mochi_physics/cpp_api/mochi_scene.h>
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+namespace superdex::recorder {
+
+/* Records all rigid and articulated actors in a Mochi scene.
+ * The episode and scene must outlive this recorder. */
+class PhysicsRecorder final {
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(PhysicsRecorder)
+
+ private:
+  struct Link {
+    Link(std::string name, TransformSeries& transformSeries);
+
+    std::string name;
+    TransformSeries& transformSeries;
+  };
+
+  struct Actor {
+    Actor(
+        std::string id,
+        std::string dataPath,
+        mochi::Actor& actor,
+        ScalarSeries& stateSeries,
+        TransformSeries& transformSeries);
+
+    std::string id;
+    std::string dataPath;
+    mochi::Actor& actor;
+    ScalarSeries& stateSeries;
+    TransformSeries& transformSeries;
+    std::vector<Link> links;
+    mochi::DynamicArray<mochi::real> positions;
+    mochi::DynamicArray<mochi::real> velocities;
+    mochi::DynamicArray<mochi::TransformRT> worldFromLinks;
+  };
+
+ public:
+  PhysicsRecorder(Episode& episode, mochi::Scene& scene, mochi::Error& error);
+  ~PhysicsRecorder();
+
+  void Record(SampleTime time, mochi::Error& error);
+
+ private:
+  void RegisterActor(std::string id, mochi::Actor& actor, mochi::Error& error);
+  void WriteGeometry(std::string_view entityPath, mochi::Actor const& actor, mochi::Error& error);
+
+  Episode& _episode;
+  mochi::Scene& _scene;
+  std::vector<Actor> _actors;
+};
+
+} // namespace superdex::recorder
