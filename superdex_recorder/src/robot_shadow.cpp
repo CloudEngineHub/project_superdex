@@ -90,8 +90,8 @@ RobotShadow::RobotShadow(
   MOCHI_ERROR_IF(config.id.empty(), error, "Robot shadow ID must not be empty.");
   MOCHI_ERROR_RETURN(error);
 
-  char const* const robotName = robot.GetName();
-  std::string const robotId = robotName == nullptr || *robotName == '\0' ? "robot" : robotName;
+  char const* const actorName = actor->GetName();
+  std::string const robotId = actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
   std::string const shadowPath = std::string{kShadowsPath} + "/" +
       Episode::EncodeEntityPathSegment(robotId) + "/" + Episode::EncodeEntityPathSegment(config.id);
 

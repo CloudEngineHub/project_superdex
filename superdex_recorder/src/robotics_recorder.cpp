@@ -204,17 +204,20 @@ RoboticsRecorder::RoboticsRecorder(Episode& episode, robotics::Bot& robot, mochi
   _numDofs = static_cast<size_t>(actor->GetNumDofs());
   _appliedEffort.resize(_numDofs);
 
-  char const* const robotName = robot.GetName();
-  std::string const robotId = robotName == nullptr || *robotName == '\0' ? "robot" : robotName;
+  char const* const actorName = actor->GetName();
+  std::string const robotId = actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
   std::string const robotPath = "data/robotics/robots/" + Episode::EncodeEntityPathSegment(robotId);
-  episode.WriteConstantText(robotPath, RobotField("robot_id"), robotId, error);
-  std::array<double, 1> const numDofs{static_cast<double>(_numDofs)};
-  episode.WriteConstantScalars(robotPath, RobotField("num_dofs"), numDofs, error);
   _appliedEffortSeries = episode.CreateScalarSeries(
       robotPath + "/" + std::string{kAppliedCommandStreamName},
       {RobotField("applied_joint_effort")},
       error);
   MOCHI_ERROR_RETURN(error);
+  episode.WriteConstantText(robotPath, RobotField("robot_id"), robotId, error);
+  char const* const prefabName = robot.GetName();
+  episode.WriteConstantText(
+      robotPath, RobotField("robot_prefab_name"), prefabName == nullptr ? "" : prefabName, error);
+  std::array<double, 1> const numDofs{static_cast<double>(_numDofs)};
+  episode.WriteConstantScalars(robotPath, RobotField("num_dofs"), numDofs, error);
 
   std::unordered_set<std::string> ids;
   auto const handles = robot.GetControllerHandles();
