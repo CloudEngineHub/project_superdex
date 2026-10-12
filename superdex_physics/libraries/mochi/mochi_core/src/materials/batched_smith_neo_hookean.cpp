@@ -72,6 +72,55 @@ template <int kBatchSize>
   return ~(positiveD & (sii >= zero) & (sjj >= zero) & (sii * sjj >= sij * sij));
 }
 
+// Lanes where the Smith tangent's scaling block A (Asym below) may be indefinite, among those with
+// J > alpha and nonnegative twist and flip eigenvalues or with 0 <= J < 2/5 * alpha. With
+// s = (sigma_i^2) and 1 = (1, 1, 1),
+//
+//   A' = diag(sigma) * A * diag(sigma) = diag(a * s_i + c) + kappa * 1 * 1^T + c3 * s * s^T,
+//
+// with a = muHatK, c = lambdaHat * (alpha - J) * J, kappa = lambdaHat * J * (2 * J - alpha) and
+// c3 = 2 * muHat / (Ic + 1)^2, all passed divided by 4/3 * lambdaHat. For J > 0, A' is congruent
+// to A, so A is positive definite iff A' is. For 2/5 * alpha <= J <= alpha, A' is positive
+// definite: diag(a * s_i) is positive definite, c3 * s * s^T is positive semidefinite, and so is
+// c * I + kappa * 1 * 1^T, whose eigenvalues are c and
+// c + 3 * kappa = lambdaHat * J * (5 * J - 2 * alpha). In the tested lanes, A' has at most one
+// negative eigenvalue: for J > alpha, nonnegative twist and flip keep a * s_i + c >= 0 for the two
+// largest sigma_i, and the other terms are positive semidefinite; for J < 2/5 * alpha, only the
+// rank-one kappa * 1 * 1^T can have a negative eigenvalue. So A' is positive definite iff
+// det(A') > 0, a symmetric polynomial in s_i that follows from the invariants Ic,
+// IIc = sum_{i<j} s_i * s_j and J^2 of F^T * F, without an SVD. Within the twist and flip test's
+// tolerance, A' can have two slightly negative eigenvalues that det(A') misses. Rounding decides
+// near-isotropic expansions whose smallest scaling eigenvalue is within a few sqrt(eps) * muHatK of
+// zero. det(A') = 0, as for J = 0, counts as indefinite.
+template <int kBatchSize>
+[[nodiscard]] static MOCHI_FORCE_INLINE BatchReal<kBatchSize> IsScalingBlockIndefinite(
+    BatchReal<kBatchSize> const& a,
+    BatchReal<kBatchSize> const& c,
+    BatchReal<kBatchSize> const& kappa,
+    BatchReal<kBatchSize> const& c3,
+    BatchReal<kBatchSize> const& Ic,
+    BatchReal<kBatchSize> const& IIc,
+    BatchReal<kBatchSize> const& Jsq) {
+  using V = BatchReal<kBatchSize>;
+
+  // With d_i = a * s_i + c and {i, j, k} = {0, 1, 2}, the matrix determinant lemma gives
+  //   det(A') = e3 + kappa * e2 + c3 * sum_i s_i^2 * d_j * d_k
+  //             + kappa * c3 * sum_k (s_i - s_j)^2 * d_k
+  // for the elementary symmetric functions e2 and e3 of d_i. Below, p2 = sum_i s_i^2,
+  // q = sum_{i != j} s_i^2 * s_j, r = sum_k (s_i - s_j)^2 / 2 and u = sum_k (s_i - s_j)^2 * s_k.
+  V const p2 = Ic * Ic - V{2_r} * IIc;
+  V const q = Ic * IIc - V{3_r} * Jsq;
+  V const r = Ic * Ic - V{3_r} * IIc;
+  V const u = Ic * IIc - V{9_r} * Jsq;
+
+  V const e2 = a * a * IIc + V{2_r} * a * c * Ic + V{3_r} * c * c;
+  V const e3 = a * a * a * Jsq + a * a * c * IIc + a * c * c * Ic + c * c * c;
+
+  V const det = e3 + kappa * e2 + c3 * (a * a * Jsq * Ic + a * c * q + c * c * p2) +
+      kappa * c3 * (a * u + V{2_r} * c * r);
+  return ~(det > V{0_r});
+}
+
 template <int kBatchSize>
 void BatchedSmithNeoHookeanConstitutiveResponse(
     BatchLameParams<kBatchSize> const& params,
@@ -118,16 +167,15 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
   V isIndefiniteMask = ~SimdZero<V>(); // All lanes indefinite unless oracle proves otherwise.
 
   if (outTangent && projectingPsd && oracle != MaterialPsdOracle::None) {
-    // PSD oracle: evaluate flip/twist indefiniteness per lane, skipping projection if no lane
-    // requires it. The oracle is based on the fact that only twist and flip eigenvalues can make
-    // the Smith tangent non-PSD. Their closed-form eigenvalues are:
+    // PSD oracle: evaluate indefiniteness per lane, skipping projection if no lane requires it. The
+    // tangent's eigenvalues are those of the 3x3 scaling block and the twist and flip eigenvalues
     //
     //   e_twist_i =  lambdaHat * (J - alpha) * sigma_i + muHatK
     //   e_flip_i  = -lambdaHat * (J - alpha) * sigma_i + muHatK
     //
     // where muHatK = muHat * (1 - 1 / (Ic + 1)), Ic = sum_i sigma_i^2, and
     // J = prod_i sigma_i. Inverted elements (J < 0) are indefinite. For J >= 0, the sign cases for
-    // (J - alpha) and sigma_i reduce to checking:
+    // (J - alpha) and sigma_i reduce the twist and flip condition to checking:
     //
     //   lambdaHat * abs(J - alpha) * abs(sigma_i) > muHatK.
     //
@@ -136,8 +184,8 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
     //   lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2) > muHatK^2,
     //
     // evaluated divided by (4/3 * lambdaHat)^2, which keeps its terms O(1) whatever the stiffness:
-    // lhsBase * max_i(sigma_i^2) > rhs, with lhsBase = (3/4 * (J - alpha))^2 and
-    // rhs = ((alpha - 1) * (1 - 1 / (Ic + 1)))^2, since alpha - 1 = 3/4 * muHat / lambdaHat.
+    // lhsBase * max_i(sigma_i^2) > rhs, with lhsBase = (3/4 * (J - alpha))^2 and rhs = a^2 for
+    // a = (alpha - 1) * (1 - 1 / (Ic + 1)), since alpha - 1 = 3/4 * muHat / lambdaHat.
     //
     // max_i(sigma_i^2) is the largest eigenvalue of F^T * F, so Correct decides this without an
     // SVD: the condition holds iff rhs * I - lhsBase * F^T * F is not positive semidefinite.
@@ -155,6 +203,15 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
     // above about 0.498; above about 0.499, the rounding error at rest and at rotations can exceed
     // delta, so rounding decides such lanes. Conservative flags rest states anyway, since Ic = 3
     // there, so it keeps the unscaled rhs.
+    //
+    // The scaling block can be indefinite while twist and flip are not, but only for J > alpha, as
+    // in anisotropic expansions, or J < 2/5 * alpha, as in compressions of strongly auxetic
+    // materials. Correct tests it there with IsScalingBlockIndefinite. Conservative needs no such
+    // test: the lanes it skips have lambdaHat * abs(J - alpha) * sqrt(Ic) <= muHatK, which keeps
+    // the scaling block positive definite for J > alpha and otherwise implies
+    // J >= (alpha + 2) / 3, above 2/5 * alpha for every Poisson's ratio above -1, unless F = 0,
+    // where the tangent is zero.
+    V const a = alphaMinusOne * (one - IcPlus1Inv);
     V const lhsBase = Sqr(V{3_r / 4_r} * Jma);
 
     if (oracle == MaterialPsdOracle::Correct) {
@@ -163,10 +220,11 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
           (alphaMinusOne + Min(V{16_r * kEps} * (alpha + one), V{8192_r * kEps} * alphaMinusOne)) *
           Sqr(one - IcPlus1Inv);
       // max_i(sigma_i^2) lies between the largest diagonal entry of F^T * F and the smaller of its
-      // trace and largest absolute row sum. Lanes these bounds leave open count as indefinite
-      // unless the exact test settles them. The Projection strategies project the whole batch once
-      // any lane is indefinite, so they skip the test once a lane is proven indefinite; Fast drops
-      // the term per lane, so it always settles the open lanes.
+      // trace and largest absolute row sum. Lanes these bounds leave open, and lanes with J > alpha
+      // or J < 2/5 * alpha not proven indefinite, count as indefinite unless the exact tests settle
+      // them. The Projection strategies project the whole batch once any lane is indefinite, so
+      // they skip the tests once a lane is proven indefinite; Fast drops the term per lane, so it
+      // always runs them.
       BatchSymMatrix3x3<kBatchSize> const G = {
           F[0][0] * F[0][0] + F[1][0] * F[1][0] + F[2][0] * F[2][0],
           F[0][1] * F[0][1] + F[1][1] * F[1][1] + F[2][1] * F[2][1],
@@ -180,17 +238,40 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
               Max(G[0] + Abs(G[3]) + Abs(G[4]),
                   G[1] + Abs(G[3]) + Abs(G[5]),
                   G[2] + Abs(G[4]) + Abs(G[5])));
+
       V const provenIndefinite = (lhsBase * lowerBound > rhs) | (J < V{0_r});
-      V const undecided = ~provenIndefinite & (lhsBase * upperBound > rhs);
-      isIndefiniteMask = provenIndefinite | undecided;
-      if (AnyTrue<kBatchSize>(undecided) &&
+      V const twistFlipUndecided = ~provenIndefinite & (lhsBase * upperBound > rhs);
+      V const scalingUndecided = ~provenIndefinite & ((J > alpha) | (V{2.5_r} * J < alpha));
+      isIndefiniteMask = provenIndefinite | twistFlipUndecided | scalingUndecided;
+
+      if (AnyTrue<kBatchSize>(twistFlipUndecided | scalingUndecided) &&
           (psdStrategy == MaterialPsdStrategy::Fast || !AnyTrue<kBatchSize>(provenIndefinite))) {
-        isIndefiniteMask =
-            provenIndefinite | (undecided & IsShiftedGramIndefinite<kBatchSize>(rhs, lhsBase, G));
+        isIndefiniteMask = provenIndefinite;
+        if (AnyTrue<kBatchSize>(twistFlipUndecided)) {
+          isIndefiniteMask |=
+              twistFlipUndecided & IsShiftedGramIndefinite<kBatchSize>(rhs, lhsBase, G);
+        }
+
+        if (AnyTrue<kBatchSize>(scalingUndecided)) {
+          // IIc from G cancels only for needle-like F, whose tangent is indefinite iff twist or
+          // flip is negative, so the cancellation can only add flags to the twist and flip test's.
+          // For such F, the rounding of J can already add flags.
+          V const IIc =
+              G[0] * G[1] + G[0] * G[2] + G[1] * G[2] - G[3] * G[3] - G[4] * G[4] - G[5] * G[5];
+          V const scalingIndefinite = IsScalingBlockIndefinite<kBatchSize>(
+              a,
+              V{-3_r / 4_r} * Jma * J,
+              V{3_r / 4_r} * J * (V{2_r} * J - alpha),
+              V{2_r} * alphaMinusOne * IcPlus1Inv * IcPlus1Inv,
+              Ic,
+              IIc,
+              J * J);
+          isIndefiniteMask |= scalingUndecided & scalingIndefinite;
+        }
       }
     } else {
       MOCHI_ASSERT_VERBOSE(oracle == MaterialPsdOracle::Conservative, "Unexpected PSD oracle.");
-      isIndefiniteMask = (lhsBase * Ic > Sqr(alphaMinusOne * (one - IcPlus1Inv))) | (J < V{0_r});
+      isIndefiniteMask = (lhsBase * Ic > Sqr(a)) | (J < V{0_r});
     }
 
     projectingPsd = AnyTrue<kBatchSize>(isIndefiniteMask);

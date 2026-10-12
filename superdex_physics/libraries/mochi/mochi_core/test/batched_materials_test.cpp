@@ -303,21 +303,25 @@ static void VerifySmithNeoHookeanGoldenData(MaterialPsdOracle oracle) {
   }
 }
 
-// The Correct oracle where values-only singular values lose up to half their digits: lanes of F
-// with the two largest singular values nearly equal, off the oracle's threshold
-//
-//   lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2) = muHatK^2
-//
-// by relative margins of 512 eps to sqrt(eps), of either sign, times (alpha + 1) / (alpha - 1)
-// over its value 17/3 at nu = 0.3, since rounding errors scale with it. F is formed in double, so
-// that rounding it moves the margins by a few eps times that factor. A quarter of the lanes are at
-// or near rest, and none may count as indefinite: F = I or a rotation, on the threshold, or, in
-// odd batches, F = s * I instead of I, with s placing its margin at
-// 12 eps * (alpha + 1) / (alpha - 1), 3/4 of the largest margin Correct exempts, unless Correct's
-// cap binds, where s = 1. With the Fast strategy, the oracle drops the d^2J term in exactly the
-// lanes it finds indefinite.
+// Lanes F = U * diag(sigma) * V^T on either side of a PSD threshold, at relative margins of 512 eps
+// to sqrt(eps), scaled like rounding errors, which grow with jmaCondition:
+//   - twist and flip, for poissonRatio > -0.9: lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2)
+//     against muHatK^2, with margins scaled by jmaCondition over its value 17/3 at
+//     poissonRatio = 0.3, and the two largest singular values nearly equal, where values-only
+//     singular values lose up to half their digits;
+//   - scaling block, with twist and flip positive: its smallest eigenvalue over muHatK against
+//     zero, with margins scaled by max(1, jmaCondition / 16), since near incompressibility that
+//     ratio only reaches about -0.03; expansions for poissonRatio > -0.9, otherwise compressions
+//     below J = 2/5 * alpha.
+// About a quarter of the lanes are at or near rest, and none may count as indefinite: F = I or a
+// rotation, on the twist and flip threshold, or, in odd batches, F = s * I instead of I, with s
+// placing its margin at 12 eps * jmaCondition, 3/4 of the largest margin Correct exempts, unless
+// Correct's cap binds, where s = 1. Fast drops the d^2J term in exactly the lanes the oracle counts
+// as indefinite.
 template <int kBS>
-static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, real poissonRatio) {
+static void VerifySmithNeoHookeanCorrectOracleNearPsdBoundary(
+    real youngsModulus,
+    real poissonRatio) {
   SmithNeoHookeanMaterialParams params;
   params.youngsModulus = youngsModulus;
   params.poissonRatio = poissonRatio;
@@ -329,10 +333,37 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, 
   double const alpha = 1.0 + 0.75 * muHat / lambdaHat;
   double const eps = std::numeric_limits<real>::epsilon();
   double const jmaCondition = (alpha + 1.0) / (alpha - 1.0);
-  double const minMargin = 512.0 * eps * 3.0 / 17.0 * jmaCondition;
+  bool const expansion = poissonRatio > -0.9_r;
   // F = s * I has the margin (1 - s) * (6 / (alpha - 1) - 1) to first order.
   double const restMargin = 16.0 * jmaCondition < 8192.0 ? 12.0 * eps * jmaCondition : 0.0;
   real const restScale = static_cast<real>(1.0 - restMargin / (6.0 / (alpha - 1.0) - 1.0));
+
+  // The smallest twist and flip eigenvalue and the smallest scaling block eigenvalue, over muHatK,
+  // at sigma = t * (1, 1, beta) with t > 0 and 0 < beta <= 1. The scaling block has the eigenvector
+  // (1, -1, 0); its other eigenvalues are those of its restriction to (1, 1, 0) / sqrt(2) and
+  // (0, 0, 1).
+  struct MinEigenvalues {
+    double twistFlip;
+    double scaling;
+  };
+  auto const minEigenvalues = [&](double t, double beta) {
+    double const t3 = t * beta;
+    double const J = t * t * t3;
+    double const Ic = 2.0 * t * t + t3 * t3;
+    double const muHatK = muHat * Ic / (Ic + 1.0);
+    double const c3 = 2.0 * muHat / Sqr(Ic + 1.0);
+    double const J2alphaLambda = (2.0 * J - alpha) * lambdaHat;
+    double const a11 = muHatK + c3 * t * t + lambdaHat * Sqr(t * t3);
+    double const a12 = c3 * t * t + J2alphaLambda * t3;
+    double const a13 = c3 * t * t3 + J2alphaLambda * t;
+    double const a33 = muHatK + c3 * t3 * t3 + lambdaHat * Sqr(t * t);
+    double const p = a11 + a12;
+    return MinEigenvalues{
+        .twistFlip = 1.0 - lambdaHat * Abs(J - alpha) * t / muHatK,
+        .scaling = Min(a11 - a12, 0.5 * (p + a33) - std::hypot(0.5 * (p - a33), Sqrt(2.0) * a13)) /
+            muHatK};
+  };
+
   auto generator = RandomGenerator(42);
   for (int batch = 0; batch < 64; ++batch) {
     std::array<Matrix3x3r, kBS> Fs{};
@@ -344,25 +375,64 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, 
             : ToNdArray3x3(ToSimdMatrix(GetRandomRotationMatrix(generator)));
         continue;
       }
-      // sigma = t (1, 1 - eta, beta), with t bisected for the target margin, which falls from +inf
-      // at t = 0 to -1 at J = alpha.
-      double const eta = std::pow(10.0, RandomUniformValue(generator, -7.0, -2.0));
-      double const beta = RandomUniformValue(generator, 0.3, 0.7);
       indefinite[lane] = RandomUniformValue(generator, 0, 1) == 1;
-      double const target = (indefinite[lane] ? minMargin : -minMargin) *
-          std::pow(1.0 / (512.0 * std::sqrt(eps)), RandomUniformValue(generator, 0.0, 1.0));
-      auto const margin = [&](double t) {
-        double const J = t * t * t * (1.0 - eta) * beta;
-        double const Ic = t * t * (1.0 + (1.0 - eta) * (1.0 - eta) + beta * beta);
-        return Sqr(lambdaHat * (J - alpha) * t * (Ic + 1.0) / (muHat * Ic)) - 1.0;
-      };
-      double hi = std::cbrt(alpha / ((1.0 - eta) * beta));
-      double lo = 1e-3 * hi;
-      for (int i = 0; i < 100; ++i) {
-        double const mid = 0.5 * (lo + hi);
-        (margin(mid) > target ? lo : hi) = mid;
+      double const margin =
+          512.0 * eps * Pow(1.0 / (512.0 * Sqrt(eps)), RandomUniformValue(generator, 0.0, 1.0));
+      std::array<double, 3> sigma{};
+      if (expansion && (batch * kBS + lane) % 2 == 0) {
+        // Bisect t for the target: twistFlipMargin tends to +inf as t -> 0 and is -1 at J = alpha.
+        double const eta = Pow(10.0, RandomUniformValue(generator, -7.0, -2.0));
+        double const beta = RandomUniformValue(generator, 0.3, 0.7);
+        double const target = (indefinite[lane] ? margin : -margin) * 3.0 / 17.0 * jmaCondition;
+        auto const twistFlipMargin = [&](double t) {
+          double const J = t * t * t * (1.0 - eta) * beta;
+          double const Ic = t * t * (1.0 + (1.0 - eta) * (1.0 - eta) + beta * beta);
+          return Sqr(lambdaHat * (J - alpha) * t * (Ic + 1.0) / (muHat * Ic)) - 1.0;
+        };
+
+        double hi = std::cbrt(alpha / ((1.0 - eta) * beta));
+        double lo = 1e-3 * hi;
+        for (int i = 0; i < 100; ++i) {
+          double const mid = 0.5 * (lo + hi);
+          (twistFlipMargin(mid) > target ? lo : hi) = mid;
+        }
+        sigma = {lo, lo * (1.0 - eta), lo * beta};
+      } else {
+        // Walk from J = alpha or 2/5 * alpha, where the scaling block is positive definite, to the
+        // first crossing of the target with twist and flip above 1e-3 * muHatK, clear of their
+        // threshold so that the lane tests the scaling block alone, then bisect. Expansions cross
+        // within a relative distance of about (alpha - 1) / alpha of J = alpha, hence the step.
+        double const target = (indefinite[lane] ? -margin : margin) * Max(1.0, jmaCondition / 16.0);
+        double const step = 1.0 + 1e-3 * (alpha - 1.0) / alpha;
+        bool found = false;
+
+        for (int attempt = 0; attempt < 100 && !found; ++attempt) {
+          double const beta = expansion ? RandomUniformValue(generator, 0.6, 0.95)
+                                        : RandomUniformValue(generator, 0.985, 1.0);
+          double t0 = std::cbrt((expansion ? alpha : 0.4 * alpha) / beta);
+          auto e0 = minEigenvalues(t0, beta);
+          for (int i = 0; i < 1000 && !found; ++i) {
+            double const t1 = expansion ? t0 * step : t0 / step;
+            auto const e1 = minEigenvalues(t1, beta);
+            if (e0.twistFlip > 1e-3 && e1.twistFlip > 1e-3 &&
+                (e0.scaling > target) != (e1.scaling > target)) {
+              double lo = t0;
+              double hi = t1;
+              for (int k = 0; k < 100; ++k) {
+                double const mid = 0.5 * (lo + hi);
+                double const scaling = minEigenvalues(mid, beta).scaling;
+                ((scaling > target) == (e0.scaling > target) ? lo : hi) = mid;
+              }
+              sigma = {lo, lo, lo * beta};
+              found = true;
+            }
+            t0 = t1;
+            e0 = e1;
+          }
+        }
+        ASSERT_TRUE(found);
       }
-      NdArray<double, 3> const sigma{lo, lo * (1.0 - eta), lo * beta};
+
       auto const U = GetRandomRotationMatrix(generator);
       auto const V = GetRandomRotationMatrix(generator);
       for (int i = 0; i < 3; ++i) {
@@ -386,7 +456,7 @@ static void VerifySmithNeoHookeanCorrectOracleNearThreshold(real youngsModulus, 
     BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
         batchedParams, batchedF, nullptr, nullptr, &kept, false);
     for (int lane = 0; lane < kBS; ++lane) {
-      // The alternatives differ by the d^2J term, only about 1% of the tangent at nu = 0.49.
+      // The alternatives differ only by the d^2J term, which can be much smaller than the tangent.
       auto const flat = [lane](NdArray<BatchReal3x3<kBS>, 3, 3> const& tangent) {
         Tensor3x3x3x3r const laneTangent = GetTangentLane(tangent, lane);
         return reinterpret_cast<NdArray<real, 81> const&>(laneTangent);
@@ -472,8 +542,8 @@ TEST(BatchedMaterials, SmithNeoHookean) {
 }
 
 // At the largest Poisson's ratio below 0.5, F = nextafter(1, 0) * I compresses enough to make the
-// twist eigenvalues about -3 * mu, far beyond rounding: the oracle must count every lane as
-// indefinite, so Fast drops the d^2J term.
+// twist eigenvalues a few times mu below zero: the oracle must count every lane as indefinite, so
+// Fast drops the d^2J term.
 template <int kBS>
 static void VerifySmithNeoHookeanCorrectOracleNearIncompressible() {
   SmithNeoHookeanMaterialParams params;
@@ -495,16 +565,16 @@ static void VerifySmithNeoHookeanCorrectOracleNearIncompressible() {
   }
 }
 
-// Checks the Smith neo-Hookean Correct oracle's decisions at rest and near its threshold, for
-// auxetic to nearly incompressible materials, so soft that their squared shear moduli are at most
-// the smallest normal number or so stiff that their fourth powers overflow float, and slightly
-// compressed at the largest Poisson's ratio below 0.5.
-TEST(BatchedMaterials, SmithNeoHookeanCorrectOracleNearThreshold) {
+// Checks the Smith neo-Hookean Correct oracle's decisions at rest and near the PSD boundary, for
+// strongly auxetic to nearly incompressible materials whose squared Young's moduli are the smallest
+// normal number or whose fourth powers overflow float, and slightly compressed at the largest
+// Poisson's ratio below 0.5.
+TEST(BatchedMaterials, SmithNeoHookeanCorrectOracleDecisions) {
   for (real const youngsModulus : {Sqrt(std::numeric_limits<real>::min()), 1e11_r}) {
-    for (real const poissonRatio : {-0.5_r, 0_r, 0.3_r, 0.45_r, 0.49_r, 0.499_r}) {
-      VerifySmithNeoHookeanCorrectOracleNearThreshold<1>(youngsModulus, poissonRatio);
-      VerifySmithNeoHookeanCorrectOracleNearThreshold<4>(youngsModulus, poissonRatio);
-      VerifySmithNeoHookeanCorrectOracleNearThreshold<8>(youngsModulus, poissonRatio);
+    for (real const poissonRatio : {-0.95_r, -0.5_r, 0_r, 0.3_r, 0.45_r, 0.49_r, 0.499_r}) {
+      VerifySmithNeoHookeanCorrectOracleNearPsdBoundary<1>(youngsModulus, poissonRatio);
+      VerifySmithNeoHookeanCorrectOracleNearPsdBoundary<4>(youngsModulus, poissonRatio);
+      VerifySmithNeoHookeanCorrectOracleNearPsdBoundary<8>(youngsModulus, poissonRatio);
     }
   }
   VerifySmithNeoHookeanCorrectOracleNearIncompressible<1>();
