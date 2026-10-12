@@ -156,6 +156,29 @@ bool LinkNameCombo(
   return changed;
 }
 
+// Picks one of @p names into @p value, which is shown even when it is not one of them.
+bool NameCombo(
+    char const* label,
+    std::vector<std::string> const& names,
+    std::string_view preview,
+    mochi::DynamicString& value) {
+  bool changed = false;
+  if (ImGui::BeginCombo(label, std::string(preview).c_str())) {
+    for (auto const& name : names) {
+      bool const selected = preview == name;
+      if (ImGui::Selectable(name.c_str(), selected)) {
+        value = mochi::DynamicString{name};
+        changed = true;
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  return changed;
+}
+
 // Why @p target cannot be stored in @p sceneFile, or empty if it can. Scenes store references only
 // as descendants of their folder, `//` paths under their .superdex_root, or `@tag` paths, so a file
 // under another root needs a tag in the scene's root.
@@ -931,6 +954,12 @@ std::string BotSceneEditor::TakeUndoSnapshot() const {
   picojson::object snapshot;
   snapshot["scene"] = picojson::value(SReflect::ToJsonString(_sceneAsset->GetPrefab(), false));
   snapshot["params"] = picojson::value(params);
+  picojson::object tasks;
+  for (auto const& [path, json] : _sceneAsset->GetTaskCache().CaptureValues()) {
+    tasks[path] = picojson::value(json);
+  }
+  snapshot["tasks"] = picojson::value(tasks);
+  snapshot["task"] = picojson::value(_taskPath.ToString());
   return picojson::value(snapshot).serialize();
 }
 
@@ -955,6 +984,25 @@ void BotSceneEditor::RestoreUndoSnapshot(std::string const& json, int /*selectio
   }
   _sceneAsset->GetControllerParams().RestoreValues(params);
 
+  std::map<std::string, std::string> tasks;
+  if (auto const tasksField = fields.find("tasks");
+      tasksField != fields.end() && tasksField->second.is<picojson::object>()) {
+    for (auto const& [path, value] : tasksField->second.get<picojson::object>()) {
+      if (value.is<std::string>()) {
+        tasks.emplace(path, value.get<std::string>());
+      }
+    }
+  }
+  _sceneAsset->GetTaskCache().RestoreValues(tasks);
+  if (auto const taskField = fields.find("task");
+      _taskPrefab.has_value() && taskField != fields.end() && taskField->second.is<std::string>()) {
+    std::string const& path = taskField->second.get<std::string>();
+    if (_sceneAsset->GetTaskCache().Find(path) != nullptr) {
+      _taskPath = mochi::Path{path};
+    }
+  }
+  SyncTaskFromCache();
+
   // Reset to defaults before deserializing — NoSerializeDefaults omits default-valued fields from
   // the JSON, so without a reset those fields would retain the current (edited) values instead of
   // reverting to defaults.
@@ -968,7 +1016,9 @@ void BotSceneEditor::RestoreUndoSnapshot(std::string const& json, int /*selectio
   _studio->GetAssetManager().ResyncReferencer(_sceneAsset);
   RestageBotScene();
 
-  _sceneAsset->SetDirty(!GetUndoStack().IsAtSavedState());
+  // Save Task can leave the undo stack's saved state out of step with the task files.
+  _sceneAsset->SetDirty(
+      !GetUndoStack().IsAtSavedState() || _sceneAsset->GetTaskCache().AnyModified());
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -998,6 +1048,7 @@ bool BotSceneEditor::BindTaskSpawns(
     std::vector<ResolvedTaskSpawn>& spawns,
     std::string& error) {
   if (!ResolveTaskSpawns(task, _sceneAsset->GetPrefab(), spawns, error)) {
+    spawns.clear();
     return false;
   }
   // SceneStage only finds already-loaded assets.
@@ -1031,31 +1082,20 @@ bool BotSceneEditor::OpenTask(mochi::Path const& path) {
 }
 
 bool BotSceneEditor::LoadTask(mochi::Path const& path) {
-  mochi::Error error;
-  auto task = superdex::robotics::LoadBotTaskPrefabFromFile(path.ToString(), error);
-  if (!error.IsOK()) {
-    MOCHI_LOG_ERROR(
-        "Failed to load bot task '%s': %s", path.ToString().c_str(), error.GetDescription());
-    _taskLoadError = "Failed to load '" + path.ToString() + "': " + error.GetDescription();
+  std::string error;
+  auto const* entry = _sceneAsset->GetTaskCache().GetOrLoad(path.ToString(), error);
+  if (entry == nullptr) {
+    MOCHI_LOG_ERROR("Failed to load bot task '%s': %s", path.ToString().c_str(), error.c_str());
+    _taskLoadError = "Failed to load '" + path.ToString() + "': " + error;
     return false;
   }
-
-  std::vector<ResolvedTaskSpawn> spawns;
-  std::string bindError;
-  if (!BindTaskSpawns(task, spawns, bindError)) {
-    MOCHI_LOG_ERROR(
-        "Failed to bind bot task '%s' to the current scene: %s",
-        path.ToString().c_str(),
-        bindError.c_str());
-    _taskLoadError = "Failed to bind '" + path.ToString() + "' to this scene: " + bindError;
-    return false;
-  }
-
   _taskLoadError.clear();
+  _taskSaveError.clear();
   _taskPath = path;
-  _taskPrefab = std::move(task);
-  _taskSpawns = std::move(spawns);
+  _taskPrefab.emplace();
+  SReflect::FromJsonString(*_taskPrefab, entry->json);
   _showCurrentTaskTransforms = false;
+  // A task that does not bind to this scene still loads, so it can be edited until it does.
   RestageBotScene();
   _viewport->FocusCameraOnScene();
   return true;
@@ -1067,8 +1107,64 @@ void BotSceneEditor::ClearTask() {
   _taskSpawns.clear();
   _taskBindError.clear();
   _taskLoadError.clear();
+  _taskSaveError.clear();
   _showCurrentTaskTransforms = false;
   RestageBotScene();
+}
+
+void BotSceneEditor::SyncTaskFromCache() {
+  if (!_taskPrefab.has_value()) {
+    return;
+  }
+  if (auto const* entry = _sceneAsset->GetTaskCache().Find(_taskPath.ToString())) {
+    _taskPrefab.emplace();
+    SReflect::FromJsonString(*_taskPrefab, entry->json);
+  }
+}
+
+void BotSceneEditor::SaveTaskAs() {
+  std::string const extension{superdex::robotics::kBotTaskExtension};
+  std::array<char const*, 1> const filters{{"*.mochi_bot_task"}};
+  int const numFilters = MOCHI_PLATFORM_MACOS ? 0 : static_cast<int>(filters.size());
+  mochi::Path selected = SuperDexStudio::GetFileDialogPath(
+      "Save Bot Task As",
+      filters.data(),
+      numFilters,
+      "Mochi Bot Task (*.mochi_bot_task)",
+      true,
+      _taskPath.GetParentPath() / (GetAssetNameFromPath(_taskPath) + "_copy" + extension));
+  if (selected.IsEmpty()) {
+    return;
+  }
+  if (!selected.GetFilename().ends_with(extension)) {
+    selected = mochi::Path{selected.ToString() + extension};
+  }
+  _taskSaveError.clear();
+  if (!_sceneAsset->GetTaskCache().SaveAs(
+          _taskPath.ToString(), selected.ToString(), _taskSaveError)) {
+    MOCHI_LOG_ERROR("%s", _taskSaveError.c_str());
+    return;
+  }
+  _taskPath = selected;
+  _studio->GetAssetBrowser().Refresh();
+  // Undo snapshots record the loaded task, so undoing this switches back to the original.
+  GetUndoStack().PushNow();
+}
+
+void BotSceneEditor::OnTaskEdited(bool structural) {
+  if (!_taskPrefab.has_value()) {
+    return;
+  }
+  if (auto* entry = _sceneAsset->GetTaskCache().Find(_taskPath.ToString())) {
+    entry->json = SReflect::ToJsonString(*_taskPrefab, true);
+  }
+  RestageBotScene();
+  _sceneAsset->SetDirty(true);
+  if (structural) {
+    GetUndoStack().PushNow();
+  } else {
+    GetUndoStack().MarkEdited();
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -1362,13 +1458,28 @@ void BotSceneEditor::ShowTaskWindow(bool* open) {
     if (ImGui::Button("Clear Task")) {
       ClearTask();
     }
+    auto const* entry = _sceneAsset->GetTaskCache().Find(_taskPath.ToString());
+    ImGui::SameLine();
+    ImGui::BeginDisabled(entry == nullptr || !BotTaskCache::IsModified(*entry));
+    if (ImGui::Button("Save Task")) {
+      _taskSaveError.clear();
+      if (!_sceneAsset->GetTaskCache().Save(_taskPath.ToString(), _taskSaveError)) {
+        MOCHI_LOG_ERROR("%s", _taskSaveError.c_str());
+      }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Save Task As...")) {
+      SaveTaskAs();
+    }
   }
   ImGui::EndDisabled();
 
   if (!_taskLoadError.empty()) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
-    ImGui::TextWrapped("%s %s", ICON_FA_EXCLAMATION_TRIANGLE, _taskLoadError.c_str());
-    ImGui::PopStyleColor();
+    ShowWarning(_taskLoadError);
+  }
+  if (!_taskSaveError.empty()) {
+    ShowWarning(_taskSaveError);
   }
 
   if (!_taskPrefab.has_value()) {
@@ -1377,11 +1488,16 @@ void BotSceneEditor::ShowTaskWindow(bool* open) {
     return;
   }
 
-  ImGui::TextDisabled("%s", _taskPath.ToString().c_str());
-  if (!_taskPrefab->metadata.name.empty()) {
-    ImGui::TextUnformatted(_taskPrefab->metadata.name.c_str());
-  }
+  auto const* entry = _sceneAsset->GetTaskCache().Find(_taskPath.ToString());
+  bool const modified = entry != nullptr && BotTaskCache::IsModified(*entry);
+  ImGui::TextDisabled("%s%s", _taskPath.ToString().c_str(), modified ? " *" : "");
   ImGui::Separator();
+
+  if (!simulating) {
+    ShowTaskEditor();
+    ImGui::End();
+    return;
+  }
 
   if (!_taskBindError.empty()) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
@@ -1392,16 +1508,14 @@ void BotSceneEditor::ShowTaskWindow(bool* open) {
     return;
   }
 
-  bool const currentSelected = simulating && _showCurrentTaskTransforms;
+  bool const currentSelected = _showCurrentTaskTransforms;
   if (ImGui::RadioButton("Initial", !currentSelected)) {
     _showCurrentTaskTransforms = false;
   }
   ImGui::SameLine();
-  ImGui::BeginDisabled(!simulating);
   if (ImGui::RadioButton("Current", currentSelected)) {
     _showCurrentTaskTransforms = true;
   }
-  ImGui::EndDisabled();
 
   auto const& current = _simData.GetConsumerData().taskTransforms;
   bool const showCurrent = currentSelected && current.size() == _taskSpawns.size();
@@ -1445,6 +1559,158 @@ void BotSceneEditor::ShowTaskWindow(bool* open) {
   }
 
   ImGui::End();
+}
+
+void BotSceneEditor::ShowTaskEditor() {
+  if (!_taskPrefab.has_value()) {
+    return;
+  }
+  auto& task = *_taskPrefab;
+  auto& spawns = task.spawns;
+  bool changed = false;
+  bool structural = false;
+  ImGui::BeginDisabled(_sceneAsset->IsReadOnly());
+
+  if (ImGui::CollapsingHeader("Metadata")) {
+    changed |= ImGui::SimpleReflectionStruct(task.metadata);
+  }
+
+  mochi::Error validation;
+  superdex::robotics::ValidateBotTaskPrefab(task, validation);
+  if (!validation.IsOK()) {
+    ShowWarning(validation.GetDescription());
+  } else if (!_taskBindError.empty()) {
+    ShowWarning("Task objects are hidden: " + _taskBindError);
+  }
+
+  std::vector<std::string> prefabNames;
+  for (auto const& prefab : _sceneAsset->GetPrefab().scene.spawnablePrefabs) {
+    prefabNames.emplace_back(prefab.name);
+  }
+
+  ImGui::HoverableSeparatorText("Spawns");
+  int spawnToDelete = -1;
+  int spawnToMoveUp = -1;
+  int spawnToMoveDown = -1;
+  ImGui::PushID("Spawns");
+  for (int i = 0; i < mochi::isize(spawns); ++i) {
+    auto& spawn = spawns[i];
+    ImGui::PushID(i);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1, 0));
+    if (ImGui::Button(ICON_FA_TRASH)) {
+      spawnToDelete = i;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(i == 0);
+    if (ImGui::Button(ICON_FA_CARET_UP)) {
+      spawnToMoveUp = i;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(i == mochi::isize(spawns) - 1);
+    if (ImGui::Button(ICON_FA_CARET_DOWN)) {
+      spawnToMoveDown = i;
+    }
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+    ImGui::SameLine();
+    std::string const label =
+        (spawn.name.empty() ? std::string("(unnamed)") : std::string(spawn.name)) + " (" +
+        std::string(spawn.prefabName) + ")###spawn";
+    if (ImGui::CollapsingHeader(label.c_str())) {
+      std::string const oldName{spawn.name};
+      bool renamed = ImGui::InputText("Name", &spawn.name);
+      // Children are found when editing starts, so a name that is briefly empty or taken while
+      // typing neither drops nor adopts any. An empty parent means task_root, so a spawn that had
+      // no name had no children.
+      if (ImGui::IsItemActivated()) {
+        _spawnRename = {.name = oldName, .children = {}};
+        for (int j = 0; j < mochi::isize(spawns); ++j) {
+          if (!oldName.empty() && std::string_view(spawns[j].parent) == oldName) {
+            _spawnRename.children.push_back(j);
+          }
+        }
+      }
+      // A name left empty or taken reverts, since spawns are parented by name.
+      if (ImGui::IsItemDeactivatedAfterEdit() &&
+          (spawn.name.empty() || std::ranges::any_of(spawns, [&](auto const& other) {
+             return &other != &spawn &&
+                 std::string_view(other.name) == std::string_view(spawn.name);
+           }))) {
+        spawn.name = mochi::DynamicString{_spawnRename.name};
+        renamed = true;
+      }
+      if (renamed) {
+        for (int const child : _spawnRename.children) {
+          if (child < mochi::isize(spawns)) {
+            spawns[child].parent = spawn.name;
+          }
+        }
+        changed = true;
+      }
+      changed |= NameCombo("Prefab", prefabNames, spawn.prefabName, spawn.prefabName);
+      std::vector<std::string> parentNames{std::string(superdex::robotics::kTaskRootParentName)};
+      for (auto const& other : spawns) {
+        if (&other != &spawn) {
+          parentNames.emplace_back(other.name);
+        }
+      }
+      std::string_view const parent = spawn.parent.empty() ? superdex::robotics::kTaskRootParentName
+                                                           : std::string_view(spawn.parent);
+      if (NameCombo("Parent", parentNames, parent, spawn.parent)) {
+        if (std::string_view(spawn.parent) == superdex::robotics::kTaskRootParentName) {
+          spawn.parent.clear();
+        }
+        changed = true;
+      }
+      changed |= ImGui::InputText("Randomization Class", &spawn.domainRandomizationClass);
+      changed |= ImGui::DragTransformRT("Spawn Transform", spawn.parentFromSpawn);
+    }
+    ImGui::PopID();
+  }
+  ImGui::PopID(); // Spawns
+  if (spawnToMoveUp > 0) {
+    std::swap(spawns[spawnToMoveUp], spawns[spawnToMoveUp - 1]);
+    structural = true;
+  }
+  if (spawnToMoveDown >= 0 && spawnToMoveDown < mochi::isize(spawns) - 1) {
+    std::swap(spawns[spawnToMoveDown], spawns[spawnToMoveDown + 1]);
+    structural = true;
+  }
+  if (spawnToDelete >= 0) {
+    // Reparent the deleted spawn's children to its parent, keeping where they are placed.
+    auto const deleted = spawns[spawnToDelete];
+    for (auto& other : spawns) {
+      if (std::string_view(other.parent) == std::string_view(deleted.name)) {
+        other.parent = deleted.parent;
+        other.parentFromSpawn = deleted.parentFromSpawn * other.parentFromSpawn;
+      }
+    }
+    spawns.erase(spawns.begin() + spawnToDelete);
+    structural = true;
+  }
+  if (ImGui::Button(ICON_FA_PLUS "###AddSpawn")) {
+    std::set<std::string> existingNames;
+    for (auto const& spawn : spawns) {
+      existingNames.insert(std::string(spawn.name));
+    }
+    superdex::robotics::SpawnEntry newSpawn;
+    newSpawn.prefabName =
+        prefabNames.empty() ? mochi::DynamicString{} : mochi::DynamicString{prefabNames.front()};
+    newSpawn.name = mochi::DynamicString{MakeUniqueName("TaskObject", existingNames)};
+    spawns.push_back(std::move(newSpawn));
+    structural = true;
+  }
+  ImGui::SameLine();
+  ImGui::TextUnformatted("Add Spawn");
+  if (prefabNames.empty()) {
+    ImGui::TextDisabled("Add spawnable prefabs to the scene to place them in tasks.");
+  }
+
+  ImGui::EndDisabled();
+  if (changed || structural) {
+    OnTaskEdited(structural);
+  }
 }
 
 void BotSceneEditor::ShowInfoWindow(bool* open) {

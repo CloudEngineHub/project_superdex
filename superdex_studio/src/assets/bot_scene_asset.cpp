@@ -459,6 +459,10 @@ bool BotSceneAsset::Save() {
   if (!SaveControllerParams((_isArchive ? _archiveTargetPath : _path).GetParentPath())) {
     return false;
   }
+  if (std::string error; !_taskCache.SaveModified(error)) {
+    MOCHI_LOG_ERROR("%s", error.c_str());
+    return false;
+  }
   if (_isArchive) {
     return SaveArchiveCopy(_path);
   }
@@ -554,6 +558,10 @@ superdex::robotics::BotScenePrefab& BotSceneAsset::GetPrefab() {
 
 ControllerParamsCache& BotSceneAsset::GetControllerParams() {
   return _controllerParams;
+}
+
+BotTaskCache& BotSceneAsset::GetTaskCache() {
+  return _taskCache;
 }
 
 std::string const& BotSceneAsset::GetBotsRootPath() const {

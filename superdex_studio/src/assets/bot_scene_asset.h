@@ -20,6 +20,7 @@
 
 #include "assets/asset.h"
 #include "assets/asset_referencer.h"
+#include "assets/bot_task_cache.h"
 #include "assets/controller_params.h"
 
 #include <superdex_robotics/internal/bot_scene.h>
@@ -54,6 +55,8 @@ class BotSceneAsset : public Asset, public IAssetReferencer {
   superdex::robotics::BotScenePrefab& GetPrefab();
   // Params of controllers that reference .superdex_controller files, written by Save.
   ControllerParamsCache& GetControllerParams();
+  // Tasks edited in this scene's editor, written by Save.
+  BotTaskCache& GetTaskCache();
   std::string const& GetBotsRootPath() const;
   [[nodiscard]] bool IsArchive() const;
   [[nodiscard]] bool SaveArchiveCopy(mochi::Path const& path) const;
@@ -71,6 +74,7 @@ class BotSceneAsset : public Asset, public IAssetReferencer {
  private:
   superdex::robotics::BotScenePrefab _prefab;
   ControllerParamsCache _controllerParams;
+  BotTaskCache _taskCache;
   std::string _botsRootPath;
   mochi::Path _archiveExtractedDir;
   mochi::Path _archiveTargetPath;

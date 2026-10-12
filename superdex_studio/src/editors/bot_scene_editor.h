@@ -90,6 +90,13 @@ class BotSceneEditor : public AssetEditor {
       std::string& error);
   bool LoadTask(mochi::Path const& path);
   void ClearTask();
+  // Re-reads the loaded task from the scene's task cache, whose values undo restores.
+  void SyncTaskFromCache();
+  // Writes the edited task to the cache and restages, marks dirty and records undo like a scene
+  // edit. Structural edits (add/remove/reorder) get their own undo entry.
+  void OnTaskEdited(bool structural);
+  // Asks for a new file, copies the task there with its unsaved edits, and switches to the copy.
+  void SaveTaskAs();
 
   //------------------------------------------------------------------------------------------------
   // Mochi Scene
@@ -112,6 +119,8 @@ class BotSceneEditor : public AssetEditor {
 
   void ShowInfoWindow(bool* open);
   void ShowTaskWindow(bool* open);
+  // The editable spawn list, shown while not simulating.
+  void ShowTaskEditor();
 
  private:
   // target asset
@@ -153,7 +162,16 @@ class BotSceneEditor : public AssetEditor {
   std::string _taskBindError;
   // Why the most recent Load/Replace Task attempt failed; the previous task, if any, stays loaded.
   std::string _taskLoadError;
+  // Why the most recent Save Task failed.
+  std::string _taskSaveError;
   bool _showCurrentTaskTransforms = false;
+  // The spawn whose Name field is being edited: its name and the indices of its children when
+  // editing started.
+  struct SpawnRename {
+    std::string name;
+    std::vector<int> children;
+  };
+  SpawnRename _spawnRename;
   // Set by OpenTask: brings the Task Preview tab forward the next time it is drawn.
   bool _focusTaskWindow = false;
 };
