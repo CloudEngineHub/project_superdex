@@ -147,7 +147,7 @@ class RecorderTest(unittest.TestCase):
                 episode = self.make_recorder(directory).begin_episode()
                 physics = recorder.PhysicsRecorder(episode, scene)
                 physics.record(0, 0.0)
-                scene.step(0.01)
+                scene.step(0.02)
                 physics.record(1, scene.get_total_simulation_time())
                 episode.commit()
 
@@ -175,5 +175,56 @@ class RecorderTest(unittest.TestCase):
                         if sample.entity_path == actor_path
                     ]
                     self.assertEqual(sample_frames, [0] if is_static else [0, 1])
+                com_translations = recording.component_samples(
+                    "superdex.physics.com_translation_xyz"
+                )
+                self.assertEqual(
+                    {sample.entity_path for sample in com_translations},
+                    {
+                        path
+                        for path, is_static in static_by_path.items()
+                        if not is_static
+                    },
+                )
+                self.assertEqual(
+                    com_translations[-1].value,
+                    dynamic_actor.get_center_of_mass_transform().translation.tolist(),
+                )
+                param_names = recording.read_static_value(
+                    "superdex.physics.contact_param_names"
+                )
+                contact_params = {
+                    sample.entity_path: sample.value
+                    for sample in recording.component_samples(
+                        "superdex.physics.contact_params"
+                    )
+                }
+                self.assertEqual(contact_params.keys(), static_by_path.keys())
+                for actor_path, is_static in static_by_path.items():
+                    actor = static_actor if is_static else dynamic_actor
+                    assert actor is not None
+                    live = actor.get_contact_params()
+                    self.assertEqual(
+                        contact_params[actor_path],
+                        [float(getattr(live, name)) for name in param_names],
+                    )
+                densities = recording.component_samples("superdex.physics.density")
+                masses = recording.component_samples("superdex.physics.mass")
+                assert dynamic_actor is not None
+                self.assertEqual(
+                    [sample.value for sample in densities],
+                    [[dynamic_actor.get_density()]],
+                )
+                self.assertEqual(
+                    [sample.value for sample in masses], [[dynamic_actor.get_mass()]]
+                )
+                step_durations = recording.component_samples(
+                    "superdex.physics.step_dt_sec"
+                )
+                self.assertEqual(
+                    [sample.timelines["frame"] for sample in step_durations], [0, 1]
+                )
+                self.assertAlmostEqual(step_durations[0].value[0], 0.01)
+                self.assertAlmostEqual(step_durations[1].value[0], 0.02)
             finally:
                 sdp.shutdown()
