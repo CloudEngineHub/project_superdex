@@ -239,6 +239,77 @@ class RecorderTest(unittest.TestCase):
             finally:
                 sdp.shutdown()
 
+    def test_task_bodies_are_recorded_under_spawn_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            directory = Path(directory_string)
+            sdp.initialize(num_worker_threads=0)
+            scene = None
+            physics = None
+            try:
+                scene = sdp.create_scene("spawn names")
+                actors = {}
+                for name in ("square", "left", "right", "floor", "a/b", "a.b"):
+                    actor = scene.create_rigid_actor(
+                        name=name,
+                        shape=sdp.create_plane_shape(normal=[0, 0, 1], distance=0),
+                        is_static=True,
+                    )
+                    assert actor is not None
+                    actors[name] = actor
+                config = recorder.PhysicsRecorderConfig()
+                config.spawn_names = [
+                    (actors["square"].get_handle(), "Square"),
+                    (actors["left"].get_handle(), "Pair"),
+                    (actors["right"].get_handle(), "Pair"),
+                ]
+                episode = self.make_recorder(directory).begin_episode()
+                physics = recorder.PhysicsRecorder(episode, scene, config)
+                physics.record(0, 0.0)
+                episode.commit()
+
+                recording = EpisodeReader(episode.output_path)
+                ids = {
+                    sample.entity_path: sample.value[0]
+                    for sample in recording.component_samples(
+                        "superdex.physics.actor_id"
+                    )
+                }
+                self.assertCountEqual(
+                    ids.values(),
+                    ["Square", "Pair.left", "Pair.right", "floor", "a.b", "a.b_1"],
+                )
+                self.assertEqual(
+                    {
+                        ids[sample.entity_path]: sample.value[0]
+                        for sample in recording.component_samples(
+                            "superdex.physics.spawn_name"
+                        )
+                    },
+                    {"Square": "Square", "Pair.left": "Pair", "Pair.right": "Pair"},
+                )
+                self.assertCountEqual(
+                    [
+                        sample.value[0]
+                        for sample in recording.component_samples(
+                            "superdex.physics.runtime_name"
+                        )
+                        if ids[sample.entity_path].startswith("a.b")
+                    ],
+                    ["a/b", "a.b"],
+                )
+
+                config.spawn_names = [(actors["floor"].get_handle(), "")]
+                with self.assertRaisesRegex(sdp.Error, "Spawn names must not be empty"):
+                    recorder.PhysicsRecorder(
+                        self.make_recorder(directory).begin_episode(), scene, config
+                    )
+            finally:
+                physics = None
+                gc.collect()
+                if scene is not None:
+                    sdp.destroy_scene(scene)
+                sdp.shutdown()
+
     def test_reader_returns_only_requested_frames(self) -> None:
         with tempfile.TemporaryDirectory() as directory_string:
             sdp.initialize(num_worker_threads=0)
