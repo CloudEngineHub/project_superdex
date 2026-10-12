@@ -96,6 +96,10 @@ if (SUPERDEX_BUILD_ROBOTICS)
     add_subdirectory(superdex_robotics)
 endif ()
 
+if (SUPERDEX_BUILD_RECORDER)
+    add_subdirectory(superdex_recorder)
+endif ()
+
 if (SUPERDEX_BUILD_STUDIO)
     add_subdirectory(superdex_studio)
 endif ()

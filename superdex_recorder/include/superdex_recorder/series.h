@@ -1,0 +1,112 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <mochi_core/utils/error.h>
+#include <mochi_core/utils/span.h>
+#include <mochi_core/utils/transform_rt.h>
+
+#include <rerun.hpp>
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace superdex::recorder {
+
+struct SampleTime {
+  uint64_t frame;
+  double simulationTimeSec;
+};
+
+/* @brief Identifies one Rerun component column and its archetype. */
+struct ComponentField {
+  std::string archetype;
+  std::string component;
+};
+
+/* @brief A timestamped set of columns buffered until its episode commits. */
+class Series {
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(Series)
+
+ public:
+  virtual ~Series();
+
+  [[nodiscard]] size_t GetNumSamples() const;
+
+ protected:
+  explicit Series(std::string_view entityPath);
+
+  void AppendTime(SampleTime time, mochi::Error& error);
+
+ private:
+  friend class Episode;
+
+  void Flush(rerun::RecordingStream& recording, mochi::Error& error);
+  virtual void BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) = 0;
+
+  std::string _entityPath;
+  std::vector<int64_t> _frames;
+  std::vector<double> _simulationTimesSec;
+  bool _sealed = false; // Rejects appends once its episode commits or is discarded.
+};
+
+/* @brief Stores one or more variable-length scalar fields per sample. */
+class ScalarSeries final : public Series {
+ private:
+  struct Column {
+    ComponentField field;
+    std::vector<uint32_t> lengths;
+    std::vector<rerun::components::Scalar> values;
+  };
+
+ public:
+  ScalarSeries(std::string_view entityPath, std::vector<ComponentField> fields);
+
+  void Append(
+      SampleTime time,
+      mochi::Span<mochi::Span<mochi::real const> const> values,
+      mochi::Error& error);
+
+ private:
+  void BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) override;
+
+  std::vector<Column> _columns;
+};
+
+/* @brief Stores one translation and quaternion per sample. */
+class TransformSeries final : public Series {
+ public:
+  explicit TransformSeries(std::string_view entityPath);
+
+  void Append(
+      SampleTime time,
+      std::array<mochi::real, 3> const& translation,
+      std::array<mochi::real, 4> const& quaternionXyzw,
+      mochi::Error& error);
+  void Append(SampleTime time, mochi::TransformRT const& transform, mochi::Error& error);
+
+ private:
+  void BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) override;
+
+  std::vector<rerun::components::Translation3D> _translations;
+  std::vector<rerun::components::RotationQuat> _rotations;
+};
+
+} // namespace superdex::recorder

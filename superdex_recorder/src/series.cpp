@@ -1,0 +1,209 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <superdex_recorder/series.h>
+
+#include <mochi_core/utils/log.h>
+
+#include <cmath>
+#include <limits>
+#include <utility>
+
+namespace superdex::recorder {
+namespace {
+
+constexpr std::string_view kFrameTimeline = "frame";
+constexpr std::string_view kSimulationTimeTimeline = "sim_time";
+
+void SetRerunError(rerun::Error const& rerunError, mochi::Error& error, char const* description) {
+  if (rerunError.is_ok()) {
+    return;
+  }
+  MOCHI_LOG_ERROR("%s: %s", description, rerunError.description.c_str());
+  error.SetFirstError(description, __FILE__, __LINE__);
+}
+
+} // namespace
+
+Series::Series(std::string_view entityPath) : _entityPath{entityPath} {}
+
+Series::~Series() = default;
+
+size_t Series::GetNumSamples() const {
+  return _frames.size();
+}
+
+void Series::AppendTime(SampleTime time, mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(_sealed, error, "Cannot append to a committed or aborted series.");
+  MOCHI_ERROR_IF(
+      time.frame > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      error,
+      "Series frame exceeds the supported range.");
+  MOCHI_ERROR_IF_NOT(
+      std::isfinite(time.simulationTimeSec) && time.simulationTimeSec >= 0.0,
+      error,
+      "Series time must be finite and non-negative.");
+  if (!_frames.empty()) {
+    MOCHI_ERROR_IF_NOT(
+        time.frame > static_cast<uint64_t>(_frames.back()), error, "Series frames must increase.");
+    MOCHI_ERROR_IF_NOT(
+        time.simulationTimeSec >= _simulationTimesSec.back(),
+        error,
+        "Series time must not decrease.");
+  }
+  MOCHI_ERROR_RETURN(error);
+  _frames.push_back(static_cast<int64_t>(time.frame));
+  _simulationTimesSec.push_back(time.simulationTimeSec);
+}
+
+void Series::Flush(rerun::RecordingStream& recording, mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  _sealed = true;
+  if (_frames.empty()) {
+    return;
+  }
+
+  std::vector<rerun::ComponentColumn> componentColumns;
+  BuildColumns(componentColumns, error);
+  MOCHI_ERROR_RETURN(error);
+
+  std::vector<rerun::TimeColumn> timeColumns;
+  timeColumns.reserve(2);
+  timeColumns.emplace_back(
+      rerun::TimeColumn::from_sequence(
+          std::string{kFrameTimeline}, std::move(_frames), rerun::SortingStatus::Sorted));
+  timeColumns.emplace_back(
+      rerun::TimeColumn::from_duration_secs(
+          std::string{kSimulationTimeTimeline},
+          std::move(_simulationTimesSec),
+          rerun::SortingStatus::Sorted));
+  SetRerunError(
+      recording.try_send_columns(
+          _entityPath,
+          rerun::Collection<rerun::TimeColumn>::take_ownership(std::move(timeColumns)),
+          rerun::Collection<rerun::ComponentColumn>::take_ownership(std::move(componentColumns))),
+      error,
+      "Failed to write sampled series.");
+}
+
+ScalarSeries::ScalarSeries(std::string_view entityPath, std::vector<ComponentField> fields)
+    : Series{entityPath} {
+  _columns.reserve(fields.size());
+  for (auto& field : fields) {
+    _columns.push_back({.field = std::move(field)});
+  }
+}
+
+void ScalarSeries::Append(
+    SampleTime time,
+    mochi::Span<mochi::Span<mochi::real const> const> values,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(values.size() != _columns.size(), error, "Scalar series field count changed.");
+  for (auto const& value : values) {
+    MOCHI_ERROR_IF(
+        value.size() > std::numeric_limits<uint32_t>::max(),
+        error,
+        "A scalar series field is too large to record.");
+  }
+  AppendTime(time, error);
+  MOCHI_ERROR_RETURN(error);
+
+  auto const* input = values.begin();
+  for (auto& column : _columns) {
+    column.lengths.push_back(static_cast<uint32_t>(input->size()));
+    for (mochi::real const value : *input) {
+      column.values.emplace_back(static_cast<double>(value));
+    }
+    ++input;
+  }
+}
+
+void ScalarSeries::BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) {
+  output.reserve(_columns.size());
+  for (auto const& column : _columns) {
+    auto encoded = rerun::ComponentColumn::from_loggable_with_lengths(
+        rerun::Collection<rerun::components::Scalar>::borrow(column.values),
+        rerun::Collection<uint32_t>::borrow(column.lengths),
+        rerun::ComponentDescriptor{
+            column.field.archetype,
+            column.field.component,
+            rerun::Loggable<rerun::components::Scalar>::ComponentType});
+    if (encoded.is_err()) {
+      SetRerunError(encoded.error, error, "Failed to encode a scalar series.");
+      return;
+    }
+    output.emplace_back(std::move(encoded.value));
+  }
+}
+
+TransformSeries::TransformSeries(std::string_view entityPath) : Series{entityPath} {}
+
+void TransformSeries::Append(
+    SampleTime time,
+    std::array<mochi::real, 3> const& translation,
+    std::array<mochi::real, 4> const& quaternionXyzw,
+    mochi::Error& error) {
+  AppendTime(time, error);
+  MOCHI_ERROR_RETURN(error);
+  _translations.emplace_back(
+      static_cast<float>(translation[0]),
+      static_cast<float>(translation[1]),
+      static_cast<float>(translation[2]));
+  _rotations.emplace_back(
+      rerun::datatypes::Quaternion::from_xyzw(
+          static_cast<float>(quaternionXyzw[0]),
+          static_cast<float>(quaternionXyzw[1]),
+          static_cast<float>(quaternionXyzw[2]),
+          static_cast<float>(quaternionXyzw[3])));
+}
+
+void TransformSeries::Append(
+    SampleTime time,
+    mochi::TransformRT const& transform,
+    mochi::Error& error) {
+  auto const translation = transform.GetTranslation();
+  auto const& rotation = transform.GetRotation();
+  std::array<mochi::real, 3> const translationArray{translation[0], translation[1], translation[2]};
+  std::array<mochi::real, 4> const quaternion{
+      rotation.data[0], rotation.data[1], rotation.data[2], rotation.data[3]};
+  Append(time, translationArray, quaternion, error);
+}
+
+void TransformSeries::BuildColumns(
+    std::vector<rerun::ComponentColumn>& output,
+    mochi::Error& error) {
+  output.reserve(2);
+  auto translations = rerun::ComponentColumn::from_loggable(
+      rerun::Collection<rerun::components::Translation3D>::borrow(_translations),
+      rerun::archetypes::Transform3D::Descriptor_translation);
+  if (translations.is_err()) {
+    SetRerunError(translations.error, error, "Failed to encode a transform translation series.");
+    return;
+  }
+  auto rotations = rerun::ComponentColumn::from_loggable(
+      rerun::Collection<rerun::components::RotationQuat>::borrow(_rotations),
+      rerun::archetypes::Transform3D::Descriptor_quaternion);
+  if (rotations.is_err()) {
+    SetRerunError(rotations.error, error, "Failed to encode a transform rotation series.");
+    return;
+  }
+  output.emplace_back(std::move(translations.value));
+  output.emplace_back(std::move(rotations.value));
+}
+
+} // namespace superdex::recorder
