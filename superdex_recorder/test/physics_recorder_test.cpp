@@ -130,5 +130,26 @@ TEST_F(PhysicsRecorderTest, CommitsWholeSceneWithoutExplicitActorRegistration) {
   EXPECT_TRUE(std::filesystem::exists(episode->GetOutputPath()));
 }
 
+TEST_F(PhysicsRecorderTest, RecordFailsAfterRecordedActorIsDestroyed) {
+  ShapeHandle const shape = context->CreateTriMeshShape(kCoordinates, kConnectivity, error);
+  Actor* const cube = CreateRigidActor("cube", shape);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(cube, nullptr);
+
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  PhysicsRecorder physics{*episode, *scene, {.recordContactForces = true}, error};
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+
+  scene->DestroyActor(cube);
+  std::erase(actors, cube);
+  physics.Record({.frame = 0, .simulationTimeSec = 0.0}, error);
+
+  EXPECT_FALSE(error.IsOK());
+}
+
 } // namespace
 } // namespace superdex::recorder

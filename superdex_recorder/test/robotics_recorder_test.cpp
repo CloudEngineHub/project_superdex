@@ -241,5 +241,20 @@ TEST_F(RoboticsRecorderTest, RecordRejectsSamplesWithoutFields) {
   EXPECT_FALSE(error.IsOK());
 }
 
+TEST_F(RoboticsRecorderTest, RecordFailsAfterRecordedRobotIsDestroyed) {
+  robotics::Bot* const bare =
+      robotics::CreateBot(scene, MakeRobotPrefab(error), roboticsContext, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(bare, nullptr);
+  RoboticsRecorder recorded{*episode, *bare, error};
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+
+  roboticsContext->DestroyBot(scene, bare->GetHandle());
+  recorded.Record({.frame = 0, .simulationTimeSec = 0.0}, error);
+
+  EXPECT_NE(error.ToString().find("The recorded robot was destroyed."), std::string::npos)
+      << error.ToString();
+}
+
 } // namespace
 } // namespace superdex::recorder
