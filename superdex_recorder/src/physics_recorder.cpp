@@ -166,6 +166,12 @@ std::string UniqueActorId(mochi::Actor const& actor, std::unordered_set<std::str
   return id;
 }
 
+mochi::Actor* ResolveActor(mochi::Scene& scene, mochi::ActorHandle handle, mochi::Error& error) {
+  mochi::Actor* const actor = scene.GetActor(handle);
+  MOCHI_ERROR_IF(actor == nullptr, error, "A recorded actor was destroyed.");
+  return actor;
+}
+
 } // namespace
 
 PhysicsRecorder::Link::Link(std::string name, TransformSeries& transformSeries)
@@ -174,20 +180,20 @@ PhysicsRecorder::Link::Link(std::string name, TransformSeries& transformSeries)
 PhysicsRecorder::Actor::Actor(
     std::string id,
     std::string dataPath,
-    mochi::Actor& actor,
+    mochi::ActorHandle handle,
     ScalarSeries& stateSeries,
     TransformSeries& transformSeries)
     : id{std::move(id)},
       dataPath{std::move(dataPath)},
-      actor{actor},
+      handle{handle},
       stateSeries{stateSeries},
       transformSeries{transformSeries} {}
 
 PhysicsRecorder::ContactBody::ContactBody(
     std::string path,
-    mochi::Actor& actor,
+    mochi::ActorHandle handle,
     mochi::QueryHandle query)
-    : path{std::move(path)}, actor{actor}, query{query} {}
+    : path{std::move(path)}, handle{handle}, query{query} {}
 
 PhysicsRecorder::PhysicsRecorder(Episode& episode, mochi::Scene& scene, mochi::Error& error)
     : PhysicsRecorder{episode, scene, PhysicsRecorderConfig{}, error} {}
@@ -243,7 +249,7 @@ PhysicsRecorder::PhysicsRecorder(
         _contactBodies.end(),
         [](ContactBody const& lhs, ContactBody const& rhs) { return lhs.path < rhs.path; });
     for (size_t i = 0; i < _contactBodies.size(); ++i) {
-      _contactBodyIndices.emplace(_contactBodies[i].actor.get().GetHandle(), i);
+      _contactBodyIndices.emplace(_contactBodies[i].handle, i);
     }
     _contactSeries = _episode.CreateScalarSeries(
         "data/physics/contacts",
@@ -283,8 +289,9 @@ PhysicsRecorder::PhysicsRecorder(
 
 PhysicsRecorder::~PhysicsRecorder() {
   for (auto const& body : _contactBodies) {
-    if (body.query.IsValid()) {
-      body.actor.get().CancelQuery(body.query);
+    mochi::Actor* const actor = _scene.GetActor(body.handle);
+    if (actor != nullptr && body.query.IsValid()) {
+      actor->CancelQuery(body.query);
     }
   }
 }
@@ -323,7 +330,7 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
     return;
   }
 
-  Actor registered{std::move(id), dataPath, actor, *stateSeries, *transformSeries};
+  Actor registered{std::move(id), dataPath, actor.GetHandle(), *stateSeries, *transformSeries};
 
   if (actor.GetType() == mochi::ActorType::Articulated) {
     auto const linkHandles = actor.GetNestedLinkActors(error);
@@ -494,7 +501,7 @@ void PhysicsRecorder::RegisterContactBody(
     query = actor.RegisterQuery(mochi::QueryType::ContactPoints, error);
     MOCHI_ERROR_RETURN(error);
   }
-  _contactBodies.emplace_back(std::move(path), actor, query);
+  _contactBodies.emplace_back(std::move(path), actor.GetHandle(), query);
 }
 
 size_t PhysicsRecorder::FindContactBody(mochi::ActorHandle handle, mochi::Error& error) const {
@@ -526,7 +533,9 @@ void PhysicsRecorder::RecordContacts(SampleTime time, mochi::Error& error) {
     if (!body.query.IsValid()) {
       continue;
     }
-    for (auto const& contact : body.actor.get().GetContactPointsWorld(error)) {
+    mochi::Actor* const actor = ResolveActor(_scene, body.handle, error);
+    MOCHI_ERROR_RETURN(error);
+    for (auto const& contact : actor->GetContactPointsWorld(error)) {
       MOCHI_ERROR_RETURN(error);
       size_t const bodyAIndex = FindContactBody(contact.actorA, error);
       size_t const bodyBIndex = FindContactBody(contact.actorB, error);
@@ -621,12 +630,13 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
 
   for (auto& registered : _actors) {
-    mochi::Actor& actor = registered.actor;
-    if (actor.IsStatic() && registered.stateSeries.GetNumSamples() != 0) {
+    mochi::Actor* const actor = ResolveActor(_scene, registered.handle, error);
+    MOCHI_ERROR_RETURN(error);
+    if (actor->IsStatic() && registered.stateSeries.GetNumSamples() != 0) {
       continue;
     }
 
-    auto const worldFromActor = actor.GetRootTransform();
+    auto const worldFromActor = actor->GetRootTransform();
     auto const rootTranslation = worldFromActor.GetTranslation();
     auto const& rootRotation = worldFromActor.GetRotation();
     std::array<mochi::real, 3> const translation{
@@ -636,14 +646,14 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
     registered.transformSeries.Append(time, worldFromActor, error);
     MOCHI_ERROR_RETURN(error);
 
-    if (actor.GetType() == mochi::ActorType::Rigid) {
-      auto const linearVelocity = actor.GetLinearVelocity(error);
-      auto const angularVelocity = actor.GetAngularVelocity(error);
+    if (actor->GetType() == mochi::ActorType::Rigid) {
+      auto const linearVelocity = actor->GetLinearVelocity(error);
+      auto const angularVelocity = actor->GetAngularVelocity(error);
       // The root transform is rounded from the simulated center-of-mass transform, so restoring
       // the state exactly needs the center of mass itself.
       mochi::Real3 comTranslation;
-      if (!actor.IsStatic()) {
-        comTranslation = actor.GetCenterOfMassTransform(error).GetTranslation();
+      if (!actor->IsStatic()) {
+        comTranslation = actor->GetCenterOfMassTransform(error).GetTranslation();
       }
       MOCHI_ERROR_RETURN(error);
       std::array<mochi::Span<mochi::real const>, 5> const fields{
@@ -653,18 +663,18 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
           AsSpan(angularVelocity),
           AsSpan(comTranslation),
       };
-      size_t const numFields = actor.IsStatic() ? fields.size() - 1 : fields.size();
+      size_t const numFields = actor->IsStatic() ? fields.size() - 1 : fields.size();
       registered.stateSeries.Append(
           time, mochi::Span<mochi::Span<mochi::real const> const>(fields.data(), numFields), error);
       MOCHI_ERROR_RETURN(error);
       continue;
     }
 
-    actor.GetArticulatedPose(registered.positions, error);
-    actor.GetArticulatedJointVelocities(registered.velocities, error);
+    actor->GetArticulatedPose(registered.positions, error);
+    actor->GetArticulatedJointVelocities(registered.velocities, error);
     MOCHI_ERROR_RETURN(error);
     if (registered.hasPoseController) {
-      actor.GetArticulatedTargetPose(registered.controllerTargets, error);
+      actor->GetArticulatedTargetPose(registered.controllerTargets, error);
       MOCHI_ERROR_RETURN(error);
     }
     std::array<mochi::Span<mochi::real const>, 5> const fields{
@@ -679,7 +689,7 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
         time, mochi::Span<mochi::Span<mochi::real const> const>(fields.data(), numFields), error);
     MOCHI_ERROR_RETURN(error);
 
-    actor.GetArticulatedLinkTransforms(registered.worldFromLinks, error);
+    actor->GetArticulatedLinkTransforms(registered.worldFromLinks, error);
     MOCHI_ERROR_RETURN(error);
     mochi::TransformRT const actorFromWorld = mochi::Invert(worldFromActor);
     for (size_t i = 0; i < registered.links.size(); ++i) {

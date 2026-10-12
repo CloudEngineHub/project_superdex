@@ -52,7 +52,8 @@ struct RobotShadowConfig {
 };
 
 /* @brief Records one named visualization pose for a robot.
- * The episode and robot must outlive this shadow. */
+ * The episode and robot must outlive this shadow. Construction fails if the episode already
+ * records a shadow with this ID for a robot with the same articulated actor name. */
 class SUPERDEX_RECORDER_API RobotShadow final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(RobotShadow)
 

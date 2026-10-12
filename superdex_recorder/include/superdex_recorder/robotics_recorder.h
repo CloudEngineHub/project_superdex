@@ -76,16 +76,18 @@ class ControllerSink final : public robotics::ControllerRecordingSink {
 };
 
 struct Controller {
-  Controller(robotics::ControllerBase& controller, ControllerSink&& sink);
+  Controller(robotics::ControllerHandle handle, ControllerSink&& sink);
 
-  robotics::ControllerBase& controller;
+  robotics::ControllerHandle handle;
   ControllerSink sink;
 };
 
 } // namespace detail
 
 /* Records the controllers owned by one SuperDex robot, and the joint effort applied to it.
- * The episode and robot must outlive this recorder. */
+ * The episode and the robot's RoboticsContext must outlive this recorder. Construction fails if
+ * the episode already records a robot with the same articulated actor name. Record fails if the
+ * robot or a recorded controller is destroyed. */
 class SUPERDEX_RECORDER_API RoboticsRecorder final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(RoboticsRecorder)
 
@@ -99,7 +101,8 @@ class SUPERDEX_RECORDER_API RoboticsRecorder final {
   void Record(SampleTime time, mochi::Error& error);
 
  private:
-  robotics::Bot& _robot;
+  robotics::RoboticsContext& _context;
+  robotics::BotHandle _robotHandle;
   size_t _numDofs = 0;
   std::vector<detail::Controller> _controllers;
   ScalarSeries* _appliedEffortSeries = nullptr;

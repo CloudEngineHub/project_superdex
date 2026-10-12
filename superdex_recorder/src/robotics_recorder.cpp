@@ -191,11 +191,11 @@ void detail::ControllerSink::WriteTransform(
   binding->series->Append(time, fields, error);
 }
 
-detail::Controller::Controller(robotics::ControllerBase& controller, detail::ControllerSink&& sink)
-    : controller{controller}, sink{std::move(sink)} {}
+detail::Controller::Controller(robotics::ControllerHandle handle, detail::ControllerSink&& sink)
+    : handle{handle}, sink{std::move(sink)} {}
 
 RoboticsRecorder::RoboticsRecorder(Episode& episode, robotics::Bot& robot, mochi::Error& error)
-    : _robot{robot} {
+    : _context{*robot.GetBotContext()}, _robotHandle{robot.GetHandle()} {
   mochi::Actor* const actor = robot.GetArticulatedActor();
   if (actor == nullptr) {
     MOCHI_ERROR_SET(error, "Robot has no articulated actor.");
@@ -238,7 +238,7 @@ RoboticsRecorder::RoboticsRecorder(Episode& episode, robotics::Bot& robot, mochi
     detail::ControllerSink sink{episode, path};
     controller->ConfigureRecording(sink, error);
     MOCHI_ERROR_RETURN(error);
-    _controllers.emplace_back(*controller, std::move(sink));
+    _controllers.emplace_back(handle, std::move(sink));
   }
 }
 
@@ -246,9 +246,14 @@ RoboticsRecorder::~RoboticsRecorder() = default;
 
 void RoboticsRecorder::Record(SampleTime time, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
-  for (auto& controller : _controllers) {
-    controller.sink.SetTime(time);
-    controller.controller.Record(controller.sink, error);
+  for (auto& recorded : _controllers) {
+    robotics::ControllerBase* const controller = _context.GetController(recorded.handle);
+    if (controller == nullptr) {
+      MOCHI_ERROR_SET(error, "A recorded controller was destroyed.");
+      return;
+    }
+    recorded.sink.SetTime(time);
+    controller->Record(recorded.sink, error);
     MOCHI_ERROR_RETURN(error);
   }
 
@@ -256,9 +261,10 @@ void RoboticsRecorder::Record(SampleTime time, mochi::Error& error) {
     MOCHI_ERROR_SET(error, "Applied effort series is unavailable.");
     return;
   }
-  mochi::Actor* const actor = _robot.GetArticulatedActor();
+  robotics::Bot* const robot = _context.GetBot(_robotHandle);
+  mochi::Actor* const actor = robot != nullptr ? robot->GetArticulatedActor() : nullptr;
   if (actor == nullptr) {
-    MOCHI_ERROR_SET(error, "The recorded robot has no articulated actor.");
+    MOCHI_ERROR_SET(error, "The recorded robot was destroyed.");
     return;
   }
   actor->GetExternalForces(_appliedEffort, error);

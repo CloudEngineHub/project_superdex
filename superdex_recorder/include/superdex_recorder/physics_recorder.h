@@ -24,7 +24,6 @@
 #include <mochi_physics/cpp_api/mochi_scene.h>
 
 #include <cstddef>
-#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -40,7 +39,8 @@ struct PhysicsRecorderConfig {
 };
 
 /* Records all rigid and articulated actors in a Mochi scene.
- * The episode and scene must outlive this recorder. */
+ * The episode and scene must outlive this recorder. Record fails if a recorded actor is
+ * destroyed. */
 class SUPERDEX_RECORDER_API PhysicsRecorder final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(PhysicsRecorder)
 
@@ -56,13 +56,13 @@ class SUPERDEX_RECORDER_API PhysicsRecorder final {
     Actor(
         std::string id,
         std::string dataPath,
-        mochi::Actor& actor,
+        mochi::ActorHandle handle,
         ScalarSeries& stateSeries,
         TransformSeries& transformSeries);
 
     std::string id;
     std::string dataPath;
-    mochi::Actor& actor;
+    mochi::ActorHandle handle;
     ScalarSeries& stateSeries;
     TransformSeries& transformSeries;
     std::vector<Link> links;
@@ -74,10 +74,10 @@ class SUPERDEX_RECORDER_API PhysicsRecorder final {
   };
 
   struct ContactBody {
-    ContactBody(std::string path, mochi::Actor& actor, mochi::QueryHandle query);
+    ContactBody(std::string path, mochi::ActorHandle handle, mochi::QueryHandle query);
 
     std::string path;
-    std::reference_wrapper<mochi::Actor> actor;
+    mochi::ActorHandle handle;
     mochi::QueryHandle query;
   };
 
