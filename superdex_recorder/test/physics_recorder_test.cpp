@@ -41,6 +41,11 @@ constexpr std::array<int, 36> kConnectivity = {
     2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5,
 };
 
+constexpr std::array<real, 12> kTetCoordinates =
+    {0_r, 0_r, 0_r, 0.1_r, 0_r, 0_r, 0_r, 0.1_r, 0_r, 0_r, 0_r, 0.1_r};
+
+constexpr std::array<int, 4> kTetConnectivity = {0, 1, 2, 3};
+
 class TemporaryDirectory final {
  public:
   TemporaryDirectory() {
@@ -98,6 +103,17 @@ class PhysicsRecorderTest : public testing::Test {
     return actor;
   }
 
+  Actor* CreateSoftActor(std::string_view name) {
+    SoftActorParams params;
+    params.name = name;
+    params.shape = context->CreateTetMeshShape(kTetCoordinates, kTetConnectivity, error);
+    Actor* const actor = scene->CreateSoftActor(params, error);
+    if (actor != nullptr) {
+      actors.push_back(actor);
+    }
+    return actor;
+  }
+
   Context* context = nullptr;
   Scene* scene = nullptr;
   std::vector<Actor*> actors;
@@ -149,6 +165,42 @@ TEST_F(PhysicsRecorderTest, RecordFailsAfterRecordedActorIsDestroyed) {
   physics.Record({.frame = 0, .simulationTimeSec = 0.0}, error);
 
   EXPECT_FALSE(error.IsOK());
+}
+
+TEST_F(PhysicsRecorderTest, SkipsActorsOfOtherTypes) {
+  ShapeHandle const shape = context->CreateTriMeshShape(kCoordinates, kConnectivity, error);
+  ASSERT_NE(CreateRigidActor("cube", shape), nullptr);
+  ASSERT_NE(CreateSoftActor("soft"), nullptr);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_NE(episode, nullptr);
+  PhysicsRecorder physics{*episode, *scene, error};
+  physics.Record({.frame = 0, .simulationTimeSec = 0.0}, error);
+  episode->Commit(error);
+
+  EXPECT_TRUE(error.IsOK()) << error.ToString();
+}
+
+TEST_F(PhysicsRecorderTest, ContactRecordingRejectsActorsOfOtherTypes) {
+  ShapeHandle const shape = context->CreateTriMeshShape(kCoordinates, kConnectivity, error);
+  ASSERT_NE(CreateRigidActor("cube", shape), nullptr);
+  ASSERT_NE(CreateSoftActor("soft"), nullptr);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  PhysicsRecorder physics{*episode, *scene, {.recordContactForces = true}, error};
+
+  EXPECT_NE(
+      error.ToString().find("Contact recording supports only rigid and articulated actors."),
+      std::string::npos)
+      << error.ToString();
 }
 
 } // namespace
