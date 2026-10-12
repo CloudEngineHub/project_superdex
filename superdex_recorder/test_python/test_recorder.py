@@ -228,3 +228,58 @@ class RecorderTest(unittest.TestCase):
                 self.assertAlmostEqual(step_durations[1].value[0], 0.02)
             finally:
                 sdp.shutdown()
+
+    def test_reader_returns_only_requested_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            try:
+                scene = sdp.create_scene("frames")
+                episode = self.make_recorder(Path(directory_string)).begin_episode()
+                physics = recorder.PhysicsRecorder(episode, scene)
+                for frame in range(5):
+                    if frame > 0:
+                        scene.step(0.01)
+                    physics.record(frame, scene.get_total_simulation_time())
+                episode.commit()
+
+                recording = EpisodeReader(episode.output_path)
+                samples = recording.component_samples(
+                    "superdex.physics.step_dt_sec", frames={1, 3}
+                )
+                self.assertEqual(
+                    [sample.timelines["frame"] for sample in samples], [1, 3]
+                )
+                self.assertEqual(
+                    recording.component_samples(
+                        "superdex.episode.schema_version", frames={1}
+                    ),
+                    [],
+                )
+            finally:
+                sdp.shutdown()
+
+    def test_reader_keeps_nanosecond_simulation_times(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            try:
+                scene = sdp.create_scene("times")
+                episode = self.make_recorder(Path(directory_string)).begin_episode()
+                physics = recorder.PhysicsRecorder(episode, scene)
+                times_sec = []
+                for frame in range(3):
+                    if frame > 0:
+                        # Not a whole number of microseconds, which a timedelta would truncate.
+                        scene.step(0.0010003)
+                    times_sec.append(scene.get_total_simulation_time())
+                    physics.record(frame, times_sec[-1])
+                episode.commit()
+
+                samples = EpisodeReader(episode.output_path).component_samples(
+                    "superdex.physics.step_dt_sec"
+                )
+                for sample, time_sec in zip(samples, times_sec, strict=True):
+                    self.assertAlmostEqual(
+                        sample.timelines["sim_time"], time_sec * 1e9, delta=1
+                    )
+            finally:
+                sdp.shutdown()
