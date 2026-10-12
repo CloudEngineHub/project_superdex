@@ -20,5 +20,6 @@
 #include <superdex_recorder/recorder.h>
 
 #if defined(SUPERDEX_RECORDER_WITH_ROBOTICS)
+#include <superdex_recorder/robot_shadow.h>
 #include <superdex_recorder/robotics_recorder.h>
 #endif
