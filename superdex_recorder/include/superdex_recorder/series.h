@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace superdex::recorder {
@@ -62,10 +63,17 @@ class SUPERDEX_RECORDER_API Series {
 /* @brief Stores one or more variable-length scalar fields per sample. */
 class SUPERDEX_RECORDER_API ScalarSeries final : public Series {
  private:
+  // Values keep the scene's precision. Rerun's scalar component is always 64-bit, so
+  // single-precision builds store a 32-bit datatype instead.
+  using Value = std::conditional_t<
+      std::is_same_v<mochi::real, float>,
+      rerun::datatypes::Float32,
+      rerun::components::Scalar>;
+
   struct Column {
     ComponentField field;
     std::vector<uint32_t> lengths;
-    std::vector<rerun::components::Scalar> values;
+    std::vector<Value> values;
   };
 
  public:

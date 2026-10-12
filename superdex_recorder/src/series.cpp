@@ -127,22 +127,23 @@ void ScalarSeries::Append(
   for (auto& column : _columns) {
     column.lengths.push_back(static_cast<uint32_t>(input->size()));
     for (mochi::real const value : *input) {
-      column.values.emplace_back(static_cast<double>(value));
+      column.values.emplace_back(value);
     }
     ++input;
   }
 }
 
 void ScalarSeries::BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) {
+  // `rerun rrd verify` rejects a datatype as a component type, so 32-bit columns declare none.
+  constexpr auto kComponentType = std::is_same_v<Value, rerun::components::Scalar>
+      ? std::optional{rerun::Loggable<Value>::ComponentType}
+      : std::nullopt;
   output.reserve(_columns.size());
   for (auto const& column : _columns) {
     auto encoded = rerun::ComponentColumn::from_loggable_with_lengths(
-        rerun::Collection<rerun::components::Scalar>::borrow(column.values),
+        rerun::Collection<Value>::borrow(column.values),
         rerun::Collection<uint32_t>::borrow(column.lengths),
-        rerun::ComponentDescriptor{
-            column.field.archetype,
-            column.field.component,
-            rerun::Loggable<rerun::components::Scalar>::ComponentType});
+        rerun::ComponentDescriptor{column.field.archetype, column.field.component, kComponentType});
     if (encoded.is_err()) {
       SetRerunError(encoded.error, error, "Failed to encode a scalar series.");
       return;
