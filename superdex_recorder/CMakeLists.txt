@@ -58,4 +58,13 @@ if (MOCHI_BUILD_TESTS)
     mochi_set_compiler_options(superdex_recorder_core_test)
     mochi_set_output_directories(superdex_recorder_core_test)
     add_test(NAME superdex_recorder_core_test COMMAND superdex_recorder_core_test)
+
+    add_executable(superdex_recorder_physics_test test/physics_recorder_test.cpp)
+    target_link_libraries(
+        superdex_recorder_physics_test
+        PRIVATE superdex_recorder_physics superdex_physics gtest_main
+    )
+    mochi_set_compiler_options(superdex_recorder_physics_test)
+    mochi_set_output_directories(superdex_recorder_physics_test)
+    add_test(NAME superdex_recorder_physics_test COMMAND superdex_recorder_physics_test)
 endif ()
