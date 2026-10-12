@@ -1223,21 +1223,26 @@ void mochi::ContactJac::CoalesceColumnsByCachedMapping(
   originalColumns.resize_noinit(oldWidth);
   for (int contact = 0; contact < nContacts; ++contact) {
     auto indices = Inds(contact);
+    [[maybe_unused]] auto sourceIndices = indices;
     auto jac = Jac(contact);
     for (int column = 0; column < oldWidth; ++column) {
       originalColumns[column] = {jac(0, column), jac(1, column), jac(2, column)};
     }
-    for (int column = 0; column < newWidth; ++column) {
-      jac.Col(column).SetZero();
-    }
 
     int const elementIndex = sampleIndices[contact] / mapping.samplesPerElement;
     auto const elementDofs = mapping.ElementDofIndices(elementIndex);
+    indices = Span<int>(_data.inds.data() + contact * newWidth, newWidth);
+    jac.Reset(_data.jac.data() + kDofsPerNode * contact * newWidth, kDofsPerNode, newWidth);
+    jac.SetZero();
+
     for (int sourceBlock = 0; sourceBlock < mapping.sourceBlockCount; ++sourceBlock) {
       auto const destinations = mapping.SourceContributionDstColumns(elementIndex, sourceBlock);
       for (int localEntry = 0; localEntry < isize(destinations); ++localEntry) {
         int const sourceColumn = sourceBlock * querySourceStride + localEntry;
         int const destinationColumn = destinations[localEntry];
+        MOCHI_ASSERT_VERBOSE(
+            sourceIndices[sourceColumn] == elementDofs[destinationColumn] + dofOffset,
+            "Cached coalescing map does not match the source Jacobian indices.");
         for (int component = 0; component < kDofsPerNode; ++component) {
           jac(component, destinationColumn) += originalColumns[sourceColumn][component];
         }
@@ -1255,19 +1260,6 @@ void mochi::ContactJac::CoalesceColumnsByCachedMapping(
     }
     for (int column = isize(elementDofs); column < newWidth; ++column) {
       indices[column] = indices[0];
-    }
-  }
-
-  if (newWidth < oldWidth) {
-    for (int contact = 1; contact < nContacts; ++contact) {
-      std::copy_n(
-          _data.inds.begin() + contact * oldWidth,
-          newWidth,
-          _data.inds.begin() + contact * newWidth);
-      std::copy_n(
-          _data.jac.begin() + kDofsPerNode * contact * oldWidth,
-          kDofsPerNode * newWidth,
-          _data.jac.begin() + kDofsPerNode * contact * newWidth);
     }
   }
 
