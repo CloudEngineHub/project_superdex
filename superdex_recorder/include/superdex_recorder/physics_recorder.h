@@ -24,10 +24,20 @@
 #include <mochi_physics/cpp_api/mochi_scene.h>
 
 #include <cstddef>
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
 namespace superdex::recorder {
+
+/* @brief Optional physics channels recorded alongside kinematics. */
+struct PhysicsRecorderConfig {
+  /* @brief Record contact-point forces and Rerun force arrows. */
+  bool recordContactForces = false;
+  /* @brief Arrow length per newton [m/N]. */
+  mochi::real contactForceVisualizationScaleMetersPerNewton = static_cast<mochi::real>(0.002);
+};
 
 /* Records all rigid and articulated actors in a Mochi scene.
  * The episode and scene must outlive this recorder. */
@@ -63,22 +73,44 @@ class PhysicsRecorder final {
     mochi::DynamicArray<mochi::TransformRT> worldFromLinks;
   };
 
+  struct ContactBody {
+    ContactBody(std::string path, mochi::Actor& actor, mochi::QueryHandle query);
+
+    std::string path;
+    std::reference_wrapper<mochi::Actor> actor;
+    mochi::QueryHandle query;
+  };
+
  public:
   PhysicsRecorder(Episode& episode, mochi::Scene& scene, mochi::Error& error);
+  PhysicsRecorder(
+      Episode& episode,
+      mochi::Scene& scene,
+      PhysicsRecorderConfig const& config,
+      mochi::Error& error);
   ~PhysicsRecorder();
 
   void Record(SampleTime time, mochi::Error& error);
 
  private:
   void RegisterActor(std::string id, mochi::Actor& actor, mochi::Error& error);
+  void RegisterContactBody(std::string path, mochi::Actor& actor, mochi::Error& error);
+  size_t FindContactBody(mochi::ActorHandle handle, mochi::Error& error) const;
+  void RecordContacts(SampleTime time, mochi::Error& error);
   void WriteGeometry(std::string_view entityPath, mochi::Actor const& actor, mochi::Error& error);
   void
   WritePhysicalParameters(std::string_view path, mochi::Actor const& actor, mochi::Error& error);
 
   Episode& _episode;
   mochi::Scene& _scene;
+  PhysicsRecorderConfig _config;
+  double _contactRegistrationTimeSec = 0.0;
   ScalarSeries* _frameSeries = nullptr;
+  ScalarSeries* _contactSeries = nullptr;
+  Arrow3DSeries* _contactArrowSeries = nullptr;
   std::vector<Actor> _actors;
+  std::vector<ContactBody> _contactBodies;
+  std::map<mochi::ActorHandle, size_t> _contactBodyIndices;
 };
 
 } // namespace superdex::recorder

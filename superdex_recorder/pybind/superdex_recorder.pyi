@@ -49,8 +49,18 @@ class Recorder:
     def __init__(self, config: RecorderConfig) -> None: ...
     def begin_episode(self, metadata: EpisodeMetadata = ...) -> Episode: ...
 
+class PhysicsRecorderConfig:
+    def __init__(self) -> None: ...
+    record_contact_forces: bool
+    contact_force_visualization_scale_meters_per_newton: float
+
 class PhysicsRecorder:
-    def __init__(self, episode: Episode, scene: Any) -> None: ...
+    def __init__(
+        self,
+        episode: Episode,
+        scene: Any,
+        config: PhysicsRecorderConfig = ...,
+    ) -> None: ...
     def record(self, frame: int, simulation_time_sec: float) -> None: ...
 
 class RoboticsRecorder:

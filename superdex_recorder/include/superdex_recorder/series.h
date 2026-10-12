@@ -17,6 +17,7 @@
 #pragma once
 
 #include <mochi_core/utils/error.h>
+#include <mochi_core/utils/nd_array.h>
 #include <mochi_core/utils/span.h>
 #include <mochi_core/utils/transform_rt.h>
 
@@ -107,6 +108,25 @@ class TransformSeries final : public Series {
 
   std::vector<rerun::components::Translation3D> _translations;
   std::vector<rerun::components::RotationQuat> _rotations;
+};
+
+/* @brief Stores a variable-length batch of world-space 3D arrows per sample. */
+class Arrow3DSeries final : public Series {
+ public:
+  explicit Arrow3DSeries(std::string_view entityPath);
+
+  void Append(
+      SampleTime time,
+      mochi::Span<mochi::Real3 const> origins,
+      mochi::Span<mochi::Real3 const> vectors,
+      mochi::Error& error);
+
+ private:
+  void BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) override;
+
+  std::vector<uint32_t> _lengths;
+  std::vector<rerun::components::Position3D> _origins;
+  std::vector<rerun::components::Vector3D> _vectors;
 };
 
 } // namespace superdex::recorder

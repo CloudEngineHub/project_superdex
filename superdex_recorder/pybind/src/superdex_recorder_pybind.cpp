@@ -149,15 +149,23 @@ NB_MODULE(SUPERDEX_RECORDER_MODULE_NAME, module) {
           },
           nb::arg("metadata") = EpisodeMetadata{});
 
+  nb::class_<PhysicsRecorderConfig>(module, "PhysicsRecorderConfig")
+      .def(nb::init<>())
+      .def_rw("record_contact_forces", &PhysicsRecorderConfig::recordContactForces)
+      .def_rw(
+          "contact_force_visualization_scale_meters_per_newton",
+          &PhysicsRecorderConfig::contactForceVisualizationScaleMetersPerNewton);
+
   nb::class_<PhysicsRecorder>(module, "PhysicsRecorder")
       .def(
-          nb::new_([](Episode& episode, mochi::Scene& scene) {
+          nb::new_([](Episode& episode, mochi::Scene& scene, PhysicsRecorderConfig const& config) {
             return CallWithErrorResult([&](mochi::Error& error) {
-              return std::make_unique<PhysicsRecorder>(episode, scene, error);
+              return std::make_unique<PhysicsRecorder>(episode, scene, config, error);
             });
           }),
           nb::arg("episode"),
           nb::arg("scene"),
+          nb::arg("config") = PhysicsRecorderConfig{},
           nb::keep_alive<0, 2>(),
           nb::keep_alive<0, 3>())
       .def(

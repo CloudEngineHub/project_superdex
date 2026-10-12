@@ -60,6 +60,7 @@ class Episode final {
       std::vector<ComponentField> fields,
       mochi::Error& error);
   TransformSeries* CreateTransformSeries(std::string_view entityPath, mochi::Error& error);
+  Arrow3DSeries* CreateArrow3DSeries(std::string_view entityPath, mochi::Error& error);
   void WriteConstantText(
       std::string_view entityPath,
       ComponentField const& field,

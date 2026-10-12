@@ -163,6 +163,17 @@ TransformSeries* Episode::CreateTransformSeries(std::string_view entityPath, moc
   return result;
 }
 
+Arrow3DSeries* Episode::CreateArrow3DSeries(std::string_view entityPath, mochi::Error& error) {
+  ValidateWrite(error);
+  ValidateSeriesPath(entityPath, error);
+  MOCHI_ERROR_RETURN(error, nullptr);
+
+  auto series = std::make_unique<Arrow3DSeries>(entityPath);
+  auto* const result = series.get();
+  _series.push_back(std::move(series));
+  return result;
+}
+
 void Episode::WriteConstantText(
     std::string_view entityPath,
     ComponentField const& field,

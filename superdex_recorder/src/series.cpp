@@ -206,4 +206,57 @@ void TransformSeries::BuildColumns(
   output.emplace_back(std::move(rotations.value));
 }
 
+Arrow3DSeries::Arrow3DSeries(std::string_view entityPath) : Series{entityPath} {}
+
+void Arrow3DSeries::Append(
+    SampleTime time,
+    mochi::Span<mochi::Real3 const> origins,
+    mochi::Span<mochi::Real3 const> vectors,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(
+      origins.size() != vectors.size(), error, "Arrow origins and vectors differ in size.");
+  MOCHI_ERROR_IF(
+      origins.size() > std::numeric_limits<uint32_t>::max(),
+      error,
+      "Arrow series sample is too large to record.");
+  MOCHI_ERROR_RETURN(error);
+  AppendTime(time, error);
+  MOCHI_ERROR_RETURN(error);
+
+  _lengths.push_back(static_cast<uint32_t>(origins.size()));
+  for (size_t i = 0; i < origins.size(); ++i) {
+    _origins.emplace_back(
+        static_cast<float>(origins[i][0]),
+        static_cast<float>(origins[i][1]),
+        static_cast<float>(origins[i][2]));
+    _vectors.emplace_back(
+        static_cast<float>(vectors[i][0]),
+        static_cast<float>(vectors[i][1]),
+        static_cast<float>(vectors[i][2]));
+  }
+}
+
+void Arrow3DSeries::BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) {
+  output.reserve(2);
+  auto origins = rerun::ComponentColumn::from_loggable_with_lengths(
+      rerun::Collection<rerun::components::Position3D>::borrow(_origins),
+      rerun::Collection<uint32_t>::borrow(_lengths),
+      rerun::archetypes::Arrows3D::Descriptor_origins);
+  if (origins.is_err()) {
+    SetRerunError(origins.error, error, "Failed to encode arrow origins.");
+    return;
+  }
+  auto vectors = rerun::ComponentColumn::from_loggable_with_lengths(
+      rerun::Collection<rerun::components::Vector3D>::borrow(_vectors),
+      rerun::Collection<uint32_t>::borrow(_lengths),
+      rerun::archetypes::Arrows3D::Descriptor_vectors);
+  if (vectors.is_err()) {
+    SetRerunError(vectors.error, error, "Failed to encode arrow vectors.");
+    return;
+  }
+  output.emplace_back(std::move(origins.value));
+  output.emplace_back(std::move(vectors.value));
+}
+
 } // namespace superdex::recorder
