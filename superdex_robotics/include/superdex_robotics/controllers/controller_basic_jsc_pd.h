@@ -140,6 +140,9 @@ class MOCHI_API ControllerBasicJscPd : public ControllerBase {
   /* @brief Reset internal controller state (e.g., between episodes). */
   void Reset() override;
 
+  void ConfigureRecording(ControllerRecordingSink& sink, superdex::Error& error) const override;
+  void Record(ControllerRecordingSink& sink, superdex::Error& error) const override;
+
  protected:
   void CheckParams(Params const& params, superdex::Error& error);
 

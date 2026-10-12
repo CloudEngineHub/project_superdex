@@ -52,6 +52,21 @@ target_sources(superdex_recorder INTERFACE include/superdex_recorder/superdex_re
 target_include_directories(superdex_recorder INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(superdex_recorder INTERFACE superdex_recorder_physics)
 
+if (TARGET superdex_robotics)
+    add_library(superdex_recorder_robotics STATIC
+        src/robotics_recorder.cpp
+        include/superdex_recorder/robotics_recorder.h
+    )
+    target_include_directories(superdex_recorder_robotics PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+    target_link_libraries(superdex_recorder_robotics PUBLIC superdex_recorder_core superdex_robotics)
+    target_compile_features(superdex_recorder_robotics PUBLIC cxx_std_17)
+    mochi_set_compiler_options(superdex_recorder_robotics)
+    set_target_properties(superdex_recorder_robotics PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    target_compile_definitions(superdex_recorder INTERFACE SUPERDEX_RECORDER_WITH_ROBOTICS=1)
+    target_link_libraries(superdex_recorder INTERFACE superdex_recorder_robotics)
+endif ()
+
 if (MOCHI_BUILD_TESTS)
     add_executable(superdex_recorder_core_test test/superdex_recorder_test.cpp)
     target_link_libraries(superdex_recorder_core_test PRIVATE superdex_recorder_core gtest_main)
