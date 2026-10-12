@@ -292,6 +292,52 @@ TEST(SuperDexRecorderTest, CreateSeriesRejectsExistingEntityPath) {
   EXPECT_FALSE(arrowError.IsOK());
 }
 
+TEST(SuperDexRecorderTest, TransformSeriesChecksTheTimeOfUnchangedTransforms) {
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  mochi::Error error;
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  auto* const series = episode->CreateTransformSeries("world/test", error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(series, nullptr);
+  auto const transform = mochi::TransformRT::Identity();
+  series->Append({.frame = 1, .simulationTimeSec = 0.1}, transform, error);
+  series->Append({.frame = 2, .simulationTimeSec = 0.2}, transform, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_EQ(series->GetNumSamples(), 1U);
+
+  mochi::Error repeatedFrameError;
+  series->Append({.frame = 2, .simulationTimeSec = 0.3}, transform, repeatedFrameError);
+  mochi::Error earlierTimeError;
+  series->Append({.frame = 3, .simulationTimeSec = 0.15}, transform, earlierTimeError);
+
+  EXPECT_FALSE(repeatedFrameError.IsOK());
+  EXPECT_FALSE(earlierTimeError.IsOK());
+}
+
+TEST(SuperDexRecorderTest, TransformSeriesRejectsUnchangedTransformsAfterCommit) {
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  mochi::Error error;
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  auto* const series = episode->CreateTransformSeries("world/test", error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(series, nullptr);
+  auto const transform = mochi::TransformRT::Identity();
+  series->Append({.frame = 1, .simulationTimeSec = 0.1}, transform, error);
+  episode->Commit(error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+
+  mochi::Error appendError;
+  series->Append({.frame = 2, .simulationTimeSec = 0.2}, transform, appendError);
+
+  EXPECT_FALSE(appendError.IsOK());
+}
+
 TEST(SuperDexRecorderTest, WriteMeshRejectsOutOfRangeIndices) {
   TemporaryDirectory directory;
   Recorder recorder{{.outputDirectory = directory.Path()}};
