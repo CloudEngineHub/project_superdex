@@ -18,6 +18,8 @@
 
 #include <superdex_recorder/series.h>
 
+#include <mochi_core/utils/log.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -247,18 +249,44 @@ PhysicsRecorder::PhysicsRecorder(
   MOCHI_ERROR_RETURN(error);
 
   std::unordered_set<std::string> ids;
+  std::vector<char const*> unrecordedActorNames;
+  std::vector<char const*> nestedSoftActorNames;
   scene.ForEachActor([&](mochi::Actor* actor) {
-    if (!error.IsOK() || actor == nullptr || actor->IsNestedLinkActor() ||
-        actor->IsNestedSoftActor()) {
+    if (!error.IsOK() || actor == nullptr || actor->IsNestedLinkActor()) {
+      return;
+    }
+    // A nested soft actor moves with its articulated actor, which is recorded.
+    if (actor->IsNestedSoftActor()) {
+      nestedSoftActorNames.push_back(actor->GetName());
       return;
     }
     if (actor->GetType() != mochi::ActorType::Rigid &&
         actor->GetType() != mochi::ActorType::Articulated) {
+      unrecordedActorNames.push_back(actor->GetName());
       return;
     }
     RegisterActor(UniqueActorId(_config, *actor, ids), *actor, error);
   });
   MOCHI_ERROR_RETURN(error);
+  if (_config.recordContactForces) {
+    // Contacts with these actors would have no recorded body to index.
+    unrecordedActorNames.insert(
+        unrecordedActorNames.end(), nestedSoftActorNames.begin(), nestedSoftActorNames.end());
+    for (char const* const name : unrecordedActorNames) {
+      MOCHI_LOG_ERROR("Contacts with actor %s cannot be recorded.", name);
+    }
+    MOCHI_ERROR_IF(
+        !unrecordedActorNames.empty(),
+        error,
+        "Contact recording supports only rigid and articulated actors.");
+    MOCHI_ERROR_RETURN(error);
+  }
+  for (char const* const name : unrecordedActorNames) {
+    MOCHI_LOG_WARNING(
+        "Not recording actor %s: only rigid and articulated actors are recorded, so this episode "
+        "cannot be restored.",
+        name);
+  }
 
   if (_config.recordContactForces) {
     _contactCollector = std::make_unique<ContactCollector>(scene, std::move(_contactBodies), error);

@@ -52,7 +52,9 @@ struct PhysicsRecorderConfig {
 
 /* Records all rigid and articulated actors in a Mochi scene.
  * The episode and scene must outlive this recorder. Record fails if a recorded actor is
- * destroyed. */
+ * destroyed. Actors are found at construction, so actors created later are not recorded, and
+ * actors of other types are skipped with a warning; with contact recording, they are an error.
+ * Static actors are sampled once, at the first Record. */
 class SUPERDEX_RECORDER_API PhysicsRecorder final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(PhysicsRecorder)
 
