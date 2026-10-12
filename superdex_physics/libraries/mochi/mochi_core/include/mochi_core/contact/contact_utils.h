@@ -1475,10 +1475,8 @@ class MeshColliderBvh {
 
   explicit MeshColliderBvh(std::shared_ptr<TriangularMesh const> const& mesh) : _mesh(mesh) {}
 
-  virtual ~MeshColliderBvh() = default;
-
   /** @brief Initialize the internal data structures. */
-  virtual void Initialize(bool allowRefitting = false) {
+  void Initialize() {
     MOCHI_PROFILE_SCOPE();
     MOCHI_ASSERT_VERBOSE(_mesh != nullptr, "Invalid collider _mesh pointer");
 
@@ -1486,32 +1484,20 @@ class MeshColliderBvh {
     _halfEdge = _mesh->GenerateHalfEdgeStructure();
     bool closed = mochi::IsMeshClosed(_halfEdge);
     if (!closed) {
-      // If refitting is not allowed, we can try to stitch the mesh. In this way, the MeshCollider
-      // supports meshes with vertex multiplicity. This is useful for the generation of SDFs for
-      // rigid actors.
-      if (!allowRefitting) {
-        if (auto stitchedMesh = TriangularMeshFromClusteredVertices(
-                _mesh->GetNodeCoordinates(), _mesh->GetElementConnectivity())) {
-          _mesh = std::move(stitchedMesh);
-          _halfEdge = _mesh->GenerateHalfEdgeStructure();
-          closed = mochi::IsMeshClosed(_halfEdge);
-        }
+      // Try to stitch the mesh. In this way, the MeshCollider supports meshes with vertex
+      // multiplicity. This is useful for the generation of SDFs for rigid actors.
+      if (auto stitchedMesh = TriangularMeshFromClusteredVertices(
+              _mesh->GetNodeCoordinates(), _mesh->GetElementConnectivity())) {
+        _mesh = std::move(stitchedMesh);
+        _halfEdge = _mesh->GenerateHalfEdgeStructure();
+        closed = mochi::IsMeshClosed(_halfEdge);
       }
     }
     _isMeshClosed = closed;
 
     // Initialize node coordinates and primitive normals.
-    if (allowRefitting) {
-      _deformedNodeCoordinates = {
-          _mesh->GetNodeCoordinates().begin(), _mesh->GetNodeCoordinates().end()};
-      _deformedElementNormals = {
-          _mesh->GetElementNormals().begin(), _mesh->GetElementNormals().end()};
-      _nodeCoordinates = _deformedNodeCoordinates;
-      _elementNormals = _deformedElementNormals;
-    } else {
-      _nodeCoordinates = _mesh->GetNodeCoordinates();
-      _elementNormals = _mesh->GetElementNormals();
-    }
+    _nodeCoordinates = _mesh->GetNodeCoordinates();
+    _elementNormals = _mesh->GetElementNormals();
     _nodeNormals.resize(_mesh->GetNumNodes());
     _edgeNormals.resize(_mesh->GetNumEdges());
     _mesh->ComputeNodeNormals(_nodeCoordinates, _elementNormals, _nodeNormals);
@@ -1545,26 +1531,6 @@ class MeshColliderBvh {
     return _halfEdge;
   }
 
-  // Dynamic refit function. Virtual to allow other implementations in subclasses.
-  virtual void Refit(ColumnVectorView<real const> displacements, Error& error) {
-    MOCHI_ERROR_RETURN(error);
-
-    MOCHI_ERROR_IF(
-        _deformedNodeCoordinates.empty(),
-        error,
-        "Trying to refit MeshCollider created with allowRefitting = false");
-    MOCHI_ERROR_RETURN(error);
-
-    MOCHI_ASSERT(
-        displacements.size() == 3 * _nodeCoordinates.size(),
-        "Size of displacements does not match mesh");
-    _nodeDisplacements = Unflatten<Real3 const>(displacements);
-
-    RefitGeometry();
-
-    _bvhTree->Refit();
-  }
-
   // Main collision detection query
   bool QueryPoint(
       Vec4r position,
@@ -1574,13 +1540,6 @@ class MeshColliderBvh {
       Vec4r& outSdfGrad) const;
 
  protected:
-  void RefitGeometry() {
-    _mesh->ComputeNodeCoordinates(_nodeDisplacements, _deformedNodeCoordinates);
-    _mesh->ComputeElementNormals(_deformedNodeCoordinates, _deformedElementNormals);
-    _mesh->ComputeNodeNormals(_deformedNodeCoordinates, _deformedElementNormals, _nodeNormals);
-    _mesh->ComputeEdgeNormals(_halfEdge, _deformedElementNormals, _edgeNormals);
-  }
-
   int FindClosestFaceBruteForce(Vec4r position, real& outDistSqr) const;
 
   // Source information.
@@ -1593,19 +1552,12 @@ class MeshColliderBvh {
       _bvhTreeObject; // unique_ptr is used here because bvhTree points to bvhTreeObject. If this
                       // MeshCollider is move constructed, the two members still need to point to
                       // each other.
-  Span<Real3 const> _nodeCoordinates; // Points to _deformedNodeCoordinates if the collider is
-                                      // refit, and to _mesh->GetNodeCoordinates() otherwise.
-  Span<Real3 const> _elementNormals; // Points to _deformedElementNormals if the collider is refit,
-                                     // and to _mesh->GetElementNormals() otherwise.
+  Span<Real3 const> _nodeCoordinates; // Points to _mesh->GetNodeCoordinates().
+  Span<Real3 const> _elementNormals; // Points to _mesh->GetElementNormals().
   std::vector<Real3> _nodeNormals;
   std::vector<Real3> _edgeNormals;
   bool _initialized = false;
   bool _isMeshClosed = true;
-
-  // Dynamic information
-  Span<Real3 const> _nodeDisplacements; // Points to an external container.
-  std::vector<Real3> _deformedNodeCoordinates; // Reserved only upon refitting.
-  std::vector<Real3> _deformedElementNormals; // Reserved only upon refitting.
 };
 
 using MeshCollider = MeshColliderBvh<Aabb>;

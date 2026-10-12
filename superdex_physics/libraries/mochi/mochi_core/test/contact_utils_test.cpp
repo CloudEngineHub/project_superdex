@@ -1226,28 +1226,24 @@ TEST(MochiContact, FindPointContactsParallel) {
 }
 
 TEST(MeshCollider, MeshCollider_Remesh) {
-  auto testMeshCollider = [&](Span<Real3 const> coords,
-                              Span<Int3 const> tris,
-                              bool enableStitching,
-                              bool expectTrue,
-                              bool disableLogging) {
-    auto logCallback = GetLogCallback();
-    if (disableLogging) {
-      SetLogCallback(nullptr);
-    }
-    auto mesh = std::make_shared<TriangularMesh const>(coords, tris);
-    MeshCollider collider{mesh};
-    bool allowRefitting = !enableStitching;
-    collider.Initialize(allowRefitting);
-    if (disableLogging) {
-      SetLogCallback(logCallback);
-    }
-    EXPECT_TRUE(IsMeshClosed(collider.GetHalfEdge()) == expectTrue);
-  };
+  auto testMeshCollider =
+      [&](Span<Real3 const> coords, Span<Int3 const> tris, bool expectTrue, bool disableLogging) {
+        auto logCallback = GetLogCallback();
+        if (disableLogging) {
+          SetLogCallback(nullptr);
+        }
+        auto mesh = std::make_shared<TriangularMesh const>(coords, tris);
+        MeshCollider collider{mesh};
+        collider.Initialize();
+        if (disableLogging) {
+          SetLogCallback(logCallback);
+        }
+        EXPECT_TRUE(IsMeshClosed(collider.GetHalfEdge()) == expectTrue);
+      };
 
   // Test a closed mesh
   auto&& [coords, tris] = test::CreateMinimalTriMeshUnitCube();
-  testMeshCollider(coords, tris, false, true, false);
+  testMeshCollider(coords, tris, true, false);
 
   // Replicate one of the vertices in the mesh
   coords.push_back(coords[0]);
@@ -1266,23 +1262,20 @@ TEST(MeshCollider, MeshCollider_Remesh) {
     }
   }
 
-  // Allow mesh stitching and validate that it's closed
-  testMeshCollider(coords, tris, true, true, false);
-
-  // Dot not allow mesh stitching and validate that it's open
-  testMeshCollider(coords, tris, false, false, true);
+  // Stitching closes the mesh
+  testMeshCollider(coords, tris, true, false);
 
   // Create a degenerate triangle; stitching won't help
   tris.push_back({0, 0, 1});
-  testMeshCollider(coords, tris, true, false, true);
+  testMeshCollider(coords, tris, false, true);
 
   // Confirm that the mesh still works after removing the degenerate triangle
   tris.pop_back();
-  testMeshCollider(coords, tris, true, true, false);
+  testMeshCollider(coords, tris, true, false);
 
   // Move the replicated vertex; stitching won't help
   coords.back()[0] += 1_r;
-  testMeshCollider(coords, tris, true, false, true);
+  testMeshCollider(coords, tris, false, true);
 }
 
 TEST(ContactJac, CoalesceColumnsByCachedMapping) {
