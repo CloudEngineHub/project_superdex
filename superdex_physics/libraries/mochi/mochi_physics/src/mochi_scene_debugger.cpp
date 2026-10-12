@@ -75,19 +75,20 @@ class SceneDebuggerImpl final : public SceneDebugger {
 
   // SceneDebugger API
   void UpdateOnSceneThread(SceneImpl* scene) override;
+  void OnPreStep(SceneImpl* scene, StepInfo const& step) override;
+  void OnPostStep(SceneImpl* scene, StepInfo const& step) override;
   StepMode GetStepMode() const override {
     return _stepMode.load();
   }
   void SetClock(ClockFn clock) override;
   void OnReceiveAsync(std::unique_ptr<net::Message> msg) override;
-  void PreShutdownAsync(SceneImpl* scene) override;
+  void PreShutdownAsync() override;
   void ShutdownOnSceneThread(SceneImpl* scene) override;
 
  private:
   void Init(SceneImpl* scene);
   void UpdateOnSceneThreadImpl(SceneImpl* scene);
-  void OnPreStep(StepInfo const& step);
-  void OnPostStep(StepInfo const& step);
+  bool IsShutdown() const;
   bool IsClientConnected() const;
   void WaitForRealTime(SceneImpl* scene);
   void SendToClient(net::Message const& msg) const;
@@ -139,8 +140,6 @@ class SceneDebuggerImpl final : public SceneDebugger {
   SceneHandle const _sceneHandle;
   Guarded<net::MessageServer*> _server;
   std::mutex _sceneThreadMutex;
-  CallbackHandle _preStepCallbackHandle;
-  CallbackHandle _postStepCallbackHandle;
   net::MessageDispatcher<SceneImpl*> _dispatcher;
   Guarded<DynamicArray<std::unique_ptr<net::Message>>> _inbox;
   DynamicArray<std::unique_ptr<net::Message>> _newMessages;
@@ -221,18 +220,6 @@ void SceneDebuggerImpl::Init(SceneImpl* scene) {
   _dispatcher.Register<protocol::SleepParamsRequest>([this](auto* scene, auto&& msg) {
     OnSleepParamsRequest(scene, std::forward<decltype(msg)>(msg));
   });
-
-  // This priority causes the debugger to update before other pre-step callbacks.
-  int constexpr kPriorityFirst = std::numeric_limits<int>::min();
-
-  // This priority causes the debugger to update after other post-step callbacks.
-  int constexpr kPriorityLast = std::numeric_limits<int>::max();
-
-  // Register callbacks (thread-safe)
-  _preStepCallbackHandle = scene->RegisterPreStepCallback(
-      "SceneDebugger", [this](auto const& step) { OnPreStep(step); }, kPriorityFirst);
-  _postStepCallbackHandle = scene->RegisterPostStepCallback(
-      "SceneDebugger", [this](auto const& step) { OnPostStep(step); }, kPriorityLast);
 }
 
 void SceneDebuggerImpl::SendToClient(net::Message const& msg) const {
@@ -247,6 +234,9 @@ void SceneDebuggerImpl::SendToClient(net::Message const& msg) const {
 
 void SceneDebuggerImpl::UpdateOnSceneThread(SceneImpl* scene) {
   std::lock_guard lock{_sceneThreadMutex};
+  if (IsShutdown()) {
+    return;
+  }
   UpdateOnSceneThreadImpl(scene);
 }
 
@@ -282,6 +272,10 @@ void SceneDebuggerImpl::UpdateOnSceneThreadImpl(SceneImpl* scene) {
 
   // Transmit periodic sync data if it is due for this step.
   SendSyncIfRequested(scene);
+}
+
+bool SceneDebuggerImpl::IsShutdown() const {
+  return _server.Read([](auto* server) { return server == nullptr; });
 }
 
 bool SceneDebuggerImpl::IsClientConnected() const {
@@ -336,9 +330,11 @@ void SceneDebuggerImpl::WaitForRealTime(SceneImpl* scene) {
   }
 }
 
-void SceneDebuggerImpl::OnPreStep(StepInfo const& step) {
+void SceneDebuggerImpl::OnPreStep(SceneImpl* scene, StepInfo const& step) {
   std::lock_guard lock{_sceneThreadMutex};
-  auto* sceneImpl = assert_cast<SceneImpl*>(step.scene);
+  if (IsShutdown()) {
+    return;
+  }
   double const preStepTime = _clock();
 
   if (TracksRealTime(GetStepMode()) && _realTimeTracking.lastPreStepTime.has_value() &&
@@ -348,12 +344,12 @@ void SceneDebuggerImpl::OnPreStep(StepInfo const& step) {
   }
 
   // Poll for messages before checking pause/step state.
-  UpdateOnSceneThreadImpl(sceneImpl);
+  UpdateOnSceneThreadImpl(scene);
 
   // Optionally slow the simulation to match real time.
   // NOTE: IK scene step with an infinite time step. No real time tracking in that case.
   if (TracksRealTime(GetStepMode()) && !_singleStepRequested && IsFinite(step.timeStepSec)) {
-    WaitForRealTime(sceneImpl);
+    WaitForRealTime(scene);
     if (TracksRealTime(GetStepMode())) {
       // Sample AFTER the throttle wait so the next step's stall check measures the true external
       // inter-step gap, not our own throttling (which pads each step to ~timeStepSec).
@@ -370,7 +366,7 @@ void SceneDebuggerImpl::OnPreStep(StepInfo const& step) {
   while (::IsPaused(GetStepMode()) && !_singleStepRequested && IsClientConnected()) {
     // NOLINTNEXTLINE(facebook-hte-BadCall-sleep_for)
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    UpdateOnSceneThreadImpl(sceneImpl);
+    UpdateOnSceneThreadImpl(scene);
     wasPaused = true;
   }
 
@@ -384,7 +380,7 @@ void SceneDebuggerImpl::OnPreStep(StepInfo const& step) {
   // then remember the reasons so we can report it to the client later.
   if (_initialState.shouldCapture) {
     Error error;
-    sceneImpl->CaptureStateToBytes(_initialState.captureData, error);
+    scene->CaptureStateToBytes(_initialState.captureData, error);
     if (!error.IsOK()) {
       _initialState.captureData.clear(); // Just in case
     }
@@ -393,9 +389,12 @@ void SceneDebuggerImpl::OnPreStep(StepInfo const& step) {
   }
 }
 
-void SceneDebuggerImpl::OnPostStep(StepInfo const& step) {
+void SceneDebuggerImpl::OnPostStep(SceneImpl* scene, StepInfo const& step) {
   // It is safe to process messages and access the scene at this time.
   std::lock_guard lock{_sceneThreadMutex};
+  if (IsShutdown()) {
+    return;
+  }
 
   ++_stepCounter;
   if (!IsFinite(step.timeStepSec)) {
@@ -403,7 +402,7 @@ void SceneDebuggerImpl::OnPostStep(StepInfo const& step) {
   } else if (TracksRealTime(GetStepMode())) {
     _realTimeTracking.simTimeTotal += step.timeStepSec;
   }
-  UpdateOnSceneThreadImpl(assert_cast<SceneImpl*>(step.scene));
+  UpdateOnSceneThreadImpl(scene);
 }
 
 void SceneDebuggerImpl::OnReceiveAsync(std::unique_ptr<net::Message> msg) {
@@ -814,19 +813,17 @@ void SceneDebuggerImpl::AppendActorMesh(
   info.meshSent = true;
 }
 
-void SceneDebuggerImpl::PreShutdownAsync(SceneImpl* scene) {
+void SceneDebuggerImpl::PreShutdownAsync() {
   // WARNING: Called on the DebugServer's thread. All operations must be thread-safe.
 
-  // Clear the server pointer before canceling callbacks. This releases a paused pre-step callback
-  // even when DebugServer::Stop is running before MessageServer has removed the client.
+  // Clear the server pointer first. This releases a paused or throttled OnPreStep even when
+  // DebugServer::Stop is running before MessageServer has removed the client.
   _server.Mutate([](auto& server) { server = nullptr; });
 
-  // Cancel callbacks (thread-safe)
-  // If we are currently in a callback, this will block.
-  scene->CancelCallback(_preStepCallbackHandle);
-  scene->CancelCallback(_postStepCallbackHandle);
-  _preStepCallbackHandle = {};
-  _postStepCallbackHandle = {};
+  // Wait for any in-progress scene-thread work to finish.
+  {
+    std::lock_guard lock{_sceneThreadMutex};
+  }
 
   // Cancel any pending messages
   _inbox.Mutate([](auto& inbox) { inbox.clear(); });

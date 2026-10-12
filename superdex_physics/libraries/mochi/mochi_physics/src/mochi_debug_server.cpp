@@ -330,7 +330,7 @@ void DebugServerImpl::AttachSceneDebuggerForClient(
 void DebugServerImpl::ReleaseSceneDebugger(SceneInfo& info) {
   if (info.debugger) {
     // Call PreShutdown (thread-safe). This prevents any future messages from being sent
-    info.debugger->PreShutdownAsync(info.scene);
+    info.debugger->PreShutdownAsync();
 
     // Release our shared_ptr
     info.debugger.reset();

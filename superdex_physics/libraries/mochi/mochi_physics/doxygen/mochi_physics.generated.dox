@@ -3754,7 +3754,7 @@
 
 /// @var mochi::PerformanceStats::totalStepDurationSec
 ///
-/// @brief Total wall-clock time [s] spent in the last call to @ref mochi::Scene::Step "Scene::Step".
+/// @brief Total wall-clock time [s] spent in the last call to @ref mochi::Scene::Step "Scene::Step", excluding time spent in the remote physics debugger.
 ///
 /// @note Includes time spent in user-defined pre-step and post-step callbacks.
 ///

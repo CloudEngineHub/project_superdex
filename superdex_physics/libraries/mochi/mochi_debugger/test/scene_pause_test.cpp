@@ -18,6 +18,7 @@
 
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/test/wait_until.h>
+#include <mochi_physics/dbg/protocol.h>
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/src/mochi_scene.h>
 #include <mochi_physics/src/mochi_scene_debugger.h>
@@ -363,6 +364,37 @@ TEST_F(ScenePauseTest, UnpauseWhenServerStops) {
       assert_cast<SceneImpl*>(scene)->GetDebugger()); // Scene debugger no longer associated
   thread.join();
   EXPECT_EQ(10, stepCounter.load()); // All 10 steps completed
+}
+
+TEST_F(ScenePauseTest, SceneThreadEntryPointsDoNothingAfterShutdown) {
+  Scene* scene = CreateConnectedSelectedScene();
+  auto sceneDebugger = GetDebugger(scene);
+  ASSERT_NE(nullptr, sceneDebugger);
+  EXPECT_EQ(StepMode::Play, sceneDebugger->GetStepMode());
+
+  DisconnectClient();
+  EXPECT_EQ(nullptr, GetDebugger(scene));
+
+  auto* sceneImpl = assert_cast<SceneImpl*>(scene);
+  StepInfo const step{.scene = scene, .timeStepSec = kTimeStep};
+  auto queuePauseRequest = [&]() {
+    auto request = std::make_unique<protocol::SceneStepRequest>();
+    request->scene = scene->GetHandle();
+    request->mode = StepMode::Pause;
+    sceneDebugger->OnReceiveAsync(std::move(request));
+  };
+
+  queuePauseRequest();
+  sceneDebugger->UpdateOnSceneThread(sceneImpl);
+  EXPECT_EQ(StepMode::Play, sceneDebugger->GetStepMode());
+
+  queuePauseRequest();
+  sceneDebugger->OnPreStep(sceneImpl, step);
+  EXPECT_EQ(StepMode::Play, sceneDebugger->GetStepMode());
+
+  queuePauseRequest();
+  sceneDebugger->OnPostStep(sceneImpl, step);
+  EXPECT_EQ(StepMode::Play, sceneDebugger->GetStepMode());
 }
 
 TEST_F(ScenePauseTest, SetSceneStepModeUpdatesClientAndServer) {

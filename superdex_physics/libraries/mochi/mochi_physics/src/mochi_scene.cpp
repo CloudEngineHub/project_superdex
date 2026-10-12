@@ -607,21 +607,11 @@ void SceneImpl::Step(double timeStepSec) {
     return;
   }
 
-  Timer totalStepTimer;
-
   auto& stepCounter = _registry.ctx<CSceneStepCounter>().value;
   stepCounter++;
 
   // Enforce scheduler binding to this thread, for parallel work.
   ScopedSchedulerBinding schedulerBinding(this);
-
-  Timer timer;
-
-  if (_recorder) {
-    _recorder->OnStepBegin(timeStepSec, GetGravity());
-  }
-
-  TimeSpan recordingStepDuration = timer.GetElapsed();
 
   // Additional info for the profiler
   MOCHI_PROFILE_DESCRIPTION_F(
@@ -631,14 +621,23 @@ void SceneImpl::Step(double timeStepSec) {
   stepInfo.scene = this;
   stepInfo.timeStepSec = timeStepSec;
 
-  timer.Reset();
-
-  // Check if a SceneDebugger needs to be cleaned up on this thread
-  DynamicArray<std::shared_ptr<dbg::SceneDebugger>> debuggersToShutdown;
-  _debugger.Mutate([&](auto& info) { debuggersToShutdown = std::move(info.pendingShutdown); });
-  for (auto& ptr : debuggersToShutdown) {
-    ptr->ShutdownOnSceneThread(this);
+  // The debugger hooks run outside all step timers, so pausing, real-time throttling and sync
+  // traffic never appear in PerformanceStats.
+  auto const debugger = AcquireDebugger();
+  if (debugger) {
+    debugger->OnPreStep(this, stepInfo);
   }
+
+  Timer totalStepTimer;
+  Timer timer;
+
+  if (_recorder) {
+    _recorder->OnStepBegin(timeStepSec, GetGravity());
+  }
+
+  TimeSpan recordingStepDuration = timer.GetElapsed();
+
+  timer.Reset();
 
   // Fire pre-step callbacks one at a time
   {
@@ -708,6 +707,10 @@ void SceneImpl::Step(double timeStepSec) {
 
   TimeSpan totalStepDuration = totalStepTimer.GetElapsed();
   _lastPerformanceStats.totalStepDurationSec = ToSeconds(totalStepDuration);
+
+  if (debugger) {
+    debugger->OnPostStep(this, stepInfo);
+  }
 
 #if MOCHI_DEBUG
   // Log a warning if any ECS component types have been used with the entt::registry, which were not
@@ -908,6 +911,12 @@ DebugDraw const& SceneImpl::GetDebugDraw() const {
 }
 
 void SceneImpl::UpdateDebugger() {
+  if (auto const debugger = AcquireDebugger()) {
+    debugger->UpdateOnSceneThread(this);
+  }
+}
+
+std::shared_ptr<dbg::SceneDebugger> SceneImpl::AcquireDebugger() {
   std::shared_ptr<dbg::SceneDebugger> debugger;
   DynamicArray<std::shared_ptr<dbg::SceneDebugger>> debuggersToShutdown;
   _debugger.Mutate([&](auto& info) {
@@ -919,11 +928,7 @@ void SceneImpl::UpdateDebugger() {
   for (auto& ptr : debuggersToShutdown) {
     ptr->ShutdownOnSceneThread(this);
   }
-
-  // Then update the current debugger (if any)
-  if (debugger) {
-    debugger->UpdateOnSceneThread(this);
-  }
+  return debugger;
 }
 
 bool SceneImpl::IsRecording() const {

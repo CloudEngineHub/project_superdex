@@ -375,6 +375,10 @@ class SceneImpl final : public Scene {
   };
   Guarded<DebuggerInfo> _debugger;
 
+  // Finish shutting down retired debuggers, then return the current one (if any). Scene thread
+  // only.
+  std::shared_ptr<dbg::SceneDebugger> AcquireDebugger();
+
   // Recording:
   std::unique_ptr<SceneRecorder> _recorder;
 

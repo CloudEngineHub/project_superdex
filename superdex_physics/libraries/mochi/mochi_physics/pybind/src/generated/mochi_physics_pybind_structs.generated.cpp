@@ -1180,7 +1180,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def(nb::self != nb::self)
     .def("__copy__", [](mochi::PerformanceStats const& self) { return mochi::PerformanceStats(self); })
     .def("__deepcopy__", [](mochi::PerformanceStats const& self, nb::dict) { return mochi::PerformanceStats(self); })
-    .def_rw("total_step_duration_sec", &mochi::PerformanceStats::totalStepDurationSec, "Total wall-clock time [s] spent in the last call to\n:meth:`~superdex.physics.Scene.step`.\n\nNote:\n    Includes time spent in user-defined pre-step and post-step callbacks.")
+    .def_rw("total_step_duration_sec", &mochi::PerformanceStats::totalStepDurationSec, "Total wall-clock time [s] spent in the last call to\n:meth:`~superdex.physics.Scene.step`, excluding time spent in the remote physics\ndebugger.\n\nNote:\n    Includes time spent in user-defined pre-step and post-step callbacks.")
     .def_rw("solve_step_duration_sec", &mochi::PerformanceStats::solveStepDurationSec, "Wall-clock time [s] spent solving physics in the last call to\n:meth:`~superdex.physics.Scene.step`.\n\nNote:\n    Does not include time spent in user-defined pre-step and post-step\n    callbacks.")
     .def_rw("pre_step_callbacks_duration_sec", &mochi::PerformanceStats::preStepCallbacksDurationSec, "Wall-clock time [s] spent executing user-defined pre-step callbacks in the last\ncall to :meth:`~superdex.physics.Scene.step`.")
     .def_rw("post_step_callbacks_duration_sec", &mochi::PerformanceStats::postStepCallbacksDurationSec, "Wall-clock time [s] spent executing user-defined post-step callbacks in the last\ncall to :meth:`~superdex.physics.Scene.step`.")

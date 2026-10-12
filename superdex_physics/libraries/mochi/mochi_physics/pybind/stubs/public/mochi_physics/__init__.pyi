@@ -7504,7 +7504,8 @@ class PerformanceStats:
     """
     total_step_duration_sec: float
     """Total wall-clock time [s] spent in the last call to
-    :meth:`~superdex.physics.Scene.step`.
+    :meth:`~superdex.physics.Scene.step`, excluding time spent in the remote physics
+    debugger.
 
     Note:
         Includes time spent in user-defined pre-step and post-step callbacks.
