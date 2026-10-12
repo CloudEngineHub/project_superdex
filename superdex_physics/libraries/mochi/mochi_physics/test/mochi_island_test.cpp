@@ -322,11 +322,16 @@ TEST_F(MochiIslandParallel, StaticArticulatedLinkIsStableAsyncCollider) {
 TEST_F(MochiIsland, StaticActorNoIsland) {
   auto& reg = GetRegistry();
 
-  // Static actors should not be in any island
+  // Static actors should not be in any island, even when moved or when forcing a single island
   ActorHandle actor = CreateRigidActor(true);
-  Step();
-  EXPECT_FALSE(reg.any_of<CIslandMemberInfo>(GetEntity(actor)));
-  EXPECT_EQ(0, GetNumIslands());
+  for (bool const forceSingleIsland : {false, true, false, true}) {
+    _scene->SetForceSingleIsland(forceSingleIsland);
+    _scene->GetActor(actor)->SetRootTransform(
+        TransformRT{Real3{0_r, forceSingleIsland ? 1_r : 0_r, 0_r}}, test::ExpectOK{});
+    Step();
+    EXPECT_FALSE(reg.any_of<CIslandMemberInfo>(GetEntity(actor)));
+    EXPECT_EQ(0, GetNumIslands());
+  }
 
   // Cleanup
   _scene->DestroyActor(actor);
@@ -720,6 +725,30 @@ TEST_F(MochiIsland, ForceSingleIsland) {
   _scene->SetForceSingleIsland(false);
   Step();
   expectSingleIsland(false);
+
+  // With a single island forced, removing every dynamic actor removes the island, even if another
+  // entity recycles its handle, and new dynamic actors join one island on their first step. Also in
+  // a differentiable scene.
+  _scene->SetForceSingleIsland(true);
+  for (bool const differentiable : {false, true}) {
+    if (differentiable) {
+      test::SetSceneIntegrationMethod(_scene, IntegrationMethod::BackwardEuler);
+      MakeSceneDifferentiableInternal(_scene, test::ExpectOK{});
+    }
+    Step();
+    entt::entity const globalIsland = GetIsland(a);
+    _scene->DestroyActor(a);
+    _scene->DestroyActor(b);
+    ASSERT_EQ(globalIsland, reg.create(globalIsland));
+    Step();
+    EXPECT_EQ(0, GetNumIslands());
+    a = CreateRigidActor();
+    b = CreateRigidActor();
+    Step();
+    expectSingleIsland(true);
+    EXPECT_FALSE(reg.all_of<TagIsland>(globalIsland));
+    reg.destroy(globalIsland);
+  }
 
   // Cleanup
   _scene->DestroyActor(a);

@@ -544,9 +544,10 @@ static bool UpdateForceGlobalIsland(entt::registry& reg) {
       global.forceSingleIslandByUserRequest || !reg.view<TagForceSingleIsland>().empty();
 
   if (needsGlobalIsland) {
-    // Ensure that the global island exists
-    if (!reg.valid(global.island)) {
-      global.island = island::CreateEmpty(reg);
+    // Ensure that the global island exists, unless it would be empty. The handle may outlive the
+    // island, and once the entity's version wraps around, it can refer to an unrelated entity.
+    if (!reg.valid(global.island) || !reg.all_of<TagIsland>(global.island)) {
+      global.island = reg.view<TagIsland>().empty() ? entt::null : island::CreateEmpty(reg);
     }
 
     // Merge any other islands into it
