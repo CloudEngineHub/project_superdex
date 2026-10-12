@@ -53,6 +53,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -1504,6 +1505,10 @@ static void CollisionDetection(entt::registry& reg, entt::entity ent) {
 template <bool kIsSync>
 static void SetupActiveCollisionNormals(entt::registry& reg, entt::entity ent) {
   MOCHI_PROFILE_SCOPE();
+  auto const* activeCollisions = reg.try_get<CActiveCollisions<kIsSync, TimeStep::Current>>(ent);
+  if (!activeCollisions || !activeCollisions->HasContact()) {
+    return;
+  }
   ecs::TryInvokeOnEntity(&linear_contact_skin::SetupActiveCollisionNormals<kIsSync>, reg, ent);
   ecs::TryInvokeOnEntity(
       &deformable::SetupActiveCollisionNormals<kIsSync, CFemBoundaryDiscretization>, reg, ent);
@@ -1512,94 +1517,145 @@ static void SetupActiveCollisionNormals(entt::registry& reg, entt::entity ent) {
   ecs::TryInvokeOnEntity(&rigid::SetupActiveCollisionNormals<kIsSync>, reg, ent);
 }
 
+template <class StorageT>
+[[nodiscard]] static MOCHI_FORCE_INLINE bool HasCollJacs(
+    StorageT const& collJacsStorage,
+    entt::entity e) {
+  auto const* collJacs = TryGet(collJacsStorage, e);
+  return collJacs && !collJacs->empty();
+}
+
+template <class StorageT>
+[[nodiscard]] static MOCHI_FORCE_INLINE bool AnyHasCollJacs(
+    StorageT const& collJacsStorage,
+    Span<entt::entity const> actors) {
+  return std::ranges::any_of(
+      actors, [&](entt::entity e) { return HasCollJacs(collJacsStorage, e); });
+}
+
+// Contact Jacobian setup systems only iterate CCollJacs, so actors without contact Jacobians have
+// nothing to set up.
+template <class StorageT, class SystemT>
+static MOCHI_FORCE_INLINE void ScheduleForActorsWithCollJacs(
+    TaskSemaphore& sem,
+    std::string_view debugLabel,
+    SystemT system,
+    entt::registry& reg,
+    StorageT const& collJacsStorage,
+    Span<entt::entity const> actors) {
+  for (entt::entity const e : actors) {
+    if (HasCollJacs(collJacsStorage, e)) {
+      ecs::TryScheduleInvokeOnEntity(sem, debugLabel, system, reg, e);
+    }
+  }
+}
+
 template <TimeStep kTimeStep>
 static void InitCollidingJacobians(
     TaskSemaphore& sem,
     entt::registry& reg,
     CIslandDescendants const& descendants) {
   MOCHI_PROFILE_SCOPE();
+  auto const& collidingJacsStorage = std::as_const(reg).storage<CCollJacs<CollRole::Colliding>>();
 
   // Schedule all deforming actors in parallel
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "deformable::SetupCollidingJacobians<TagSoftActor, CFemBoundaryDiscretization>",
       &deformable::SetupCollidingJacobians<TagSoftActor, CFemBoundaryDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.softActors);
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "deformable::SetupCollidingJacobians<TagShellActor, CFemSurfaceDiscretization>",
       &deformable::SetupCollidingJacobians<TagShellActor, CFemSurfaceDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.shellActors);
   // Centerline Jacobians for rods without surface contact.
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "deformable::SetupCollidingJacobians<TagRodActor, CFemSegmentDiscretization>",
       &deformable::SetupCollidingJacobians<TagRodActor, CFemSegmentDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.rodActors);
   std::array<Span<entt::entity const>, 3> contactSkinActors = {
       descendants.softActors, descendants.shellActors, descendants.rodActors};
   for (auto actors : contactSkinActors) {
-    ecs::ScheduleInvokeForEach(
+    ScheduleForActorsWithCollJacs(
         sem,
         "SetupContactSkinCollidingJacobians",
         &SetupContactSkinCollidingJacobians,
         reg,
+        collidingJacsStorage,
         actors);
   }
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "rom::SetupCollidingJacobians",
       &rom::SetupCollidingJacobians,
       reg,
+      collidingJacsStorage,
       descendants.softActors);
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "articulated::compound::SetupCollidingJacobians<CFemBoundaryDiscretization>",
       &articulated::compound::SetupCollidingJacobians<CFemBoundaryDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.compoundActors);
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "articulated::compound::SetupCollidingJacobians<CFemSurfaceDiscretization>",
       &articulated::compound::SetupCollidingJacobians<CFemSurfaceDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.compoundActors);
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "skinned::SetupCollidingJacobians",
       &skinned::SetupCollidingJacobians,
       reg,
+      collidingJacsStorage,
       descendants.nestedSoftActors);
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "blended::SetupCollidingJacobians<CFemBoundaryDiscretization>",
       &blended::SetupCollidingJacobians<CFemBoundaryDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.blendedActors);
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "blended::SetupCollidingJacobians<CFemSurfaceDiscretization>",
       &blended::SetupCollidingJacobians<CFemSurfaceDiscretization>,
       reg,
+      collidingJacsStorage,
       descendants.blendedActors);
 
   // Schedule jointly all the rigid links in an articulated actor
   for (auto e : descendants.compoundActors) {
-    if (reg.all_of<TagArticulatedActor>(e)) {
-      Schedule(sem, "SetupCollidingJacobians_Articulated", [&reg, e]() {
-        for (auto nested : reg.get<CGroupMembers const>(e).actors) {
-          ecs::TryInvokeOnEntity(
-              &articulated::rigid::SetupCollidingJacobians<kTimeStep>, reg, nested);
+    if (reg.all_of<TagArticulatedActor>(e) &&
+        AnyHasCollJacs(collidingJacsStorage, reg.get<CGroupMembers const>(e).actors)) {
+      Schedule(sem, "SetupCollidingJacobians_Articulated", [&reg, &collidingJacsStorage, e]() {
+        for (auto link : reg.get<CGroupMembers const>(e).actors) {
+          if (HasCollJacs(collidingJacsStorage, link)) {
+            ecs::TryInvokeOnEntity(
+                &articulated::rigid::SetupCollidingJacobians<kTimeStep>, reg, link);
+          }
         }
       });
     }
   }
 
   // Rigid actors are pretty cheap. Do them on the calling thread.
-  ecs::InvokeForEach(&rigid::SetupCollidingJacobians<kTimeStep>, reg, descendants.rigidActors);
+  for (auto e : descendants.rigidActors) {
+    if (HasCollJacs(collidingJacsStorage, e)) {
+      ecs::TryInvokeOnEntity(&rigid::SetupCollidingJacobians<kTimeStep>, reg, e);
+    }
+  }
 }
 
 // This system is only used for far SDF queries.
@@ -1821,37 +1877,46 @@ static void InitColliderJacobians(
     entt::registry& reg,
     CIslandDescendants const& descendants) {
   MOCHI_PROFILE_SCOPE();
+  auto const& colliderJacsStorage = std::as_const(reg).storage<CCollJacs<CollRole::Collider>>();
 
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "deformable::SetupColliderJacobians (soft)",
       &deformable::SetupColliderJacobians,
       reg,
+      colliderJacsStorage,
       descendants.softActors);
 
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "deformable::SetupColliderJacobians (shell)",
       &deformable::SetupColliderJacobians,
       reg,
+      colliderJacsStorage,
       descendants.shellActors);
 
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "deformable::SetupColliderJacobians (rod)",
       &deformable::SetupColliderJacobians,
       reg,
+      colliderJacsStorage,
       descendants.rodActors);
 
-  ecs::ScheduleInvokeForEach(
+  ScheduleForActorsWithCollJacs(
       sem,
       "articulated::rigid::SetupColliderJacobians",
       &articulated::rigid::SetupColliderJacobians<kTimeStep>,
       reg,
+      colliderJacsStorage,
       descendants.rigidActors);
 
   // Rigid actors are pretty cheap. Do them on the calling thread.
-  ecs::InvokeForEach(&rigid::SetupColliderJacobians<kTimeStep>, reg, descendants.rigidActors);
+  for (auto e : descendants.rigidActors) {
+    if (HasCollJacs(colliderJacsStorage, e)) {
+      ecs::TryInvokeOnEntity(&rigid::SetupColliderJacobians<kTimeStep>, reg, e);
+    }
+  }
 }
 
 namespace {
