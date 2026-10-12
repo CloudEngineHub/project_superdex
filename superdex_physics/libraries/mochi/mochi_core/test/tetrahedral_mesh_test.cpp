@@ -245,7 +245,7 @@ TEST(TetrahedralMesh, UnitGridDefaultMatchesUnitCube) {
   EXPECT_SPAN_EQ(cube.GetFlatConnectivity(), grid.GetFlatConnectivity());
 }
 
-TEST(TetrahedralMesh, ActiveNodeEdgesUseActiveNodeIndices) {
+TEST(TetrahedralMesh, UnreferencedNodes) {
   constexpr std::array kCoordinates = {
       Real3{10_r, 10_r, 10_r}, // unreferenced
       Real3{0_r, 0_r, 0_r},
@@ -266,6 +266,7 @@ TEST(TetrahedralMesh, ActiveNodeEdgesUseActiveNodeIndices) {
   EXPECT_SPAN_EQ(kExpectedActiveNodes, mesh.GetActiveNodes());
   EXPECT_SPAN_EQ(kExpectedEdges, mesh.GetEdges());
   EXPECT_SPAN_EQ(kExpectedActiveEdges, mesh.GetActiveNodesEdges());
+  EXPECT_NEAR_EQ(Aabb(Real3{}, Real3{1_r, 1_r, 1_r}), mesh.GetAabb());
 }
 
 TEST(TetrahedralMesh, Empty) {

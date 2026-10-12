@@ -1262,7 +1262,7 @@ void mochi::InitRigidActor(
     MOCHI_ERROR_RETURN(error);
   }
 
-  // This bounding volume contains all nodes of the mesh and the shape of the collider.
+  // This bounding volume contains all active nodes of the mesh and the shape of the collider.
   reg.emplace<CBoundingVolume>(e, bv);
 
   // Rigid velocity component
