@@ -58,6 +58,8 @@ class PhysicsRecorder final {
     std::vector<Link> links;
     mochi::DynamicArray<mochi::real> positions;
     mochi::DynamicArray<mochi::real> velocities;
+    mochi::DynamicArray<mochi::real> controllerTargets;
+    bool hasPoseController = false;
     mochi::DynamicArray<mochi::TransformRT> worldFromLinks;
   };
 
@@ -70,9 +72,12 @@ class PhysicsRecorder final {
  private:
   void RegisterActor(std::string id, mochi::Actor& actor, mochi::Error& error);
   void WriteGeometry(std::string_view entityPath, mochi::Actor const& actor, mochi::Error& error);
+  void
+  WritePhysicalParameters(std::string_view path, mochi::Actor const& actor, mochi::Error& error);
 
   Episode& _episode;
   mochi::Scene& _scene;
+  ScalarSeries* _frameSeries = nullptr;
   std::vector<Actor> _actors;
 };
 

@@ -28,9 +28,69 @@ namespace superdex::recorder {
 namespace {
 
 constexpr std::string_view kActorArchetype = "superdex.archetypes.PhysicsActor";
+constexpr std::string_view kFrameArchetype = "superdex.archetypes.PhysicsFrame";
 
 ComponentField ActorField(std::string component) {
   return {std::string{kActorArchetype}, std::move(component)};
+}
+
+// Recorded in this order under superdex.physics.contact_param_names, with the Python field names.
+constexpr std::array<std::string_view, 13> kContactParamNames = {
+    "penalty_coefficient",
+    "penalty_smoothing_half_distance",
+    "penalty_threshold_default",
+    "penalty_threshold_extra_padding",
+    "friction_with_collider_normal",
+    "max_alignment_normals",
+    "viscous_friction_coefficient",
+    "coulomb_friction_coefficient",
+    "friction_falloff_vel",
+    "normal_viscous_damping_coefficient",
+    "distance_error_bound",
+    "obj_scale",
+    "colliding_penalty_length_scale",
+};
+
+// Mirrors mochi::ContactParams so that a new field fails to compile until it is recorded.
+struct RecordedContactParamsLayout {
+  mochi::real penaltyCoefficient;
+  mochi::real penaltySmoothingHalfDistance;
+  mochi::real penaltyThresholdDefault;
+  mochi::real penaltyThresholdExtraPadding;
+  bool frictionWithColliderNormal;
+  mochi::real maxAlignmentNormals;
+  mochi::real viscousFrictionCoefficient;
+  mochi::real coulombFrictionCoefficient;
+  mochi::real frictionFalloffVel;
+  mochi::real normalViscousDampingCoefficient;
+  mochi::real distanceErrorBound;
+  mochi::real objScale;
+  mochi::real collidingPenaltyLengthScale;
+};
+static_assert(
+    sizeof(mochi::ContactParams) == sizeof(RecordedContactParamsLayout),
+    "mochi::ContactParams changed; update kContactParamNames and ContactParamValues.");
+
+std::array<double, kContactParamNames.size()> ContactParamValues(mochi::ContactParams const& p) {
+  return {
+      p.penaltyCoefficient,
+      p.penaltySmoothingHalfDistance,
+      p.penaltyThresholdDefault,
+      p.penaltyThresholdExtraPadding,
+      p.frictionWithColliderNormal ? 1.0 : 0.0,
+      p.maxAlignmentNormals,
+      p.viscousFrictionCoefficient,
+      p.coulombFrictionCoefficient,
+      p.frictionFalloffVel,
+      p.normalViscousDampingCoefficient,
+      p.distanceErrorBound,
+      p.objScale,
+      p.collidingPenaltyLengthScale,
+  };
+}
+
+ComponentField FrameField(std::string component) {
+  return {std::string{kFrameArchetype}, std::move(component)};
 }
 
 std::string_view ActorTypeName(mochi::ActorType type) {
@@ -109,6 +169,21 @@ PhysicsRecorder::Actor::Actor(
 
 PhysicsRecorder::PhysicsRecorder(Episode& episode, mochi::Scene& scene, mochi::Error& error)
     : _episode{episode}, _scene{scene} {
+  _frameSeries = _episode.CreateScalarSeries(
+      "data/physics/frames",
+      {
+          FrameField("superdex.physics.step_dt_sec"),
+      },
+      error);
+  std::vector<std::string> const contactParamNames{
+      kContactParamNames.begin(), kContactParamNames.end()};
+  _episode.WriteConstantTexts(
+      "data/physics/actors",
+      ActorField("superdex.physics.contact_param_names"),
+      contactParamNames,
+      error);
+  MOCHI_ERROR_RETURN(error);
+
   std::unordered_set<std::string> ids;
   scene.ForEachActor([&](mochi::Actor* actor) {
     if (!error.IsOK() || actor == nullptr || actor->IsNestedLinkActor() ||
@@ -131,6 +206,9 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
   std::string const dataPath = "data/physics/actors/" + encodedId;
   std::string const entityPath = "world/" + encodedId;
 
+  bool const hasPoseController =
+      actor.GetType() == mochi::ActorType::Articulated && actor.HasArticulatedPoseController(error);
+  MOCHI_ERROR_RETURN(error);
   auto* const transformSeries = _episode.CreateTransformSeries(entityPath, error);
   std::vector<ComponentField> fields{
       ActorField("superdex.physics.root_translation_xyz"),
@@ -139,9 +217,15 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
   if (actor.GetType() == mochi::ActorType::Rigid) {
     fields.push_back(ActorField("superdex.physics.linear_velocity_xyz"));
     fields.push_back(ActorField("superdex.physics.angular_velocity_xyz"));
+    if (!actor.IsStatic()) {
+      fields.push_back(ActorField("superdex.physics.com_translation_xyz"));
+    }
   } else {
     fields.push_back(ActorField("superdex.physics.joint_positions"));
     fields.push_back(ActorField("superdex.physics.joint_velocities"));
+    if (hasPoseController) {
+      fields.push_back(ActorField("superdex.physics.controller_target_positions"));
+    }
   }
   auto* const stateSeries = _episode.CreateScalarSeries(dataPath, std::move(fields), error);
   MOCHI_ERROR_RETURN(error);
@@ -181,8 +265,21 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
       _episode.WriteConstantText(
           linkPath, ActorField("superdex.physics.link_name"), linkName, error);
       WriteGeometry(linkPath, *linkActor, error);
+      WritePhysicalParameters(linkPath, *linkActor, error);
       MOCHI_ERROR_RETURN(error);
       registered.links.emplace_back(linkName, *linkSeries);
+    }
+
+    // A skinned articulation keeps its contact skin's parameters on the root actor. The root's
+    // mass and density aren't written: they describe the whole articulation, not one body.
+    mochi::Error skinContactError;
+    mochi::ContactParams const skinContact = actor.GetContactParams(skinContactError);
+    if (skinContactError.IsOK()) {
+      _episode.WriteConstantScalars(
+          dataPath,
+          ActorField("superdex.physics.contact_params"),
+          ContactParamValues(skinContact),
+          error);
     }
 
     MOCHI_ERROR_IF_NOT(
@@ -236,9 +333,14 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
     int const numDofs = actor.GetNumDofs();
     registered.positions.resize(numDofs);
     registered.velocities.resize(numDofs);
+    registered.hasPoseController = hasPoseController;
+    if (hasPoseController) {
+      registered.controllerTargets.resize(numDofs);
+    }
     registered.worldFromLinks.resize(registered.links.size());
   } else {
     WriteGeometry(entityPath, actor, error);
+    WritePhysicalParameters(dataPath, actor, error);
   }
   MOCHI_ERROR_RETURN(error);
 
@@ -259,6 +361,32 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
   _episode.WriteConstantScalars(dataPath, ActorField("superdex.physics.num_dofs"), numDofs, error);
   MOCHI_ERROR_RETURN(error);
   _actors.push_back(std::move(registered));
+}
+
+void PhysicsRecorder::WritePhysicalParameters(
+    std::string_view path,
+    mochi::Actor const& actor,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  // Links without a collider are massless frames with nothing to reapply, and static bodies have
+  // no mass.
+  mochi::Error contactError;
+  mochi::ContactParams const contact = actor.GetContactParams(contactError);
+  if (!contactError.IsOK()) {
+    return;
+  }
+  _episode.WriteConstantScalars(
+      path, ActorField("superdex.physics.contact_params"), ContactParamValues(contact), error);
+  if (actor.IsStatic()) {
+    return;
+  }
+  mochi::Error massError;
+  std::array<double, 1> const density{static_cast<double>(actor.GetDensity(massError))};
+  std::array<double, 1> const mass{static_cast<double>(actor.GetMass(massError))};
+  if (massError.IsOK()) {
+    _episode.WriteConstantScalars(path, ActorField("superdex.physics.density"), density, error);
+    _episode.WriteConstantScalars(path, ActorField("superdex.physics.mass"), mass, error);
+  }
 }
 
 void PhysicsRecorder::WriteGeometry(
@@ -297,6 +425,15 @@ void PhysicsRecorder::WriteGeometry(
 
 void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
+  if (_frameSeries == nullptr) {
+    MOCHI_ERROR_SET(error, "Physics frame series is unavailable.");
+    return;
+  }
+  std::array<mochi::real, 1> const stepDuration{static_cast<mochi::real>(_scene.GetLastTimeStep())};
+  std::array<mochi::Span<mochi::real const>, 1> const frameFields{AsSpan(stepDuration)};
+  _frameSeries->Append(time, frameFields, error);
+  MOCHI_ERROR_RETURN(error);
+
   for (auto& registered : _actors) {
     mochi::Actor& actor = registered.actor;
     if (actor.IsStatic() && registered.stateSeries.GetNumSamples() != 0) {
@@ -316,14 +453,23 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
     if (actor.GetType() == mochi::ActorType::Rigid) {
       auto const linearVelocity = actor.GetLinearVelocity(error);
       auto const angularVelocity = actor.GetAngularVelocity(error);
+      // The root transform is rounded from the simulated center-of-mass transform, so restoring
+      // the state exactly needs the center of mass itself.
+      mochi::Real3 comTranslation;
+      if (!actor.IsStatic()) {
+        comTranslation = actor.GetCenterOfMassTransform(error).GetTranslation();
+      }
       MOCHI_ERROR_RETURN(error);
-      std::array<mochi::Span<mochi::real const>, 4> const fields{
+      std::array<mochi::Span<mochi::real const>, 5> const fields{
           AsSpan(translation),
           AsSpan(quaternion),
           AsSpan(linearVelocity),
           AsSpan(angularVelocity),
+          AsSpan(comTranslation),
       };
-      registered.stateSeries.Append(time, fields, error);
+      size_t const numFields = actor.IsStatic() ? fields.size() - 1 : fields.size();
+      registered.stateSeries.Append(
+          time, mochi::Span<mochi::Span<mochi::real const> const>(fields.data(), numFields), error);
       MOCHI_ERROR_RETURN(error);
       continue;
     }
@@ -331,13 +477,20 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
     actor.GetArticulatedPose(registered.positions, error);
     actor.GetArticulatedJointVelocities(registered.velocities, error);
     MOCHI_ERROR_RETURN(error);
-    std::array<mochi::Span<mochi::real const>, 4> const fields{
+    if (registered.hasPoseController) {
+      actor.GetArticulatedTargetPose(registered.controllerTargets, error);
+      MOCHI_ERROR_RETURN(error);
+    }
+    std::array<mochi::Span<mochi::real const>, 5> const fields{
         AsSpan(translation),
         AsSpan(quaternion),
         AsSpan(registered.positions),
         AsSpan(registered.velocities),
+        AsSpan(registered.controllerTargets),
     };
-    registered.stateSeries.Append(time, fields, error);
+    size_t const numFields = registered.hasPoseController ? fields.size() : fields.size() - 1;
+    registered.stateSeries.Append(
+        time, mochi::Span<mochi::Span<mochi::real const> const>(fields.data(), numFields), error);
     MOCHI_ERROR_RETURN(error);
 
     actor.GetArticulatedLinkTransforms(registered.worldFromLinks, error);
