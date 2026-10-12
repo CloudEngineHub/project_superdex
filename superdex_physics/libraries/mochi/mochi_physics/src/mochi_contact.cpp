@@ -261,6 +261,26 @@ static real GetFarSdfEvaluationDistance(
   }
 }
 
+namespace {
+// The contact bounds of a non-static collider. Its island's CollisionDetectionPipeline computes
+// them before collision detection, for that call only.
+struct CColliderWorldBounds {
+  AnyShape shape;
+  // Whether some actor's CConservativePotentialColliders</*kIsSync*/ true> holds this collider.
+  // Only then does collision detection read `shape`, so only then does its island compute it.
+  bool isPotentialSyncCollider = false;
+};
+} // namespace
+
+// A collider's world-space bounds, padded for contact.
+[[nodiscard]] static AnyShape ComputeColliderWorldBounds(
+    TransformRT const& worldFromCollider,
+    CBoundingVolume const& bounds,
+    CContactParams const& params) {
+  return TransformShape(
+      worldFromCollider, ExpandColliderBoundsForContact(bounds.localShape, params));
+}
+
 // Find all the entities that might collide with the colliding actor. Cull the ones that don't
 // overlap the colliding's bounding volume at all. Outputs CPotentialColliders with a list of the
 // entities that are worth considering for collision detection.
@@ -355,9 +375,7 @@ static void UpdatePotentialColliders(
     // bounds.
     AnyShape const worldBoundsColliding =
         TransformShape(worldFromColliding, boundsColliding.localShape);
-    auto const& rootTransforms = reg.storage<CRootTransform>();
-    auto const& boundingVolumes = reg.storage<CBoundingVolume>();
-    auto const& contactParams = reg.storage<CContactParams>();
+#if MOCHI_ASSERT_VERBOSE_ENABLED
     for (entt::entity const collider : conservativeColliders) {
       MOCHI_ASSERT_VERBOSE(
           (reg.all_of<CBoundingVolume, CColliderInfo, CContactParams, CRootTransform>(collider)),
@@ -368,22 +386,37 @@ static void UpdatePotentialColliders(
           reg.get<CColliderInfo const>(collider).type != ColliderType::None,
           "CConservativePotentialColliders should only list entities with valid colliders.");
 
-      // Get root transform.
-      TransformRT const& worldFromCollider =
-          GetRootTransform<kTimeStep>(reg, collider, rootTransforms.get(collider));
-
-      // Get the world-space bounds of the collider and pad it by the penalty threshold distance
-      // We use the penalty threshold of the collider, which is the one used for contact
-      auto const& boundsCollider = boundingVolumes.get(collider);
-
-      auto const& paramsCollider = contactParams.get(collider);
-      AnyShape worldBoundsCollider = TransformShape(
-          worldFromCollider,
-          ExpandColliderBoundsForContact(boundsCollider.localShape, paramsCollider));
-
-      // Check for overlap
-      if (HasOverlap(worldBoundsColliding, worldBoundsCollider)) {
-        potentialColliders.emplace_back(collider);
+      MOCHI_ASSERT_VERBOSE(
+          !kIsSync || (reg.get<CIslandMemberInfo const>(collider).island == islandColliding.island),
+          "Sync colliders should be members of the colliding actor's island.");
+      MOCHI_ASSERT_VERBOSE(
+          !kIsSync ||
+              (reg.all_of<CColliderWorldBounds>(collider) &&
+               reg.get<CColliderWorldBounds const>(collider).isPotentialSyncCollider),
+          "Sync colliders should be flagged, so that their island computes their bounds.");
+    }
+#endif // MOCHI_ASSERT_VERBOSE_ENABLED
+    if constexpr (kIsSync) {
+      // Precondition: this island's CollisionDetectionPipeline computed these bounds in this call.
+      auto const& colliderWorldBounds = reg.storage<CColliderWorldBounds>();
+      for (entt::entity const collider : conservativeColliders) {
+        if (HasOverlap(worldBoundsColliding, colliderWorldBounds.get(collider).shape)) {
+          potentialColliders.emplace_back(collider);
+        }
+      }
+    } else {
+      // Async colliders are static, and other islands read them concurrently.
+      auto const& rootTransforms = reg.storage<CRootTransform>();
+      auto const& boundingVolumes = reg.storage<CBoundingVolume>();
+      auto const& contactParams = reg.storage<CContactParams>();
+      for (entt::entity const collider : conservativeColliders) {
+        AnyShape const worldBoundsCollider = ComputeColliderWorldBounds(
+            GetRootTransform<kTimeStep>(reg, collider, rootTransforms.get(collider)),
+            boundingVolumes.get(collider),
+            contactParams.get(collider));
+        if (HasOverlap(worldBoundsColliding, worldBoundsCollider)) {
+          potentialColliders.emplace_back(collider);
+        }
       }
     }
   }
@@ -4198,6 +4231,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CActiveCollisions</*kIsSync*/ true, TimeStep::StageStart>>(reg);
   ecs::RegisterComponent<CBoxCollider>(reg);
   ecs::RegisterComponent<CColliderInfo>(reg);
+  ecs::RegisterComponent<CColliderWorldBounds>(reg);
   ecs::RegisterComponent<CCollJacs<CollRole::Collider>>(reg);
   ecs::RegisterComponent<CCollJacs<CollRole::Colliding>>(reg);
   ecs::RegisterComponent<CContactPairParamsOverrideTable>(reg);
@@ -4261,6 +4295,8 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
   reg.view<CConservativePotentialColliders</*kIsSync*/ true>>().each(
       [](auto& colliders) { colliders.clear(); });
 
+  auto& colliderWorldBounds = reg.storage<CColliderWorldBounds>();
+
   // Find all static colliders
   // TODO: These rarely change. We could cache this information and update it incrementally.
   for (auto&& [e, colliderInfo, root, bounds, contactParams] : reg.view<
@@ -4290,6 +4326,11 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
     dynamicEntities.push_back(e);
     dynamicBounds.push_back(bounds.worldAabb);
     dynamicHasCollider.push_back(hasCollider ? 1 : 0);
+    // Islands set CColliderWorldBounds concurrently, so it is emplaced here. Unlike hasCollider,
+    // this includes point-cloud colliders, which the point-cloud loop below adds to sync lists.
+    if (cinfo && (cinfo->type != ColliderType::None) && !colliderWorldBounds.contains(e)) {
+      colliderWorldBounds.emplace(e);
+    }
   }
 
   // Find pairs of overlapping actors and update CConservativePotentialColliders
@@ -4382,6 +4423,34 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
               }
             });
       });
+
+  FlagPotentialSyncColliders(reg);
+}
+
+void mochi::contact::FlagPotentialSyncColliders(entt::registry& reg) {
+  auto& colliderWorldBounds = reg.storage<CColliderWorldBounds>();
+  reg.view<CColliderWorldBounds>().each(
+      [](auto& bounds) { bounds.isPotentialSyncCollider = false; });
+  reg.view<CConservativePotentialColliders</*kIsSync*/ true> const>().each(
+      [&](auto const& colliders) {
+        for (entt::entity const collider : colliders) {
+          MOCHI_ASSERT_VERBOSE(
+              colliderWorldBounds.contains(collider),
+              "Sync colliders should have CColliderWorldBounds, which the broadphase emplaces.");
+          colliderWorldBounds.get(collider).isPotentialSyncCollider = true;
+        }
+      });
+#if MOCHI_ASSERT_VERBOSE_ENABLED
+  DynamicArray<entt::entity> potentialSyncColliders;
+  reg.view<CConservativePotentialColliders</*kIsSync*/ true> const>().each(
+      [&](auto const& colliders) { potentialSyncColliders.append(colliders); });
+  std::ranges::sort(potentialSyncColliders);
+  reg.view<CColliderWorldBounds const>().each([&](entt::entity e, auto const& bounds) {
+    MOCHI_ASSERT_VERBOSE(
+        bounds.isPotentialSyncCollider == std::ranges::binary_search(potentialSyncColliders, e),
+        "isPotentialSyncCollider should flag exactly the colliders that sync lists hold.");
+  });
+#endif // MOCHI_ASSERT_VERBOSE_ENABLED
 }
 
 void mochi::UpdateStageStartDataPipeline(
@@ -4446,6 +4515,32 @@ void mochi::UpdateStageStartDataPipeline(
       reg,
       descendants.rodActors);
   sem.Wait();
+}
+
+// Computes the contact bounds of the island's potential sync colliders, for this collision
+// detection call. Sync lists only hold members of their actor's island, so other islands never
+// touch them.
+template <TimeStep kTimeStep>
+static void UpdateIslandColliderWorldBounds(entt::registry& reg, Span<entt::entity const> actors) {
+  auto& colliderWorldBounds = reg.storage<CColliderWorldBounds>();
+  auto const isPotentialSyncCollider = [&](entt::entity e) {
+    auto const* worldBounds = TryGet(colliderWorldBounds, e);
+    return worldBounds && worldBounds->isPotentialSyncCollider;
+  };
+  if (std::ranges::none_of(actors, isPotentialSyncCollider)) {
+    return;
+  }
+  auto const& roots = reg.storage<CRootTransform>();
+  auto const& boundingVolumes = reg.storage<CBoundingVolume>();
+  auto const& contactParams = reg.storage<CContactParams>();
+  for (entt::entity const e : actors) {
+    if (isPotentialSyncCollider(e)) {
+      colliderWorldBounds.get(e).shape = ComputeColliderWorldBounds(
+          GetRootTransform<kTimeStep>(reg, e, roots.get(e)),
+          boundingVolumes.get(e),
+          contactParams.get(e));
+    }
+  }
 }
 
 template <TimeStep kTimeStep>
@@ -4521,6 +4616,8 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
 
   // The above must complete before collision detection can start.
   sem.Wait();
+
+  UpdateIslandColliderWorldBounds<kTimeStep>(reg, descendants.actors);
 
   ////////////////////////////////////////////////////////////////////////////////
   // Per Actor Collision Detection & Response

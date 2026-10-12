@@ -131,6 +131,7 @@ class MochiIsland : public test::MochiSceneTestBase {
         potentialColliders->emplace_back(GetEntity(b));
       }
     }
+    contact::FlagPotentialSyncColliders(reg);
   }
 
   // Called during simulation just AFTER islands are updated
@@ -423,6 +424,12 @@ TEST_F(MochiIsland, VariousContactType) {
       // just to prove that it remains in the same island as actorB.
       actorC = CreateRigidActor();
 
+      // This threshold shrinks actorC's contact bounds to negative extents. No sync list holds
+      // actorC, so collision detection must not evaluate them.
+      ContactParams contact;
+      contact.penaltyThresholdDefault = -0.1_r;
+      _scene->GetActor(actorC)->SetContactParams(contact, test::ExpectOK{});
+
       compound = reg.create();
       InitCompoundActor(reg, compound, test::ExpectOK{});
       AddActorToCompound(reg, compound, GetEntity(actorB), test::ExpectOK{});
@@ -573,6 +580,9 @@ TEST_F(MochiIsland, SplitPermutation) {
   for (auto& a : actors) {
     a = CreateRigidActor();
   }
+  // island::PreStep below skips the broadphase, which emplaces the contact bounds that
+  // PreIslandUpdate flags, so step once first.
+  Step();
 
   // Helper: Fakes potential colliders to cause a single island to form
   auto formSingleIsland = [&]() {

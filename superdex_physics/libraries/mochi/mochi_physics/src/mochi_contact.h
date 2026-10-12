@@ -1089,6 +1089,12 @@ namespace mochi::contact {
   Contact Simulation
 */
 
+// Flags the potential sync colliders, the colliders that some actor's
+// CConservativePotentialColliders</*kIsSync*/ true> holds, so that their islands compute their
+// contact bounds. UpdateConservativePotentialColliders calls it once it has emplaced their bounds;
+// call it again after editing sync lists.
+void FlagPotentialSyncColliders(entt::registry& reg);
+
 // Call this at the beginning of each simulation step to update CConservativePotentialColliders for
 // all actors. Must come AFTER CConservativeStepBounds has been updated.
 void UpdateConservativePotentialColliders(entt::registry& reg);
