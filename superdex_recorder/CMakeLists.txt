@@ -82,4 +82,15 @@ if (MOCHI_BUILD_TESTS)
     mochi_set_compiler_options(superdex_recorder_physics_test)
     mochi_set_output_directories(superdex_recorder_physics_test)
     add_test(NAME superdex_recorder_physics_test COMMAND superdex_recorder_physics_test)
+
+    if (TARGET superdex_recorder_robotics)
+        add_executable(superdex_recorder_robotics_test test/robotics_recorder_test.cpp)
+        target_link_libraries(
+            superdex_recorder_robotics_test
+            PRIVATE superdex_recorder_robotics gtest_main
+        )
+        mochi_set_compiler_options(superdex_recorder_robotics_test)
+        mochi_set_output_directories(superdex_recorder_robotics_test)
+        add_test(NAME superdex_recorder_robotics_test COMMAND superdex_recorder_robotics_test)
+    endif ()
 endif ()
