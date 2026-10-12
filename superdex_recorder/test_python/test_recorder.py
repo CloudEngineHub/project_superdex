@@ -53,6 +53,10 @@ class RecorderTest(unittest.TestCase):
                 recording.read_static_value("superdex.episode.units_per_meter"),
                 1.0,
             )
+            self.assertEqual(
+                recording.read_static_value("superdex.episode.schema_version"),
+                "1.0",
+            )
             property_keys = recording.component_samples("superdex.episode.property_key")
             self.assertCountEqual(
                 [sample.value[0] for sample in property_keys],
@@ -226,6 +230,12 @@ class RecorderTest(unittest.TestCase):
                 )
                 self.assertAlmostEqual(step_durations[0].value[0], 0.01)
                 self.assertAlmostEqual(step_durations[1].value[0], 0.02)
+                self.assertEqual(
+                    recording.component_samples(
+                        "superdex.physics.contact_force_on_a_world_xyz"
+                    ),
+                    [],
+                )
             finally:
                 sdp.shutdown()
 
@@ -282,4 +292,106 @@ class RecorderTest(unittest.TestCase):
                         sample.timelines["sim_time"], time_sec * 1e9, delta=1
                     )
             finally:
+                sdp.shutdown()
+
+    def test_records_simulated_contact_forces(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            scene = None
+            physics = None
+            try:
+                scene = sdp.create_scene("contact")
+                scene.set_gravity([0, -10, 0])
+                h = 0.05
+                cube_shape = sdp.create_tri_mesh_shape(
+                    coordinates=[
+                        c
+                        for z in (-h, h)
+                        for y in (-h, h)
+                        for x in (-h, h)
+                        for c in (x, y, z)
+                    ],
+                    connectivity=[
+                        *(0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6),
+                        *(0, 1, 5, 0, 5, 4, 2, 6, 3, 3, 6, 7),
+                        *(0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5),
+                    ],
+                )
+                cube = scene.create_rigid_actor(
+                    name="cube",
+                    shape=cube_shape,
+                    density=1000,
+                    world_from_local=sdp.TransformRT(translation=[0, h, 0]),
+                    collider_type=sdp.ColliderType.BOX,
+                )
+                scene.create_rigid_actor(
+                    name="ground",
+                    shape=sdp.create_plane_shape(normal=[0, 1, 0], distance=0),
+                    is_static=True,
+                )
+                assert cube is not None
+                cube.register_query(sdp.QueryType.TOTAL_CONTACT_FORCE)
+                episode = self.make_recorder(Path(directory_string)).begin_episode()
+                config = recorder.PhysicsRecorderConfig()
+                config.record_contact_forces = True
+                physics = recorder.PhysicsRecorder(episode, scene, config)
+                physics.record(0, scene.get_total_simulation_time())
+                expected_forces: dict[int, list[float]] = {}
+                for frame in (1, 2, 3):
+                    scene.step(0.01)
+                    physics.record(frame, scene.get_total_simulation_time())
+                    expected_forces[frame] = cube.get_contact_force_world().tolist()
+                episode.commit()
+                self.assertGreater(expected_forces[3][1], 1.0)
+
+                recording = EpisodeReader(episode.output_path)
+                self.assertEqual(
+                    recording.read_static_value(
+                        "superdex.physics.contact_force_source"
+                    ),
+                    "simulation",
+                )
+                self.assertEqual(
+                    recording.read_static_value("superdex.physics.contact_body_paths"),
+                    ["world/cube", "world/ground"],
+                )
+                contacts = recording.component_samples_many(
+                    (
+                        "superdex.physics.contact_body_a_indices",
+                        "superdex.physics.contact_body_b_indices",
+                        "superdex.physics.contact_force_on_a_world_xyz",
+                    ),
+                    entity_path="data/physics/contacts",
+                )
+                arrows = recording.component_samples(
+                    "Arrows3D:vectors", entity_path="world/contact_forces"
+                )
+                rows = list(
+                    zip(
+                        contacts["superdex.physics.contact_body_a_indices"],
+                        contacts["superdex.physics.contact_body_b_indices"],
+                        contacts["superdex.physics.contact_force_on_a_world_xyz"],
+                        arrows,
+                        strict=True,
+                    )
+                )
+                # Frame 0 precedes the first step, so it has no contacts.
+                self.assertEqual([row[2].timelines["frame"] for row in rows], [1, 2, 3])
+                for body_a, body_b, forces, arrow in rows:
+                    self.assertEqual(len(arrow.value), len(body_a.value))
+                    self.assertEqual(set(body_a.value), {0.0})
+                    self.assertEqual(set(body_b.value), {1.0})
+                    recorded_force = [sum(forces.value[axis::3]) for axis in range(3)]
+                    frame = forces.timelines["frame"]
+                    assert isinstance(frame, int)
+                    expected_force = expected_forces[frame]
+                    for actual, expected in zip(
+                        recorded_force, expected_force, strict=True
+                    ):
+                        self.assertAlmostEqual(actual, expected, delta=1e-4)
+            finally:
+                physics = None
+                gc.collect()
+                if scene is not None:
+                    sdp.destroy_scene(scene)
                 sdp.shutdown()

@@ -280,11 +280,15 @@ TEST(SuperDexRecorderTest, CreateSeriesRejectsExistingEntityPath) {
       "world/test", {{"superdex.archetypes.Test", "superdex.test.value"}}, scalarError);
   mochi::Error transformError;
   auto* const transformSeries = episode->CreateTransformSeries("world/test", transformError);
+  mochi::Error arrowError;
+  auto* const arrowSeries = episode->CreateArrow3DSeries("world/test", arrowError);
 
   EXPECT_EQ(scalarSeries, nullptr);
   EXPECT_FALSE(scalarError.IsOK());
   EXPECT_EQ(transformSeries, nullptr);
   EXPECT_FALSE(transformError.IsOK());
+  EXPECT_EQ(arrowSeries, nullptr);
+  EXPECT_FALSE(arrowError.IsOK());
 }
 
 TEST(SuperDexRecorderTest, WriteMeshRejectsOutOfRangeIndices) {
