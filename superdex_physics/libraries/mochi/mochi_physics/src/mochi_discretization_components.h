@@ -50,6 +50,10 @@ struct CMeshPivot {
 struct CSimplicialMesh : public NoCopy {
   explicit CSimplicialMesh(std::shared_ptr<SimplicialMesh const> const& meshIn) : mesh(meshIn) {
     MOCHI_ASSERT(mesh);
+    MOCHI_ASSERT_VERBOSE(
+        mesh->GetNumActiveNodes() == mesh->GetNumNodes(),
+        "Only rigid actors accept simulation meshes with nodes that no element references, and "
+        "they never have this component.");
   }
   std::shared_ptr<SimplicialMesh const> mesh;
 };

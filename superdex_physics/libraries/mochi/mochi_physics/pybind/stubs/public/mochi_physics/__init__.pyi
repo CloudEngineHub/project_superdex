@@ -5279,7 +5279,8 @@ class RigidActorParams:
     forces and collisions).
 
     Note:
-        Also used to create links in articulated bodies.
+        Articulated links are created from
+        :class:`~superdex.physics.ArticulatedLinkParams` instead.
 
     See Also:
         :meth:`~superdex.physics.Scene.create_rigid_actor`,
@@ -5304,6 +5305,10 @@ class RigidActorParams:
 
     Note:
         Dynamic rigid actors require a shape with a surface mesh.
+
+    Note:
+        A tetrahedral or triangular mesh shape may have nodes that no element
+        references. :meth:`~superdex.physics.Actor.get_mesh` omits them.
 
     See Also:
         :class:`~superdex.physics.ShapeHandle`,
@@ -5466,7 +5471,7 @@ class RigidActorParams:
         zero otherwise.
 
         Note:
-            Not valid for static rigid actors or articulated links.
+            Not valid for static rigid actors.
 
         See Also:
             :meth:`~superdex.physics.Actor.get_linear_velocity`,
@@ -5479,7 +5484,7 @@ class RigidActorParams:
         """Optional initial angular velocity in world frame [rad/s], zero otherwise.
 
         Note:
-            Not valid for static rigid actors or articulated links.
+            Not valid for static rigid actors.
 
         See Also:
             :meth:`~superdex.physics.Actor.get_angular_velocity`,
@@ -5568,7 +5573,7 @@ class SoftActorParams:
 
     Note:
         Actor creation fails if the shape is not a tetrahedral mesh shape or has a
-        node that no tetrahedron references.
+        node that no element references.
 
     Note:
         A shape can be shared by multiple actors, even actors in different scenes.
@@ -5897,6 +5902,11 @@ class ArticulatedLinkParams:
         :attr:`~superdex.physics.SoftSkinnedActorParams.enable_colliding_links` is
         true.
 
+    Note:
+        A tetrahedral or triangular mesh shape may have nodes that no element
+        references. The link actor's :meth:`~superdex.physics.Actor.get_mesh` omits
+        them.
+
     See Also:
         :class:`~superdex.physics.ShapeHandle`,
         :func:`~superdex.physics.load_shape_from_file`
@@ -6062,6 +6072,10 @@ class ArticulatedSkinParams:
     """
     shape: ShapeHandle
     """Shape handle defining the skinned triangular or tetrahedral mesh.
+
+    Note:
+        Actor creation fails if the shape is not a triangular or tetrahedral mesh
+        shape with skinning data, or has a node that no element references.
 
     Note:
         A shape can be shared by multiple actors, even actors in different scenes.
@@ -7345,20 +7359,10 @@ class ContactPoint:
         value.
     """
     element_index: int
-    """Element index in the mesh used for colliding samples on
-    :attr:`~superdex.physics.ContactPoint.actor_a`.
-
-    Note:
-        For shell actors, this is the physics mesh returned by
-        :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
-        enabled, in which case it is the compact contact skin returned by
-        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
-
-    Note:
-        For soft actors, this indexes the triangles of
-        :meth:`~superdex.physics.Actor.get_surface_mesh` unless contact-skin contact
-        is enabled, in which case it is the compact contact skin returned by
-        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
+    """Index of the triangle of :attr:`~superdex.physics.ContactPoint.actor_a` in
+    :meth:`~superdex.physics.Actor.get_surface_mesh`, or in
+    :meth:`~superdex.physics.Actor.get_contact_skin_mesh` when contact uses the
+    contact skin.
 
     Note:
         For rod actors, this field is not populated and is reported as 0. Use
@@ -7420,13 +7424,10 @@ class NodeContactForce:
         :meth:`~superdex.physics.Actor.get_node_contact_forces_world`
     """
     index: int
-    """Node index in the volumetric mesh or the mesh used for colliding samples.
-
-    Note:
-        For soft and shell actors, this is the physics mesh returned by
-        :meth:`~superdex.physics.Actor.get_mesh` unless contact-skin contact is
-        enabled, in which case it is the compact contact skin returned by
-        :meth:`~superdex.physics.Actor.get_contact_skin_mesh`.
+    """Index of the node in the node list returned by
+    :meth:`~superdex.physics.Actor.get_mesh`, or by
+    :meth:`~superdex.physics.Actor.get_contact_skin_mesh` when contact uses the
+    contact skin.
     """
     @property
     def force(self) -> Real3:
@@ -8869,11 +8870,11 @@ def create_plane_shape(normal: Real3Like, distance: float) -> ShapeHandle:
 def get_shape_mesh(shape: ShapeHandle) -> MeshDataView:
     """Get a view of the shape's main mesh data.
 
-    For tetrahedral mesh shapes, returns the volume mesh (4 nodes per element). For
-    triangular mesh shapes, returns the surface mesh (3 nodes per element). For
+    For tetrahedral mesh shapes, returns the tetrahedral mesh (4 nodes per element).
+    For triangular mesh shapes, returns the triangle mesh (3 nodes per element). For
     polyline shapes, returns the polyline mesh (2 nodes per element). For shapes
     without a main mesh, including implicit shapes such as spheres and planes,
-    returns an empty view.
+    returns an empty view. The view includes any nodes that no element references.
 
     Args:
         shape (ShapeHandle): Handle to a valid shape.
@@ -8919,10 +8920,10 @@ def get_shape_surface_mesh(shape: ShapeHandle) -> MeshDataView:
         :class:`~superdex.physics.Error`: If an error occurs.
 
     Note:
-        For triangular mesh shapes, this may differ from
-        :func:`~superdex.physics.get_shape_mesh` if the main mesh contains
-        unreferenced nodes. For tetrahedral mesh shapes, this is the boundary
-        surface of the volume mesh, with non-boundary volume nodes omitted.
+        For triangular mesh shapes, this differs from
+        :func:`~superdex.physics.get_shape_mesh` only if the main mesh has nodes
+        that no element references. For tetrahedral mesh shapes, this is the
+        boundary surface of the volume mesh, with non-boundary volume nodes omitted.
 
     Note:
         Can be called on any thread.
@@ -8985,9 +8986,9 @@ def get_shape_visual_mesh(shape: ShapeHandle) -> MeshDataView:
 
     Returns a triangle mesh (3 nodes per element) intended for visual rendering.
     Coordinates and connectivity are returned in visual-mesh node-index space,
-    including any visual mesh nodes not referenced by the visual connectivity. The
-    mesh includes the authored skinning data when available. For shapes without a
-    visual mesh, returns an empty view.
+    including any nodes that no visual triangle references. The mesh includes the
+    authored skinning data when available. For shapes without a visual mesh, returns
+    an empty view.
 
     Args:
         shape (ShapeHandle): Handle to a valid shape.
@@ -9907,12 +9908,15 @@ class Actor:
         Note:
             For rigid actors with tetrahedral or triangular mesh shapes, returns the
             same compact surface view as
-            :meth:`~superdex.physics.Actor.get_surface_mesh`. For tetrahedral meshes
-            this is the boundary surface. For triangular meshes, nodes not referenced by
-            any surface triangle are omitted and remaining nodes may be reindexed. Use
-            :meth:`~superdex.physics.Actor.get_reference_shape` and
+            :meth:`~superdex.physics.Actor.get_surface_mesh`, which is the boundary
+            surface for tetrahedral meshes. It omits interior nodes and nodes that no
+            element references, and keeps the remaining nodes in their original relative
+            order. Use :meth:`~superdex.physics.Actor.get_reference_shape` and
             :func:`~superdex.physics.get_shape_mesh` to retrieve the original authored
             shape mesh.
+
+        Note:
+            The returned mesh has only the nodes that its elements reference.
 
         Note:
             The returned view remains valid until the actor is destroyed.
@@ -9928,12 +9932,10 @@ class Actor:
 
         Returns a compact triangle mesh for the actor's surface. For volumetric
         simulation meshes, the surface is the boundary triangles. For triangular
-        simulation meshes, the surface has the same triangle elements as the simulation
-        mesh, but nodes not referenced by any surface triangle are omitted and remaining
-        nodes may be reindexed. For articulated actors with a skinned simulation
-        surface, returns that surface. Returns an empty view if the actor does not have
-        a surface mesh, e.g. for rod actors. Contact skins are exposed by
-        :meth:`~superdex.physics.Actor.get_contact_skin_mesh` instead.
+        simulation meshes, the surface is the simulation mesh. For articulated actors
+        with a skinned simulation surface, returns that surface. Returns an empty view
+        if the actor does not have a surface mesh, e.g. for rod actors. Contact skins
+        are exposed by :meth:`~superdex.physics.Actor.get_contact_skin_mesh` instead.
 
         Returns:
             A non-owning view of the actor's reference surface mesh, or an empty view if
@@ -9944,13 +9946,11 @@ class Actor:
             local frame. They do not include deformation for deformable actors.
 
         Note:
-            The returned mesh uses compact surface-node ordering. Connectivity indices
-            refer to this ordering, which may differ from the node ordering returned by
-            :meth:`~superdex.physics.Actor.get_mesh`. Interior nodes and nodes not
-            referenced by any surface triangle are excluded. Results from
-            :meth:`~superdex.physics.Actor.get_surface_mesh_node_positions_local` and
-            :meth:`~superdex.physics.Actor.get_surface_mesh_node_normals_local` use this
-            same surface ordering.
+            The returned mesh has only the nodes that its triangles reference, in the
+            same relative order as in :meth:`~superdex.physics.Actor.get_mesh`. Results
+            from :meth:`~superdex.physics.Actor.get_surface_mesh_node_positions_local`
+            and :meth:`~superdex.physics.Actor.get_surface_mesh_node_normals_local` use
+            this node order.
 
         Note:
             The returned view remains valid until the actor is destroyed.
@@ -9980,8 +9980,8 @@ class Actor:
             local frame. They do not include deformation for deformable actors.
 
         Note:
-            Includes visual mesh nodes not referenced by any visual triangle. Unlike
-            surface mesh getters, visual mesh getters do not omit unreferenced nodes.
+            Unlike surface mesh getters, visual mesh getters include any nodes that no
+            visual triangle references.
 
         Note:
             When linear visual-mesh skinning data is present, skinning indices refer to
@@ -10495,8 +10495,8 @@ class Actor:
             :class:`~superdex.physics.Error`: If an error occurs.
 
         Note:
-            Includes visual mesh nodes not referenced by any visual triangle. Unlike
-            surface mesh getters, visual mesh getters do not omit unreferenced nodes.
+            Unlike surface mesh getters, visual mesh getters include any nodes that no
+            visual triangle references.
 
         Note:
             Requires registering :class:`VISUAL_NODE_POSITIONS
@@ -10523,14 +10523,14 @@ class Actor:
             :meth:`~superdex.physics.Actor.get_visual_mesh`. The order of the nodes is
             1-to-1 with
             :meth:`~superdex.physics.Actor.get_visual_mesh_node_positions_local`.
-            Normals for visual nodes not referenced by any visual triangle are zero.
+            Normals of nodes that no visual triangle references are zero.
 
         Raises:
             :class:`~superdex.physics.Error`: If an error occurs.
 
         Note:
-            Includes visual mesh nodes not referenced by any visual triangle. Unlike
-            surface mesh getters, visual mesh getters do not omit unreferenced nodes.
+            Unlike surface mesh getters, visual mesh getters include any nodes that no
+            visual triangle references.
 
         Note:
             Requires registering :class:`VISUAL_NODE_NORMALS

@@ -2319,7 +2319,7 @@
 ///
 /// @details Rigid actors behave as rigid bodies with 6 degrees of freedom (3 translational, 3 rotational). They can be static (fixed in space) or dynamic (affected by forces and collisions).
 ///
-/// @note Also used to create links in articulated bodies.
+/// @note Articulated links are created from @ref mochi::ArticulatedLinkParams "ArticulatedLinkParams" instead.
 ///
 /// @see @ref mochi::Scene::CreateRigidActor "Scene::CreateRigidActor", @ref mochi::ArticulatedActorParams "ArticulatedActorParams"
 ///
@@ -2342,6 +2342,7 @@
 ///
 /// @note A shape can be shared by multiple actors, even actors in different scenes.
 /// @note Dynamic rigid actors require a shape with a surface mesh.
+/// @note A tetrahedral or triangular mesh shape may have nodes that no element references. @ref mochi::Actor::GetMesh "Actor::GetMesh" omits them.
 ///
 /// @see @ref mochi::ShapeHandle "ShapeHandle", @ref mochi::Context::LoadShapeFromFile "Context::LoadShapeFromFile"
 ///
@@ -2466,7 +2467,7 @@
 ///
 /// @brief Optional initial linear velocity of the center of mass in world frame [m/s], zero otherwise.
 ///
-/// @note Not valid for static rigid actors or articulated links.
+/// @note Not valid for static rigid actors.
 ///
 /// @see @ref mochi::Actor::GetLinearVelocity "Actor::GetLinearVelocity", @ref mochi::Actor::SetVelocity "Actor::SetVelocity"
 ///
@@ -2475,7 +2476,7 @@
 ///
 /// @brief Optional initial angular velocity in world frame [rad/s], zero otherwise.
 ///
-/// @note Not valid for static rigid actors or articulated links.
+/// @note Not valid for static rigid actors.
 ///
 /// @see @ref mochi::Actor::GetAngularVelocity "Actor::GetAngularVelocity", @ref mochi::Actor::SetVelocity "Actor::SetVelocity"
 ///
@@ -2516,7 +2517,7 @@
 ///
 /// @brief Shape handle defining the actor's geometry and other metadata.
 ///
-/// @note Actor creation fails if the shape is not a tetrahedral mesh shape or has a node that no tetrahedron references.
+/// @note Actor creation fails if the shape is not a tetrahedral mesh shape or has a node that no element references.
 /// @note A shape can be shared by multiple actors, even actors in different scenes.
 ///
 /// @see @ref mochi::ShapeHandle "ShapeHandle", @ref mochi::Context::LoadShapeFromFile "Context::LoadShapeFromFile"
@@ -2709,6 +2710,7 @@
 ///
 /// @note A shape can be shared by multiple actors, even actors in different scenes.
 /// @note Dynamic links require a shape with a surface mesh when link contact is enabled. An articulated actor enables link contact when no skin shape is provided. A soft-skinned actor enables link contact when @ref mochi::SoftSkinnedActorParams::enableCollidingLinks "SoftSkinnedActorParams::enableCollidingLinks" is true.
+/// @note A tetrahedral or triangular mesh shape may have nodes that no element references. The link actor's @ref mochi::Actor::GetMesh "Actor::GetMesh" omits them.
 ///
 /// @see @ref mochi::ShapeHandle "ShapeHandle", @ref mochi::Context::LoadShapeFromFile "Context::LoadShapeFromFile"
 ///
@@ -2819,6 +2821,7 @@
 ///
 /// @brief Shape handle defining the skinned triangular or tetrahedral mesh.
 ///
+/// @note Actor creation fails if the shape is not a triangular or tetrahedral mesh shape with skinning data, or has a node that no element references.
 /// @note A shape can be shared by multiple actors, even actors in different scenes.
 /// @note The number of skinning links per vertex impacts performance. Keep it as low as possible to maximize performance, e.g., by clamping tiny skinning weights to zero.
 ///
@@ -3607,10 +3610,8 @@
 
 /// @var mochi::ContactPoint::elementIndex
 ///
-/// @brief Element index in the mesh used for colliding samples on @ref mochi::ContactPoint::actorA "actorA".
+/// @brief Index of the triangle of @ref mochi::ContactPoint::actorA "actorA" in @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh", or in @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" when contact uses the contact skin.
 ///
-/// @note For shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
-/// @note For soft actors, this indexes the triangles of @ref mochi::Actor::GetSurfaceMesh "Actor::GetSurfaceMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
 /// @note For rod actors, this field is not populated and is reported as 0. Use @ref mochi::ContactPoint::sampleIndex "sampleIndex" to identify the contact location.
 ///
 
@@ -3635,9 +3636,7 @@
 
 /// @var mochi::NodeContactForce::index
 ///
-/// @brief Node index in the volumetric mesh or the mesh used for colliding samples.
-///
-/// @note For soft and shell actors, this is the physics mesh returned by @ref mochi::Actor::GetMesh "Actor::GetMesh" unless contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh".
+/// @brief Index of the node in the node list returned by @ref mochi::Actor::GetMesh "Actor::GetMesh", or by @ref mochi::Actor::GetContactSkinMesh "Actor::GetContactSkinMesh" when contact uses the contact skin.
 ///
 
 /// @var mochi::NodeContactForce::force
@@ -4518,7 +4517,7 @@
 ///
 /// @brief Get a view of the shape's main mesh data.
 ///
-/// @details For tetrahedral mesh shapes, returns the volume mesh (4 nodes per element). For triangular mesh shapes, returns the surface mesh (3 nodes per element). For polyline shapes, returns the polyline mesh (2 nodes per element). For shapes without a main mesh, including implicit shapes such as spheres and planes, returns an empty view.
+/// @details For tetrahedral mesh shapes, returns the tetrahedral mesh (4 nodes per element). For triangular mesh shapes, returns the triangle mesh (3 nodes per element). For polyline shapes, returns the polyline mesh (2 nodes per element). For shapes without a main mesh, including implicit shapes such as spheres and planes, returns an empty view. The view includes any nodes that no element references.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -4540,7 +4539,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 /// @return A non-owning view of the shape's surface mesh data, or an empty view if the shape has no surface mesh.
 ///
-/// @note For triangular mesh shapes, this may differ from @ref mochi::Context::GetShapeMesh "GetShapeMesh" if the main mesh contains unreferenced nodes. For tetrahedral mesh shapes, this is the boundary surface of the volume mesh, with non-boundary volume nodes omitted.
+/// @note For triangular mesh shapes, this differs from @ref mochi::Context::GetShapeMesh "GetShapeMesh" only if the main mesh has nodes that no element references. For tetrahedral mesh shapes, this is the boundary surface of the volume mesh, with non-boundary volume nodes omitted.
 /// @note Can be called on any thread.
 /// @note The returned view will be invalid after the shape handle has been released.
 ///
@@ -4568,7 +4567,7 @@
 ///
 /// @brief Get a view of the shape's visual mesh data, including skinning data if available.
 ///
-/// @details Returns a triangle mesh (3 nodes per element) intended for visual rendering. Coordinates and connectivity are returned in visual-mesh node-index space, including any visual mesh nodes not referenced by the visual connectivity. The mesh includes the authored skinning data when available. For shapes without a visual mesh, returns an empty view.
+/// @details Returns a triangle mesh (3 nodes per element) intended for visual rendering. Coordinates and connectivity are returned in visual-mesh node-index space, including any nodes that no visual triangle references. The mesh includes the authored skinning data when available. For shapes without a visual mesh, returns an empty view.
 ///
 /// @param[in] shape Handle to a valid shape.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -5258,7 +5257,8 @@
 /// @return A non-owning view of the actor's reference simulation mesh, or an empty view if the actor has no simulation mesh.
 ///
 /// @note The returned coordinates are reference positions in the actor's local frame. They do not include deformation for deformable actors.
-/// @note For rigid actors with tetrahedral or triangular mesh shapes, returns the same compact surface view as @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh". For tetrahedral meshes this is the boundary surface. For triangular meshes, nodes not referenced by any surface triangle are omitted and remaining nodes may be reindexed. Use @ref mochi::Actor::GetReferenceShape "GetReferenceShape" and @ref mochi::Context::GetShapeMesh "Context::GetShapeMesh" to retrieve the original authored shape mesh.
+/// @note For rigid actors with tetrahedral or triangular mesh shapes, returns the same compact surface view as @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", which is the boundary surface for tetrahedral meshes. It omits interior nodes and nodes that no element references, and keeps the remaining nodes in their original relative order. Use @ref mochi::Actor::GetReferenceShape "GetReferenceShape" and @ref mochi::Context::GetShapeMesh "Context::GetShapeMesh" to retrieve the original authored shape mesh.
+/// @note The returned mesh has only the nodes that its elements reference.
 /// @note The returned view remains valid until the actor is destroyed.
 ///
 /// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh", @ref mochi::Actor::GetVisualMesh "GetVisualMesh", @ref mochi::Context::GetShapeMesh "Context::GetShapeMesh"
@@ -5268,12 +5268,12 @@
 ///
 /// @brief Get a view of the actor's reference surface mesh.
 ///
-/// @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface has the same triangle elements as the simulation mesh, but nodes not referenced by any surface triangle are omitted and remaining nodes may be reindexed. For articulated actors with a skinned simulation surface, returns that surface. Returns an empty view if the actor does not have a surface mesh, e.g. for rod actors. Contact skins are exposed by @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh" instead.
+/// @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface is the simulation mesh. For articulated actors with a skinned simulation surface, returns that surface. Returns an empty view if the actor does not have a surface mesh, e.g. for rod actors. Contact skins are exposed by @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh" instead.
 ///
 /// @return A non-owning view of the actor's reference surface mesh, or an empty view if the actor has no surface mesh.
 ///
 /// @note The returned coordinates are reference surface-mesh positions in the actor's local frame. They do not include deformation for deformable actors.
-/// @note The returned mesh uses compact surface-node ordering. Connectivity indices refer to this ordering, which may differ from the node ordering returned by @ref mochi::Actor::GetMesh "GetMesh". Interior nodes and nodes not referenced by any surface triangle are excluded. Results from @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal" and @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal" use this same surface ordering.
+/// @note The returned mesh has only the nodes that its triangles reference, in the same relative order as in @ref mochi::Actor::GetMesh "GetMesh". Results from @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal" and @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal" use this node order.
 /// @note The returned view remains valid until the actor is destroyed.
 ///
 /// @see @ref mochi::MeshDataView "MeshDataView", @ref mochi::Actor::GetMesh "GetMesh", @ref mochi::Actor::GetVisualMesh "GetVisualMesh", @ref mochi::Actor::GetContactSkinMesh "GetContactSkinMesh", @ref mochi::Actor::GetSurfaceMeshNodePositionsLocal "GetSurfaceMeshNodePositionsLocal", @ref mochi::Actor::GetSurfaceMeshNodeNormalsLocal "GetSurfaceMeshNodeNormalsLocal", @ref mochi::Context::GetShapeSurfaceMesh "Context::GetShapeSurfaceMesh"
@@ -5288,7 +5288,7 @@
 /// @return A non-owning view of the actor's reference visual mesh, or an empty view if the actor has no visual mesh.
 ///
 /// @note The returned coordinates are reference visual-mesh positions in the actor's local frame. They do not include deformation for deformable actors.
-/// @note Includes visual mesh nodes not referenced by any visual triangle. Unlike surface mesh getters, visual mesh getters do not omit unreferenced nodes.
+/// @note Unlike surface mesh getters, visual mesh getters include any nodes that no visual triangle references.
 /// @note When linear visual-mesh skinning data is present, skinning indices refer to the node ordering returned by @ref mochi::Actor::GetMesh "GetMesh", not to the compact surface-node ordering returned by @ref mochi::Actor::GetSurfaceMesh "GetSurfaceMesh". Rod visual mesh embeddings are nonlinear and are not exposed through this linear skinning field.
 /// @note The returned view remains valid until the actor is destroyed.
 ///
@@ -5537,7 +5537,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 /// @return Current node positions [m] of the visual mesh in the actor's local frame (3 values per node: x, y, z). The number of nodes is available via @ref mochi::Actor::GetVisualMesh "GetVisualMesh". The order of the nodes is 1-to-1 with @ref mochi::Actor::GetVisualMeshNodeNormalsLocal "GetVisualMeshNodeNormalsLocal".
 ///
-/// @note Includes visual mesh nodes not referenced by any visual triangle. Unlike surface mesh getters, visual mesh getters do not omit unreferenced nodes.
+/// @note Unlike surface mesh getters, visual mesh getters include any nodes that no visual triangle references.
 /// @note Requires registering @ref mochi::QueryType::VisualNodePositions "QueryType::VisualNodePositions" before the simulation step. Results are available after the simulation step completes.
 /// @note Requires the actor to support @ref mochi::QueryType::VisualNodePositions "QueryType::VisualNodePositions".
 ///
@@ -5549,9 +5549,9 @@
 /// @brief Get the normal direction to each node of the visual mesh in the actor's local frame.
 ///
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
-/// @return Flattened normals (3 values per node: nx, ny, nz) in the actor's local frame. The number of nodes is available via @ref mochi::Actor::GetVisualMesh "GetVisualMesh". The order of the nodes is 1-to-1 with @ref mochi::Actor::GetVisualMeshNodePositionsLocal "GetVisualMeshNodePositionsLocal". Normals for visual nodes not referenced by any visual triangle are zero.
+/// @return Flattened normals (3 values per node: nx, ny, nz) in the actor's local frame. The number of nodes is available via @ref mochi::Actor::GetVisualMesh "GetVisualMesh". The order of the nodes is 1-to-1 with @ref mochi::Actor::GetVisualMeshNodePositionsLocal "GetVisualMeshNodePositionsLocal". Normals of nodes that no visual triangle references are zero.
 ///
-/// @note Includes visual mesh nodes not referenced by any visual triangle. Unlike surface mesh getters, visual mesh getters do not omit unreferenced nodes.
+/// @note Unlike surface mesh getters, visual mesh getters include any nodes that no visual triangle references.
 /// @note Requires registering @ref mochi::QueryType::VisualNodeNormals "QueryType::VisualNodeNormals" before the simulation step. Results are available after the simulation step completes.
 /// @note Requires the actor to support @ref mochi::QueryType::VisualNodeNormals "QueryType::VisualNodeNormals".
 ///

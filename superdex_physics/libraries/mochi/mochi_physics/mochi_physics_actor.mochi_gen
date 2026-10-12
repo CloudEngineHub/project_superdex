@@ -382,10 +382,11 @@ class Actor [no_init, no_destruct, use_scene] {
   // @note The returned coordinates are reference positions in the actor's local frame. They do not
   // include deformation for deformable actors.
   // @note For rigid actors with tetrahedral or triangular mesh shapes, returns the same compact
-  // surface view as @ref GetSurfaceMesh. For tetrahedral meshes this is the boundary surface. For
-  // triangular meshes, nodes not referenced by any surface triangle are omitted and remaining nodes
-  // may be reindexed. Use @ref GetReferenceShape and @ref Context::GetShapeMesh to retrieve the
-  // original authored shape mesh.
+  // surface view as @ref GetSurfaceMesh, which is the boundary surface for tetrahedral meshes. It
+  // omits interior nodes and nodes that no element references, and keeps the remaining nodes in
+  // their original relative order. Use @ref GetReferenceShape and @ref Context::GetShapeMesh to
+  // retrieve the original authored shape mesh.
+  // @note The returned mesh has only the nodes that its elements reference.
   // @note The returned view remains valid until the actor is destroyed.
   //
   // @see MeshDataView, GetSurfaceMesh, GetVisualMesh, Context::GetShapeMesh
@@ -394,23 +395,19 @@ class Actor [no_init, no_destruct, use_scene] {
   // @brief Get a view of the actor's reference surface mesh.
   //
   // @details Returns a compact triangle mesh for the actor's surface. For volumetric simulation
-  // meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface
-  // has the same triangle elements as the simulation mesh, but nodes not referenced by any surface
-  // triangle are omitted and remaining nodes may be reindexed. For articulated actors with a
-  // skinned simulation surface, returns that surface. Returns an empty view if the actor does not
-  // have a surface mesh, e.g. for rod actors. Contact skins are exposed by @ref
-  // GetContactSkinMesh instead.
+  // meshes, the surface is the boundary triangles. For triangular simulation meshes, the surface is
+  // the simulation mesh. For articulated actors with a skinned simulation surface, returns that
+  // surface. Returns an empty view if the actor does not have a surface mesh, e.g. for rod actors.
+  // Contact skins are exposed by @ref GetContactSkinMesh instead.
   //
   // @return A non-owning view of the actor's reference surface mesh, or an empty view if the actor
   // has no surface mesh.
   //
   // @note The returned coordinates are reference surface-mesh positions in the actor's local
   // frame. They do not include deformation for deformable actors.
-  // @note The returned mesh uses compact surface-node ordering. Connectivity indices refer to
-  // this ordering, which may differ from the node ordering returned by @ref GetMesh. Interior
-  // nodes and nodes not referenced by any surface triangle are excluded. Results from @ref
-  // GetSurfaceMeshNodePositionsLocal and @ref GetSurfaceMeshNodeNormalsLocal use this same surface
-  // ordering.
+  // @note The returned mesh has only the nodes that its triangles reference, in the same relative
+  // order as in @ref GetMesh. Results from @ref GetSurfaceMeshNodePositionsLocal and @ref
+  // GetSurfaceMeshNodeNormalsLocal use this node order.
   // @note The returned view remains valid until the actor is destroyed.
   //
   // @see MeshDataView, GetMesh, GetVisualMesh, GetContactSkinMesh,
@@ -428,8 +425,8 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @note The returned coordinates are reference visual-mesh positions in the actor's local frame.
   // They do not include deformation for deformable actors.
-  // @note Includes visual mesh nodes not referenced by any visual triangle. Unlike surface mesh
-  // getters, visual mesh getters do not omit unreferenced nodes.
+  // @note Unlike surface mesh getters, visual mesh getters include any nodes that no visual
+  // triangle references.
   // @note When linear visual-mesh skinning data is present, skinning indices refer to the node
   // ordering returned by @ref GetMesh, not to the compact surface-node ordering returned by @ref
   // GetSurfaceMesh. Rod visual mesh embeddings are nonlinear and are not exposed through this linear
@@ -695,8 +692,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // node: x, y, z). The number of nodes is available via @ref GetVisualMesh. The order of
   // the nodes is 1-to-1 with @ref GetVisualMeshNodeNormalsLocal.
   //
-  // @note Includes visual mesh nodes not referenced by any visual triangle. Unlike surface
-  // mesh getters, visual mesh getters do not omit unreferenced nodes.
+  // @note Unlike surface mesh getters, visual mesh getters include any nodes that no visual
+  // triangle references.
   // @note Requires registering @ref QueryType::VisualNodePositions before the simulation step. Results
   // are available after the simulation step completes.
   // @note Requires the actor to support @ref QueryType::VisualNodePositions.
@@ -709,11 +706,11 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @return Flattened normals (3 values per node: nx, ny, nz) in the actor's local frame. The
   // number of nodes is available via @ref GetVisualMesh. The order of the nodes is 1-to-1
-  // with @ref GetVisualMeshNodePositionsLocal. Normals for visual nodes not referenced by any
-  // visual triangle are zero.
+  // with @ref GetVisualMeshNodePositionsLocal. Normals of nodes that no visual triangle references
+  // are zero.
   //
-  // @note Includes visual mesh nodes not referenced by any visual triangle. Unlike surface
-  // mesh getters, visual mesh getters do not omit unreferenced nodes.
+  // @note Unlike surface mesh getters, visual mesh getters include any nodes that no visual
+  // triangle references.
   // @note Requires registering @ref QueryType::VisualNodeNormals before the simulation step. Results
   // are available after the simulation step completes.
   // @note Requires the actor to support @ref QueryType::VisualNodeNormals.

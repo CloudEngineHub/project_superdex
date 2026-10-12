@@ -639,10 +639,11 @@ class Context [no_init, no_destruct, singleton] {
 
   // @brief Get a view of the shape's main mesh data.
   //
-  // @details For tetrahedral mesh shapes, returns the volume mesh (4 nodes per element).
-  // For triangular mesh shapes, returns the surface mesh (3 nodes per element).
+  // @details For tetrahedral mesh shapes, returns the tetrahedral mesh (4 nodes per element).
+  // For triangular mesh shapes, returns the triangle mesh (3 nodes per element).
   // For polyline shapes, returns the polyline mesh (2 nodes per element). For shapes without a
   // main mesh, including implicit shapes such as spheres and planes, returns an empty view.
+  // The view includes any nodes that no element references.
   //
   // @param[in] shape Handle to a valid shape.
   //
@@ -662,9 +663,9 @@ class Context [no_init, no_destruct, singleton] {
   // Connectivity values are indices into this returned coordinate array. For shapes without a
   // surface mesh, such as polyline shapes, returns an empty view.
   //
-  // @note For triangular mesh shapes, this may differ from @ref GetShapeMesh if the main mesh
-  // contains unreferenced nodes. For tetrahedral mesh shapes, this is the boundary surface of the
-  // volume mesh, with non-boundary volume nodes omitted.
+  // @note For triangular mesh shapes, this differs from @ref GetShapeMesh only if the main mesh has
+  // nodes that no element references. For tetrahedral mesh shapes, this is the boundary surface of
+  // the volume mesh, with non-boundary volume nodes omitted.
   //
   // @param[in] shape Handle to a valid shape.
   //
@@ -704,9 +705,9 @@ class Context [no_init, no_destruct, singleton] {
   // @brief Get a view of the shape's visual mesh data, including skinning data if available.
   //
   // @details Returns a triangle mesh (3 nodes per element) intended for visual rendering.
-  // Coordinates and connectivity are returned in visual-mesh node-index space, including any visual
-  // mesh nodes not referenced by the visual connectivity. The mesh includes the authored skinning
-  // data when available. For shapes without a visual mesh, returns an empty view.
+  // Coordinates and connectivity are returned in visual-mesh node-index space, including any nodes
+  // that no visual triangle references. The mesh includes the authored skinning data when
+  // available. For shapes without a visual mesh, returns an empty view.
   //
   // @param[in] shape Handle to a valid shape.
   //

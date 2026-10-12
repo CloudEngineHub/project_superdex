@@ -221,7 +221,7 @@ struct StepInfo {
 // @details Rigid actors behave as rigid bodies with 6 degrees of freedom (3 translational, 3
 // rotational). They can be static (fixed in space) or dynamic (affected by forces and collisions).
 //
-// @note Also used to create links in articulated bodies.
+// @note Articulated links are created from @ref ArticulatedLinkParams instead.
 //
 // @see Scene::CreateRigidActor, ArticulatedActorParams
 struct RigidActorParams [equality] {
@@ -239,6 +239,8 @@ struct RigidActorParams [equality] {
   //
   // @note A shape can be shared by multiple actors, even actors in different scenes.
   // @note Dynamic rigid actors require a shape with a surface mesh.
+  // @note A tetrahedral or triangular mesh shape may have nodes that no element references. @ref
+  // Actor::GetMesh omits them.
   //
   // @see ShapeHandle, Context::LoadShapeFromFile
   ShapeHandle shape;
@@ -346,14 +348,14 @@ struct RigidActorParams [equality] {
   // @brief Optional initial linear velocity of the center of mass in world frame [m/s], zero
   // otherwise.
   //
-  // @note Not valid for static rigid actors or articulated links.
+  // @note Not valid for static rigid actors.
   //
   // @see Actor::GetLinearVelocity, Actor::SetVelocity
   Optional<Real3> linearVelocity [units("m/s")];
 
   // @brief Optional initial angular velocity in world frame [rad/s], zero otherwise.
   //
-  // @note Not valid for static rigid actors or articulated links.
+  // @note Not valid for static rigid actors.
   //
   // @see Actor::GetAngularVelocity, Actor::SetVelocity
   Optional<Real3> angularVelocity [units("rad/s")];
@@ -398,7 +400,7 @@ struct SoftActorParams [equality] {
   // @brief Shape handle defining the actor's geometry and other metadata.
   //
   // @note Actor creation fails if the shape is not a tetrahedral mesh shape or has a node that no
-  // tetrahedron references.
+  // element references.
   // @note A shape can be shared by multiple actors, even actors in different scenes.
   //
   // @see ShapeHandle, Context::LoadShapeFromFile
@@ -592,6 +594,8 @@ struct ArticulatedLinkParams [equality] {
   // @note Dynamic links require a shape with a surface mesh when link contact is enabled. An
   // articulated actor enables link contact when no skin shape is provided. A soft-skinned actor
   // enables link contact when @ref SoftSkinnedActorParams::enableCollidingLinks is true.
+  // @note A tetrahedral or triangular mesh shape may have nodes that no element references. The
+  // link actor's @ref Actor::GetMesh omits them.
   //
   // @see ShapeHandle, Context::LoadShapeFromFile
   ShapeHandle shape;
@@ -687,6 +691,8 @@ struct ArticulatedLinkParams [equality] {
 struct ArticulatedSkinParams [equality] {
   // @brief Shape handle defining the skinned triangular or tetrahedral mesh.
   //
+  // @note Actor creation fails if the shape is not a triangular or tetrahedral mesh shape with
+  // skinning data, or has a node that no element references.
   // @note A shape can be shared by multiple actors, even actors in different scenes.
   // @note The number of skinning links per vertex impacts performance. Keep it as low as possible
   // to maximize performance, e.g., by clamping tiny skinning weights to zero.
@@ -1399,14 +1405,9 @@ struct ContactPoint {
   // @note @ref force is already weighted by this value.
   real intWeight;
 
-  // @brief Element index in the mesh used for colliding samples on @ref actorA.
+  // @brief Index of the triangle of @ref actorA in @ref Actor::GetSurfaceMesh, or in @ref
+  // Actor::GetContactSkinMesh when contact uses the contact skin.
   //
-  // @note For shell actors, this is the physics mesh returned by @ref Actor::GetMesh unless
-  // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
-  // Actor::GetContactSkinMesh.
-  // @note For soft actors, this indexes the triangles of @ref Actor::GetSurfaceMesh unless
-  // contact-skin contact is enabled, in which case it is the compact contact skin returned by @ref
-  // Actor::GetContactSkinMesh.
   // @note For rod actors, this field is not populated and is reported as 0. Use @ref sampleIndex
   // to identify the contact location.
   int elementIndex = -1;
@@ -1430,11 +1431,8 @@ struct ContactPoint {
 // @see QueryType::NodeContactForces, Actor::RegisterQuery, Actor::GetNodeContactForcesWorld
 struct NodeContactForce {
 
-  // @brief Node index in the volumetric mesh or the mesh used for colliding samples.
-  //
-  // @note For soft and shell actors, this is the physics mesh returned by @ref Actor::GetMesh
-  // unless contact-skin contact is enabled, in which case it is the compact contact skin returned
-  // by @ref Actor::GetContactSkinMesh.
+  // @brief Index of the node in the node list returned by @ref Actor::GetMesh, or by @ref
+  // Actor::GetContactSkinMesh when contact uses the contact skin.
   int index;
 
   // @brief Contact force [N] applied to the node.

@@ -2320,9 +2320,10 @@ ResolveSkinShape(ContextImpl const* context, ShapeHandle handle, Error& error) {
   auto shape = context->GetShapeSharedPtr(handle);
   MOCHI_ERROR_IF_NOT(shape, error, "Invalid skin shape handle.");
   MOCHI_ERROR_RETURN(error, nullptr);
+  auto const* tetShape = dynamic_cast<TetrahedralMeshShape const*>(shape.get());
+  auto const* triShape = dynamic_cast<TriangularMeshShape const*>(shape.get());
   MOCHI_ERROR_IF_NOT(
-      dynamic_cast<TetrahedralMeshShape const*>(shape.get()) ||
-          dynamic_cast<TriangularMeshShape const*>(shape.get()),
+      tetShape || triShape,
       error,
       "Skin shape must be a TetrahedralMeshShape or TriangularMeshShape.");
   MOCHI_ERROR_RETURN(error, nullptr);
@@ -2330,6 +2331,12 @@ ResolveSkinShape(ContextImpl const* context, ShapeHandle handle, Error& error) {
       shape->GetMeshSkinning() != nullptr,
       error,
       "Skin shape must contain skinning data (per-node weights and link indices).");
+  SimplicialMesh const& mesh =
+      tetShape ? static_cast<SimplicialMesh const&>(*tetShape->GetMesh()) : *triShape->GetMesh();
+  MOCHI_ERROR_IF(
+      mesh.GetNumActiveNodes() != mesh.GetNumNodes(),
+      error,
+      "Skin mesh must not contain nodes that are unreferenced by its elements.");
   MOCHI_ERROR_RETURN(error, nullptr);
   return shape;
 }

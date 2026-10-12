@@ -2338,8 +2338,14 @@ namespace {
 
 // Build a TetrahedralMeshShape with single-bone skinning (every node pinned to bone 'boneIndex')
 // and register it with the context. Returns the resulting handle.
-ShapeHandle CreateUnitCubeTetMeshShapeWithSkinning(Context* context, int boneIndex = 0) {
+ShapeHandle CreateUnitCubeTetMeshShapeWithSkinning(
+    Context* context,
+    int boneIndex = 0,
+    bool addUnreferencedNode = false) {
   auto&& [coords, connectivity] = test::CreateMinimalTetMeshUnitCube();
+  if (addUnreferencedNode) {
+    coords.emplace_back(2_r, 2_r, 2_r);
+  }
   auto mesh = std::make_shared<TetrahedralMesh const>(coords, connectivity);
   auto skinning = std::make_shared<SkinningData const>(
       test::MakeSingleBoneSkinning(mesh->GetNumNodes(), boneIndex));
@@ -2349,8 +2355,13 @@ ShapeHandle CreateUnitCubeTetMeshShapeWithSkinning(Context* context, int boneInd
 
 // Build a TriangularMeshShape with single-bone skinning (every node pinned to bone 0)
 // and register it with the context. Returns the resulting handle.
-ShapeHandle CreateUnitCubeTriMeshShapeWithSkinning(Context* context) {
+ShapeHandle CreateUnitCubeTriMeshShapeWithSkinning(
+    Context* context,
+    bool addUnreferencedNode = false) {
   auto&& [coords, connectivity] = test::CreateMinimalTriMeshUnitCube();
+  if (addUnreferencedNode) {
+    coords.emplace_back(2_r, 2_r, 2_r);
+  }
   auto mesh = std::make_unique<TriangularMesh>(coords, connectivity);
   int const numNodes = mesh->GetNumNodes();
   auto skinning =
@@ -2733,7 +2744,8 @@ TEST_F(CreateSkinnedArticulatedActorTest, NonCollidingLinksEmptyListKeepsAllColl
 }
 
 // Skin params whose shape handle is invalid describe a skin that cannot exist. Reject them rather
-// than silently discarding every other skin setting (including nonCollidingLinks).
+// than silently discarding every other skin setting (including nonCollidingLinks). Articulated and
+// soft-skinned actors also reject skins whose mesh has a node that no element references.
 TEST_F(CreateSkinnedArticulatedActorTest, SkinWithoutValidShapeIsRejected) {
   auto params = MakeTwoLinkSkinnedParams(_mochiContext);
   params.skin->shape = ShapeHandle{};
@@ -2741,6 +2753,20 @@ TEST_F(CreateSkinnedArticulatedActorTest, SkinWithoutValidShapeIsRejected) {
 
   EXPECT_EQ(nullptr, _scene->CreateArticulatedActor(params, test::ExpectNotOK{}));
   EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
+
+  for (ShapeHandle const& shape :
+       {CreateUnitCubeTetMeshShapeWithSkinning(
+            _mochiContext, /*boneIndex=*/0, /*addUnreferencedNode=*/true),
+        CreateUnitCubeTriMeshShapeWithSkinning(_mochiContext, /*addUnreferencedNode=*/true)}) {
+    params.skin->shape = shape;
+    Error error;
+    EXPECT_EQ(nullptr, _scene->CreateArticulatedActor(params, error));
+    EXPECT_NOT_OK(error);
+    // This skin has no blending data, so only an identical error shows the same check rejected it.
+    Error blendedError;
+    EXPECT_EQ(nullptr, _scene->CreateSoftSkinnedActor({.skeletonParams = params}, blendedError));
+    EXPECT_STREQ(error.GetDescription(), blendedError.GetDescription());
+  }
 }
 
 class CreateBlendedActorTest : public test::MochiSceneTestBase {
