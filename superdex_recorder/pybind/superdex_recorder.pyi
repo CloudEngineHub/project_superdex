@@ -53,6 +53,7 @@ class PhysicsRecorderConfig:
     def __init__(self) -> None: ...
     record_contact_forces: bool
     contact_force_visualization_scale_meters_per_newton: float
+    spawn_names: list[tuple[Any, str]]
 
 class PhysicsRecorder:
     def __init__(

@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace superdex::recorder {
@@ -37,6 +38,14 @@ struct PhysicsRecorderConfig {
   bool recordContactForces = false;
   /* @brief Arrow length per newton [m/N]. */
   mochi::real contactForceVisualizationScaleMetersPerNewton = static_cast<mochi::real>(0.002);
+  /* @brief The task spawn name of each actor that a scene task spawned.
+   *
+   * Each named actor records its spawn name, which a rebuilt scene uses to find the matching body.
+   * Like the legacy teleop recorder, a spawn's only body is recorded under the spawn name. Bodies
+   * of a spawn with several are recorded as "<spawn name>.<Mochi name>". A `/` in a spawn or Mochi
+   * name becomes `.` in the recorded actor ID; `spawn_name` and `runtime_name` keep the originals.
+   */
+  std::vector<std::pair<mochi::ActorHandle, std::string>> spawnNames;
 };
 
 /* Records all rigid and articulated actors in a Mochi scene.

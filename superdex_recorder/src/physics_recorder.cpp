@@ -148,9 +148,33 @@ std::array<uint8_t, 4> ColorForId(std::string_view id) {
       255U};
 }
 
-std::string UniqueActorId(mochi::Actor const& actor, std::unordered_set<std::string>& ids) {
+std::string const* FindSpawnName(PhysicsRecorderConfig const& config, mochi::Actor const& actor) {
+  auto const entry =
+      std::find_if(config.spawnNames.begin(), config.spawnNames.end(), [&](auto const& candidate) {
+        return candidate.first == actor.GetHandle();
+      });
+  return entry == config.spawnNames.end() ? nullptr : &entry->second;
+}
+
+// Actor IDs are entity path segments, where `.` reads better than an escaped `\/`.
+std::string WithoutSlashes(std::string name) {
+  std::replace(name.begin(), name.end(), '/', '.');
+  return name;
+}
+
+std::string UniqueActorId(
+    PhysicsRecorderConfig const& config,
+    mochi::Actor const& actor,
+    std::unordered_set<std::string>& ids) {
   char const* const name = actor.GetName();
-  std::string const base = name == nullptr || *name == '\0' ? "actor" : name;
+  std::string base = name == nullptr || *name == '\0' ? "actor" : WithoutSlashes(name);
+  if (std::string const* const spawnName = FindSpawnName(config, actor)) {
+    auto const spawnBodies = std::count_if(
+        config.spawnNames.begin(), config.spawnNames.end(), [&](auto const& candidate) {
+          return candidate.second == *spawnName;
+        });
+    base = spawnBodies == 1 ? WithoutSlashes(*spawnName) : WithoutSlashes(*spawnName) + "." + base;
+  }
   std::string id = base;
   for (uint32_t suffix = 1; !ids.insert(id).second; ++suffix) {
     id = base + "_" + std::to_string(suffix);
@@ -199,6 +223,13 @@ PhysicsRecorder::PhysicsRecorder(
            std::isfinite(_config.contactForceVisualizationScaleMetersPerNewton)),
       error,
       "Contact force visualization scale must be finite and positive.");
+  MOCHI_ERROR_IF(
+      std::any_of(
+          _config.spawnNames.begin(),
+          _config.spawnNames.end(),
+          [](auto const& entry) { return entry.second.empty(); }),
+      error,
+      "Spawn names must not be empty.");
   MOCHI_ERROR_RETURN(error);
   _frameSeries = _episode.CreateScalarSeries(
       "data/physics/frames",
@@ -225,7 +256,7 @@ PhysicsRecorder::PhysicsRecorder(
         actor->GetType() != mochi::ActorType::Articulated) {
       return;
     }
-    RegisterActor(UniqueActorId(*actor, ids), *actor, error);
+    RegisterActor(UniqueActorId(_config, *actor, ids), *actor, error);
   });
   MOCHI_ERROR_RETURN(error);
 
@@ -424,6 +455,10 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
       ActorField("superdex.physics.runtime_name"),
       runtimeName == nullptr ? "" : runtimeName,
       error);
+  if (std::string const* const spawnName = FindSpawnName(_config, actor)) {
+    _episode.WriteConstantText(
+        dataPath, ActorField("superdex.physics.spawn_name"), *spawnName, error);
+  }
   _episode.WriteConstantText(
       dataPath, ActorField("superdex.physics.actor_type"), ActorTypeName(actor.GetType()), error);
   std::array<double, 1> const isStatic{actor.IsStatic() ? 1.0 : 0.0};

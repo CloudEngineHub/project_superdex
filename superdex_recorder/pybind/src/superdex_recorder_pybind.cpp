@@ -28,8 +28,10 @@
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unique_ptr.h>
+#include <nanobind/stl/vector.h>
 
 #include <array>
 #include <cstdint>
@@ -154,7 +156,8 @@ NB_MODULE(SUPERDEX_RECORDER_MODULE_NAME, module) {
       .def_rw("record_contact_forces", &PhysicsRecorderConfig::recordContactForces)
       .def_rw(
           "contact_force_visualization_scale_meters_per_newton",
-          &PhysicsRecorderConfig::contactForceVisualizationScaleMetersPerNewton);
+          &PhysicsRecorderConfig::contactForceVisualizationScaleMetersPerNewton)
+      .def_rw("spawn_names", &PhysicsRecorderConfig::spawnNames);
 
   nb::class_<PhysicsRecorder>(module, "PhysicsRecorder")
       .def(
