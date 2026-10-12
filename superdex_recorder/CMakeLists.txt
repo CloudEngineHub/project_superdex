@@ -96,3 +96,7 @@ if (MOCHI_BUILD_TESTS)
         add_test(NAME superdex_recorder_robotics_test COMMAND superdex_recorder_robotics_test)
     endif ()
 endif ()
+
+if (MOCHI_USE_PYBIND AND TARGET superdex_recorder_robotics)
+    add_subdirectory(pybind)
+endif ()
