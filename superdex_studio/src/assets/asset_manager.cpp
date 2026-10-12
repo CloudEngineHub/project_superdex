@@ -77,6 +77,7 @@ Asset* AssetManager::LoadAsset(mochi::Path const& path) {
 #else
     case AssetType::BotScene:
 #endif
+    case AssetType::BotTask:
     case AssetType::Unknown:
     case AssetType::Count:
       break;

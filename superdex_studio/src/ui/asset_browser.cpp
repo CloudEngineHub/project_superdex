@@ -17,6 +17,10 @@
 #include "ui/asset_browser.h"
 #include "app/app.h"
 #include "assets/asset.h"
+#if MOCHI_INTERNAL
+#include "assets/bot_task_utils.h"
+#include "editors/bot_scene_editor.h"
+#endif
 
 #include <mochi_physics/utils/mochi_prefab.h>
 #include <superdex_robotics/utils/file_utils.h>
@@ -395,7 +399,8 @@ void AssetBrowser::ShowFilter(float width) {
   // Real-type swatches (Unknown handled separately so Importable can precede it).
   for (int i = 0; i < kUnknownIndex; ++i) {
 #if !MOCHI_INTERNAL
-    if (static_cast<AssetType>(i) == AssetType::BotScene) {
+    if (static_cast<AssetType>(i) == AssetType::BotScene ||
+        static_cast<AssetType>(i) == AssetType::BotTask) {
       continue;
     }
 #endif
@@ -767,7 +772,9 @@ void AssetBrowser::ShowItemContextMenuContents(TileItem const& item, Asset const
       if (selAsset->GetReferenceCount() != 0) {
         allUnloadable = false;
       }
-    } else if (ClassifyAssetTypeByFilename(selPath.GetFilename()) != AssetType::Unknown) {
+    } else if (AssetType const fileType = ClassifyAssetTypeByFilename(selPath.GetFilename());
+               fileType != AssetType::Unknown && fileType != AssetType::BotTask) {
+      // Tasks are classified for browsing but have no asset to load.
       ++unloadedFileCount;
     }
   }
@@ -2206,6 +2213,15 @@ void AssetBrowser::ShowWindow(bool* open) {
           _studio->BeginImport(item.file->importer, item.fullPath);
         } else if (asset) {
           assetToOpen = asset;
+#if MOCHI_INTERNAL
+        } else if (item.file->type == AssetType::BotTask) {
+          if (auto* sceneEditor = dynamic_cast<BotSceneEditor*>(_studio->GetActiveAssetEditor())) {
+            sceneEditor->OpenTask(item.fullPath);
+          } else {
+            MOCHI_LOG_WARNING(
+                "Open a bot scene to load task '%s' into it.", item.fullPath.ToString().c_str());
+          }
+#endif
         } else {
           if (auto* loaded = _assetManager->LoadAsset(item.fullPath)) {
             assetToOpen = loaded;
@@ -2357,6 +2373,30 @@ void AssetBrowser::ShowWindow(bool* open) {
             botScene->Save();
           }
         });
+      }
+      if (ImGui::Selectable("Task...")) {
+        std::string const extension{superdex::robotics::kBotTaskExtension};
+        std::string const taskName = MakeUniqueFileName("Task", _currentPath, extension);
+        auto const newPath = _currentPath / (taskName + extension);
+        if (std::string error; !CreateBotTaskFile(newPath.ToString(), taskName, error)) {
+          MOCHI_LOG_ERROR(
+              "Failed to create task '%s': %s", newPath.ToString().c_str(), error.c_str());
+        } else {
+          BeginRenaming(newPath, taskName, [this](std::string const& newName) {
+            if (!RenameAsset(_renamingPath, newName)) {
+              return;
+            }
+            auto const renamedPath = _renamingPath.GetParentPath() /
+                (newName + std::string(superdex::robotics::kBotTaskExtension));
+            if (std::string renameError;
+                !SetBotTaskName(renamedPath.ToString(), newName, renameError)) {
+              MOCHI_LOG_ERROR(
+                  "Renamed task '%s' but failed to update its name: %s",
+                  renamedPath.ToString().c_str(),
+                  renameError.c_str());
+            }
+          });
+        }
       }
 #endif // MOCHI_INTERNAL
       ImGui::EndMenu();

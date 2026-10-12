@@ -70,7 +70,8 @@ constexpr std::array<std::string_view, 5> kCrossRoleSearchSubdirs{
 std::size_t AssetTypeExtensionIndex(std::string_view filename) {
   for (std::size_t i = 0; i < kAssetTypeExtensions.size(); ++i) {
     auto const& entry = kAssetTypeExtensions[i];
-    if (!kInternalBuild && entry.type == AssetType::BotScene) {
+    if (!kInternalBuild &&
+        (entry.type == AssetType::BotScene || entry.type == AssetType::BotTask)) {
       continue;
     }
     if (HasExtension(filename, entry.extension)) {
@@ -143,6 +144,8 @@ std::string_view AssetTypeToToken(AssetType type) {
       return "Bot";
     case AssetType::BotScene:
       return "BotScene";
+    case AssetType::BotTask:
+      return "BotTask";
     case AssetType::CadModel:
       return "CadModel";
     case AssetType::Unknown:
@@ -215,6 +218,7 @@ std::string_view AssetRoleFolderForType(AssetType type) {
     case AssetType::MochiPrefab:
     case AssetType::Bot:
     case AssetType::BotScene:
+    case AssetType::BotTask:
     case AssetType::Unknown:
     case AssetType::Count:
       break;

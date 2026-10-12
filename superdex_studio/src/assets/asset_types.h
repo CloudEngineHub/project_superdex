@@ -34,6 +34,7 @@ enum class AssetType {
   MochiPrefab,
   Bot,
   BotScene,
+  BotTask,
   CadModel,
   Unknown,
   Count
@@ -41,8 +42,15 @@ enum class AssetType {
 
 constexpr int kAssetTypeCount = static_cast<int>(AssetType::Count);
 
-constexpr std::array<char const*, kAssetTypeCount> kAssetTypeLabels =
-    {"Render Model", "Collision Model", "Prefab", "Bot", "Bot Scene", "CAD Model", "(Unknown)"};
+constexpr std::array<char const*, kAssetTypeCount> kAssetTypeLabels = {
+    "Render Model",
+    "Collision Model",
+    "Prefab",
+    "Bot",
+    "Bot Scene",
+    "Task",
+    "CAD Model",
+    "(Unknown)"};
 
 inline constexpr char const* GetAssetTypeLabel(AssetType type) {
   return kAssetTypeLabels[static_cast<int>(type)];
@@ -61,7 +69,7 @@ struct AssetTypeExtension {
 //
 // Order is significant twice over: the first matching entry wins, so an extension must precede any
 // shorter one that is its own suffix; and within a type, earlier means preferred.
-constexpr std::array<AssetTypeExtension, 16> kAssetTypeExtensions{
+constexpr std::array<AssetTypeExtension, 17> kAssetTypeExtensions{
     {{".glb", AssetType::RenderModel},
      {".gltf", AssetType::RenderModel},
      {".dae", AssetType::RenderModel},
@@ -72,9 +80,10 @@ constexpr std::array<AssetTypeExtension, 16> kAssetTypeExtensions{
      {".step", AssetType::CadModel},
      {".stl", AssetType::CadModel},
      {".mochi.h5", AssetType::MochiModel},
-     // Bot scenes are an internal-build concept; public builds do not classify these.
+     // Bot scenes and tasks are an internal-build concept; public builds do not classify these.
      {".mochi_bot_scene", AssetType::BotScene},
      {".mochi_bot_scene_archive", AssetType::BotScene},
+     {.extension = ".mochi_bot_task", .type = AssetType::BotTask},
      {".superdex_bot_archive", AssetType::Bot},
      {".superdex_bot", AssetType::Bot},
      {".mochi_bot_archive", AssetType::Bot},

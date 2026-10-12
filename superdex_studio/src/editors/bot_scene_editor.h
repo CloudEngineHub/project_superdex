@@ -65,6 +65,10 @@ class BotSceneEditor : public AssetEditor {
     return _viewport.get();
   }
 
+  // Loads @p path as the previewed task, as "Load Task..." does, and brings up the Task Preview
+  // window. Refused while simulating, when that button is disabled too.
+  bool OpenTask(mochi::Path const& path);
+
  private:
   //------------------------------------------------------------------------------------------------
   // Undo/Redo
@@ -150,6 +154,8 @@ class BotSceneEditor : public AssetEditor {
   // Why the most recent Load/Replace Task attempt failed; the previous task, if any, stays loaded.
   std::string _taskLoadError;
   bool _showCurrentTaskTransforms = false;
+  // Set by OpenTask: brings the Task Preview tab forward the next time it is drawn.
+  bool _focusTaskWindow = false;
 };
 
 } // namespace superdex::studio

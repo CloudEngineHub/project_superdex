@@ -37,6 +37,7 @@
 #include <mochi_core/utils/span.h>
 #include <mochi_physics/utils/mochi_prefab.h>
 
+#include <imgui_internal.h> // dock node tab bar, to bring the Task Preview tab forward
 #include <imguios/fonts/icons_font_awesome5.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <picojson/picojson.h>
@@ -51,6 +52,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 namespace superdex::studio {
 
@@ -1018,6 +1020,16 @@ bool BotSceneEditor::BindTaskSpawns(
   return true;
 }
 
+bool BotSceneEditor::OpenTask(mochi::Path const& path) {
+  if (_mochiScene.IsSimulating()) {
+    MOCHI_LOG_WARNING("Stop the simulation before loading bot task '%s'.", path.ToString().c_str());
+    return false;
+  }
+  _studio->GetWindowVisible("Task Preview") = true;
+  _focusTaskWindow = true;
+  return LoadTask(path);
+}
+
 bool BotSceneEditor::LoadTask(mochi::Path const& path) {
   mochi::Error error;
   auto task = superdex::robotics::LoadBotTaskPrefabFromFile(path.ToString(), error);
@@ -1316,6 +1328,15 @@ void BotSceneEditor::SyncFromPhysics() {
 //--------------------------------------------------------------------------------------------------
 
 void BotSceneEditor::ShowTaskWindow(bool* open) {
+  if (std::exchange(_focusTaskWindow, false)) {
+    // Focusing a docked window does not select its tab, so select the tab directly.
+    ImGuiWindow* const window = ImGui::FindWindowByName("Task Preview");
+    if (window != nullptr && window->DockNode != nullptr && window->DockNode->TabBar != nullptr) {
+      window->DockNode->TabBar->NextSelectedTabId = window->TabId;
+    } else {
+      ImGui::SetNextWindowFocus();
+    }
+  }
   ImGui::Begin("Task Preview", open);
 
   bool const simulating = _mochiScene.IsSimulating();
