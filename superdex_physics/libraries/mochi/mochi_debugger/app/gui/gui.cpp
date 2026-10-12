@@ -186,10 +186,33 @@ static void BuildDefaultLayout(UiState& state, ImGuiID dockspaceId) {
   ImGui::DockBuilderFinish(dockspaceId);
 }
 
+// Selects a docked panel's tab if it is hidden behind another tab, without taking keyboard focus.
+// If a sibling tab has focus, leave it selected so active interactions are not interrupted.
+static void BringPanelToFront(PanelState const& panel) {
+  ImGuiWindow* const window = ImGui::FindWindowByName(panel.label.c_str());
+  if (!window || !window->DockNode || !window->DockNode->TabBar) {
+    return;
+  }
+  ImGuiTabBar* const tabBar = window->DockNode->TabBar;
+  // Defensive: a docked window with a tab bar should have a corresponding tab.
+  ImGuiTabItem* const tab = ImGui::TabBarFindTabByID(tabBar, window->TabId);
+  if (!tab) {
+    return;
+  }
+  ImGuiWindow const* const navWindow = ImGui::GetCurrentContext()->NavWindow;
+  if (navWindow && navWindow->RootWindow->DockNode == window->DockNode) {
+    return;
+  }
+  // Only sets the tab bar's next selected tab; does not take keyboard focus.
+  ImGui::TabBarQueueFocus(tabBar, tab);
+}
+
 static void BuildDockablePanels(UiState& state) {
-  // Always show the terminal if there are new errors or warnings.
-  if (state.logView.HasNewErrorsOrWarnings()) {
-    state.panels[kPanelNameTerminal].isVisible = true;
+  bool const hasNewErrorsOrWarnings = state.logView.ConsumeNewErrorsOrWarnings();
+  if (hasNewErrorsOrWarnings && state.terminal.bringToForegroundOnErrorOrWarning) {
+    PanelState& terminal = state.panels[kPanelNameTerminal];
+    terminal.isVisible = true;
+    BringPanelToFront(terminal);
   }
 
   for (auto&& [name, panel] : state.panels) {
