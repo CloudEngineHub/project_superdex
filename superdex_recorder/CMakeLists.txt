@@ -23,8 +23,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(rerun_sdk)
 
 add_library(superdex_recorder_core STATIC
+    src/link_kinematics.cpp
     src/series.cpp
     src/recorder.cpp
+    include/superdex_recorder/link_kinematics.h
     include/superdex_recorder/recorder.h
     include/superdex_recorder/series.h
 )

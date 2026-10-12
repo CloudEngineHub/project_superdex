@@ -16,13 +16,11 @@
 
 #pragma once
 
+#include <superdex_recorder/link_kinematics.h>
 #include <superdex_recorder/recorder.h>
 #include <superdex_robotics/superdex_robotics.h>
 
-#include <mochi_core/articulated_body/articulated_body.h>
-#include <mochi_core/linear_algebra/matrix.h>
-#include <mochi_core/utils/dynamic_array.h>
-#include <mochi_core/utils/dynamic_string.h>
+#include <mochi_core/utils/span.h>
 #include <mochi_core/utils/transform_rt.h>
 
 #include <array>
@@ -76,23 +74,9 @@ class SUPERDEX_RECORDER_API RobotShadow final {
       mochi::Error& error);
 
  private:
-  void ComputeLinkTransforms(mochi::Span<mochi::real const> jointPositions, mochi::Error& error);
-  void WriteLinkTransforms(
-      SampleTime time,
-      mochi::TransformRT const& worldAdjustment,
-      mochi::Error& error);
-
   std::optional<size_t> _subtreeRootLinkIndex;
-  mochi::DynamicArray<int> _parents;
-  mochi::DynamicArray<mochi::ArticulatedJointType> _jointTypes;
-  mochi::DynamicArray<mochi::Real3> _jointAxes;
-  mochi::DynamicArray<mochi::ArticulatedDofInfo> _dofInfo;
-  mochi::DynamicArray<mochi::ArticulatedPoseInfo> _poseInfo;
-  mochi::DynamicArray<mochi::ArticulatedRestTransform> _restTransforms;
-  mochi::ColumnVector<mochi::real> _dofs;
-  mochi::ColumnVector<mochi::real> _pose;
-  mochi::DynamicArray<mochi::TransformRT> _jointTransforms;
-  mochi::DynamicArray<mochi::TransformRT> _rootFromLinks;
+  std::optional<detail::LinkKinematics> _kinematics;
+  TransformSeries* _anchorSeries = nullptr;
   std::vector<detail::ShadowLink> _links;
 };
 

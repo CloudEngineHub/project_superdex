@@ -17,6 +17,7 @@
 #pragma once
 
 #include <superdex_recorder/contact_collector.h>
+#include <superdex_recorder/link_kinematics.h>
 #include <superdex_recorder/recorder.h>
 
 #include <mochi_core/utils/dynamic_array.h>
@@ -26,6 +27,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -80,7 +82,7 @@ class SUPERDEX_RECORDER_API PhysicsRecorder final {
     mochi::DynamicArray<mochi::real> velocities;
     mochi::DynamicArray<mochi::real> controllerTargets;
     bool hasPoseController = false;
-    mochi::DynamicArray<mochi::TransformRT> worldFromLinks;
+    std::optional<detail::LinkKinematics> linkKinematics;
   };
 
  public:

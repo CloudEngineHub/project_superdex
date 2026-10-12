@@ -344,6 +344,27 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
         linkHandles.size() == shapeInfo.linkNames.size(),
         error,
         "Articulated actor link handles and names have inconsistent sizes.");
+    size_t const numLinks = linkHandles.size();
+    MOCHI_ERROR_IF_NOT(
+        shapeInfo.jointTypes.size() >= numLinks && shapeInfo.jointAxes.size() >= numLinks &&
+            shapeInfo.jointFromChildLink.size() >= numLinks &&
+            shapeInfo.parentLinkFromJoint.size() >= numLinks,
+        error,
+        "Articulated actor joint metadata is incomplete.");
+    MOCHI_ERROR_RETURN(error);
+    // Each link is recorded relative to its parent link, so a link on a fixed joint is recorded
+    // once.
+    auto const linkPaths =
+        detail::NestedLinkPaths(shapeInfo.parents, shapeInfo.linkNames, std::nullopt, error);
+    // The per-joint arrays end with the cycle joints, which have no DoFs and no child link of
+    // their own.
+    registered.linkKinematics.emplace(
+        shapeInfo.parents,
+        shapeInfo.jointTypes.subspan(0, numLinks),
+        shapeInfo.jointAxes.subspan(0, numLinks),
+        shapeInfo.jointFromChildLink.subspan(0, numLinks),
+        shapeInfo.parentLinkFromJoint.subspan(0, numLinks),
+        error);
     MOCHI_ERROR_RETURN(error);
 
     registered.links.reserve(linkHandles.size());
@@ -354,8 +375,7 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
         return;
       }
       std::string const linkName = std::string{shapeInfo.linkNames[i]};
-      std::string const linkPath =
-          entityPath + "/links/" + detail::EncodeEntityPathSegment(linkName);
+      std::string const linkPath = entityPath + "/links/" + linkPaths[i];
       auto* const linkSeries = _episode.CreateTransformSeries(linkPath, error);
       MOCHI_ERROR_RETURN(error);
       if (linkSeries == nullptr) {
@@ -439,7 +459,6 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
     if (hasPoseController) {
       registered.controllerTargets.resize(numDofs);
     }
-    registered.worldFromLinks.resize(registered.links.size());
   } else {
     WriteGeometry(entityPath, actor, error);
     WritePhysicalParameters(dataPath, actor, error);
@@ -639,12 +658,11 @@ void PhysicsRecorder::Record(SampleTime time, mochi::Error& error) {
         time, mochi::Span<mochi::Span<mochi::real const> const>(fields.data(), numFields), error);
     MOCHI_ERROR_RETURN(error);
 
-    actor->GetArticulatedLinkTransforms(registered.worldFromLinks, error);
+    registered.linkKinematics->Compute(registered.positions, error);
     MOCHI_ERROR_RETURN(error);
-    mochi::TransformRT const actorFromWorld = mochi::Invert(worldFromActor);
+    auto const parentFromLinks = registered.linkKinematics->GetParentFromLinks();
     for (size_t i = 0; i < registered.links.size(); ++i) {
-      mochi::TransformRT const actorFromLink = actorFromWorld * registered.worldFromLinks[i];
-      registered.links[i].transformSeries.Append(time, actorFromLink, error);
+      registered.links[i].transformSeries.Append(time, parentFromLinks[i], error);
       MOCHI_ERROR_RETURN(error);
     }
   }

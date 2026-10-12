@@ -30,15 +30,6 @@ namespace {
 
 constexpr std::string_view kShadowsPath = "world/shadows";
 
-bool IsInSubtree(size_t linkIndex, size_t rootLinkIndex, mochi::Span<int const> parents) {
-  for (int index = static_cast<int>(linkIndex); index >= 0; index = parents[index]) {
-    if (static_cast<size_t>(index) == rootLinkIndex) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void WriteGeometry(
     Episode& episode,
     std::string_view entityPath,
@@ -114,25 +105,27 @@ RobotShadow::RobotShadow(
       "Robot shadow subtree root index is out of range.");
   MOCHI_ERROR_RETURN(error);
 
-  _parents.reserve(numLinks);
-  _jointTypes.reserve(numLinks);
-  _jointAxes.reserve(numLinks);
-  _restTransforms.reserve(numLinks);
-  for (size_t i = 0; i < numLinks; ++i) {
-    _parents.push_back(shapeInfo.parents[i]);
-    _jointTypes.push_back(shapeInfo.jointTypes[i]);
-    _jointAxes.push_back(shapeInfo.jointAxes[i]);
-    _restTransforms.emplace_back(shapeInfo.jointFromChildLink[i], shapeInfo.parentLinkFromJoint[i]);
+  // The shadow's root entity records the anchor, and each link is recorded relative to its parent
+  // link, so a link on a fixed joint is recorded once.
+  auto const parents = shapeInfo.parents.subspan(0, numLinks);
+  auto const linkPaths = detail::NestedLinkPaths(
+      parents, shapeInfo.linkNames.subspan(0, numLinks), _subtreeRootLinkIndex, error);
+  _kinematics.emplace(
+      parents,
+      shapeInfo.jointTypes.subspan(0, numLinks),
+      shapeInfo.jointAxes.subspan(0, numLinks),
+      shapeInfo.jointFromChildLink.subspan(0, numLinks),
+      shapeInfo.parentLinkFromJoint.subspan(0, numLinks),
+      error);
+  _anchorSeries = episode.CreateTransformSeries(shadowPath, error);
+  MOCHI_ERROR_RETURN(error);
+  if (_anchorSeries == nullptr) {
+    MOCHI_ERROR_SET(error, "Failed to create a robot shadow transform series.");
+    return;
   }
-  _dofInfo = mochi::articulated::SetupJointDofs(_jointTypes);
-  _poseInfo = mochi::articulated::SetupJointPose(_jointTypes);
-  _dofs.Resize(mochi::articulated::GetReducedDofsSize(_dofInfo));
-  _pose.Resize(mochi::articulated::GetReducedPoseSize(_poseInfo));
-  _jointTransforms.resize(numLinks);
-  _rootFromLinks.resize(numLinks);
   _links.reserve(linkHandles.size());
   for (size_t i = 0; i < linkHandles.size(); ++i) {
-    if (_subtreeRootLinkIndex.has_value() && !IsInSubtree(i, *_subtreeRootLinkIndex, _parents)) {
+    if (linkPaths[i].empty()) {
       continue;
     }
     mochi::Actor* const linkActor = scene->GetActor(linkHandles[i]);
@@ -140,8 +133,7 @@ RobotShadow::RobotShadow(
       MOCHI_ERROR_SET(error, "Robot shadow contains an invalid link.");
       return;
     }
-    std::string const linkPath =
-        shadowPath + "/links/" + detail::EncodeEntityPathSegment(shapeInfo.linkNames[i].c_str());
+    std::string const linkPath = shadowPath + "/links/" + linkPaths[i];
     WriteGeometry(episode, linkPath, *linkActor, config.colorRgba, error);
     auto* const series = episode.CreateTransformSeries(linkPath, error);
     MOCHI_ERROR_RETURN(error);
@@ -155,54 +147,24 @@ RobotShadow::RobotShadow(
 
 RobotShadow::~RobotShadow() = default;
 
-void RobotShadow::ComputeLinkTransforms(
-    mochi::Span<mochi::real const> jointPositions,
-    mochi::Error& error) {
-  MOCHI_ERROR_RETURN(error);
-  MOCHI_ERROR_IF(
-      jointPositions.size() != static_cast<size_t>(_dofs.Rows()),
-      error,
-      "Robot shadow joint position size does not match the robot DOF count.");
-  MOCHI_ERROR_RETURN(error);
-  std::copy(jointPositions.begin(), jointPositions.end(), _dofs.Data());
-  mochi::articulated::ConvertDofsToPose(
-      _jointTypes, _dofInfo, _poseInfo, mochi::AsConstView(_dofs), mochi::AsView(_pose));
-  mochi::articulated::ComputeTransformsFromReducedPose(
-      _jointTypes,
-      _jointAxes,
-      _poseInfo,
-      _parents,
-      _restTransforms,
-      mochi::TransformRT::Identity(),
-      mochi::AsConstView(_pose),
-      _jointTransforms,
-      _rootFromLinks);
-}
-
-void RobotShadow::WriteLinkTransforms(
-    SampleTime time,
-    mochi::TransformRT const& worldAdjustment,
-    mochi::Error& error) {
-  MOCHI_ERROR_RETURN(error);
-  for (auto& link : _links) {
-    mochi::TransformRT const worldFromLink = worldAdjustment * _rootFromLinks[link.index];
-    link.transformSeries.Append(time, worldFromLink, error);
-    MOCHI_ERROR_RETURN(error);
-  }
-}
-
 void RobotShadow::Record(
     SampleTime time,
     mochi::TransformRT const& worldFromAnchor,
     mochi::Span<mochi::real const> jointPositions,
     mochi::Error& error) {
-  ComputeLinkTransforms(jointPositions, error);
   MOCHI_ERROR_RETURN(error);
-  mochi::TransformRT worldAdjustment = worldFromAnchor;
-  if (_subtreeRootLinkIndex.has_value()) {
-    worldAdjustment = worldFromAnchor * mochi::Invert(_rootFromLinks[*_subtreeRootLinkIndex]);
+  _kinematics->Compute(jointPositions, error);
+  _anchorSeries->Append(time, worldFromAnchor, error);
+  MOCHI_ERROR_RETURN(error);
+  auto const parentFromLinks = _kinematics->GetParentFromLinks();
+  for (auto& link : _links) {
+    // The anchor locates a subtree shadow's root link itself.
+    mochi::TransformRT const parentFromLink = link.index == _subtreeRootLinkIndex
+        ? mochi::TransformRT::Identity()
+        : parentFromLinks[link.index];
+    link.transformSeries.Append(time, parentFromLink, error);
+    MOCHI_ERROR_RETURN(error);
   }
-  WriteLinkTransforms(time, worldAdjustment, error);
 }
 
 } // namespace superdex::recorder

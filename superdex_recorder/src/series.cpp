@@ -46,7 +46,7 @@ size_t Series::GetNumSamples() const {
   return _frames.size();
 }
 
-void Series::AppendTime(SampleTime time, mochi::Error& error) {
+void Series::AdvanceTime(SampleTime time, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
   MOCHI_ERROR_IF(_sealed, error, "Cannot append to a committed or aborted series.");
   MOCHI_ERROR_IF(
@@ -57,14 +57,19 @@ void Series::AppendTime(SampleTime time, mochi::Error& error) {
       std::isfinite(time.simulationTimeSec) && time.simulationTimeSec >= 0.0,
       error,
       "Series time must be finite and non-negative.");
-  if (!_frames.empty()) {
+  if (_latestTime.has_value()) {
+    MOCHI_ERROR_IF_NOT(time.frame > _latestTime->frame, error, "Series frames must increase.");
     MOCHI_ERROR_IF_NOT(
-        time.frame > static_cast<uint64_t>(_frames.back()), error, "Series frames must increase.");
-    MOCHI_ERROR_IF_NOT(
-        time.simulationTimeSec >= _simulationTimesSec.back(),
+        time.simulationTimeSec >= _latestTime->simulationTimeSec,
         error,
         "Series time must not decrease.");
   }
+  MOCHI_ERROR_RETURN(error);
+  _latestTime = time;
+}
+
+void Series::AppendTime(SampleTime time, mochi::Error& error) {
+  AdvanceTime(time, error);
   MOCHI_ERROR_RETURN(error);
   _frames.push_back(static_cast<int64_t>(time.frame));
   _simulationTimesSec.push_back(time.simulationTimeSec);
@@ -159,18 +164,26 @@ void TransformSeries::Append(
     std::array<mochi::real, 3> const& translation,
     std::array<mochi::real, 4> const& quaternionXyzw,
     mochi::Error& error) {
-  AppendTime(time, error);
   MOCHI_ERROR_RETURN(error);
-  _translations.emplace_back(
+  std::array<float, 7> const transform{
       static_cast<float>(translation[0]),
       static_cast<float>(translation[1]),
-      static_cast<float>(translation[2]));
+      static_cast<float>(translation[2]),
+      static_cast<float>(quaternionXyzw[0]),
+      static_cast<float>(quaternionXyzw[1]),
+      static_cast<float>(quaternionXyzw[2]),
+      static_cast<float>(quaternionXyzw[3])};
+  if (transform == _lastTransform) {
+    AdvanceTime(time, error);
+    return;
+  }
+  AppendTime(time, error);
+  MOCHI_ERROR_RETURN(error);
+  _translations.emplace_back(transform[0], transform[1], transform[2]);
   _rotations.emplace_back(
       rerun::datatypes::Quaternion::from_xyzw(
-          static_cast<float>(quaternionXyzw[0]),
-          static_cast<float>(quaternionXyzw[1]),
-          static_cast<float>(quaternionXyzw[2]),
-          static_cast<float>(quaternionXyzw[3])));
+          transform[3], transform[4], transform[5], transform[6]));
+  _lastTransform = transform;
 }
 
 void TransformSeries::Append(

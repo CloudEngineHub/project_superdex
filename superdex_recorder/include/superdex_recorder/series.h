@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -46,6 +47,9 @@ class SUPERDEX_RECORDER_API Series {
  protected:
   explicit Series(std::string_view entityPath);
 
+  /* Checks that time follows the previous append's time and makes it the latest, without storing
+   * a sample. */
+  void AdvanceTime(SampleTime time, mochi::Error& error);
   void AppendTime(SampleTime time, mochi::Error& error);
 
  private:
@@ -57,6 +61,7 @@ class SUPERDEX_RECORDER_API Series {
   std::string _entityPath;
   std::vector<int64_t> _frames;
   std::vector<double> _simulationTimesSec;
+  std::optional<SampleTime> _latestTime; // May be newer than the last stored time.
   bool _sealed = false; // Rejects appends once its episode commits or is discarded.
 };
 
@@ -90,7 +95,8 @@ class SUPERDEX_RECORDER_API ScalarSeries final : public Series {
   std::vector<Column> _columns;
 };
 
-/* @brief Stores one translation and quaternion per sample. */
+/* @brief Stores one translation and quaternion per sample. A transform equal to the previous
+ * sample is not stored, because readers take the latest sample at or before a time. */
 class SUPERDEX_RECORDER_API TransformSeries final : public Series {
  public:
   explicit TransformSeries(std::string_view entityPath);
@@ -107,6 +113,8 @@ class SUPERDEX_RECORDER_API TransformSeries final : public Series {
 
   std::vector<rerun::components::Translation3D> _translations;
   std::vector<rerun::components::RotationQuat> _rotations;
+  // Translation then quaternion, as stored.
+  std::optional<std::array<float, 7>> _lastTransform;
 };
 
 /* @brief Stores a variable-length batch of world-space 3D arrows per sample. */
