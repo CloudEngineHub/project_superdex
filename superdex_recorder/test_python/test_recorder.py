@@ -17,11 +17,35 @@ from __future__ import annotations
 import gc
 import tempfile
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
+import numpy as np
+import pyarrow as pa
+import rerun.experimental as rr_experimental
 import superdex.physics as sdp
 import superdex.recorder as recorder
 from superdex.recorder.reader import EpisodeReader
+
+from . import rrd_verify
+
+# The Rerun wheel does not expose its experimental API to static type checkers.
+_rr_experimental: Any = rr_experimental
+
+
+def stored_value_types(path: Path, components: Sequence[str]) -> dict[str, pa.DataType]:
+    """Return the Arrow element type that each component is stored with."""
+    types = {}
+    for chunk in (
+        _rr_experimental.RrdReader(path).stream().filter(components=components)
+    ):
+        schema = chunk.to_record_batch().schema
+        for component in components:
+            index = schema.get_field_index(component)
+            if index >= 0:
+                types[component] = schema.field(index).type.value_type
+    return types
 
 
 class RecorderTest(unittest.TestCase):
@@ -310,6 +334,89 @@ class RecorderTest(unittest.TestCase):
                     sdp.destroy_scene(scene)
                 sdp.shutdown()
 
+    def test_per_frame_values_keep_the_scene_precision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            scene = None
+            physics = None
+            try:
+                scene = sdp.create_scene("precision")
+                floor = scene.create_rigid_actor(
+                    name="floor",
+                    shape=sdp.create_plane_shape(normal=[0, 0, 1], distance=0),
+                    is_static=True,
+                )
+                assert floor is not None
+                episode = self.make_recorder(Path(directory_string)).begin_episode()
+                physics = recorder.PhysicsRecorder(episode, scene)
+                physics.record(0, 0.0)
+                episode.commit()
+
+                real_type = pa.from_numpy_dtype(np.asarray(scene.get_gravity()).dtype)
+                self.assertEqual(
+                    stored_value_types(
+                        episode.output_path,
+                        ["superdex.physics.step_dt_sec", "superdex.physics.is_static"],
+                    ),
+                    {
+                        "superdex.physics.step_dt_sec": real_type,
+                        "superdex.physics.is_static": pa.float64(),
+                    },
+                )
+            finally:
+                physics = None
+                gc.collect()
+                if scene is not None:
+                    sdp.destroy_scene(scene)
+                sdp.shutdown()
+
+    def test_each_entity_has_one_static_chunk(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            scene = None
+            physics = None
+            try:
+                scene = sdp.create_scene("static chunks")
+                cube = scene.create_rigid_actor(
+                    name="cube",
+                    shape=sdp.create_tri_mesh_shape(
+                        coordinates=[0, 0, 0, 0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.1],
+                        connectivity=[0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+                    ),
+                    density=1000,
+                )
+                floor = scene.create_rigid_actor(
+                    name="floor",
+                    shape=sdp.create_plane_shape(normal=[0, 0, 1], distance=0),
+                    is_static=True,
+                )
+                assert cube is not None and floor is not None
+                episode = self.make_recorder(Path(directory_string)).begin_episode()
+                physics = recorder.PhysicsRecorder(episode, scene)
+                physics.record(0, 0.0)
+                episode.commit()
+
+                stream = _rr_experimental.RrdReader(episode.output_path).stream()
+                static_chunks = [chunk for chunk in stream if chunk.is_static]
+                entity_paths = [chunk.entity_path for chunk in static_chunks]
+                self.assertCountEqual(entity_paths, set(entity_paths))
+                columns = {
+                    chunk.entity_path: chunk.to_record_batch().schema.names
+                    for chunk in static_chunks
+                }
+                self.assertIn("Mesh3D:vertex_positions", columns["/world/cube"])
+                self.assertIn("superdex.episode.started_utc_ns", columns["/episode"])
+                self.assertIn("superdex.episode.committed_utc_ns", columns["/episode"])
+                actor_columns = columns["/data/physics/actors/cube"]
+                self.assertIn("superdex.physics.actor_id", actor_columns)
+                self.assertIn("superdex.physics.contact_params", actor_columns)
+            finally:
+                physics = None
+                gc.collect()
+                if scene is not None:
+                    sdp.destroy_scene(scene)
+                sdp.shutdown()
+
     def test_reader_returns_only_requested_frames(self) -> None:
         with tempfile.TemporaryDirectory() as directory_string:
             sdp.initialize(num_worker_threads=0)
@@ -413,6 +520,7 @@ class RecorderTest(unittest.TestCase):
                     physics.record(frame, scene.get_total_simulation_time())
                     expected_forces[frame] = cube.get_contact_force_world().tolist()
                 episode.commit()
+                rrd_verify.assert_rerun_accepts(episode.output_path)
                 self.assertGreater(expected_forces[3][1], 1.0)
 
                 recording = EpisodeReader(episode.output_path)
