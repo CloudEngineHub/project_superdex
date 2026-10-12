@@ -86,7 +86,7 @@ struct Controller {
 
 /* Records the controllers owned by one SuperDex robot, and the joint effort applied to it.
  * The episode and robot must outlive this recorder. */
-class RoboticsRecorder final {
+class SUPERDEX_RECORDER_API RoboticsRecorder final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(RoboticsRecorder)
 
  public:

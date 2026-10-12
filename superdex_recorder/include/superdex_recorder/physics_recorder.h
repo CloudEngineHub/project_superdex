@@ -41,7 +41,7 @@ struct PhysicsRecorderConfig {
 
 /* Records all rigid and articulated actors in a Mochi scene.
  * The episode and scene must outlive this recorder. */
-class PhysicsRecorder final {
+class SUPERDEX_RECORDER_API PhysicsRecorder final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(PhysicsRecorder)
 
  private:

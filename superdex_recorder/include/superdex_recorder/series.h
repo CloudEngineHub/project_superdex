@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <superdex_recorder/recorder.h>
+
 #include <mochi_core/utils/error.h>
 #include <mochi_core/utils/nd_array.h>
 #include <mochi_core/utils/span.h>
@@ -31,19 +33,8 @@
 
 namespace superdex::recorder {
 
-struct SampleTime {
-  uint64_t frame;
-  double simulationTimeSec;
-};
-
-/* @brief Identifies one Rerun component column and its archetype. */
-struct ComponentField {
-  std::string archetype;
-  std::string component;
-};
-
 /* @brief A timestamped set of columns buffered until its episode commits. */
-class Series {
+class SUPERDEX_RECORDER_API Series {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(Series)
 
  public:
@@ -69,7 +60,7 @@ class Series {
 };
 
 /* @brief Stores one or more variable-length scalar fields per sample. */
-class ScalarSeries final : public Series {
+class SUPERDEX_RECORDER_API ScalarSeries final : public Series {
  private:
   struct Column {
     ComponentField field;
@@ -78,7 +69,7 @@ class ScalarSeries final : public Series {
   };
 
  public:
-  ScalarSeries(std::string_view entityPath, std::vector<ComponentField> fields);
+  ScalarSeries(std::string_view entityPath, std::vector<ComponentField> const& fields);
 
   void Append(
       SampleTime time,
@@ -92,7 +83,7 @@ class ScalarSeries final : public Series {
 };
 
 /* @brief Stores one translation and quaternion per sample. */
-class TransformSeries final : public Series {
+class SUPERDEX_RECORDER_API TransformSeries final : public Series {
  public:
   explicit TransformSeries(std::string_view entityPath);
 
@@ -111,7 +102,7 @@ class TransformSeries final : public Series {
 };
 
 /* @brief Stores a variable-length batch of world-space 3D arrows per sample. */
-class Arrow3DSeries final : public Series {
+class SUPERDEX_RECORDER_API Arrow3DSeries final : public Series {
  public:
   explicit Arrow3DSeries(std::string_view entityPath);
 

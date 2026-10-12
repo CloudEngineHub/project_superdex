@@ -16,6 +16,8 @@
 
 #include <superdex_recorder/physics_recorder.h>
 
+#include <superdex_recorder/series.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -289,7 +291,7 @@ PhysicsRecorder::~PhysicsRecorder() {
 
 void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
-  std::string const encodedId = Episode::EncodeEntityPathSegment(id);
+  std::string const encodedId = detail::EncodeEntityPathSegment(id);
   std::string const dataPath = "data/physics/actors/" + encodedId;
   std::string const entityPath = "world/" + encodedId;
 
@@ -314,7 +316,7 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
       fields.push_back(ActorField("superdex.physics.controller_target_positions"));
     }
   }
-  auto* const stateSeries = _episode.CreateScalarSeries(dataPath, std::move(fields), error);
+  auto* const stateSeries = _episode.CreateScalarSeries(dataPath, fields, error);
   MOCHI_ERROR_RETURN(error);
   if (transformSeries == nullptr || stateSeries == nullptr) {
     MOCHI_ERROR_SET(error, "Failed to create actor recording series.");
@@ -342,7 +344,7 @@ void PhysicsRecorder::RegisterActor(std::string id, mochi::Actor& actor, mochi::
       }
       std::string const linkName = std::string{shapeInfo.linkNames[i]};
       std::string const linkPath =
-          entityPath + "/links/" + Episode::EncodeEntityPathSegment(linkName);
+          entityPath + "/links/" + detail::EncodeEntityPathSegment(linkName);
       auto* const linkSeries = _episode.CreateTransformSeries(linkPath, error);
       MOCHI_ERROR_RETURN(error);
       if (linkSeries == nullptr) {

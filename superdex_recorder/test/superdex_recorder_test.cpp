@@ -15,6 +15,7 @@
  */
 
 #include <superdex_recorder/recorder.h>
+#include <superdex_recorder/series.h>
 
 #include <gtest/gtest.h>
 

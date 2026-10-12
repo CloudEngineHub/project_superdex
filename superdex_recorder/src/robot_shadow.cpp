@@ -16,6 +16,8 @@
 
 #include <superdex_recorder/robot_shadow.h>
 
+#include <superdex_recorder/series.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -93,7 +95,7 @@ RobotShadow::RobotShadow(
   char const* const actorName = actor->GetName();
   std::string const robotId = actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
   std::string const shadowPath = std::string{kShadowsPath} + "/" +
-      Episode::EncodeEntityPathSegment(robotId) + "/" + Episode::EncodeEntityPathSegment(config.id);
+      detail::EncodeEntityPathSegment(robotId) + "/" + detail::EncodeEntityPathSegment(config.id);
 
   auto const linkHandles = actor->GetNestedLinkActors(error);
   auto const shapeInfo = actor->GetArticulatedShapeInfo(error);
@@ -139,7 +141,7 @@ RobotShadow::RobotShadow(
       return;
     }
     std::string const linkPath =
-        shadowPath + "/links/" + Episode::EncodeEntityPathSegment(shapeInfo.linkNames[i].c_str());
+        shadowPath + "/links/" + detail::EncodeEntityPathSegment(shapeInfo.linkNames[i].c_str());
     WriteGeometry(episode, linkPath, *linkActor, config.colorRgba, error);
     auto* const series = episode.CreateTransformSeries(linkPath, error);
     MOCHI_ERROR_RETURN(error);

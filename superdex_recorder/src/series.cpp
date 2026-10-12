@@ -100,11 +100,11 @@ void Series::Flush(rerun::RecordingStream& recording, mochi::Error& error) {
       "Failed to write sampled series.");
 }
 
-ScalarSeries::ScalarSeries(std::string_view entityPath, std::vector<ComponentField> fields)
+ScalarSeries::ScalarSeries(std::string_view entityPath, std::vector<ComponentField> const& fields)
     : Series{entityPath} {
   _columns.reserve(fields.size());
-  for (auto& field : fields) {
-    _columns.push_back({.field = std::move(field)});
+  for (auto const& field : fields) {
+    _columns.push_back({.field = field});
   }
 }
 

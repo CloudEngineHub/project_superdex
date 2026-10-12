@@ -16,12 +16,12 @@
 
 #pragma once
 
-#include <superdex_recorder/series.h>
+#include <superdex_recorder/export.h>
 
 #include <mochi_core/utils/error.h>
+#include <mochi_core/utils/log.h>
 #include <mochi_core/utils/span.h>
-
-#include <rerun.hpp>
+#include <mochi_core/utils/transform_rt.h>
 
 #include <array>
 #include <cstdint>
@@ -32,13 +32,35 @@
 #include <string_view>
 #include <vector>
 
+/* Unreal builds against this header and the recorders' headers without Rerun on its include path.
+ * Only series.h may include Rerun. */
+namespace rerun {
+class RecordingStream;
+} // namespace rerun
+
 namespace superdex::recorder {
+
+class Series;
+class ScalarSeries;
+class TransformSeries;
+class Arrow3DSeries;
 
 inline constexpr std::string_view kSchemaName = "superdex.episode";
 inline constexpr uint32_t kSchemaVersionMajor = 1;
 inline constexpr uint32_t kSchemaVersionMinor = 0;
 inline constexpr std::string_view kSchemaCoordinateSpace = "FLU";
 inline constexpr double kSchemaUnitsPerMeter = 1.0;
+
+struct SampleTime {
+  uint64_t frame;
+  double simulationTimeSec;
+};
+
+/* @brief Identifies one Rerun component column and its archetype. */
+struct ComponentField {
+  std::string archetype;
+  std::string component;
+};
 
 struct RecorderConfig {
   std::filesystem::path outputDirectory;
@@ -49,15 +71,20 @@ struct EpisodeMetadata {
 };
 
 /* @brief Owns one transactional RRD and the constants and sample series buffered until commit. */
-class Episode final {
+class SUPERDEX_RECORDER_API Episode final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(Episode)
 
  public:
   ~Episode();
 
+  /* Keep allocation and deletion in the recorder library's heap, even when a module with its own
+   * allocator deletes the episode that BeginEpisode returned. */
+  static void* operator new(size_t size);
+  static void operator delete(void* episode);
+
   ScalarSeries* CreateScalarSeries(
       std::string_view entityPath,
-      std::vector<ComponentField> fields,
+      std::vector<ComponentField> const& fields,
       mochi::Error& error);
   TransformSeries* CreateTransformSeries(std::string_view entityPath, mochi::Error& error);
   Arrow3DSeries* CreateArrow3DSeries(std::string_view entityPath, mochi::Error& error);
@@ -105,8 +132,6 @@ class Episode final {
   [[nodiscard]] std::filesystem::path const& GetOutputPath() const;
   [[nodiscard]] bool IsActive() const;
 
-  static std::string EncodeEntityPathSegment(std::string_view segment);
-
  private:
   friend class Recorder;
 
@@ -140,14 +165,27 @@ class Episode final {
 };
 
 /* @brief Starts transactional episode recordings in one output directory. */
-class Recorder final {
+class SUPERDEX_RECORDER_API Recorder final {
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(Recorder)
+
  public:
-  explicit Recorder(RecorderConfig config);
+  explicit Recorder(RecorderConfig const& config);
+  ~Recorder();
 
   std::unique_ptr<Episode> BeginEpisode(EpisodeMetadata const& metadata, mochi::Error& error) const;
 
  private:
   RecorderConfig _config;
 };
+
+/* @brief Sets Mochi's log callback inside this library.
+ * A shared library can hold its own copy of the callback, and on Windows always does, so a host
+ * that loads this library passes its callback here. */
+SUPERDEX_RECORDER_API void SetLogCallback(mochi::LogFn const& callback);
+
+namespace detail {
+// Not exported: it returns std::string, which must not cross the DLL boundary.
+std::string EncodeEntityPathSegment(std::string_view segment);
+} // namespace detail
 
 } // namespace superdex::recorder

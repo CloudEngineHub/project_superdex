@@ -16,7 +16,11 @@
 
 #include <superdex_recorder/recorder.h>
 
+#include <superdex_recorder/series.h>
+
 #include <mochi_core/utils/log.h>
+
+#include <rerun.hpp>
 
 #include <algorithm>
 #include <array>
@@ -131,9 +135,17 @@ Episode::~Episode() {
   }
 }
 
+void* Episode::operator new(size_t size) {
+  return ::operator new(size);
+}
+
+void Episode::operator delete(void* episode) {
+  ::operator delete(episode);
+}
+
 ScalarSeries* Episode::CreateScalarSeries(
     std::string_view entityPath,
-    std::vector<ComponentField> fields,
+    std::vector<ComponentField> const& fields,
     mochi::Error& error) {
   ValidateWrite(error);
   ValidateSeriesPath(entityPath, error);
@@ -146,7 +158,7 @@ ScalarSeries* Episode::CreateScalarSeries(
       HasDuplicateComponents(fields), error, "Scalar series component names must be unique.");
   MOCHI_ERROR_RETURN(error, nullptr);
 
-  auto series = std::make_unique<ScalarSeries>(entityPath, std::move(fields));
+  auto series = std::make_unique<ScalarSeries>(entityPath, fields);
   auto* const result = series.get();
   _series.push_back(std::move(series));
   return result;
@@ -389,7 +401,7 @@ bool Episode::IsActive() const {
   return _state == State::Active;
 }
 
-std::string Episode::EncodeEntityPathSegment(std::string_view segment) {
+std::string detail::EncodeEntityPathSegment(std::string_view segment) {
   return rerun::escape_entity_path_part(segment);
 }
 
@@ -437,7 +449,9 @@ void Episode::DiscardTemporaryFile(mochi::Error* error) {
   _state = State::Aborted;
 }
 
-Recorder::Recorder(RecorderConfig config) : _config(std::move(config)) {}
+Recorder::Recorder(RecorderConfig const& config) : _config(config) {}
+
+Recorder::~Recorder() = default;
 
 std::unique_ptr<Episode> Recorder::BeginEpisode(
     EpisodeMetadata const& metadata,
@@ -497,12 +511,16 @@ std::unique_ptr<Episode> Recorder::BeginEpisode(
   episode->WriteConstantScalars(
       "episode", episodeField("superdex.episode.units_per_meter"), unitsPerMeter, error);
   for (auto const& [key, value] : metadata.properties) {
-    std::string const path = "episode/properties/" + Episode::EncodeEntityPathSegment(key);
+    std::string const path = "episode/properties/" + detail::EncodeEntityPathSegment(key);
     episode->WriteConstantText(path, episodeField("superdex.episode.property_key"), key, error);
     episode->WriteConstantText(path, episodeField("superdex.episode.property_value"), value, error);
   }
   MOCHI_ERROR_RETURN(error, nullptr);
   return episode;
+}
+
+void SetLogCallback(mochi::LogFn const& callback) {
+  mochi::SetLogCallback(callback);
 }
 
 } // namespace superdex::recorder

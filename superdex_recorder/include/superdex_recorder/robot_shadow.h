@@ -53,7 +53,7 @@ struct RobotShadowConfig {
 
 /* @brief Records one named visualization pose for a robot.
  * The episode and robot must outlive this shadow. */
-class RobotShadow final {
+class SUPERDEX_RECORDER_API RobotShadow final {
   MOCHI_DECLARE_NO_COPY_NO_MOVE(RobotShadow)
 
  public:

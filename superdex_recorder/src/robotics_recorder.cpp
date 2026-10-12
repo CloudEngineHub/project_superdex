@@ -16,6 +16,8 @@
 
 #include <superdex_recorder/robotics_recorder.h>
 
+#include <superdex_recorder/series.h>
+
 #include <algorithm>
 #include <array>
 #include <unordered_set>
@@ -84,7 +86,7 @@ void detail::ControllerSink::WriteConstantTransform(
   MOCHI_ERROR_RETURN(error);
   std::string const prefix{name};
   _episode.WriteConstantPose(
-      _controllerPath + "/" + Episode::EncodeEntityPathSegment(name),
+      _controllerPath + "/" + detail::EncodeEntityPathSegment(name),
       ControllerField(prefix + "_translation_xyz"),
       ControllerField(prefix + "_quaternion_xyzw"),
       value,
@@ -127,9 +129,7 @@ void detail::ControllerSink::WriteScalars(
       descriptors.push_back(ControllerField(std::string{field.name}));
     }
     auto* const series = _episode.CreateScalarSeries(
-        _controllerPath + "/" + Episode::EncodeEntityPathSegment(seriesName),
-        std::move(descriptors),
-        error);
+        _controllerPath + "/" + detail::EncodeEntityPathSegment(seriesName), descriptors, error);
     MOCHI_ERROR_RETURN(error);
     _scalarBindings.push_back({
         .name = std::string{seriesName},
@@ -172,7 +172,7 @@ void detail::ControllerSink::WriteTransform(
   if (binding == _transformBindings.end()) {
     std::string const prefix{seriesName};
     auto* const series = _episode.CreateScalarSeries(
-        _controllerPath + "/" + Episode::EncodeEntityPathSegment(seriesName),
+        _controllerPath + "/" + detail::EncodeEntityPathSegment(seriesName),
         {ControllerField(prefix + "_translation_xyz"),
          ControllerField(prefix + "_quaternion_xyzw")},
         error);
@@ -206,7 +206,7 @@ RoboticsRecorder::RoboticsRecorder(Episode& episode, robotics::Bot& robot, mochi
 
   char const* const actorName = actor->GetName();
   std::string const robotId = actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
-  std::string const robotPath = "data/robotics/robots/" + Episode::EncodeEntityPathSegment(robotId);
+  std::string const robotPath = "data/robotics/robots/" + detail::EncodeEntityPathSegment(robotId);
   _appliedEffortSeries = episode.CreateScalarSeries(
       robotPath + "/" + std::string{kAppliedCommandStreamName},
       {RobotField("applied_joint_effort")},
@@ -231,7 +231,7 @@ RoboticsRecorder::RoboticsRecorder(Episode& episode, robotics::Bot& robot, mochi
     }
 
     std::string const id = UniqueControllerId(*controller, ids);
-    std::string const path = robotPath + "/controllers/" + Episode::EncodeEntityPathSegment(id);
+    std::string const path = robotPath + "/controllers/" + detail::EncodeEntityPathSegment(id);
     episode.WriteConstantText(path, ControllerField("controller_id"), id, error);
     episode.WriteConstantText(
         path, ControllerField("controller_type"), controller->GetTypeName(), error);
