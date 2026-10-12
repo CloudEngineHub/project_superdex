@@ -35,6 +35,7 @@
 #include <cmath>
 #include <filesystem>
 #include <numbers>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -2543,6 +2544,74 @@ DragScalarField(char const* label, void* fieldPtr, char const* units, float min,
   return DragScalarN(label, dataType, value, 1, 0.01f, &scalarMin, &scalarMax, fmt);
 }
 
+static std::vector<std::span<std::string const>>& ArrayLabelStack() {
+  static std::vector<std::span<std::string const>> stack;
+  return stack;
+}
+
+void ImGui::PushReflectionArrayLabels(std::span<std::string const> labels) {
+  ArrayLabelStack().push_back(labels);
+}
+
+void ImGui::PopReflectionArrayLabels() {
+  ArrayLabelStack().pop_back();
+}
+
+// A tree node with one row per element plus add / remove-last buttons, so the array can grow from
+// empty. Scalar elements take @p fieldInfo's units and range.
+static bool ResizableArrayField(
+    char const* label,
+    SReflect::ArrayTypeInfo const& arrInfo,
+    void* arrPtr,
+    SReflect::FieldTypeInfo const* fieldInfo) {
+  SReflect::TypeInfo const& elemInfo = *arrInfo._innerTypeInfo;
+  size_t const count = arrInfo.GetNumElements(arrPtr);
+  std::span<std::string const> const elemLabels =
+      ArrayLabelStack().empty() ? std::span<std::string const>{} : ArrayLabelStack().back();
+
+  bool const open = TreeNode(label, "%s (%zu)", label, count);
+  if (!elemLabels.empty() && count != elemLabels.size()) {
+    SameLine();
+    TextColored(ImVec4(1.0f, 0.65f, 0.15f, 1.0f), ICON_FA_EXCLAMATION_TRIANGLE);
+    ItemTooltipWrapped(("Expected " + std::to_string(elemLabels.size()) + " elements").c_str());
+  }
+  if (!open) {
+    return false;
+  }
+
+  using CT = SReflect::CoreType;
+  bool const isScalar = elemInfo._coreType == CT::CT_int32 || elemInfo._coreType == CT::CT_float ||
+      elemInfo._coreType == CT::CT_double;
+  bool changed = false;
+  for (size_t i = 0; i < count; ++i) {
+    std::string const elemLabel =
+        i < elemLabels.size() ? elemLabels[i] : "[" + std::to_string(i) + "]";
+    PushID(static_cast<int>(i));
+    changed |= SimpleReflectionField(
+        elemLabel.c_str(), elemInfo, arrInfo.GetElement(arrPtr, i), isScalar ? fieldInfo : nullptr);
+    PopID();
+  }
+
+  if (SmallButton(ICON_FA_PLUS)) {
+    arrInfo.SetNumElements(arrPtr, count + 1);
+    if (count > 0) {
+      elemInfo.Set(arrInfo.GetElement(arrPtr, count - 1), arrInfo.GetElement(arrPtr, count));
+    }
+    changed = true;
+  }
+  ItemTooltipWrapped("Add an element, copying the last one");
+  SameLine();
+  BeginDisabled(count == 0);
+  if (SmallButton(ICON_FA_MINUS)) {
+    arrInfo.SetNumElements(arrPtr, count - 1);
+    changed = true;
+  }
+  ItemTooltipWrapped("Remove the last element");
+  EndDisabled();
+  TreePop();
+  return changed;
+}
+
 static bool SimpleReflectionField(
     char const* label,
     SReflect::TypeInfo const& typeInfo,
@@ -2699,6 +2768,10 @@ static bool SimpleReflectionField(
       }
       case SReflect::CoreType::CT_array: {
         auto const& arrInfo = static_cast<SReflect::ArrayTypeInfo const&>(typeInfo);
+        if (arrInfo.CanResize()) {
+          changed = ResizableArrayField(label, arrInfo, fieldPtr, fieldInfo);
+          break;
+        }
         size_t const count = arrInfo.GetNumElements(fieldPtr);
         SReflect::CoreType const elemType = arrInfo._innerTypeInfo->_coreType;
 

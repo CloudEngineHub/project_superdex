@@ -27,6 +27,7 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -470,6 +471,12 @@ bool SimpleReflectionStruct(
   return SimpleReflectionStruct(
       static_cast<SReflect::StructTypeInfo const&>(typeInfo), &value, overrideFn, readOnlyFn);
 }
+
+// Labels the elements of resizable arrays SimpleReflectionStruct draws until the matching pop, e.g.
+// joint names for per-DOF arrays, and flags such arrays whose length differs. @p labels must stay
+// alive until then.
+void PushReflectionArrayLabels(std::span<std::string const> labels);
+void PopReflectionArrayLabels();
 
 // Render an editable combo for a reflected enum (type-erased entry point).
 bool SimpleReflectionEnum(char const* label, SReflect::EnumTypeInfo const& enumInfo, void* enumPtr);

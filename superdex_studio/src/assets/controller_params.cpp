@@ -117,6 +117,28 @@ bool NormalizeParamsJson(
   return builtin ? ok : NormalizeCustomParams(json, out, error);
 }
 
+bool ResizeArrayFields(SReflect::StructTypeInfo const& structInfo, void* structPtr, size_t count) {
+  bool changed = false;
+  for (SReflect::FieldTypeInfo const* field : structInfo._fields) {
+    if (field->_innerTypeInfo->_coreType != SReflect::CoreType::CT_array) {
+      continue;
+    }
+    auto const& arrInfo = static_cast<SReflect::ArrayTypeInfo const&>(*field->_innerTypeInfo);
+    void* const arrPtr = field->GetFieldPtr(structPtr);
+    size_t const oldCount = arrInfo.GetNumElements(arrPtr);
+    if (!arrInfo.CanResize() || oldCount == count) {
+      continue;
+    }
+    arrInfo.SetNumElements(arrPtr, count);
+    for (size_t i = oldCount; oldCount > 0 && i < count; ++i) {
+      arrInfo._innerTypeInfo->Set(
+          arrInfo.GetElement(arrPtr, oldCount - 1), arrInfo.GetElement(arrPtr, i));
+    }
+    changed = true;
+  }
+  return changed;
+}
+
 bool LoadParamsFile(
     std::string_view type,
     std::string const& path,

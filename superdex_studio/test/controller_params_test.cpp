@@ -294,4 +294,29 @@ TEST_F(ControllerParamsTest, ExternalizeRejectsInvalidInlineJson) {
   EXPECT_FALSE(error.empty());
 }
 
+auto const& JscParamsInfo() {
+  return static_cast<SReflect::StructTypeInfo const&>(
+      SReflect::GetTypeInfo<superdex::robotics::ControllerBasicJscPdParams>());
+}
+
+TEST_F(ControllerParamsTest, ResizeArrayFieldsExtendsWithLastValue) {
+  superdex::robotics::ControllerBasicJscPdParams params;
+  params.Kp = {2.0f};
+  EXPECT_TRUE(ResizeArrayFields(JscParamsInfo(), &params, 3));
+  using Reals = mochi::DynamicArray<mochi::real>;
+  EXPECT_EQ(params.Kp, (Reals{2.0f, 2.0f, 2.0f}));
+  EXPECT_EQ(params.Kd, (Reals{0.0f, 0.0f, 0.0f}));
+}
+
+TEST_F(ControllerParamsTest, ResizeArrayFieldsTruncatesThenReportsNoChange) {
+  superdex::robotics::ControllerBasicJscPdParams params;
+  params.Kp = {1.0f, 2.0f, 3.0f};
+  params.Kd = {4.0f, 5.0f};
+  params.saturation = {6.0f, 7.0f};
+  params.deadband = {8.0f, 9.0f};
+  EXPECT_TRUE(ResizeArrayFields(JscParamsInfo(), &params, 2));
+  EXPECT_EQ(params.Kp, (mochi::DynamicArray<mochi::real>{1.0f, 2.0f}));
+  EXPECT_FALSE(ResizeArrayFields(JscParamsInfo(), &params, 2));
+}
+
 } // namespace

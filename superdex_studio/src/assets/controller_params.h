@@ -86,6 +86,10 @@ bool NormalizeParamsJson(
     std::string& out,
     std::string& error);
 
+// Resizes every resizable array field of @p structPtr to @p count, filling new elements with the
+// last existing one so a single gain extends to every joint. Returns whether any field changed.
+bool ResizeArrayFields(SReflect::StructTypeInfo const& structInfo, void* structPtr, size_t count);
+
 // Loads a params file into normalized JSON (see NormalizeParamsJson).
 bool LoadParamsFile(
     std::string_view type,

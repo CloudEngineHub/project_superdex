@@ -184,8 +184,31 @@ void ShowWarning(std::string_view warning) {
   ImGui::PopStyleColor();
 }
 
+// One label per DOF, in the order per-DOF controller params index them.
+std::vector<std::string> DofLabels(superdex::robotics::BotPrefab const& botPrefab) {
+  std::vector<std::string> labels;
+  labels.reserve(botPrefab._dofIndices.size());
+  int sphericalAxis = 0;
+  for (size_t iDof = 0; iDof < botPrefab._dofIndices.size(); ++iDof) {
+    int const iJoint = botPrefab._dofIndices[iDof];
+    auto const& joint = botPrefab.joints[iJoint];
+    if (joint.type != mochi::ArticulatedJointType::Spherical) {
+      labels.emplace_back(joint.name);
+      continue;
+    }
+    // Spherical joints have three consecutive DOFs.
+    sphericalAxis = iDof > 0 && botPrefab._dofIndices[iDof - 1] == iJoint ? sphericalAxis + 1 : 0;
+    labels.push_back(std::string(joint.name) + " (" + "XYZ"[sphericalAxis] + ")");
+  }
+  return labels;
+}
+
 // Edits normalized params JSON: typed fields for built-in controller types, raw JSON otherwise.
-bool EditParamsJson(std::string_view type, std::string& json) {
+// With @p botPrefab, per-DOF arrays are labeled by joint and can be resized to the bot's DOFs.
+bool EditParamsJson(
+    std::string_view type,
+    std::string& json,
+    superdex::robotics::BotPrefab const* botPrefab) {
   bool changed = false;
   bool const builtin = ForEachBuiltinController([&]<typename T>() {
     if (T::TypeName() != CanonicalControllerType(type)) {
@@ -193,9 +216,29 @@ bool EditParamsJson(std::string_view type, std::string& json) {
     }
     typename T::Params params;
     SReflect::FromJsonString(params, json);
-    if (ImGui::SimpleReflectionStruct(params)) {
+    std::vector<std::string> const dofLabels =
+        botPrefab != nullptr ? DofLabels(*botPrefab) : std::vector<std::string>{};
+    if (!dofLabels.empty()) {
+      auto resized = params;
+      if (ResizeArrayFields(
+              static_cast<SReflect::StructTypeInfo const&>(
+                  SReflect::GetTypeInfo<typename T::Params>()),
+              &resized,
+              dofLabels.size())) {
+        if (ImGui::Button("Match Bot Joints")) {
+          params = std::move(resized);
+          changed = true;
+        }
+        ImGui::ItemTooltipWrapped(
+            "Resize every per-joint array to the bot's joint count, filling new entries with the "
+            "last value");
+      }
+    }
+    ImGui::PushReflectionArrayLabels(dofLabels);
+    changed |= ImGui::SimpleReflectionStruct(params);
+    ImGui::PopReflectionArrayLabels();
+    if (changed) {
       json = SReflect::ToJsonString(params, true);
-      changed = true;
     }
     return true;
   });
@@ -333,6 +376,8 @@ ControllerEditResult ShowControllers(
     BotSceneAsset* sceneAsset,
     std::function<std::string const&(std::string_view)> const& referenceProblem) {
   ControllerEditResult result;
+  superdex::robotics::BotPrefab const* const botPrefab =
+      botAsset != nullptr ? &botAsset->GetBotPrefab() : nullptr;
   auto& controllers = bot.controllers;
   int controllerToDelete = -1;
   int controllerToMoveUp = -1;
@@ -510,7 +555,7 @@ ControllerEditResult ShowControllers(
         } else if (entry->type != type) {
           ShowWarning("This file is used by a '" + entry->type + "' controller in this scene");
         } else {
-          result.changed |= EditParamsJson(type, entry->json);
+          result.changed |= EditParamsJson(type, entry->json, botPrefab);
         }
       } else {
         std::string json = paramsValue.empty() ? DefaultParamsJson(type) : paramsValue;
@@ -521,7 +566,7 @@ ControllerEditResult ShowControllers(
             json = paramsValue;
           }
         }
-        if (EditParamsJson(type, json)) {
+        if (EditParamsJson(type, json, botPrefab)) {
           if (json == DefaultParamsJson(type)) {
             controller.params.clear();
           } else {
@@ -539,26 +584,25 @@ ControllerEditResult ShowControllers(
           picojson::object initArgs;
           std::string parseError;
           if (ParseJsonObject(controller.initArgs, initArgs, parseError)) {
-            auto const& botPrefab = botAsset->GetBotPrefab();
             std::string baseLinkName = GetJsonString(initArgs, "baseLinkName");
-            if (LinkNameCombo("Base Link", botPrefab, baseLinkName)) {
+            if (LinkNameCombo("Base Link", *botPrefab, baseLinkName)) {
               SetJsonString(controller.initArgs, initArgs, "baseLinkName", baseLinkName);
               result.changed = true;
             }
             if (baseLinkName.empty()) {
               ShowWarning("Base link is required");
-            } else if (superdex::robotics::FindLinkIndexByName(botPrefab, baseLinkName) < 0) {
+            } else if (superdex::robotics::FindLinkIndexByName(*botPrefab, baseLinkName) < 0) {
               ShowWarning("Base link does not exist on the selected bot");
             }
 
             std::string eeLinkName = GetJsonString(initArgs, "eeLinkName");
-            if (LinkNameCombo("End Effector Link", botPrefab, eeLinkName)) {
+            if (LinkNameCombo("End Effector Link", *botPrefab, eeLinkName)) {
               SetJsonString(controller.initArgs, initArgs, "eeLinkName", eeLinkName);
               result.changed = true;
             }
             if (eeLinkName.empty()) {
               ShowWarning("End effector link is required");
-            } else if (superdex::robotics::FindLinkIndexByName(botPrefab, eeLinkName) < 0) {
+            } else if (superdex::robotics::FindLinkIndexByName(*botPrefab, eeLinkName) < 0) {
               ShowWarning("End effector link does not exist on the selected bot");
             }
           }
