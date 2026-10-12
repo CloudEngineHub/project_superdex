@@ -35,5 +35,12 @@ _extension = import_module(
 
 __all__ = forward_module(_extension, globals())
 
+from .reader import (  # noqa: F401
+    ComponentSample as ComponentSample,
+    EpisodeReader as EpisodeReader,
+)
+
+__all__.extend(["ComponentSample", "EpisodeReader"])
+
 if TYPE_CHECKING:
     from superdex_recorder import *  # noqa: F401,F403

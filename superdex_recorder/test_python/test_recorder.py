@@ -21,7 +21,7 @@ from pathlib import Path
 
 import superdex.physics as sdp
 import superdex.recorder as recorder
-from superdex_recorder_test_helpers.test_python.rrd_reader import EpisodeReader
+from superdex.recorder.reader import EpisodeReader
 
 
 class RecorderTest(unittest.TestCase):
