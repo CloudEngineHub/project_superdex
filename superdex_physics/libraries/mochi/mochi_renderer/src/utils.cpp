@@ -927,7 +927,7 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
             static_cast<float>(mat.diffuse[1]),
             static_cast<float>(mat.diffuse[2]),
             static_cast<float>(mat.dissolve)};
-        float const ns = static_cast<float>(mat.shininess);
+        auto const ns = static_cast<float>(mat.shininess);
         section.roughness = std::clamp(std::sqrt(2.0f / (ns + 2.0f)), 0.0f, 1.0f);
       }
       sections.push_back(std::move(section));
