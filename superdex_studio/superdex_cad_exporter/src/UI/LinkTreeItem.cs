@@ -115,6 +115,21 @@ namespace CADRobotExporter.UI
             Raise(nameof(DisplayName));
         }
 
+        /// <summary>
+        /// Whether this link carries its own meshing options. Bound by the link tree so overridden
+        /// links can be spotted without selecting each one in turn.
+        /// </summary>
+        public bool HasMeshingOverride => Link.meshingOverride;
+
+        /// <summary>
+        /// Called after the meshing override is toggled on the Link. Link.meshingOverride is a plain
+        /// field with no notification of its own, so every site that flips it has to say so.
+        /// </summary>
+        public void RefreshMeshingOverride()
+        {
+            Raise(nameof(HasMeshingOverride));
+        }
+
         public IEnumerable<LinkTreeItem> SelfAndDescendants()
         {
             yield return this;

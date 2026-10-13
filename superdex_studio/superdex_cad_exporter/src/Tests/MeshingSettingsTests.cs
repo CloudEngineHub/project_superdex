@@ -52,20 +52,43 @@ namespace CADRobotExporter.Tests
         public void DisabledColumn_DisablesEverything()
         {
             MeshingColumnEnableState state =
-                MeshingSettings.EnableStateFor(false, MeshingBackend.Isotropic, true);
+                MeshingSettings.EnableStateFor(false, true, MeshingBackend.Isotropic, true);
 
+            Assert.False(state.Scale);
             Assert.False(state.Backend);
             Assert.False(state.EdgeSampling);
             Assert.False(state.TargetEdgeLength);
             Assert.False(state.EdgeLengthFraction);
         }
 
+        /// <summary>
+        /// Nothing reads these values unless the column exports a SuperDex format, so an enabled
+        /// column with no such format still greys the whole group.
+        /// </summary>
         [Fact]
-        public void NonIsotropicBackend_LeavesOnlyTheBackendItselfEnabled()
+        public void NoSuperDexFormat_DisablesEverything()
         {
             MeshingColumnEnableState state =
-                MeshingSettings.EnableStateFor(true, MeshingBackend.Delabella, true);
+                MeshingSettings.EnableStateFor(true, false, MeshingBackend.Isotropic, true);
 
+            Assert.False(state.Scale);
+            Assert.False(state.Backend);
+            Assert.False(state.EdgeSampling);
+            Assert.False(state.TargetEdgeLength);
+            Assert.False(state.EdgeLengthFraction);
+        }
+
+        /// <summary>
+        /// Delabella ignores the sampling settings but is still scaled, so Scale does not follow the
+        /// backend the way the rest of the group does.
+        /// </summary>
+        [Fact]
+        public void NonIsotropicBackend_LeavesOnlyTheBackendAndScaleEnabled()
+        {
+            MeshingColumnEnableState state =
+                MeshingSettings.EnableStateFor(true, true, MeshingBackend.Delabella, true);
+
+            Assert.True(state.Scale);
             Assert.True(state.Backend);
             Assert.False(state.EdgeSampling);
             Assert.False(state.TargetEdgeLength);
@@ -76,8 +99,9 @@ namespace CADRobotExporter.Tests
         public void IsotropicBackend_EnablesTheSamplingSettings()
         {
             MeshingColumnEnableState state =
-                MeshingSettings.EnableStateFor(true, MeshingBackend.Isotropic, true);
+                MeshingSettings.EnableStateFor(true, true, MeshingBackend.Isotropic, true);
 
+            Assert.True(state.Scale);
             Assert.True(state.Backend);
             Assert.True(state.EdgeSampling);
             Assert.True(state.TargetEdgeLength);
@@ -91,7 +115,7 @@ namespace CADRobotExporter.Tests
         public void NonZeroTargetEdgeLength_DisablesTheFraction()
         {
             MeshingColumnEnableState state =
-                MeshingSettings.EnableStateFor(true, MeshingBackend.Isotropic, false);
+                MeshingSettings.EnableStateFor(true, true, MeshingBackend.Isotropic, false);
 
             Assert.True(state.TargetEdgeLength);
             Assert.False(state.EdgeLengthFraction);
@@ -107,6 +131,25 @@ namespace CADRobotExporter.Tests
             decimal value, decimal min, decimal max, decimal expected)
         {
             Assert.Equal(expected, MeshingSettings.Clamp(value, min, max));
+        }
+
+        [Theory]
+        [InlineData(0.1, 0.1, false)]
+        [InlineData(0.2, 0.1, true)]
+        [InlineData(0.1, 0.1000004, false)]
+        [InlineData(0.1, 0.1006, true)]
+        public void DiffersAsShown_ComparesAtTheDisplayedPrecision(
+            double shown, double baseline, bool expected)
+        {
+            Assert.Equal(
+                expected,
+                MeshingSettings.DiffersAsShown((decimal)shown, baseline, 0M, 100M, 3));
+        }
+
+        [Fact]
+        public void DiffersAsShown_ClampsTheBaselineLikeTheSpinnerWould()
+        {
+            Assert.False(MeshingSettings.DiffersAsShown(100M, 250.0, 0M, 100M, 3));
         }
     }
 }

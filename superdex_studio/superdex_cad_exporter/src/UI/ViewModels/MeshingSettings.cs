@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+using System;
+
 using Meshing;
 
 namespace CADRobotExporter.UI.ViewModels
@@ -14,6 +16,7 @@ namespace CADRobotExporter.UI.ViewModels
     /// </summary>
     public struct MeshingColumnEnableState
     {
+        public bool Scale;
         public bool Backend;
         public bool EdgeSampling;
         public bool TargetEdgeLength;
@@ -53,20 +56,21 @@ namespace CADRobotExporter.UI.ViewModels
             return sampling == EdgeSampling.Uniform ? EdgeSamplingIndexUniform : EdgeSamplingIndexAdaptive;
         }
 
-        /// <summary>
-        /// The isotropic-only settings follow the column's backend, and the edge length fraction
-        /// is only meaningful while the absolute target length is zero.
-        /// </summary>
         public static MeshingColumnEnableState EnableStateFor(
-            bool columnEnabled, MeshingBackend backend, bool targetEdgeLengthIsZero)
+            bool columnEnabled,
+            bool superDexSelected,
+            MeshingBackend backend,
+            bool targetEdgeLengthIsZero)
         {
+            bool available = columnEnabled && superDexSelected;
             bool isotropic = backend == MeshingBackend.Isotropic;
             return new MeshingColumnEnableState
             {
-                Backend = columnEnabled,
-                EdgeSampling = columnEnabled && isotropic,
-                TargetEdgeLength = columnEnabled && isotropic,
-                EdgeLengthFraction = columnEnabled && isotropic && targetEdgeLengthIsZero,
+                Scale = available,
+                Backend = available,
+                EdgeSampling = available && isotropic,
+                TargetEdgeLength = available && isotropic,
+                EdgeLengthFraction = available && isotropic && targetEdgeLengthIsZero,
             };
         }
 
@@ -86,6 +90,19 @@ namespace CADRobotExporter.UI.ViewModels
                 return maximum;
             }
             return value;
+        }
+
+        /// <summary>
+        /// Whether a spinner showing <paramref name="shown"/> would look different from one given
+        /// <paramref name="baseline"/>. Compared as displayed, after the same clamping and rounding,
+        /// so a value that only differs past the shown digits is not flagged as an override.
+        /// </summary>
+        public static bool DiffersAsShown(
+            decimal shown, double baseline, decimal minimum, decimal maximum, int decimalPlaces)
+        {
+            decimal clampedBaseline = Clamp((decimal)baseline, minimum, maximum);
+            return Math.Round(shown, decimalPlaces, MidpointRounding.AwayFromZero)
+                != Math.Round(clampedBaseline, decimalPlaces, MidpointRounding.AwayFromZero);
         }
     }
 }

@@ -332,7 +332,7 @@ namespace CADRobotExporter.RobotExport
                     + meshingErrors
                     + "\n\nIf all are partial failures, some faces may be missing, but visual models are generally fine. You may need to adjust meshing parameters and re-export."
                     + "\n\nComplete failure meshes will be missing.",
-                    "Robot Configuration Exporter - Meshing Errors",
+                    "SuperDex CAD Exporter - Meshing Errors",
                     MessageBoxButton.OK,
                     MessageBoxImage.None,
                     MessageBoxResult.OK,
@@ -462,13 +462,7 @@ namespace CADRobotExporter.RobotExport
                     windowsCollisionMeshFileName = package.WindowsCollisionMeshesDirectory + linkName + package.CollisionMeshPostfix;
                 }
 
-                ExporterMeshingOptions linkMeshingOptions = meshingOptions;
-
-                if (meshingOptions.perLinkMeshing)
-                {
-                    linkMeshingOptions.visualMeshingOptions = link.visualMeshingOptions;
-                    linkMeshingOptions.collisionMeshingOptions = link.collisionMeshingOptions;
-                }
+                ExporterMeshingOptions linkMeshingOptions = meshingOptions.ResolveFor(link);
 
                 if (link.HasComponents(visualComponentType))
                 {

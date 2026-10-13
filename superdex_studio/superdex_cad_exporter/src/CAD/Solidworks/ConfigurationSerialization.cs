@@ -394,15 +394,17 @@ namespace CADRobotExporter.CAD
 
             // Replace URDFElement with RobotElement in both opening and closing tags
             // This handles the inheritance change from URDFElement to RobotElement base class
+            // Namespace change that reverts from CADRobotExporter to SW2URDF are intentional
+            // for forwards compatibility
             string migratedData = data
                 .Replace("<URDFElement", "<RobotElement")
                 .Replace("</URDFElement>", "</RobotElement>")
                 .Replace(
                     "http://schemas.datacontract.org/2004/07/SW2URDF.UI",
-                    "http://schemas.datacontract.org/2004/07/CADRobotExporter.Export")
+                    "http://schemas.datacontract.org/2004/07/SW2URDF.Export")
                 .Replace(
-                    "http://schemas.datacontract.org/2004/07/SW2URDF.Export",
-                    "http://schemas.datacontract.org/2004/07/CADRobotExporter.Export");
+                    "http://schemas.datacontract.org/2004/07/CADRobotExporter.Export",
+                    "http://schemas.datacontract.org/2004/07/SW2URDF.Export");
 
             return migratedData;
         }

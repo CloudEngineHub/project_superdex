@@ -20,7 +20,6 @@ namespace CADRobotExporter.Export
         public bool hasCollisionMeshFormats;
         public string meshTagExtension;
         public bool enableCollisionMeshing;
-        public bool perLinkMeshing;
         public string collisionMeshTagExtension;
         public string robotName;
         public FolderStructure folderStructure;
@@ -70,8 +69,6 @@ namespace CADRobotExporter.Export
 #endif
 
             enableCollisionMeshing = true;
-
-            perLinkMeshing = false;
 
             robotName = "";
 

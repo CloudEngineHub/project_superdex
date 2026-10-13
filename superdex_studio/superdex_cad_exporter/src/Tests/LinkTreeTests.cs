@@ -5,7 +5,10 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+using System.Collections.Generic;
+
 using CADRobotExporter.RobotDescription;
+using CADRobotExporter.UI;
 using Xunit;
 
 namespace CADRobotExporter.Tests
@@ -187,6 +190,66 @@ namespace CADRobotExporter.Tests
 
             Assert.Single(root.SWVisualBodyPIDs);
             Assert.Equal(2, clone.SWVisualBodyPIDs.Count);
+        }
+
+        [Fact]
+        public void Clone_PreservesMeshingOptions()
+        {
+            Link root = NamedLink("root");
+            root.visualMeshingOptions.linearDeflection = 0.25;
+            root.collisionMeshingOptions.angularDeflection = 1.5;
+
+            Link clone = root.Clone();
+
+            Assert.Equal(0.25, clone.visualMeshingOptions.linearDeflection);
+            Assert.Equal(1.5, clone.collisionMeshingOptions.angularDeflection);
+        }
+
+        /// <summary>
+        /// SetElement used to assign the references straight across, so a cloned link shared one
+        /// MeshingOptions with its source and editing either link's meshing properties edited both.
+        /// </summary>
+        [Fact]
+        public void Clone_MeshingOptionsAreIndependent()
+        {
+            Link root = NamedLink("root");
+            Link clone = root.Clone();
+
+            clone.visualMeshingOptions.linearDeflection = 9.0;
+            clone.collisionMeshingOptions.linearDeflection = 9.0;
+
+            Assert.NotSame(root.visualMeshingOptions, clone.visualMeshingOptions);
+            Assert.NotSame(root.collisionMeshingOptions, clone.collisionMeshingOptions);
+            Assert.Equal(0.1, root.visualMeshingOptions.linearDeflection);
+            Assert.Equal(0.5, root.collisionMeshingOptions.linearDeflection);
+        }
+        /// <summary>
+        /// The tree binds this to bold overridden links, and Link.meshingOverride is a plain field
+        /// with no notification of its own, so the raise has to be explicit.
+        /// </summary>
+        [Fact]
+        public void HasMeshingOverride_ReadsThroughToTheLink()
+        {
+            Link link = new Link { Name = "link_1" };
+            LinkTreeItem item = new LinkTreeItem(link);
+
+            Assert.False(item.HasMeshingOverride);
+
+            link.meshingOverride = true;
+
+            Assert.True(item.HasMeshingOverride);
+        }
+
+        [Fact]
+        public void RefreshMeshingOverride_RaisesPropertyChanged()
+        {
+            LinkTreeItem item = new LinkTreeItem(new Link { Name = "link_1" });
+            List<string> raised = new List<string>();
+            item.PropertyChanged += (s, e) => raised.Add(e.PropertyName);
+
+            item.RefreshMeshingOverride();
+
+            Assert.Contains(nameof(LinkTreeItem.HasMeshingOverride), raised);
         }
     }
 }

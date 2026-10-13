@@ -5,33 +5,47 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+
+using CADRobotExporter.Utilities;
 
 namespace CADRobotExporter.UI
 {
     /// <summary>
-    /// Reports where the exported files were written. A true dialog result means the user asked to
-    /// open the containing folder.
+    /// Reports where the exported files were written.
     /// </summary>
     public class ExportCompleteDialog : Window
     {
         public ExportCompleteDialog(string urdfPath, string mjcfPath, string superdexBotPath)
         {
+            Build(
+                "SuperDex CAD Exporter",
+                "Export complete!\n\n" +
+                "URDF file saved to:\n" + urdfPath + "\n\n" +
+                "MJCF file saved to:\n" + mjcfPath + "\n\n" +
+                "SuperDex Bot file saved to:\n" + superdexBotPath,
+                "Close");
+        }
+
+        private ExportCompleteDialog()
+        {
+        }
+
+        private void Build(string title, string message, string closeCaption)
+        {
             Theme.FluentTheme.Apply(this);
 
-            Title = "SuperDex CAD Exporter";
+            Title = title;
             Topmost = true;
             Width = 720;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ShowInTaskbar = false;
-
-            string message = "Export complete!\n\n" +
-                "URDF file saved to:\n" + urdfPath + "\n\n" +
-                "MJCF file saved to:\n" + mjcfPath + "\n\n" +
-                "SuperDex Bot file saved to:\n" + superdexBotPath;
 
             TextBlock label = new TextBlock
             {
@@ -50,7 +64,7 @@ namespace CADRobotExporter.UI
 
             Button closeButton = new Button
             {
-                Content = "Close",
+                Content = closeCaption,
                 IsCancel = true,
                 Width = 80,
                 Height = 32,
@@ -71,6 +85,34 @@ namespace CADRobotExporter.UI
             root.Children.Add(buttons);
 
             Content = root;
+        }
+
+        /// <summary>
+        /// Lists the mesh files written and, if the user asks, opens Explorer with the first one
+        /// selected.
+        /// </summary>
+        public static void ShowMeshExportComplete(
+            IList<string> writtenPaths, Window owner = null, IntPtr ownerHandle = default(IntPtr))
+        {
+            ExportCompleteDialog dialog = new ExportCompleteDialog();
+            dialog.Build(
+                "SuperDex Mesh Exporter",
+                "Mesh export complete!\n\nSaved to:\n" + string.Join("\n", writtenPaths),
+                "OK");
+
+            if (owner != null)
+            {
+                dialog.Owner = owner;
+            }
+            else
+            {
+                WpfWindowOwner.OwnTo(dialog, ownerHandle);
+            }
+
+            if (dialog.ShowDialog() == true && writtenPaths.Count > 0)
+            {
+                Process.Start("explorer.exe", $"/select,\"{writtenPaths[0]}\"");
+            }
         }
     }
 }

@@ -42,8 +42,15 @@ namespace CADRobotExporter.UI.Views
             Backend = MakeCombo("Isotropic", "Delabella");
             EdgeSampling = MakeCombo("Adaptive", "Uniform");
 
+            // Every control raises, not only the two the enable rules read, so the override bold
+            // follows each edit as it is made.
+            LinearDeflection.ValueChanged += (s, e) => Raise();
+            AngularDeflection.ValueChanged += (s, e) => Raise();
+            Scale.ValueChanged += (s, e) => Raise();
             Backend.SelectionChanged += (s, e) => Raise();
+            EdgeSampling.SelectionChanged += (s, e) => Raise();
             TargetEdgeLength.ValueChanged += (s, e) => Raise();
+            EdgeLengthFraction.ValueChanged += (s, e) => Raise();
         }
 
         private void Raise()
@@ -108,29 +115,19 @@ namespace CADRobotExporter.UI.Views
             EdgeLengthFraction.Value = (decimal)source.targetEdgeLengthFraction;
         }
 
-        public void WriteMesherSettingsOnly(Export.MeshingOptions source)
-        {
-            Backend.SelectedIndex = MeshingSettings.IndexFromBackend(source.backend);
-            EdgeSampling.SelectedIndex = MeshingSettings.IndexFromEdgeSampling(source.edgeSampling);
-            TargetEdgeLength.Value = (decimal)source.targetEdgeLength;
-            EdgeLengthFraction.Value = (decimal)source.targetEdgeLengthFraction;
-        }
-
-        public void ReadMesherSettingsOnly(Export.MeshingOptions target)
-        {
-            target.backend = MeshingSettings.BackendFromIndex(Backend.SelectedIndex);
-            target.edgeSampling = MeshingSettings.EdgeSamplingFromIndex(EdgeSampling.SelectedIndex);
-            target.targetEdgeLength = (double)TargetEdgeLength.Value;
-            target.targetEdgeLengthFraction = (double)EdgeLengthFraction.Value;
-        }
-
-        public void ApplyEnableState(bool columnEnabled)
+        /// <param name="superDexSelected">
+        /// Whether this column has a SuperDex mesh format selected. The SuperDex-only settings are
+        /// greyed out when it does not.
+        /// </param>
+        public void ApplyEnableState(bool columnEnabled, bool superDexSelected)
         {
             MeshingColumnEnableState state = MeshingSettings.EnableStateFor(
                 columnEnabled,
+                superDexSelected,
                 MeshingSettings.BackendFromIndex(Backend.SelectedIndex),
                 TargetEdgeLength.Value == 0M);
 
+            Scale.IsEnabled = state.Scale;
             Backend.IsEnabled = state.Backend;
             EdgeSampling.IsEnabled = state.EdgeSampling;
             TargetEdgeLength.IsEnabled = state.TargetEdgeLength;
@@ -138,7 +135,37 @@ namespace CADRobotExporter.UI.Views
 
             LinearDeflection.IsEnabled = columnEnabled;
             AngularDeflection.IsEnabled = columnEnabled;
-            Scale.IsEnabled = columnEnabled;
+        }
+
+        // Bolds each value that differs from baseline
+        public void BoldValuesDifferentFrom(Export.MeshingOptions baseline)
+        {
+            Bold(LinearDeflection, baseline != null
+                && LinearDeflection.DiffersAsShownFrom(baseline.linearDeflection));
+            Bold(AngularDeflection, baseline != null
+                && AngularDeflection.DiffersAsShownFrom(baseline.angularDeflection));
+            Bold(Scale, baseline != null && Scale.DiffersAsShownFrom(baseline.scale));
+            Bold(TargetEdgeLength, baseline != null
+                && TargetEdgeLength.DiffersAsShownFrom(baseline.targetEdgeLength));
+            Bold(EdgeLengthFraction, baseline != null
+                && EdgeLengthFraction.DiffersAsShownFrom(baseline.targetEdgeLengthFraction));
+
+            // Set on the ComboBox itself, which reaches the selected item shown in the closed box.
+            Backend.FontWeight = Weight(baseline != null
+                && Backend.SelectedIndex != MeshingSettings.IndexFromBackend(baseline.backend));
+            EdgeSampling.FontWeight = Weight(baseline != null
+                && EdgeSampling.SelectedIndex
+                    != MeshingSettings.IndexFromEdgeSampling(baseline.edgeSampling));
+        }
+
+        private static void Bold(NumericSpinner spinner, bool bold)
+        {
+            spinner.SetTextWeight(Weight(bold));
+        }
+
+        private static FontWeight Weight(bool bold)
+        {
+            return bold ? FontWeights.Bold : FontWeights.Normal;
         }
     }
 }

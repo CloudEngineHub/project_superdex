@@ -51,6 +51,16 @@ namespace CADRobotExporter.UI.Views
             set { SetValue(value, true); }
         }
 
+        public void SetTextWeight(FontWeight weight)
+        {
+            textBox.FontWeight = weight;
+        }
+
+        public bool DiffersAsShownFrom(double baseline)
+        {
+            return MeshingSettings.DiffersAsShown(value, baseline, Minimum, Maximum, decimalPlaces);
+        }
+
         public NumericSpinner()
         {
             Minimum = decimal.MinValue;

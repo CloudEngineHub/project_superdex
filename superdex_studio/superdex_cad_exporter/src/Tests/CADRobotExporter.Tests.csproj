@@ -65,6 +65,7 @@
     <Compile Include="MeshFormatSelectionTests.cs" />
     <Compile Include="RobotValidationTests.cs" />
     <Compile Include="MeshingSettingsTests.cs" />
+    <Compile Include="MeshingOptionsTests.cs" />
     <Compile Include="LinkPropertiesViewModelTests.cs" />
     <Compile Include="JointPropertiesViewModelTests.cs" />
     <Compile Include="KinematicsSummaryTests.cs" />

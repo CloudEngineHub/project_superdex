@@ -771,7 +771,7 @@ public partial class ExportRobotDialog
             treeControlTendonRouting.SetIsDropAllowedHandler(new NXOpen.BlockStyler.Tree.IsDropAllowedCallback(RoutingIsDropAllowedCallback));
             treeControlTendonRouting.SetOnDropHandler(new NXOpen.BlockStyler.Tree.OnDropCallback(RoutingOnDropCallback));
 
-            theDialog.TopBlock.Label = "Robot Configuration Exporter " + CADRobotExporter.Versioning.VersionString.Get();
+            theDialog.TopBlock.Label = "SuperDex CAD Exporter " + CADRobotExporter.Versioning.VersionString.Get() + " - Setup";
 
             // Initialize the tree manager
             treeManager = new NXTreeManager(treeControlKinematicTree);

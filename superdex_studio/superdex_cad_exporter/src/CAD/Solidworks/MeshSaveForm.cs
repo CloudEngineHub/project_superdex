@@ -64,7 +64,7 @@ namespace CADRobotExporter.UI
             ActiveSWModel = (ModelDoc2)SWApp.ActiveDoc;
 
             meshing = new MeshingColumnView(false);
-            meshing.SettingChanged += (s, e) => meshing.ApplyEnableState(true);
+            meshing.SettingChanged += (s, e) => meshing.ApplyEnableState(true, true);
 
             checkBoxGlb = MakeFormatCheckBox("GLB");
             checkBoxStl = MakeFormatCheckBox("STL");
@@ -116,7 +116,7 @@ namespace CADRobotExporter.UI
 
             Content = root;
 
-            meshing.ApplyEnableState(true);
+            meshing.ApplyEnableState(true, true);
             AddCoordinateSystems();
             MeshFilename = ExtractFilePathWithoutExtension(solidworksSaveAsString);
         }
@@ -213,9 +213,9 @@ namespace CADRobotExporter.UI
 
         private void ButtonSave_Click(object sender, RoutedEventArgs e)
         {
-            if (SaveMesh())
+            if (SaveMesh(out List<string> writtenPaths))
             {
-                MessageBox.Show("Export complete");
+                ExportCompleteDialog.ShowMeshExportComplete(writtenPaths, owner: this);
             }
             Close();
         }
@@ -245,8 +245,9 @@ namespace CADRobotExporter.UI
             }
         }
 
-        private bool SaveMesh()
+        private bool SaveMesh(out List<string> writtenPaths)
         {
+            writtenPaths = new List<string>();
             int modelType = ActiveSWModel.GetType();
             bool isPart = modelType == (int)swDocumentTypes_e.swDocPART;
 
@@ -413,6 +414,18 @@ namespace CADRobotExporter.UI
                 catch (Exception ex)
                 {
                     MessageBox.Show("Couldn't delete temporary STEP file: \n" + ex.Message);
+                }
+            }
+
+            if (exported)
+            {
+                foreach (MeshExportOutput output in outputs)
+                {
+                    writtenPaths.Add(output.Path);
+                }
+                if (keepStep)
+                {
+                    writtenPaths.Add(stepPath);
                 }
             }
 

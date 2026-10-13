@@ -70,8 +70,8 @@ namespace CADRobotExporter.UI
             tabControl.Items.Add(tabPageKinematicsSummary);
             tabControl.Items.Add(tabPageTendonsSummary);
 
-            treeViewJointTree = MakeTree();
-            treeViewLinkProperties = MakeTree();
+            treeViewJointTree = MakeTree(markMeshingOverrides: false);
+            treeViewLinkProperties = MakeTree(markMeshingOverrides: true);
 
             checkBoxShowJointVisualization = new CheckBox();
             checkBoxShowJointHighlights = new CheckBox();
@@ -174,20 +174,36 @@ namespace CADRobotExporter.UI
         /// The template is built here rather than in the theme because it binds to
         /// <see cref="LinkTreeItem"/>, which is application data, not chrome.
         /// </summary>
-        private static TreeView MakeTree()
+        /// <param name="markMeshingOverrides">
+        /// Bolds links that carry a meshing override. Only the link tree asks for this: both trees
+        /// wrap the same <c>Link</c> objects, so binding it unconditionally would bold the joint tree
+        /// too, where meshing is not on show.
+        /// </param>
+        private static TreeView MakeTree(bool markMeshingOverrides)
         {
             FrameworkElementFactory label = new FrameworkElementFactory(typeof(TextBlock));
             label.SetBinding(TextBlock.TextProperty, new Binding("DisplayName"));
 
-            // Bold marks the node whose properties the panel on the right is showing.
-            DataTrigger selected = new DataTrigger
-            {
-                Binding = new Binding("IsSelected"),
-                Value = true,
-            };
-            selected.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.SemiBold));
             Style labelStyle = new Style(typeof(TextBlock));
-            labelStyle.Triggers.Add(selected);
+
+            if (markMeshingOverrides)
+            {
+                AddWeightTrigger(labelStyle, selected: true, overridden: false, FontWeights.SemiBold);
+                AddWeightTrigger(labelStyle, selected: false, overridden: true, FontWeights.Bold);
+                AddWeightTrigger(labelStyle, selected: true, overridden: true, FontWeights.Bold);
+            }
+            else
+            {
+                DataTrigger selected = new DataTrigger
+                {
+                    Binding = new Binding("IsSelected"),
+                    Value = true,
+                };
+                selected.Setters.Add(
+                    new Setter(TextBlock.FontWeightProperty, FontWeights.SemiBold));
+                labelStyle.Triggers.Add(selected);
+            }
+
             label.SetValue(FrameworkElement.StyleProperty, labelStyle);
 
             HierarchicalDataTemplate template = new HierarchicalDataTemplate(typeof(LinkTreeItem))
@@ -198,6 +214,20 @@ namespace CADRobotExporter.UI
             template.Seal();
 
             return new TreeView { ItemTemplate = template };
+        }
+
+        /// <summary>
+        /// Bold marks a link whose meshing properties are its own; semi-bold marks the node whose
+        /// properties the panel on the right is showing.
+        /// </summary>
+        private static void AddWeightTrigger(
+            Style style, bool selected, bool overridden, FontWeight weight)
+        {
+            MultiDataTrigger trigger = new MultiDataTrigger();
+            trigger.Conditions.Add(new Condition(new Binding("IsSelected"), selected));
+            trigger.Conditions.Add(new Condition(new Binding("HasMeshingOverride"), overridden));
+            trigger.Setters.Add(new Setter(TextBlock.FontWeightProperty, weight));
+            style.Triggers.Add(trigger);
         }
 
         private GroupBox BuildVisualization(

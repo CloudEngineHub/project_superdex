@@ -65,12 +65,19 @@ namespace CADRobotExporter.UI
         private LinkTreeItem previouslySelectedNode;
         private readonly LinkNode BaseNode;
 
-        private ExporterConfiguration cachedExporterConfig;
+        // The robot-wide meshing options, used by every link that is not marked as overriding
+        private Export.MeshingOptions globalVisualMeshing = new Export.MeshingOptions();
+        private Export.MeshingOptions globalCollisionMeshing = new Export.MeshingOptions();
+
+        // The link whose override the meshing columns are showing, or null when they are showing the
+        // robot-wide options.
+        private Link meshingEditorLink;
 
         private int _currentTabIndex;
         private bool _navigating;
         private bool _isClosing;
         private bool _syncingMeshFormats;
+        private bool _syncingMeshingOverride;
 
         private readonly MeshFormatSelection visualMeshFormats = new MeshFormatSelection();
         private readonly MeshFormatSelection collisionMeshFormats = new MeshFormatSelection();
@@ -112,7 +119,7 @@ namespace CADRobotExporter.UI
 
             meshExportView = new MeshExportView();
             meshExportView.SetFolderStructures(Enum.GetNames(typeof(FolderStructure)));
-            meshExportView.PerLinkMeshingChanged += PerLinkMeshingCheckboxChanged;
+            meshExportView.MeshingOverrideChanged += MeshingOverrideCheckboxChanged;
             meshExportView.CollisionMeshingChanged += CollisionCheckboxChanged;
             meshExportView.ResetToDefaultsRequested += ResetMeshingToDefaults;
             meshExportView.ExportLinkMeshRequested += ButtonExportLinkMeshClick;
@@ -161,8 +168,7 @@ namespace CADRobotExporter.UI
             Exporter = exporter;
             CadBridge = Exporter.CadBridge;
 
-            cachedExporterConfig = CadBridge.GetExporterConfiguration();
-            LoadExporterConfigurationToForm(cachedExporterConfig);
+            LoadExporterConfigurationToForm(CadBridge.GetExporterConfiguration());
 
             treeViewJointTree.SelectedItemChanged += TreeViewJointtreeAfterSelect;
             treeViewLinkProperties.SelectedItemChanged += TreeViewLinkPropertiesAfterSelect;
@@ -242,29 +248,103 @@ namespace CADRobotExporter.UI
             meshExportView.UncheckRow(MeshFormat.objCAD);
             meshExportView.UncheckRow(MeshFormat.glbCAD);
 #endif
+            meshExportView.ApplyEnableState();
         }
 
-        private void PerLinkMeshingCheckboxChanged(object sender, EventArgs e)
+        private static bool CanOverrideMeshing(Link link)
         {
-            if (meshExportView.PerLinkMeshing)
-            {
-                cachedExporterConfig = SaveFormToExporterConfiguration();
+            return link != null && !link.isFixedFrame && !link.isSite;
+        }
 
-                LinkTreeItem currentNode = treeViewLinkProperties.SelectedItem as LinkTreeItem;
-                if (currentNode != null)
-                {
-                    LoadMeshingOptionsFromLink(currentNode.Link);
-                }
+        // Commits the meshing columns to whichever tier they are currently showing.
+        private void CommitMeshingColumns()
+        {
+            if (meshingEditorLink != null)
+            {
+                meshExportView.Visual.ReadInto(meshingEditorLink.visualMeshingOptions);
+                meshExportView.Collision.ReadInto(meshingEditorLink.collisionMeshingOptions);
             }
             else
             {
-                if (previouslySelectedNode != null)
-                {
-                    SaveMeshingOptionsToLink(previouslySelectedNode.Link);
-                }
-
-                LoadMeshingOptionsToForm(cachedExporterConfig);
+                meshExportView.Visual.ReadInto(globalVisualMeshing);
+                meshExportView.Collision.ReadInto(globalCollisionMeshing);
             }
+        }
+
+        // Points the meshing columns at <paramref name="link"/>'s override if it has one, and at the
+        // robot-wide options otherwise.
+        private void ShowMeshingColumnsFor(Link link)
+        {
+            bool canOverride = CanOverrideMeshing(link);
+            bool overridden = canOverride && link.meshingOverride;
+
+            meshingEditorLink = overridden ? link : null;
+
+            // The check box raises its change event on a programmatic set too, and this runs on every
+            // link selection, so without the guard simply navigating the tree would re-run the seed
+            // and discard paths.
+            _syncingMeshingOverride = true;
+            try
+            {
+                meshExportView.MeshingOverrideEnabled = canOverride;
+                meshExportView.MeshingOverride = overridden;
+            }
+            finally
+            {
+                _syncingMeshingOverride = false;
+            }
+
+            WriteMeshingColumns(
+                overridden ? link.visualMeshingOptions : globalVisualMeshing,
+                overridden ? link.collisionMeshingOptions : globalCollisionMeshing);
+
+            RefreshMeshingOverrideBold();
+        }
+
+        // Bolds only the values an override on screen actually changes from the robot-wide ones.
+        private void RefreshMeshingOverrideBold()
+        {
+            bool overridden = meshingEditorLink != null;
+            meshExportView.BoldValuesDifferentFrom(
+                overridden ? globalVisualMeshing : null,
+                overridden ? globalCollisionMeshing : null);
+        }
+
+        private void ShowMeshingColumnsForSelectedLink()
+        {
+            LinkTreeItem node = treeViewLinkProperties.SelectedItem as LinkTreeItem;
+            ShowMeshingColumnsFor(node?.Link);
+        }
+
+        private void MeshingOverrideCheckboxChanged(object sender, EventArgs e)
+        {
+            if (_syncingMeshingOverride)
+            {
+                return;
+            }
+
+            LinkTreeItem node = treeViewLinkProperties.SelectedItem as LinkTreeItem;
+            if (node == null)
+            {
+                return;
+            }
+
+            CommitMeshingColumns();
+
+            Link link = node.Link;
+            if (meshExportView.MeshingOverride)
+            {
+                link.visualMeshingOptions = globalVisualMeshing.Clone();
+                link.collisionMeshingOptions = globalCollisionMeshing.Clone();
+                link.meshingOverride = true;
+            }
+            else
+            {
+                link.meshingOverride = false;
+            }
+
+            ShowMeshingColumnsFor(link);
+            node.RefreshMeshingOverride();
         }
 
         /// <summary>
@@ -294,7 +374,9 @@ namespace CADRobotExporter.UI
 
         private void ResetMeshingToDefaults(object sender, EventArgs e)
         {
-            LoadMeshingOptionsToForm(new ExporterConfiguration());
+            ExporterConfiguration defaults = new ExporterConfiguration();
+            WriteMeshingColumns(defaults.visualMeshingOptions, defaults.collisionMeshingOptions);
+            CommitMeshingColumns();
         }
 
         private void CollisionCheckboxChanged(object sender, EventArgs e)
@@ -469,6 +551,9 @@ namespace CADRobotExporter.UI
             {
                 _syncingMeshFormats = false;
             }
+
+            // Outside the guard: the writes above re-raise the toggle events
+            meshExportView.ApplyEnableState();
         }
         private void TabControlSelected(object sender, SelectionChangedEventArgs e)
         {
@@ -543,7 +628,7 @@ namespace CADRobotExporter.UI
             {
                 string message = "The following joints are missing required fields, please " +
                     "address them before continuing\r\n\r\n" + errors;
-                MessageBox.Show(message, "Robot Configuration Exporter - Joint Errors");
+                MessageBox.Show(message, "SuperDex CAD Exporter - Joint Errors");
                 return false;
             }
 
@@ -573,6 +658,12 @@ namespace CADRobotExporter.UI
             {
                 SaveLinkDataFromPropertyBoxes(node.Link);
             }
+
+            // Commit any pending meshing edit, then put the columns back on the robot-wide options so
+            // they still agree with meshingEditorLink.
+            CommitMeshingColumns();
+            ShowMeshingColumnsFor(null);
+
             previouslySelectedNode = null;
 
             CadBridge.IsShowingInertialGizmo = false;
@@ -955,7 +1046,7 @@ namespace CADRobotExporter.UI
                 if (folderDialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
                     return;
 
-                ExporterMeshingOptions meshingOptions = BuildMeshingOptionsFromForm();
+                ExporterMeshingOptions meshingOptions = BuildMeshingOptionsFromForm().ResolveFor(link);
                 ExporterConfiguration config = SaveFormToExporterConfiguration();
                 RobotPackage package = new RobotPackage("", "", config.folderStructure);
 
@@ -1007,15 +1098,15 @@ namespace CADRobotExporter.UI
 
         private ExporterMeshingOptions BuildMeshingOptionsFromForm()
         {
+            CommitMeshingColumns();
+
             ExporterMeshingOptions meshingOptions = new ExporterMeshingOptions();
-            meshingOptions.visualMeshingOptions = new Export.MeshingOptions();
-            meshingOptions.collisionMeshingOptions = new Export.MeshingOptions();
-            meshExportView.Visual.ReadInto(meshingOptions.visualMeshingOptions);
-            meshExportView.Collision.ReadInto(meshingOptions.collisionMeshingOptions);
+            // The robot-wide options
+            meshingOptions.visualMeshingOptions = globalVisualMeshing.Clone();
+            meshingOptions.collisionMeshingOptions = globalCollisionMeshing.Clone();
             meshingOptions.meshTagExtension = meshExportView.VisualExtension;
             meshingOptions.collisionMeshTagExtension = meshExportView.CollisionExtension;
             meshingOptions.exportCollision = meshExportView.CollisionMeshing;
-            meshingOptions.perLinkMeshing = meshExportView.PerLinkMeshing;
             return meshingOptions;
         }
 
@@ -1029,6 +1120,7 @@ namespace CADRobotExporter.UI
         private void MesherSettingChanged(object sender, EventArgs e)
         {
             meshExportView.ApplyEnableState();
+            RefreshMeshingOverrideBold();
         }
 
         /// <summary>
@@ -1097,7 +1189,7 @@ namespace CADRobotExporter.UI
 
                 string message = "The following links contained errors in either their link or joint " +
                     "properties. Please address before continuing\r\n\r\n" + errors;
-                MessageBox.Show(message, "Robot Configuration Exporter - Link Errors");
+                MessageBox.Show(message, "SuperDex CAD Exporter - Link Errors");
                 return;
             }
 
@@ -1217,6 +1309,10 @@ namespace CADRobotExporter.UI
                 SaveLinkDataFromPropertyBoxes(previouslySelectedNode.Link);
             }
 
+            // Committed against the link the columns were actually showing, which is tracked
+            // separately from previouslySelectedNode because the joint tree shares that field.
+            CommitMeshingColumns();
+
             if (checkBoxLinkHighlights.IsChecked == true)
             {
                 CadBridge.SelectLinkComponents(node.Link);
@@ -1266,17 +1362,6 @@ namespace CADRobotExporter.UI
             CadBridge.TriggerGraphicsRedraw();
         }
 
-        public void LoadMeshingOptionsFromLink(Link link)
-        {
-            WriteMeshingColumns(link.visualMeshingOptions, link.collisionMeshingOptions);
-        }
-
-        public void SaveMeshingOptionsToLink(Link link)
-        {
-            meshExportView.Visual.ReadInto(link.visualMeshingOptions);
-            meshExportView.Collision.ReadInto(link.collisionMeshingOptions);
-        }
-
         public void LoadMeshingOptionsToForm(ExporterConfiguration config)
         {
             if (config == null)
@@ -1284,7 +1369,14 @@ namespace CADRobotExporter.UI
                 config = new ExporterConfiguration(); // Use defaults
             }
 
-            WriteMeshingColumns(config.visualMeshingOptions, config.collisionMeshingOptions);
+            // Commit first: with an override on screen the columns hold that link's values, and
+            // replacing the globals underneath them would drop the edit rather than save it.
+            CommitMeshingColumns();
+
+            globalVisualMeshing = config.visualMeshingOptions.Clone();
+            globalCollisionMeshing = config.collisionMeshingOptions.Clone();
+
+            ShowMeshingColumnsForSelectedLink();
         }
 
         public void LoadExporterConfigurationToForm(ExporterConfiguration config)
@@ -1308,7 +1400,6 @@ namespace CADRobotExporter.UI
             meshExportView.CollisionExtension = config.collisionMeshTagExtension;
             meshExportView.CollisionMeshing = config.enableCollisionMeshing;
             meshExportView.ApplyEnableState();
-            meshExportView.PerLinkMeshing = config.perLinkMeshing;
 
             string documentTitle = CadBridge.GetDocumentTitle();
 
@@ -1319,10 +1410,12 @@ namespace CADRobotExporter.UI
 
         public ExporterConfiguration SaveFormToExporterConfiguration()
         {
+            CommitMeshingColumns();
+
             ExporterConfiguration config = new ExporterConfiguration();
 
-            meshExportView.Visual.ReadInto(config.visualMeshingOptions);
-            meshExportView.Collision.ReadInto(config.collisionMeshingOptions);
+            config.visualMeshingOptions = globalVisualMeshing.Clone();
+            config.collisionMeshingOptions = globalCollisionMeshing.Clone();
 
             config.meshFormats = new List<MeshFormat>();
 
@@ -1344,7 +1437,6 @@ namespace CADRobotExporter.UI
             config.meshTagExtension = meshExportView.VisualExtension;
             config.collisionMeshTagExtension = meshExportView.CollisionExtension;
             config.enableCollisionMeshing = meshExportView.CollisionMeshing;
-            config.perLinkMeshing = meshExportView.PerLinkMeshing;
 
             config.collisionMeshFormats = new List<MeshFormat>();
 

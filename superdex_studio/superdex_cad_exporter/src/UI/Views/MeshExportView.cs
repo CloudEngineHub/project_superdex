@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Media;
 
 using CADRobotExporter.Export;
 
@@ -24,8 +25,8 @@ namespace CADRobotExporter.UI.Views
         public MeshingColumnView Visual { get; private set; }
         public MeshingColumnView Collision { get; private set; }
 
-        private readonly CheckBox perLinkMeshing =
-            new CheckBox { Content = "Per Link Meshing Options" };
+        private readonly CheckBox meshingOverride =
+            new CheckBox { Content = "Link Meshing Override" };
         private readonly CheckBox collisionMeshing = new CheckBox { Content = "Collision" };
         private readonly Button resetToDefaults = new Button
         {
@@ -49,7 +50,24 @@ namespace CADRobotExporter.UI.Views
         private readonly Dictionary<MeshFormat, TextBlock> methodLabels =
             new Dictionary<MeshFormat, TextBlock>();
 
-        public event EventHandler PerLinkMeshingChanged;
+        /// <summary>
+        /// Held so the group can be greyed as a whole, which is the only way to dim its caption
+        /// column and header. It spans both columns, so it stays enabled while either one has a
+        /// SuperDex format
+        /// </summary>
+        private GroupBox superdexGroup;
+        private readonly GroupBox meshingGroup;
+
+        private static readonly Brush OverrideTint = CreateOverrideTint();
+
+        private static Brush CreateOverrideTint()
+        {
+            SolidColorBrush brush = new SolidColorBrush(Color.FromRgb(0xDC, 0xEB, 0xFA));
+            brush.Freeze();
+            return brush;
+        }
+
+        public event EventHandler MeshingOverrideChanged;
         public event EventHandler CollisionMeshingChanged;
         public event EventHandler ResetToDefaultsRequested;
         public event EventHandler ExportLinkMeshRequested;
@@ -118,8 +136,8 @@ namespace CADRobotExporter.UI.Views
             Visual.SettingChanged += (s, e) => Raise(MesherSettingChanged);
             Collision.SettingChanged += (s, e) => Raise(MesherSettingChanged);
 
-            perLinkMeshing.Checked += (s, e) => Raise(PerLinkMeshingChanged);
-            perLinkMeshing.Unchecked += (s, e) => Raise(PerLinkMeshingChanged);
+            meshingOverride.Checked += (s, e) => { ApplyOverrideTint(); Raise(MeshingOverrideChanged); };
+            meshingOverride.Unchecked += (s, e) => { ApplyOverrideTint(); Raise(MeshingOverrideChanged); };
             collisionMeshing.Checked += (s, e) => Raise(CollisionMeshingChanged);
             collisionMeshing.Unchecked += (s, e) => Raise(CollisionMeshingChanged);
             resetToDefaults.Click += (s, e) => Raise(ResetToDefaultsRequested);
@@ -130,7 +148,7 @@ namespace CADRobotExporter.UI.Views
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.55, GridUnitType.Star) });
 
             GroupBox formatGroup = MakeGroup("Mesh Format", BuildMeshFormat());
-            GroupBox meshingGroup = MakeGroup("Meshing Options", BuildMeshingOptions());
+            meshingGroup = MakeGroup("Meshing Options", BuildMeshingOptions());
             meshingGroup.Margin = new Thickness(8, 0, 0, 0);
 
             Grid.SetColumn(formatGroup, 0);
@@ -139,6 +157,18 @@ namespace CADRobotExporter.UI.Views
             root.Children.Add(meshingGroup);
 
             Content = root;
+        }
+
+        private void ApplyOverrideTint()
+        {
+            if (MeshingOverride)
+            {
+                meshingGroup.Background = OverrideTint;
+            }
+            else
+            {
+                meshingGroup.ClearValue(Control.BackgroundProperty);
+            }
         }
 
         private void Raise(EventHandler handler)
@@ -302,7 +332,7 @@ namespace CADRobotExporter.UI.Views
 
             int row = 0;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            Place(grid, perLinkMeshing, row, 0);
+            Place(grid, meshingOverride, row, 0);
             TextBlock visualHeader = MakeHeader("Visual");
             visualHeader.HorizontalAlignment = HorizontalAlignment.Center;
             Place(grid, visualHeader, row, 1);
@@ -324,7 +354,7 @@ namespace CADRobotExporter.UI.Views
             sub = AddColumnRow(superdex, sub, "Edge Length mm (0=auto)", Visual.TargetEdgeLength, Collision.TargetEdgeLength);
             AddColumnRow(superdex, sub, "Edge Length Fraction", Visual.EdgeLengthFraction, Collision.EdgeLengthFraction);
 
-            GroupBox superdexGroup = MakeGroup("SuperDex Meshing Options", superdex);
+            superdexGroup = MakeGroup("SuperDex Meshing Options", superdex);
             superdexGroup.Margin = new Thickness(0, 8, 0, 0);
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetRow(superdexGroup, row);
@@ -365,10 +395,23 @@ namespace CADRobotExporter.UI.Views
             return row + 1;
         }
 
-        public bool PerLinkMeshing
+        /// <summary>
+        /// Whether the selected link carries its own meshing options rather than the robot-wide ones.
+        /// </summary>
+        public bool MeshingOverride
         {
-            get { return perLinkMeshing.IsChecked == true; }
-            set { perLinkMeshing.IsChecked = value; }
+            get { return meshingOverride.IsChecked == true; }
+            set { meshingOverride.IsChecked = value; }
+        }
+
+        /// <summary>
+        /// Links with no geometry to mesh cannot carry an override, so the box is disabled for them
+        /// rather than left tickable with no effect.
+        /// </summary>
+        public bool MeshingOverrideEnabled
+        {
+            get { return meshingOverride.IsEnabled; }
+            set { meshingOverride.IsEnabled = value; }
         }
 
         public bool CollisionMeshing
@@ -501,10 +544,51 @@ namespace CADRobotExporter.UI.Views
             collisionFormatBoxes[format].ToolTip = collisionTip;
         }
 
+        /// <summary>
+        /// Whether the visual column has a format that the SuperDex mesher produces, and therefore
+        /// whether the SuperDex-only settings in that column would be read at all.
+        /// </summary>
+        public bool HasSuperDexVisualFormat
+        {
+            get { return HasSuperDexFormat(visualFormatBoxes); }
+        }
+
+        public bool HasSuperDexCollisionFormat
+        {
+            get { return HasSuperDexFormat(collisionFormatBoxes); }
+        }
+
+        private static bool HasSuperDexFormat(Dictionary<MeshFormat, CheckBox> boxes)
+        {
+            foreach (KeyValuePair<MeshFormat, CheckBox> pair in boxes)
+            {
+                if (IsSuperDexRow(pair.Key) && pair.Value.IsChecked == true)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public void ApplyEnableState()
         {
-            Visual.ApplyEnableState(columnEnabled: true);
-            Collision.ApplyEnableState(columnEnabled: CollisionMeshing);
+            bool visualSuperDex = HasSuperDexVisualFormat;
+            bool collisionSuperDex = CollisionMeshing && HasSuperDexCollisionFormat;
+
+            Visual.ApplyEnableState(columnEnabled: true, superDexSelected: visualSuperDex);
+            Collision.ApplyEnableState(
+                columnEnabled: CollisionMeshing, superDexSelected: collisionSuperDex);
+
+            // A disabled ancestor disables everything beneath it, so this can only go false once
+            // neither column has any use for the group.
+            superdexGroup.IsEnabled = visualSuperDex || collisionSuperDex;
+        }
+
+        public void BoldValuesDifferentFrom(
+            Export.MeshingOptions visualBaseline, Export.MeshingOptions collisionBaseline)
+        {
+            Visual.BoldValuesDifferentFrom(visualBaseline);
+            Collision.BoldValuesDifferentFrom(collisionBaseline);
         }
     }
 

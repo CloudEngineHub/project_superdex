@@ -87,12 +87,10 @@ namespace CADRobotExporter.UI
             if (properties.IsEditable)
             {
                 ShowLinkPropertyBoxes(properties);
-
-                if (meshExportView.PerLinkMeshing)
-                {
-                    LoadMeshingOptionsFromLink(link);
-                }
             }
+
+            ShowMeshingColumnsFor(link);
+
             AutoUpdatingForm = false;
         }
 
@@ -119,11 +117,6 @@ namespace CADRobotExporter.UI
             }
 
             ReadLinkPropertyBoxes().SaveTo(link);
-
-            if (meshExportView.PerLinkMeshing)
-            {
-                SaveMeshingOptionsToLink(link);
-            }
         }
 
         //Saves data from text boxes back into a joint
@@ -153,6 +146,8 @@ namespace CADRobotExporter.UI
 
         public void FillLinkTree()
         {
+            SanitizeMeshingOverrides(BaseNode.Link);
+
             ObservableCollection<LinkTreeItem> roots = new ObservableCollection<LinkTreeItem>
             {
                 new LinkTreeItem(BaseNode.Link),
@@ -160,6 +155,25 @@ namespace CADRobotExporter.UI
 
             treeViewLinkProperties.ItemsSource = roots;
             roots[0].IsSelected = true;
+        }
+
+        // Clears the override flag on links that cannot carry one
+        private static void SanitizeMeshingOverrides(Link link)
+        {
+            if (link == null)
+            {
+                return;
+            }
+
+            if (link.meshingOverride && !CanOverrideMeshing(link))
+            {
+                link.meshingOverride = false;
+            }
+
+            foreach (Link child in link.Children)
+            {
+                SanitizeMeshingOverrides(child);
+            }
         }
 
         //Converts a Link to a LinkNode
@@ -182,12 +196,6 @@ namespace CADRobotExporter.UI
             LinkNode BaseNode, bool warnUser, bool allowCancel = false)
         {
             ExporterConfiguration config = SaveFormToExporterConfiguration();
-            if (meshExportView.PerLinkMeshing)
-            {
-                // small ugly hack to grab cached non-per link meshing meshing options
-                config.visualMeshingOptions = cachedExporterConfig.visualMeshingOptions;
-                config.collisionMeshingOptions = cachedExporterConfig.collisionMeshingOptions;
-            }
 
             return CadBridge.SaveConfigurationFromTree(
                 config, BaseNode, warnUser, featureNameOverride: null, allowCancel: allowCancel);

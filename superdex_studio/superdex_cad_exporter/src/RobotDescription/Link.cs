@@ -100,6 +100,9 @@ namespace CADRobotExporter.RobotDescription
         public MeshingOptions collisionMeshingOptions;
 
         [DataMember]
+        public bool meshingOverride;
+
+        [DataMember]
         public bool exportCollision;
 
         [DataMember]
@@ -328,8 +331,10 @@ namespace CADRobotExporter.RobotDescription
             visualsOnly = externalLink.visualsOnly;
             inertialsOnly = externalLink.inertialsOnly;
 
-            visualMeshingOptions = externalLink.visualMeshingOptions;
-            collisionMeshingOptions = externalLink.collisionMeshingOptions;
+            // Must be clone otherwise edits will stomp external reference
+            meshingOverride = externalLink.meshingOverride;
+            visualMeshingOptions = externalLink.visualMeshingOptions?.Clone();
+            collisionMeshingOptions = externalLink.collisionMeshingOptions?.Clone();
 
             if (visualMeshingOptions == null)
             {
