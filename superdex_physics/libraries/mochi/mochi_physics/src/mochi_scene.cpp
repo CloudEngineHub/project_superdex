@@ -649,6 +649,7 @@ void SceneImpl::Step(double timeStepSec) {
   _lastPerformanceStats.preStepCallbacksDurationSec = ToSeconds(preStepDuration);
 
   double stepDuration = 0.0;
+  dbg::StepProfileTimers stepProfile;
   if (timeStepSec > 0.0) {
     timer.Reset();
 
@@ -656,13 +657,19 @@ void SceneImpl::Step(double timeStepSec) {
     _registry.ctx<CSceneTime>().Advance(timeStepSec);
 
     // ECS compute velocities and prepare actors
+    Timer phaseTimer;
     PreStepEcs(_registry);
+    stepProfile.preStepSec = ToSeconds(phaseTimer.GetElapsed());
 
     // ECS (step actors):
+    phaseTimer.Reset();
     StepEcs(_registry);
+    stepProfile.stepSec = ToSeconds(phaseTimer.GetElapsed());
 
     // ECS
+    phaseTimer.Reset();
     PostStepEcs(_registry);
+    stepProfile.postStepSec = ToSeconds(phaseTimer.GetElapsed());
 
     stepDuration = ToSeconds(timer.GetElapsed());
 
@@ -685,6 +692,12 @@ void SceneImpl::Step(double timeStepSec) {
 
   _lastPerformanceStats.solveStepDurationSec = stepDuration;
 
+  TimeSpan totalStepDuration = totalStepTimer.GetElapsed();
+  if (debugger) {
+    debugger->CaptureStepProfile(this, stepInfo, stepProfile);
+  }
+  totalStepTimer.Reset();
+
   timer.Reset();
 
   // Fire post-step callbacks one at a time
@@ -705,7 +718,7 @@ void SceneImpl::Step(double timeStepSec) {
   recordingStepDuration += timer.GetElapsed();
   _lastPerformanceStats.recordingStepDurationSec = ToSeconds(recordingStepDuration);
 
-  TimeSpan totalStepDuration = totalStepTimer.GetElapsed();
+  totalStepDuration += totalStepTimer.GetElapsed();
   _lastPerformanceStats.totalStepDurationSec = ToSeconds(totalStepDuration);
 
   if (debugger) {

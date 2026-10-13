@@ -28,6 +28,7 @@
 #include <mochi_physics/dbg/protocol.h>
 
 #include <cinttypes>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <string>
@@ -59,6 +60,8 @@ struct SceneSyncParams {
                            ///< Ignored if not @ref enabled.
   bool useVisualMesh = true; ///< Prefer actor visual meshes when available. Otherwise, synchronize
                              ///< simulation surface meshes. Requires @ref syncMeshes.
+  bool syncPerformance = false; ///< Should per-step profiling data be included? Ignored if not
+                                ///< @ref enabled. See @ref DebugClient::ReadProfileHistory.
 
   bool operator==(SceneSyncParams const& rhs) const = default;
 };
@@ -68,10 +71,57 @@ struct DebugClientSettings {
   /// @brief Parameters to control automatic synchronization of scene state
   SceneSyncParams sync;
 
+  /// @brief Number of step profiles retained by @ref DebugClient::ReadProfileHistory.
+  int maxProfileHistory = 2500;
+
   bool operator==(DebugClientSettings const& rhs) const = default;
 };
 
 using MeshSyncData = protocol::MeshSyncData;
+
+/// @brief Step profiles retained by the client, oldest first.
+class StepProfileHistory {
+ public:
+  using const_iterator = std::deque<protocol::StepProfileData>::const_iterator;
+  using size_type = std::deque<protocol::StepProfileData>::size_type;
+
+  [[nodiscard]] bool empty() const {
+    return _profiles.empty();
+  }
+  [[nodiscard]] size_type size() const {
+    return _profiles.size();
+  }
+  [[nodiscard]] protocol::StepProfileData const& operator[](size_type index) const {
+    return _profiles[index];
+  }
+  [[nodiscard]] protocol::StepProfileData const& front() const {
+    return _profiles.front();
+  }
+  [[nodiscard]] protocol::StepProfileData const& back() const {
+    return _profiles.back();
+  }
+  [[nodiscard]] const_iterator begin() const {
+    return _profiles.begin();
+  }
+  [[nodiscard]] const_iterator end() const {
+    return _profiles.end();
+  }
+
+  /// @brief Sequence of the oldest retained profile, or zero when empty.
+  [[nodiscard]] uint64_t GetBeginSequence() const;
+
+  /// @brief Sequence one past the newest retained profile, or zero when empty.
+  [[nodiscard]] uint64_t GetEndSequence() const;
+
+ private:
+  friend class DebugClient;
+
+  void Append(DynamicArray<protocol::StepProfileData> const& profiles);
+  void Trim(int maxSize);
+  void Clear();
+
+  std::deque<protocol::StepProfileData> _profiles;
+};
 
 /// @brief A non-owning view into a mesh's data, in actor-local coordinates.
 struct MeshSyncDataView {
@@ -266,6 +316,29 @@ class DebugClient {
   void GetSceneSyncData(std::function<void(SceneSyncData const& data)> const& fn) const;
 
   /**
+   * @brief Access the selected scene's step profile history via callback.
+   *
+   * @param fn Called immediately as `fn(StepProfileHistory const&)`, oldest first, while the client
+   * state is locked. Keep it short: copy what is needed and return.
+   *
+   * @details Samples arrive while @ref SceneSyncParams::syncPerformance is enabled. The history is
+   * cleared when the selected scene changes, on disconnect, and by @ref ClearProfileHistory.
+   */
+  template <class Fn>
+  void ReadProfileHistory(Fn&& fn) const {
+    _state.Read([&](State const& state) { fn(state.profileHistory); });
+  }
+
+  /** @brief Discard all step profile history. */
+  void ClearProfileHistory();
+
+  /**
+   * @brief Return the number of task scheduler worker threads reported by the server. Zero if the
+   * server is single-threaded or this client is not fully connected.
+   */
+  [[nodiscard]] int GetServerNumWorkerThreads() const;
+
+  /**
    * @brief Set the playback mode for all scenes.
    *
    * @details The mode is remembered while disconnected, and is applied to each scene as the
@@ -388,6 +461,11 @@ class DebugClient {
 
     // Selected scene's sleep params. Cleared when the selection changes, then read from the server.
     std::optional<experimental::SleepParams> sleepParams;
+
+    // Selected scene's step profiles, oldest first. At most settings.maxProfileHistory.
+    StepProfileHistory profileHistory;
+
+    int serverNumWorkerThreads = 0; // From the WelcomeMessage
   };
 
   void InitProtocol();

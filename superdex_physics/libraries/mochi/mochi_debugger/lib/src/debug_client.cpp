@@ -37,6 +37,31 @@ using namespace mochi::dbg;
 
 static constexpr double kCommandTimeout = 3.0; // seconds
 
+uint64_t StepProfileHistory::GetBeginSequence() const {
+  return empty() ? 0 : front().sequence;
+}
+
+uint64_t StepProfileHistory::GetEndSequence() const {
+  return empty() ? 0 : back().sequence + 1;
+}
+
+void StepProfileHistory::Append(DynamicArray<protocol::StepProfileData> const& profiles) {
+  for (auto const& profile : profiles) {
+    _profiles.push_back(profile);
+  }
+}
+
+void StepProfileHistory::Trim(int maxSize) {
+  int const excess = isize(_profiles) - maxSize;
+  if (excess > 0) {
+    _profiles.erase(_profiles.begin(), _profiles.begin() + excess);
+  }
+}
+
+void StepProfileHistory::Clear() {
+  _profiles.clear();
+}
+
 void DebugClient::SetPrintFunction(LogFn fn) {
   MOCHI_ASSERT(
       _socket.GetStatus() == net::SocketStatus::None,
@@ -142,6 +167,8 @@ void DebugClient::ResetConnectionState() {
       state.syncData.counter = ++state.syncCounter; // Indicates it was changed
     }
     state.sleepParams.reset();
+    state.profileHistory.Clear();
+    state.serverNumWorkerThreads = 0;
 
     // Keep settings: it is a user preference that persists across connections.
   });
@@ -331,6 +358,7 @@ void DebugClient::OnWelcomeMessage(protocol::WelcomeMessage&& msg) {
     MOCHI_ASSERT_VERBOSE(
         state.scenes.empty(), "We should not track scenes until the WelcomeMessage arrives.");
     state.coordinateSpace = msg.coordinateSpace;
+    state.serverNumWorkerThreads = msg.numWorkerThreads;
     state.debugDraw = ReconcileDebugDrawFeatures(std::move(msg.debugDraw), state.debugDraw);
     state.scenes.reserve(scenes.handles.size());
     if (state.stepMode != StepMode::Pause) {
@@ -594,6 +622,11 @@ void DebugClient::OnSceneSyncReply(protocol::SceneSyncReply&& reply) {
       state.syncData.debugDraw = std::move(*reply.debugDraw);
       hasDataChanged = true;
     }
+
+    if (state.settings.sync.syncPerformance && reply.performance) {
+      state.profileHistory.Append(*reply.performance);
+      state.profileHistory.Trim(state.settings.maxProfileHistory);
+    }
     if (hasDataChanged) {
       state.syncData.counter = ++state.syncCounter;
     }
@@ -626,6 +659,14 @@ SceneHandle DebugClient::GetSelectedScene() const {
 
 CoordinateSpace DebugClient::GetCoordinateSpace() const {
   return _state.Read(&State::coordinateSpace);
+}
+
+void DebugClient::ClearProfileHistory() {
+  _state.Mutate([](auto& state) { state.profileHistory.Clear(); });
+}
+
+int DebugClient::GetServerNumWorkerThreads() const {
+  return _state.Read(&State::serverNumWorkerThreads);
 }
 
 void DebugClient::SetSceneSyncParams(SceneSyncParams const& params) {
@@ -695,6 +736,8 @@ void DebugClient::SetSettings(DebugClientSettings const& settings) {
     auto sync = state.settings.sync;
     state.settings = settings;
     state.settings.sync = sync;
+    state.settings.maxProfileHistory = Max(0, settings.maxProfileHistory);
+    state.profileHistory.Trim(state.settings.maxProfileHistory);
   });
 }
 
@@ -707,6 +750,7 @@ protocol::SceneSyncRequest DebugClient::MakeSyncRequest(State const& state) {
   req.syncDebugDraw = state.settings.sync.syncDebugDraw;
   req.syncMeshes = state.settings.sync.syncActors && state.settings.sync.syncMeshes;
   req.useVisualMesh = state.settings.sync.useVisualMesh;
+  req.syncPerformance = state.settings.sync.syncPerformance;
   return req;
 }
 
@@ -777,6 +821,7 @@ void DebugClient::SetSelectedScene(
   }
 
   state.meshCache.clear();
+  state.profileHistory.Clear();
   state.syncData = {};
   state.syncData.scene = newSelection;
   state.syncData.counter = ++state.syncCounter;

@@ -36,6 +36,13 @@ class MessageServer;
 
 namespace mochi::dbg {
 
+// Durations of the simulation phases of one SceneImpl::Step [s]. Zero if nothing was simulated.
+struct StepProfileTimers {
+  double preStepSec = 0.0; // PreStepEcs
+  double stepSec = 0.0; // StepEcs
+  double postStepSec = 0.0; // PostStepEcs
+};
+
 class SceneDebugger {
  public:
   using ClockFn = std::function<double()>;
@@ -47,6 +54,13 @@ class SceneDebugger {
   // Called by SceneImpl::Step before any step timing starts. May block while paused or while
   // throttling to real time.
   virtual void OnPreStep(SceneImpl* scene, StepInfo const& step) = 0;
+
+  // Capture profiling data after simulation finishes, before user post-step callbacks mutate the
+  // scene.
+  virtual void CaptureStepProfile(
+      SceneImpl* scene,
+      StepInfo const& step,
+      StepProfileTimers const& stepProfile) = 0;
 
   // Called by SceneImpl::Step after all step timing has been recorded.
   virtual void OnPostStep(SceneImpl* scene, StepInfo const& step) = 0;

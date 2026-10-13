@@ -15,7 +15,12 @@
  */
 
 #include "mochi_scene_debugger.h"
+#include "mochi_active_collisions.h"
+#include "mochi_common_components.h"
+#include "mochi_constraint.h"
+#include "mochi_island.h"
 #include "mochi_scene.h"
+#include "mochi_sleep.h"
 #include "mochi_step.h"
 
 #include <mochi_core/geometry/mesh_data.h>
@@ -34,6 +39,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -58,6 +64,63 @@ static bool TracksRealTime(StepMode mode) {
   return mode == StepMode::Play;
 }
 
+static bool IsActorAwake(entt::registry const& reg, entt::entity e) {
+  auto const* memberInfo = reg.try_get<CIslandMemberInfo const>(e);
+  return memberInfo && sleep::IsIslandAwake(reg, memberInfo->island);
+}
+
+// A constraint belongs to the island of its actors. Constraints nested in compounds are not listed
+// by CIslandMembers.
+static int32_t CountActiveConstraints(entt::registry const& reg) {
+  int32_t numConstraints = 0;
+  for (auto&& [e, info] : reg.view<CConstraintInfo const>().each()) {
+    bool const isActive = std::any_of(info.actors.begin(), info.actors.end(), [&](entt::entity a) {
+      return IsActorAwake(reg, a);
+    });
+    numConstraints += isActive ? 1 : 0;
+  }
+  return numConstraints;
+}
+
+template <bool kIsSync>
+static int32_t CountActiveContacts(entt::registry const& reg) {
+  int32_t numContacts = 0;
+  for (auto&& [island, descendants] :
+       reg.view<CIslandDescendants const, TagIslandIsAwake const>().each()) {
+    for (entt::entity e : descendants.actors) {
+      auto const* collisions = reg.try_get<CActiveCollisions<kIsSync, TimeStep::Current> const>(e);
+      if (collisions) {
+        for (ActiveCollision const& collision : *collisions) {
+          numContacts += isize(collision.collisionResult.sampleIndices);
+        }
+      }
+    }
+  }
+  return numContacts;
+}
+
+static protocol::StepProfileData RecordStepProfileData(
+    SceneImpl const& scene,
+    StepInfo const& step,
+    StepProfileTimers const& stepProfile) {
+  entt::registry const& reg = scene.GetRegistry();
+  protocol::StepProfileData profile;
+  profile.timeStepSec = StaticCast<float>(step.timeStepSec);
+  profile.preStepSec = StaticCast<float>(stepProfile.preStepSec);
+  profile.stepSec = StaticCast<float>(stepProfile.stepSec);
+  profile.postStepSec = StaticCast<float>(stepProfile.postStepSec);
+  for (auto&& [island, members, dofs] :
+       reg.view<CIslandMembers const, CIslandDofInfo const, TagIslandIsAwake const>().each()) {
+    ++profile.activeIslands;
+    profile.activeActors += isize(members.actors);
+    profile.activeDofs += dofs.dofsSize;
+  }
+  profile.activeConstraints = CountActiveConstraints(reg);
+  profile.activeContacts = CountActiveContacts<false>(reg) + CountActiveContacts<true>(reg);
+  profile.convergenceStatus = scene.GetSolverStats().convergenceStatus;
+  return profile;
+}
+
 namespace {
 
 class SceneDebuggerImpl final : public SceneDebugger {
@@ -76,6 +139,10 @@ class SceneDebuggerImpl final : public SceneDebugger {
   // SceneDebugger API
   void UpdateOnSceneThread(SceneImpl* scene) override;
   void OnPreStep(SceneImpl* scene, StepInfo const& step) override;
+  void CaptureStepProfile(
+      SceneImpl* scene,
+      StepInfo const& step,
+      StepProfileTimers const& stepProfile) override;
   void OnPostStep(SceneImpl* scene, StepInfo const& step) override;
   StepMode GetStepMode() const override {
     return _stepMode.load();
@@ -100,6 +167,7 @@ class SceneDebuggerImpl final : public SceneDebugger {
       bool syncDebugDraw,
       bool syncMeshes,
       bool useVisualMesh,
+      bool syncPerformance,
       uint64_t requestId);
 
   // Reconcile per-actor mesh-tracking state against the live actor set. When meshesEnabled is
@@ -147,6 +215,8 @@ class SceneDebuggerImpl final : public SceneDebugger {
   // Counts simulation steps. Incremented in OnPostStep.
   uint64_t _stepCounter = 1;
 
+  uint64_t _profileSequenceCounter = 0;
+
   // Sync state. Only touched on the scene's owning (step) thread.
   struct SyncState {
     float interval = 0;
@@ -154,10 +224,16 @@ class SceneDebuggerImpl final : public SceneDebugger {
     bool syncDebugDraw = false;
     bool syncMeshes = false;
     bool useVisualMesh = true;
+    bool syncPerformance = false;
     double lastSyncTime = 0.0;
     uint64_t lastSyncStep = 0;
   };
   std::optional<SyncState> _sync;
+
+  // Step profiles not yet sent to the client, oldest first (scene-thread only). Filled while
+  // performance syncing is enabled. Capped so it cannot grow without bound between syncs.
+  static constexpr int kMaxPendingProfiles = 4096;
+  std::deque<protocol::StepProfileData> _pendingProfileData;
 
   // Mesh syncing state (scene-thread only). One entry per actor while mesh syncing is enabled.
   std::unordered_map<ActorHandle, ActorInfo> _actorInfo;
@@ -389,6 +465,27 @@ void SceneDebuggerImpl::OnPreStep(SceneImpl* scene, StepInfo const& step) {
   }
 }
 
+void SceneDebuggerImpl::CaptureStepProfile(
+    SceneImpl* scene,
+    StepInfo const& step,
+    StepProfileTimers const& stepProfile) {
+  std::lock_guard lock{_sceneThreadMutex};
+  if (IsShutdown() || step.timeStepSec == 0.0) {
+    return;
+  }
+  uint64_t const sequence = ++_profileSequenceCounter;
+  if (!_sync || !_sync->syncPerformance) {
+    return;
+  }
+
+  if (isize(_pendingProfileData) >= kMaxPendingProfiles) {
+    _pendingProfileData.pop_front();
+  }
+  auto& profile =
+      _pendingProfileData.emplace_back(RecordStepProfileData(*scene, step, stepProfile));
+  profile.sequence = sequence;
+}
+
 void SceneDebuggerImpl::OnPostStep(SceneImpl* scene, StepInfo const& step) {
   // It is safe to process messages and access the scene at this time.
   std::lock_guard lock{_sceneThreadMutex};
@@ -402,6 +499,8 @@ void SceneDebuggerImpl::OnPostStep(SceneImpl* scene, StepInfo const& step) {
   } else if (TracksRealTime(GetStepMode())) {
     _realTimeTracking.simTimeTotal += step.timeStepSec;
   }
+
+  // A sync sent below includes the profile captured for this step.
   UpdateOnSceneThreadImpl(scene);
 }
 
@@ -502,6 +601,7 @@ void SceneDebuggerImpl::OnSceneStepRequest(SceneImpl* scene, protocol::SceneStep
 void SceneDebuggerImpl::OnSceneSyncRequest(SceneImpl* scene, protocol::SceneSyncRequest&& request) {
   MOCHI_ASSERT_VERBOSE(request.scene == _sceneHandle, "Received by the wrong scene");
   bool const wasSyncingMeshes = _sync && _sync->syncActors && _sync->syncMeshes;
+  bool const wasSyncingPerformance = _sync && _sync->syncPerformance;
 
   // If enableAutoSync.has_value() then enable/disable auto-syncing. Otherwise this is a one-time
   // sync request that must not affect the active syncing state.
@@ -520,6 +620,7 @@ void SceneDebuggerImpl::OnSceneSyncRequest(SceneImpl* scene, protocol::SceneSync
           .syncDebugDraw = request.syncDebugDraw,
           .syncMeshes = request.syncMeshes,
           .useVisualMesh = request.useVisualMesh,
+          .syncPerformance = request.syncPerformance,
           .lastSyncTime = _clock(),
           .lastSyncStep = _stepCounter};
 
@@ -527,10 +628,17 @@ void SceneDebuggerImpl::OnSceneSyncRequest(SceneImpl* scene, protocol::SceneSync
       _sync = std::nullopt;
     }
   } else {
-    // We do not support one-time sync requests with mesh data because they would
-    // interfere with our book keeping for periodic syncing of mesh data.
+    // Mesh and performance data are only supported for periodic syncing.
     request.syncMeshes = false;
+    request.syncPerformance = false;
   }
+
+  // Samples gathered under a previous setting are stale.
+  bool const isSyncingPerformance = _sync && _sync->syncPerformance;
+  if (wasSyncingPerformance != isSyncingPerformance) {
+    _pendingProfileData.clear();
+  }
+  request.syncPerformance = request.syncPerformance && isSyncingPerformance;
 
   bool const isSyncingMeshes = _sync && _sync->syncActors && _sync->syncMeshes;
   bool const preserveMeshQueries = wasSyncingMeshes && isSyncingMeshes;
@@ -547,6 +655,7 @@ void SceneDebuggerImpl::OnSceneSyncRequest(SceneImpl* scene, protocol::SceneSync
         request.syncDebugDraw,
         request.syncMeshes,
         request.useVisualMesh,
+        request.syncPerformance,
         request.requestId);
   }
 }
@@ -577,6 +686,7 @@ void SceneDebuggerImpl::SendSyncReply(
     bool syncDebugDraw,
     bool syncMeshes,
     bool useVisualMesh,
+    bool syncPerformance,
     uint64_t requestId) {
   protocol::SceneSyncReply reply;
   reply.requestId = requestId;
@@ -641,6 +751,11 @@ void SceneDebuggerImpl::SendSyncReply(
     outSpheres.colors = Flatten(inSpheres.colors);
   }
 
+  if (syncPerformance) {
+    reply.performance.emplace(_pendingProfileData.begin(), _pendingProfileData.end());
+    _pendingProfileData.clear();
+  }
+
   // Send the message unless Shutdown() was called.
   SendToClient(reply);
 }
@@ -669,6 +784,7 @@ void SceneDebuggerImpl::SendSyncIfRequested(SceneImpl* scene) {
       _sync->syncDebugDraw,
       _sync->syncMeshes,
       _sync->useVisualMesh,
+      _sync->syncPerformance,
       /*requestId*/ 0);
   _sync->lastSyncTime = now;
   _sync->lastSyncStep = _stepCounter;
@@ -834,6 +950,7 @@ void SceneDebuggerImpl::ShutdownOnSceneThread(SceneImpl* scene) {
 
   // No more syncing
   _sync = std::nullopt;
+  _pendingProfileData.clear();
 
   // The debugger owns debug draw while connected. Return the scene to a fully disabled state.
   auto& debugDraw = scene->GetDebugDraw();

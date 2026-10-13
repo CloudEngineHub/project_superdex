@@ -222,6 +222,37 @@ struct SceneList {
   MOCHI_STRUCT_END()
 };
 
+/// @brief Profiling data for one simulation step. "Active" counts only include awake islands.
+struct StepProfileData {
+  uint64_t sequence = 0; ///< Monotonically increasing sequence within the scene debugger
+  float timeStepSec = 0.0f; ///< Simulated time step [s]
+  float preStepSec = 0.0f; ///< Duration of the pre-step phase [s]
+  float stepSec = 0.0f; ///< Duration of the step phase [s]
+  float postStepSec = 0.0f; ///< Duration of the post-step phase [s]
+  int32_t activeActors = 0; ///< Top-level actors (direct island members)
+  int32_t activeConstraints = 0;
+  int32_t activeContacts = 0; ///< Contact points, both sync and async
+  int32_t activeDofs = 0;
+  int32_t activeIslands = 0;
+  ConvergenceStatus convergenceStatus = ConvergenceStatus::None; ///< Worst over active islands
+
+  bool operator==(StepProfileData const& rhs) const = default;
+
+  MOCHI_STRUCT_BEGIN(mochi::dbg::protocol::StepProfileData)
+  MOCHI_FIELD(sequence)
+  MOCHI_FIELD(timeStepSec)
+  MOCHI_FIELD(preStepSec)
+  MOCHI_FIELD(stepSec)
+  MOCHI_FIELD(postStepSec)
+  MOCHI_FIELD(activeActors)
+  MOCHI_FIELD(activeConstraints)
+  MOCHI_FIELD(activeContacts)
+  MOCHI_FIELD(activeDofs)
+  MOCHI_FIELD(activeIslands)
+  MOCHI_FIELD(convergenceStatus)
+  MOCHI_STRUCT_END()
+};
+
 //------------------------------------------------------------------------------
 // Message Types
 //------------------------------------------------------------------------------
@@ -373,6 +404,10 @@ struct SceneSyncRequest : SceneRequest {
   // Requires syncMeshes. Changing this setting starts a new mesh version.
   bool useVisualMesh = true;
 
+  // Should per-step profiling data be included in periodic replies? Samples accumulate on the
+  // server between replies. Only affects auto syncing behavior if enableAutoSync.has_value().
+  bool syncPerformance = false;
+
   MOCHI_STRUCT_BEGIN(mochi::dbg::protocol::SceneSyncRequest)
   MOCHI_BASE_CLASS(SceneRequest)
   MOCHI_FIELD(enableAutoSync)
@@ -381,6 +416,7 @@ struct SceneSyncRequest : SceneRequest {
   MOCHI_FIELD(syncDebugDraw)
   MOCHI_FIELD(syncMeshes)
   MOCHI_FIELD(useVisualMesh)
+  MOCHI_FIELD(syncPerformance)
   MOCHI_STRUCT_END()
 };
 
@@ -399,6 +435,8 @@ struct SceneSyncReply : SceneReply {
   // to mean "no mesh".
   uint64_t meshVersionCounter = 0;
   std::optional<DbgDrawData> debugDraw; // Sent if syncDebugDraw requested
+  // Steps completed since the previous reply, oldest first. Sent if syncPerformance is enabled.
+  std::optional<DynamicArray<StepProfileData>> performance;
 
   MOCHI_STRUCT_BEGIN(mochi::dbg::protocol::SceneSyncReply)
   MOCHI_BASE_CLASS(SceneReply)
@@ -407,6 +445,7 @@ struct SceneSyncReply : SceneReply {
   MOCHI_FIELD(actorMeshRanges)
   MOCHI_FIELD(meshVersionCounter)
   MOCHI_FIELD(debugDraw)
+  MOCHI_FIELD(performance)
   MOCHI_STRUCT_END()
 };
 
@@ -440,12 +479,14 @@ struct WelcomeMessage : net::Message {
   DbgDrawFeatures debugDraw; ///< Debug draw feature catalog; enable fields are initially false.
   SceneList scenes; ///< Information about all scenes that already exist.
   CoordinateSpace coordinateSpace = {}; ///< The server's coordinate space convention.
+  int32_t numWorkerThreads = 0; ///< Task scheduler worker threads. Zero if single-threaded.
 
   MOCHI_STRUCT_BEGIN(mochi::dbg::protocol::WelcomeMessage)
   MOCHI_BASE_CLASS(net::Message)
   MOCHI_FIELD(debugDraw)
   MOCHI_FIELD(scenes)
   MOCHI_FIELD(coordinateSpace)
+  MOCHI_FIELD(numWorkerThreads)
   MOCHI_STRUCT_END()
 };
 

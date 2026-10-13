@@ -22,12 +22,15 @@
 #include <mochi_physics/dbg/protocol.h>
 #include <mochi_physics/mochi_physics_experimental.h>
 #include <mochi_physics/src/mochi_context.h>
+#include <mochi_physics/src/mochi_island.h>
 #include <mochi_physics/src/mochi_scene.h>
 #include <mochi_physics/src/mochi_scene_debugger.h>
 #include <mochi_physics/src/mochi_shape.h>
+#include <mochi_physics/src/mochi_sleep.h>
 
 #include <algorithm>
 #include <atomic>
+#include <deque>
 #include <memory>
 #include <ranges>
 
@@ -42,6 +45,9 @@ class SceneSyncTest : public MochiDebuggerTest {
   static constexpr double kTimeout = 60.0; // Generous to prevent spurious CI errors [seconds]
 
   int _actorCount = 0;
+
+  // Time returned by the scene debugger's clock after SetFakeClock [s]
+  std::atomic<double> _clockSec{0.0};
 
   void SetUp() override {
     MochiDebuggerTest::SetUp(); // Call down
@@ -362,6 +368,63 @@ class SceneSyncTest : public MochiDebuggerTest {
   void EnableActorDebugDraw() {
     _client->EnableDebugDrawFeature("Actor Mesh", true); // Draws lines
     _client->EnableDebugDrawFeature("Actor Contact Samples", true); // Draws spheres
+  }
+
+  // Sync parameters that enable automatic synchronization of actors and step profiles. Actors make
+  // each request's immediate reply observable through the sync counter.
+  static SceneSyncParams PerformanceSyncParams(float syncInterval = 0.0f) {
+    SceneSyncParams params = ActorSyncParams();
+    params.syncInterval = syncInterval;
+    params.syncPerformance = true;
+    return params;
+  }
+
+  // Apply params and wait until the server has processed them (its immediate reply arrived).
+  void ApplySyncParamsAndWait(Scene* scene, SceneSyncParams const& params) {
+    uint64_t const counter = GetSceneSyncData().counter;
+    SetSceneSyncParams(params);
+    WaitForSync(scene, counter + 1);
+  }
+
+  // Make the scene's debugger read time from _clockSec, so tests control sync intervals.
+  void SetFakeClock(Scene* scene) {
+    auto sceneDebugger = assert_cast<SceneImpl*>(scene)->GetDebugger();
+    ASSERT_NE(nullptr, sceneDebugger);
+    sceneDebugger->SetClock([this] { return _clockSec.load(); });
+  }
+
+  // Put every island to sleep.
+  static void ForceSleepAllIslands(Scene* scene) {
+    entt::registry& reg = assert_cast<SceneImpl*>(scene)->GetRegistry();
+    for (entt::entity island : reg.view<CIslandMembers>()) {
+      sleep::ForceSleep(reg, island);
+    }
+  }
+
+  // Advance the fake clock by one frame, so the Play throttle releases, then step.
+  void StepWithFakeClock(Scene* scene) {
+    _clockSec += kTimeStep;
+    scene->Step(kTimeStep);
+  }
+
+  // Return a copy of the client's step profile history, oldest first.
+  std::deque<protocol::StepProfileData> GetProfileHistory() const {
+    std::deque<protocol::StepProfileData> profiles;
+    _client->ReadProfileHistory(
+        [&](auto const& history) { profiles.assign(history.begin(), history.end()); });
+    return profiles;
+  }
+
+  // Pump the scene until the client holds `count` step profiles, then return them.
+  std::deque<protocol::StepProfileData> WaitForProfileHistory(Scene* scene, int count) const {
+    std::deque<protocol::StepProfileData> profiles;
+    test::WaitUntil([&] {
+      scene->UpdateDebugger();
+      profiles = GetProfileHistory();
+      return isize(profiles) >= count;
+    });
+    EXPECT_EQ(count, isize(profiles));
+    return profiles;
   }
 };
 } // namespace
@@ -1221,4 +1284,354 @@ TEST_F(SceneSyncTest, SyncInitialStatePaused) {
   // Unpause so the thread can finish.
   _client->SetSceneStepMode(StepMode::Play);
   thread.join();
+}
+
+TEST_F(SceneSyncTest, PerformanceSyncSendsEveryStepSinceLastSync) {
+  Scene* scene = CreateSceneNoGravity();
+  CreateRigidActor(scene);
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+
+  SetFakeClock(scene);
+  float constexpr kSyncInterval = 100.0f;
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams(kSyncInterval));
+
+  int constexpr kNumSteps = 4;
+  for (int i = 0; i < kNumSteps; ++i) {
+    StepWithFakeClock(scene);
+  }
+
+  // Nothing is sent until the sync interval elapses. Then every step since the last sync is sent.
+  scene->UpdateDebugger();
+  EXPECT_TRUE(GetProfileHistory().empty());
+  _clockSec += 2.0 * kSyncInterval;
+  for (auto const& profile : WaitForProfileHistory(scene, kNumSteps)) {
+    EXPECT_EQ(static_cast<float>(kTimeStep), profile.timeStepSec);
+  }
+}
+
+TEST_F(SceneSyncTest, OneShotRequestDoesNotDrainPendingProfiles) {
+  Scene* scene = CreateSceneNoGravity();
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+
+  SetFakeClock(scene);
+  float constexpr kSyncInterval = 100.0f;
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams(kSyncInterval));
+  for (int i = 0; i < 3; ++i) {
+    StepWithFakeClock(scene);
+  }
+
+  protocol::SceneSyncRequest request;
+  request.scene = scene->GetHandle();
+  request.syncPerformance = true;
+  protocol::SceneSyncReply reply;
+  Error error;
+  std::atomic<bool> requestFinished = false;
+  std::thread requestThread([&] {
+    reply = _client->SendAndAwaitReply(request, kTimeout, error);
+    requestFinished = true;
+  });
+  test::WaitUntil([&] {
+    scene->UpdateDebugger();
+    return requestFinished.load();
+  });
+  requestThread.join();
+
+  ASSERT_TRUE(error.IsOK());
+  EXPECT_FALSE(reply.performance.has_value());
+
+  _clockSec += 2.0 * kSyncInterval;
+  auto const profiles = WaitForProfileHistory(scene, 3);
+  EXPECT_EQ(1, profiles.front().sequence);
+  EXPECT_EQ(3, profiles.back().sequence);
+}
+
+TEST_F(SceneSyncTest, PerformanceSyncReportsOnlyActiveIslands) {
+  Scene* scene = _context->CreateScene("ActiveCounts");
+  scene->SetForceSingleIsland(true); // Fixes the island layout from the first step
+  ShapeHandle const cube = CreateUnitCube();
+
+  // A static ground box, and a dynamic box sinking slightly into it, so they are in contact.
+  RigidActorParams groundParams;
+  groundParams.shape = cube;
+  groundParams.colliderType = ColliderType::Box;
+  groundParams.isStatic = true;
+  groundParams.worldFromLocal.SetTranslation(Real3{0_r, -1_r, 0_r});
+  scene->CreateRigidActor(groundParams, test::ExpectOK{});
+  RigidActorParams restingParams;
+  restingParams.shape = cube;
+  restingParams.colliderType = ColliderType::Box;
+  restingParams.worldFromLocal.SetTranslation(Real3{0_r, -0.01_r, 0_r});
+  scene->CreateRigidActor(restingParams, test::ExpectOK{});
+
+  // A distant dynamic box pinned in place by a constraint.
+  RigidActorParams pinnedParams;
+  pinnedParams.shape = cube;
+  pinnedParams.colliderType = ColliderType::None;
+  pinnedParams.worldFromLocal.SetTranslation(Real3{10_r, 0_r, 0_r});
+  Actor const* pinned = scene->CreateRigidActor(pinnedParams, test::ExpectOK{});
+  RigidPivotPositionConstraintParams pinParams;
+  pinParams.actor = pinned->GetHandle();
+  pinParams.targetPosition = Real3{10_r, 0_r, 0_r};
+  scene->CreateRigidPivotPositionConstraint(pinParams, test::ExpectOK{});
+
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams());
+
+  scene->Step(kTimeStep);
+  ConvergenceStatus const awakeConvergence = scene->GetSolverStats().convergenceStatus;
+  protocol::StepProfileData const awake = WaitForProfileHistory(scene, 1).back();
+  EXPECT_EQ(2, awake.activeActors);
+  EXPECT_EQ(1, awake.activeConstraints);
+  EXPECT_GT(awake.activeContacts, 0);
+  EXPECT_EQ(12, awake.activeDofs);
+  EXPECT_EQ(1, awake.activeIslands);
+  EXPECT_NE(ConvergenceStatus::None, awake.convergenceStatus);
+  EXPECT_EQ(awakeConvergence, awake.convergenceStatus);
+
+  // Nothing in sleeping islands is active.
+  ForceSleepAllIslands(scene);
+  scene->Step(kTimeStep);
+  protocol::StepProfileData const asleep = WaitForProfileHistory(scene, 2).back();
+  EXPECT_EQ(0, asleep.activeActors);
+  EXPECT_EQ(0, asleep.activeConstraints);
+  EXPECT_EQ(0, asleep.activeContacts);
+  EXPECT_EQ(0, asleep.activeDofs);
+  EXPECT_EQ(0, asleep.activeIslands);
+  EXPECT_EQ(ConvergenceStatus::None, asleep.convergenceStatus); // Nothing was solved
+}
+
+TEST_F(SceneSyncTest, PerformanceProfileIsCapturedBeforePostStepCallbacks) {
+  Scene* scene = CreateSceneNoGravity();
+  CreateRigidActor(scene);
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams());
+
+  bool callbackRan = false;
+  CallbackHandle const callback =
+      scene->RegisterPostStepCallback("Sleep islands", [&](auto const&) {
+        callbackRan = true;
+        ForceSleepAllIslands(scene);
+      });
+
+  scene->Step(kTimeStep);
+  EXPECT_TRUE(callbackRan);
+  protocol::StepProfileData const profile = WaitForProfileHistory(scene, 1).back();
+  EXPECT_EQ(1, profile.activeActors);
+  EXPECT_EQ(6, profile.activeDofs);
+  EXPECT_EQ(1, profile.activeIslands);
+
+  scene->CancelCallback(callback);
+}
+
+TEST_F(SceneSyncTest, ProfileSequenceIncreasesAcrossSceneRestore) {
+  Scene* scene = CreateSceneNoGravity();
+  ActorHandle const actor = CreateRigidActor(scene);
+  Real3 const initialPosition = scene->GetActor(actor)->GetRootTransform().GetTranslation();
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams());
+
+  // The debugger captures its initial scene snapshot just before this first step.
+  scene->Step(kTimeStep);
+  uint64_t const beforeRestore = WaitForProfileHistory(scene, 1).back().sequence;
+
+  scene->GetActor(actor)->SetRootTransform(TransformRT{Real3{4_r, 5_r, 6_r}}, test::ExpectOK{});
+  _client->RestoreSceneState();
+  test::WaitUntil([&] {
+    scene->UpdateDebugger();
+    return scene->GetActor(actor)->GetRootTransform().GetTranslation() == initialPosition;
+  });
+
+  scene->Step(kTimeStep);
+  uint64_t const afterRestore = WaitForProfileHistory(scene, 2).back().sequence;
+  EXPECT_EQ(beforeRestore + 1, afterRestore);
+}
+
+TEST_F(SceneSyncTest, ZeroTimeStepDoesNotCaptureProfile) {
+  Scene* scene = CreateSceneNoGravity();
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams());
+
+  scene->Step(0.0);
+  scene->UpdateDebugger();
+  EXPECT_TRUE(GetProfileHistory().empty());
+
+  scene->Step(kTimeStep);
+  protocol::StepProfileData const profile = WaitForProfileHistory(scene, 1).back();
+  EXPECT_EQ(1, profile.sequence);
+  EXPECT_EQ(static_cast<float>(kTimeStep), profile.timeStepSec);
+}
+
+TEST_F(SceneSyncTest, PerformanceSyncLimitsPendingProfiles) {
+  Scene* scene = CreateSceneNoGravity();
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+
+  int constexpr kExpectedMaxPendingProfiles = 4096;
+  int constexpr kNumSteps = kExpectedMaxPendingProfiles + 1;
+  auto settings = _client->GetSettings();
+  settings.maxProfileHistory = kNumSteps;
+  _client->SetSettings(settings);
+
+  SetFakeClock(scene);
+  auto constexpr kSyncInterval = static_cast<float>(kTimeStep * (kNumSteps + 1));
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams(kSyncInterval));
+
+  // Give the oldest profile a distinct time step, then overflow the server's pending history.
+  scene->Step(2.0 * kTimeStep);
+  for (int i = 1; i < kNumSteps; ++i) {
+    StepWithFakeClock(scene);
+  }
+
+  _clockSec += 2.0 * kSyncInterval;
+  auto const profiles = WaitForProfileHistory(scene, kExpectedMaxPendingProfiles);
+  EXPECT_EQ(2, profiles.front().sequence);
+  EXPECT_EQ(static_cast<float>(kTimeStep), profiles.front().timeStepSec);
+}
+
+TEST_F(SceneSyncTest, PerformanceSyncDisabledSendsNoProfiles) {
+  Scene* scene = CreateSceneNoGravity();
+  CreateRigidActor(scene);
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+
+  ApplySyncParamsAndWait(scene, ActorSyncParams());
+  uint64_t const counter = GetSceneSyncData().counter;
+  scene->Step(kTimeStep);
+  WaitForSync(scene, counter + 1);
+
+  EXPECT_TRUE(GetProfileHistory().empty());
+}
+
+TEST_F(SceneSyncTest, ReenablingPerformanceSyncDiscardsUnsentProfiles) {
+  Scene* scene = CreateSceneNoGravity();
+  CreateRigidActor(scene);
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+
+  SetFakeClock(scene);
+  float constexpr kSyncInterval = 100.0f;
+  SceneSyncParams const enabled = PerformanceSyncParams(kSyncInterval);
+  ApplySyncParamsAndWait(scene, enabled);
+
+  _clockSec += 2.0 * kSyncInterval;
+  StepWithFakeClock(scene);
+  EXPECT_EQ(1, WaitForProfileHistory(scene, 1).back().sequence);
+
+  // These profiles stay on the server because the sync interval has not elapsed.
+  for (int i = 0; i < 3; ++i) {
+    StepWithFakeClock(scene);
+  }
+
+  // Toggle performance syncing off and on. The unsent profiles are now stale.
+  SceneSyncParams disabled = enabled;
+  disabled.syncPerformance = false;
+  ApplySyncParamsAndWait(scene, disabled);
+  ApplySyncParamsAndWait(scene, enabled);
+
+  StepWithFakeClock(scene);
+  _clockSec += 2.0 * kSyncInterval;
+  std::deque<protocol::StepProfileData> profiles;
+  test::WaitUntil([&] {
+    scene->UpdateDebugger();
+    profiles = GetProfileHistory();
+    return isize(profiles) == 2 && profiles.back().sequence == 5;
+  });
+  ASSERT_EQ(2, isize(profiles));
+  EXPECT_EQ(1, profiles.front().sequence);
+  EXPECT_EQ(5, profiles.back().sequence);
+  _client->ReadProfileHistory([](StepProfileHistory const& history) {
+    EXPECT_EQ(1, history.GetBeginSequence());
+    EXPECT_EQ(6, history.GetEndSequence());
+  });
+}
+
+TEST_F(SceneSyncTest, ProfileHistoryIsClearedOnSceneChangeDisconnectAndRequest) {
+  Scene* sceneA = CreateSceneNoGravity("A");
+  Scene* sceneB = CreateSceneNoGravity("B");
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(sceneA->GetHandle());
+  ApplySyncParamsAndWait(sceneA, PerformanceSyncParams());
+
+  auto const stepAndWait = [&](Scene* scene) {
+    scene->Step(kTimeStep);
+    WaitForProfileHistory(scene, 1);
+  };
+
+  stepAndWait(sceneA);
+  _client->SelectScene(sceneB->GetHandle());
+  EXPECT_TRUE(GetProfileHistory().empty());
+
+  WaitForSync(sceneB, GetSceneSyncData().counter + 1); // Syncing of B has started.
+  stepAndWait(sceneB);
+  _client->ClearProfileHistory();
+  EXPECT_TRUE(GetProfileHistory().empty());
+
+  stepAndWait(sceneB);
+  DisconnectClient();
+  EXPECT_TRUE(GetProfileHistory().empty());
+}
+
+TEST_F(SceneSyncTest, ProfileHistoryKeepsNewestUpToCapacity) {
+  Scene* scene = CreateSceneNoGravity();
+  StartServer();
+  ConnectClient();
+  ClientSelectScene(scene->GetHandle());
+
+  int constexpr kCapacity = 3;
+  auto settings = _client->GetSettings();
+  settings.maxProfileHistory = kCapacity;
+  _client->SetSettings(settings);
+  ApplySyncParamsAndWait(scene, PerformanceSyncParams());
+
+  // Each step uses a distinct time step to identify its profile.
+  int constexpr kNumSteps = 5;
+  auto const timeStep = [](int step) { return static_cast<float>(kTimeStep * (step + 1)); };
+  for (int i = 0; i < kNumSteps; ++i) {
+    scene->Step(timeStep(i));
+  }
+  test::WaitUntil([&] {
+    scene->UpdateDebugger();
+    auto const profiles = GetProfileHistory();
+    return !profiles.empty() && profiles.back().timeStepSec == timeStep(kNumSteps - 1);
+  });
+
+  auto const getTimeSteps = [&] {
+    DynamicArray<float> timeSteps;
+    for (auto const& profile : GetProfileHistory()) {
+      timeSteps.push_back(profile.timeStepSec);
+    }
+    return timeSteps;
+  };
+  DynamicArray<float> const expected = {timeStep(2), timeStep(3), timeStep(4)};
+  EXPECT_EQ(expected, getTimeSteps());
+  _client->ReadProfileHistory([](StepProfileHistory const& history) {
+    EXPECT_EQ(3, history.GetBeginSequence());
+    EXPECT_EQ(6, history.GetEndSequence());
+  });
+
+  // Shrinking keeps the newest profiles.
+  settings.maxProfileHistory = 2;
+  _client->SetSettings(settings);
+  DynamicArray<float> const expectedAfterShrink = {timeStep(3), timeStep(4)};
+  EXPECT_EQ(expectedAfterShrink, getTimeSteps());
+  _client->ReadProfileHistory([](StepProfileHistory const& history) {
+    EXPECT_EQ(4, history.GetBeginSequence());
+    EXPECT_EQ(6, history.GetEndSequence());
+  });
 }
