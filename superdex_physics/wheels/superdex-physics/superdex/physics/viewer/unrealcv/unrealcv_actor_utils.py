@@ -56,6 +56,20 @@ PREFAB_PREFIX = "prefab://"
 KEEP_PREVIOUS_TOKEN = -1.0e6
 
 
+def _decimal(value: float) -> str:
+    """``value`` as UnrealCV's ``[float]`` pattern accepts it. The pattern has no
+    exponent, so a float that formats as e.g. ``6.12e-05`` fails the whole command and
+    that actor skips its DR; every other value is written as before."""
+    text = f"{value}"
+    if isinstance(value, (float, np.floating)) and "e" in text:
+        return np.format_float_positional(value, trim="0")
+    return text
+
+
+def _decimals(*values: float) -> str:
+    return " ".join(_decimal(value) for value in values)
+
+
 @dataclass
 class UnrealCVActorConfig:
     """Configuration for UnrealCV connection and rendering."""
@@ -578,7 +592,7 @@ def _build_rgb_color_cmd(
     g = g if g is not None else KEEP_PREVIOUS_TOKEN
     b = b if b is not None else KEEP_PREVIOUS_TOKEN
     a = a if a is not None else KEEP_PREVIOUS_TOKEN
-    return _material_cmds(actor_name, "rgba", f"{r} {g} {b} {a}", component)
+    return _material_cmds(actor_name, "rgba", _decimals(r, g, b, a), component)
 
 
 def _build_hsv_color_cmd(
@@ -607,7 +621,7 @@ def _build_hsv_color_cmd(
     s = s if s is not None else KEEP_PREVIOUS_TOKEN
     v = v if v is not None else KEEP_PREVIOUS_TOKEN
     a = a if a is not None else KEEP_PREVIOUS_TOKEN
-    return _material_cmds(actor_name, "hsva", f"{h} {s} {v} {a}", component)
+    return _material_cmds(actor_name, "hsva", _decimals(h, s, v, a), component)
 
 
 def _classify_dr_response(
@@ -824,7 +838,7 @@ def _resolve_scalar_cmd(
 ) -> list[str]:
     val = _resolve_override_value(override_val, global_range, rng)
     if val is not None:
-        return _material_cmds(actor_name, prop, f"{val}", component)
+        return _material_cmds(actor_name, prop, _decimal(val), component)
     return []
 
 
@@ -840,7 +854,7 @@ def _resolve_explicit_only_cmd(
         return None
     val = _resolve_override_value(override_val, global_range, rng)
     if val is not None:
-        return f"vset /object/{actor_name}/{prop} {val}"
+        return f"vset /object/{actor_name}/{prop} {_decimal(val)}"
     return None
 
 
@@ -871,7 +885,9 @@ def _build_scalar_param_commands(actor_name: str, override: Any) -> list[str]:
     for name, spec in params.items():
         val = _resolve_override_value(spec, None)
         if val is not None:
-            commands.append(f"vset /object/{actor_name}/scalar_param {name} {val}")
+            commands.append(
+                f"vset /object/{actor_name}/scalar_param {name} {_decimal(val)}"
+            )
     return commands
 
 
@@ -891,7 +907,7 @@ def _build_vector_param_commands(actor_name: str, override: Any) -> list[str]:
             rgb.append(0.0 if val is None else val)
         rgb += [0.0] * (3 - len(rgb))
         commands.append(
-            f"vset /object/{actor_name}/vector_param {name} {rgb[0]} {rgb[1]} {rgb[2]}"
+            f"vset /object/{actor_name}/vector_param {name} {_decimals(*rgb[:3])}"
         )
     return commands
 
@@ -930,7 +946,7 @@ def _build_exclusive_color_texture_cmds(
         tex = _resolve_override_value(ov_tex, None, rng)
         if tex is not None:
             commands.extend(
-                _material_cmds(actor_name, "texture_index", f"{tex}", component)
+                _material_cmds(actor_name, "texture_index", _decimal(tex), component)
             )
         commands.extend(
             _material_cmds(actor_name, "hsva", "0.0 0.0 1.0 1.0", component)
@@ -1026,7 +1042,7 @@ def _build_actor_material_commands(
         tex = _resolve_override_value(ov_tex, None, rng)
         if tex is not None:
             commands.extend(
-                _material_cmds(actor_name, "texture_index", f"{tex}", component)
+                _material_cmds(actor_name, "texture_index", _decimal(tex), component)
             )
 
     # Light-only properties: whole-actor only (no per-component UnrealCV route).
@@ -1230,7 +1246,7 @@ def apply_scale_dr(
             )
             if group is not None:
                 group_scales[group] = (sx, sy, sz)
-        commands.append(f"vset /object/{actor_name}/scale {sx} {sy} {sz}")
+        commands.append(f"vset /object/{actor_name}/scale {_decimals(sx, sy, sz)}")
 
     if not commands:
         return
@@ -1327,7 +1343,7 @@ def apply_mpc_dr(
             if resolved is None:
                 continue
             commands.append(
-                f"vset /object/{actor_name}/mpc_scalar {param_name} {resolved}"
+                f"vset /object/{actor_name}/mpc_scalar {param_name} {_decimal(resolved)}"
             )
 
     if not commands:
@@ -1494,7 +1510,7 @@ def apply_position_dr(
         x = _resolve_position_axis(override, "location_x", "offset_x", ix, rng)
         y = _resolve_position_axis(override, "location_y", "offset_y", iy, rng)
         z = _resolve_position_axis(override, "location_z", "offset_z", iz, rng)
-        commands.append(f"vset /object/{actor_name}/location {x} {y} {z}")
+        commands.append(f"vset /object/{actor_name}/location {_decimals(x, y, z)}")
 
     if not commands:
         return
@@ -1687,10 +1703,13 @@ def apply_rotation_dr(
         roll = _resolve_rotation_axis(override, "rotation_roll", "offset_roll", ir, rng)
         if component:
             commands.append(
-                f"vset /object/{actor_name}/rotation {component} {pitch} {yaw} {roll}"
+                f"vset /object/{actor_name}/rotation {component} "
+                f"{_decimals(pitch, yaw, roll)}"
             )
         else:
-            commands.append(f"vset /object/{actor_name}/rotation {pitch} {yaw} {roll}")
+            commands.append(
+                f"vset /object/{actor_name}/rotation {_decimals(pitch, yaw, roll)}"
+            )
         labels.append(key)
 
     if not commands:
@@ -1893,8 +1912,8 @@ def _build_sphere_placement_commands(
     pitch = float(np.degrees(np.arctan2(dz, np.hypot(dx, dy))))
 
     return [
-        f"vset /object/{actor_name}/location {px} {py} {pz}",
-        f"vset /object/{actor_name}/rotation {pitch} {yaw} 0.0",
+        f"vset /object/{actor_name}/location {_decimals(px, py, pz)}",
+        f"vset /object/{actor_name}/rotation {_decimals(pitch, yaw)} 0.0",
     ]
 
 
@@ -2368,9 +2387,9 @@ def apply_hdri_lighting_dr(
 
     commands = [
         f"vset /object/{dome}/texture_cube_param {dome_cube_param} {cube_path}",
-        f"vset /object/{dome}/rotation {base_pitch} {dome_yaw} {base_roll}",
+        f"vset /object/{dome}/rotation {_decimals(base_pitch, dome_yaw, base_roll)}",
         f"vset /object/{skylight}/skylight_cubemap {cube_path}",
-        f"vset /object/{skylight}/skylight_angle {yaw}",
+        f"vset /object/{skylight}/skylight_angle {_decimal(yaw)}",
     ]
 
     # Optional brightness / tint knobs, batched with the cubemap swap so the
@@ -2378,7 +2397,7 @@ def apply_hdri_lighting_dr(
     skylight_intensity = _resolve_override_value(skylight_intensity_cfg, None, rng)
     if skylight_intensity is not None:
         commands.append(
-            f"vset /object/{skylight}/skylight_intensity {skylight_intensity}"
+            f"vset /object/{skylight}/skylight_intensity {_decimal(skylight_intensity)}"
         )
 
     if skylight_color_cfg is not None:
@@ -2396,12 +2415,14 @@ def apply_hdri_lighting_dr(
             r = r if r is not None else 1.0
             g = g if g is not None else 1.0
             b = b if b is not None else 1.0
-            commands.append(f"vset /object/{skylight}/skylight_color {r} {g} {b}")
+            commands.append(
+                f"vset /object/{skylight}/skylight_color {_decimals(r, g, b)}"
+            )
 
     skydome_brightness = _resolve_override_value(skydome_brightness_cfg, None, rng)
     if skydome_brightness is not None:
         commands.append(
-            f"vset /object/{dome}/scalar_param Brightness {skydome_brightness}"
+            f"vset /object/{dome}/scalar_param Brightness {_decimal(skydome_brightness)}"
         )
 
     result = client._request_batch(commands)

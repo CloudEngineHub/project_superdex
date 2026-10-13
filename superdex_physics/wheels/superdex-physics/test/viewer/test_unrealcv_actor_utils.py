@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from superdex.physics.viewer.unrealcv.unrealcv_actor_utils import (
     _build_actor_material_commands,
+    _decimal,
     _log_material_dr_results,
     _log_mpc_results,
     _log_visibility_results,
@@ -29,6 +30,7 @@ from superdex.physics.viewer.unrealcv.unrealcv_actor_utils import (
     apply_mpc_dr,
     apply_scale_dr,
     get_material_params,
+    KEEP_PREVIOUS_TOKEN,
 )
 
 
@@ -585,6 +587,31 @@ class BuildActorMaterialCommandsExclusiveTest(unittest.TestCase):
                 f"vset /object/{self._ACTOR}/hsva NIST_Board_Render 0.0 0.0 1.0 1.0",
                 f"vset /object/{self._ACTOR}/roughness NIST_Board_Render 0.6",
                 f"vset /object/{self._ACTOR}/metallic NIST_Board_Render 0.2",
+            ],
+        )
+
+
+class DecimalDrValuesTest(unittest.TestCase):
+    """UnrealCV's [float] pattern has no exponent: DR floats go out positionally."""
+
+    def test_only_floats_that_format_with_an_exponent_change(self):
+        self.assertEqual("0.0000612", _decimal(6.12e-05))
+        self.assertEqual("0.0000612", _decimal(np.float32(6.12e-05)))
+        self.assertEqual("0.5625084527225299", _decimal(0.5625084527225299))
+        self.assertEqual("-1000000.0", _decimal(KEEP_PREVIOUS_TOKEN))
+        self.assertEqual("3", _decimal(3))
+
+    def test_a_tiny_sampled_hue_reaches_unrealcv_in_decimal_form(self):
+        override = _FakeMaterialOverride(
+            hue=_FakeRangeConfig(0.0, 360.0), roughness=_FakeRangeConfig(0.4, 0.9)
+        )
+        with patch("numpy.random.uniform", side_effect=[6.12e-05, 0.55]):
+            commands = _build_actor_material_commands("Board", override, {})
+        self.assertEqual(
+            commands,
+            [
+                "vset /object/Board/hsva 0.0000612 -1000000.0 -1000000.0 -1000000.0",
+                "vset /object/Board/roughness 0.55",
             ],
         )
 
