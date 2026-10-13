@@ -4220,6 +4220,7 @@ struct CTempPotentialColliderData {
   std::vector<entt::entity> dynamicEntities;
   std::vector<Aabb> dynamicBounds;
   std::vector<uint8_t> dynamicHasCollider;
+  DynamicArray<std::pair<real, int>> dynamicSweepOrder; // (lower bound, index in dynamicBounds)
 };
 } // namespace
 
@@ -4267,8 +4268,35 @@ void InitializeOnce(entt::registry& reg) {
   data.dynamicEntities.reserve(kReserveSize);
   data.dynamicBounds.reserve(kReserveSize);
   data.dynamicHasCollider.reserve(kReserveSize);
+  data.dynamicSweepOrder.reserve(kReserveSize);
 }
 } // namespace mochi::contact
+
+size_t mochi::contact::SelectSweepAxis(Span<Aabb const> bounds) {
+  // Accumulate offsets from the first finite center, in double, so that the variances don't cancel
+  // far from the origin.
+  Double3 origin{};
+  Double3 sum{};
+  Double3 sumSqr{};
+  double count = 0.0;
+  for (Aabb const& box : bounds) {
+    // Non-finite boxes don't vote. Check them before taking the center: the center of infinite
+    // (quasistatic) bounds computes -inf + inf, which raises an invalid-operation exception.
+    if (!IsFinite(box.GetMin()) || !IsFinite(box.GetMax())) {
+      continue;
+    }
+    auto const center = StaticCast<Double3>(box.GetCenter());
+    if (count == 0.0) {
+      origin = center;
+    }
+    Double3 const offset = center - origin;
+    sum += offset;
+    sumSqr += offset * offset;
+    ++count;
+  }
+  // count^2 times the variances, all zero (selecting x) if no box is finite.
+  return ArgMax(count * sumSqr - sum * sum);
+}
 
 void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
   MOCHI_PROFILE_SCOPE();
@@ -4283,11 +4311,13 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
   auto& dynamicEntities = ctx.dynamicEntities;
   auto& dynamicBounds = ctx.dynamicBounds;
   auto& dynamicHasCollider = ctx.dynamicHasCollider;
+  auto& dynamicSweepOrder = ctx.dynamicSweepOrder;
   staticColliders.clear();
   staticBounds.clear();
   dynamicEntities.clear();
   dynamicBounds.clear();
   dynamicHasCollider.clear();
+  dynamicSweepOrder.clear();
 
   // Clear CConservativePotentialColliders for all actors
   reg.view<CConservativePotentialColliders</*kIsSync*/ false>>().each(
@@ -4342,7 +4372,19 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
   CConservativePotentialColliders</*kIsSync*/ true>* iSync = nullptr;
   int const numDynamic = isize(dynamicEntities);
   int const numStatic = isize(staticColliders);
+  size_t const axis = SelectSweepAxis(dynamicBounds);
+
+  // Sort the dynamic actors by lower bound on that axis, then by index so that the order does not
+  // depend on the sort implementation. A NaN must not reach the comparator (undefined behavior),
+  // and NaN bounds overlap nothing, so they sort last.
   for (int i = 0; i < numDynamic; ++i) {
+    real const lower = dynamicBounds[i].GetMin()[axis];
+    dynamicSweepOrder.emplace_back(std::isnan(lower) ? kInf : lower, i);
+  }
+  std::ranges::sort(dynamicSweepOrder);
+
+  for (int iSweep = 0; iSweep < numDynamic; ++iSweep) {
+    int const i = dynamicSweepOrder[iSweep].second;
     entt::entity ie = dynamicEntities[i];
     Aabb const iBounds = dynamicBounds[i];
     auto iLayer = layers.get(ie).id;
@@ -4364,9 +4406,12 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
       }
     }
 
-    // Iterate over all other dynamic actors, starting at (i + 1).
+    // Iterate over the later dynamic actors in the sweep that overlap entity ie on the sweep axis.
     // They may contact entity ie even if it doesn't contact them.
-    for (int j = i + 1; j < numDynamic; ++j) {
+    real const iUpper = iBounds.GetMax()[axis];
+    for (int jSweep = iSweep + 1; jSweep < numDynamic && dynamicSweepOrder[jSweep].first <= iUpper;
+         ++jSweep) {
+      int const j = dynamicSweepOrder[jSweep].second;
       if (HasOverlap(iBounds, dynamicBounds[j])) {
         entt::entity je = dynamicEntities[j];
         ContactLayerId jLayer = layers.get(je).id;

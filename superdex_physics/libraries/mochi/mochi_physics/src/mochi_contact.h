@@ -50,6 +50,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1098,6 +1099,10 @@ void FlagPotentialSyncColliders(entt::registry& reg);
 // Call this at the beginning of each simulation step to update CConservativePotentialColliders for
 // all actors. Must come AFTER CConservativeStepBounds has been updated.
 void UpdateConservativePotentialColliders(entt::registry& reg);
+
+// Returns the axis on which the centers of the finite boxes vary most, along which
+// UpdateConservativePotentialColliders sweeps, or 0 (x) if no box is finite.
+[[nodiscard]] size_t SelectSweepAxis(Span<Aabb const> bounds);
 
 void InitializeOnce(entt::registry& reg);
 
