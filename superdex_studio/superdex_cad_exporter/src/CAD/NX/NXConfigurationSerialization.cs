@@ -19,8 +19,8 @@ using NXOpen;
 using NXOpen.Features;
 using NXOpen.UF;
 
+using CADRobotExporter.Export;
 using CADRobotExporter.RobotDescription;
-using CADRobotExporter.UI;
 using CADRobotExporter.Utilities;
 
 namespace CADRobotExporter.CAD.NX

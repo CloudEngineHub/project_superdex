@@ -1090,11 +1090,11 @@ namespace CADRobotExporter.RobotExport
             _exportErrorWhy = "";
             Robot = new Robot();
 
-            CadBridge.SetProgressBarStart(RobotDescription.Utilities.GetCount(baseNode.Nodes) + 1, "Building links");
+            CadBridge.SetProgressBarStart(allNodes.Count + 1, "Building links");
             int count = 0;
 
             CadBridge.SetProgressBarProgress(count);
-            CadBridge.SetProgressBarTitle("Building link: " + baseNode.Name);
+            CadBridge.SetProgressBarTitle("Building link: " + baseNode.Link.Name);
 
             Link baseLink = CreateLink(baseNode, 1);
             if (baseLink == null || !string.IsNullOrWhiteSpace(_exportErrorWhy))
@@ -1128,7 +1128,7 @@ namespace CADRobotExporter.RobotExport
         //Method which builds an entire link and iterates through.
         private Link CreateLink(LinkNode node, int count)
         {
-            CadBridge.SetProgressBarTitle("Building link: " + node.Name);
+            CadBridge.SetProgressBarTitle("Building link: " + node.Link.Name);
             CadBridge.SetProgressBarProgress(count);
             Link link;
             if (node.IsBaseNode)

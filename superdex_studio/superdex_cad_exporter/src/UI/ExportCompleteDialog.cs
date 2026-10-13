@@ -5,71 +5,72 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-using System.Drawing;
-using System.Windows.Forms;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace CADRobotExporter.UI
 {
-    public class ExportCompleteDialog : Form
+    /// <summary>
+    /// Reports where the exported files were written. A true dialog result means the user asked to
+    /// open the containing folder.
+    /// </summary>
+    public class ExportCompleteDialog : Window
     {
-        private Button openFolderButton;
-        private Button closeButton;
-
         public ExportCompleteDialog(string urdfPath, string mjcfPath, string superdexBotPath)
         {
-            Text = "SuperDex CAD Exporter";
-            TopMost = true;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            StartPosition = FormStartPosition.CenterScreen;
-            MaximizeBox = false;
-            MinimizeBox = false;
+            Theme.FluentTheme.Apply(this);
 
-            int formWidth = 720;
+            Title = "SuperDex CAD Exporter";
+            Topmost = true;
+            Width = 720;
+            SizeToContent = SizeToContent.Height;
+            ResizeMode = ResizeMode.NoResize;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            ShowInTaskbar = false;
 
             string message = "Export complete!\n\n" +
                 "URDF file saved to:\n" + urdfPath + "\n\n" +
                 "MJCF file saved to:\n" + mjcfPath + "\n\n" +
                 "SuperDex Bot file saved to:\n" + superdexBotPath;
 
-            var label = new Label
+            TextBlock label = new TextBlock
             {
-                Left = 10,
-                Top = 10,
-                MaximumSize = new Size(formWidth - 30, 0),
                 Text = message,
-                AutoSize = true
+                TextWrapping = TextWrapping.Wrap,
             };
 
-            Controls.Add(label);
-
-            int buttonY = label.Bottom + 20;
-
-            openFolderButton = new Button
+            Button openFolderButton = new Button
             {
-                Text = "Open Folder",
-                Left = formWidth - 320,
-                Top = buttonY,
+                Content = "Open Folder",
+                IsDefault = true,
                 Width = 200,
                 Height = 32,
-                DialogResult = DialogResult.Yes
             };
+            openFolderButton.Click += (sender, e) => { DialogResult = true; };
 
-            closeButton = new Button
+            Button closeButton = new Button
             {
-                Text = "Close",
-                Left = formWidth - 100,
-                Top = buttonY,
+                Content = "Close",
+                IsCancel = true,
                 Width = 80,
                 Height = 32,
-                DialogResult = DialogResult.No
+                Margin = new Thickness(20, 0, 0, 0),
             };
 
-            AcceptButton = openFolderButton;
-            CancelButton = closeButton;
-            Controls.Add(openFolderButton);
-            Controls.Add(closeButton);
+            StackPanel buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 20, 0, 0),
+            };
+            buttons.Children.Add(openFolderButton);
+            buttons.Children.Add(closeButton);
 
-            ClientSize = new Size(formWidth, buttonY + 50);
+            StackPanel root = new StackPanel { Margin = new Thickness(10) };
+            root.Children.Add(label);
+            root.Children.Add(buttons);
+
+            Content = root;
         }
     }
 }
