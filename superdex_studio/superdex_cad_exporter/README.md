@@ -32,7 +32,7 @@ Some notable features that have been removed, amongst others:
 - Visual Studio 2022 with .NET Desktop Development
 - CMake (for building superdex_mesh_cli)
 - A SolidWorks API installation is required for SolidWorks
-- The .NET SDK is required to build the SolidWorks installer (the WiX v6 toolset is restored automatically via NuGet)
+- The .NET SDK is required to build the installers (the WiX v6 toolset is restored automatically via NuGet)
 - An NXOpen license is required for Siemens NX
 
 ## Building
@@ -42,7 +42,9 @@ Some notable features that have been removed, amongst others:
 3. Open SuperDexCADExporter.sln
 4. For SolidWorks, right-click on SolidWorksRobotExporter and click Build. The Add-In should be registered automatically. If not, or the build is failing, double-check the SolidWorks API locations in SolidWorksRobotExporter.csproj and update accordingly.
 5. For NX, right-click on NXRobotExporter and click Build. The built files by default are deposited into `C:/NXCustom/`. Please see below for installation instructions.
-6. For SolidWorks, run `scripts/MakeSolidWorksInstaller.ps1` via Powershell to build the installer. The MSI will be written to `installer/OUTPUT/SuperDexCadExporterSetup.msi`.
+6. To build the installers, run the scripts below via PowerShell. Both MSIs are written to `installer/output/`.
+   - SolidWorks: build SolidWorksRobotExporter (Release|x64), then run `scripts/MakeSolidWorksInstaller.ps1` to produce `SuperDexCadExporterSolidWorksSetup.msi`.
+   - NX: build NXRobotExporter (Release), then run `scripts/MakeNXInstaller.ps1` to produce `SuperDexCadExporterNXSetup.msi`.
 
 ## Installation
 
@@ -57,11 +59,14 @@ Some notable features that have been removed, amongst others:
 
 ### Siemens NX
 
-1. As we currently do not distribute binaries for the NX plugin, please follow the building instructions shown in the [README](https://github.com/facebookresearch/project_superdex/blob/main/superdex_studio/superdex_cad_exporter/README.md).
-2. Make sure Siemens NX or Teamcenter NX is closed before starting
-3. The build process should deposit `application` and `startup` folders into `C:/NXCustom`.
-4. Add `UGII_USER_DIR` to your User or System Environment Variables (System Properties → Environment Variables...) and point it to `C:/NXCustom`.
-5. The next time you launch Siemens NX or Teamcenter NX, there should now be a Robotics tab in your ribbon bar. If not, reboot your PC and try again.
+1. Download the NX installer from the latest release on the [Release page](https://github.com/facebookresearch/project_superdex/releases), or build it yourself by following the building instructions above.
+2. Make sure Siemens NX or Teamcenter NX is closed before starting.
+3. Run the installer and go through the prompts.
+   - The add-in is installed into the `startup` and `application` folders of your `UGII_USER_DIR`. If `UGII_USER_DIR` is not set, the installer creates `C:/NXCustom` and sets `UGII_USER_DIR` to it for your user account.
+   - If the installer finds existing NX customizations (such as `UGII_USER_DIR`, `UGII_ENV_FILE`, `UGII_CUSTOM_DIRECTORY_FILE`, `UGII_SITE_DIR` or `UGII_GROUP_DIR`), it lists them before installing. NX setups managed by an administrator may load add-ins from elsewhere, so check with your NX system administrator before continuing.
+4. The next time you launch Siemens NX or Teamcenter NX, there should now be a **Robotics** tab in your ribbon bar. If not, sign out of Windows and back in (or reboot) so NX picks up `UGII_USER_DIR`, then try again.
+
+If you build NXRobotExporter from source instead, the build deposits the `application` and `startup` folders into `C:/NXCustom`. Add `UGII_USER_DIR` to your User or System Environment Variables (System Properties → Environment Variables...) and point it to `C:/NXCustom`.
 
 ## Usage
 

@@ -19,8 +19,8 @@
 
     <SummaryInformation Description="SuperDex CAD Exporter for SolidWorks" Manufacturer="SuperDex" />
 
-    <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of [ProductName] is already installed. Uninstall it before running this installer." />
+    <!-- Any installed version, older, equal or newer, is replaced. -->
+    <MajorUpgrade AllowDowngrades="yes" />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/facebookresearch/project_superdex" />
@@ -84,6 +84,15 @@
                            Key="SOFTWARE\SolidWorks\Addins\$(AddinClsid)" />
         <RemoveRegistryKey Root="HKLM" Action="removeOnInstall"
                            Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{E43E85A9-071D-430A-91B2-84B7AB923170}_is1" />
+        <!-- Clear out old versions: COM loads the highest one registered, and RegAsm only removes its own. -->
+        <RemoveRegistryKey Root="HKLM" Action="removeOnInstall"
+                           Key="SOFTWARE\Classes\CLSID\$(AddinClsid)" />
+      </Component>
+
+      <!-- Set here because RegAsm runs as SYSTEM and can't write to the user's HKCU. -->
+      <Component Id="AddinStartup" Bitness="always64">
+        <RegistryValue Root="HKCU" Key="Software\SolidWorks\AddInsStartup\$(AddinClsid)"
+                       Type="integer" Value="1" KeyPath="yes" />
       </Component>
 
       <Files Include="$(BinDir)\*">
