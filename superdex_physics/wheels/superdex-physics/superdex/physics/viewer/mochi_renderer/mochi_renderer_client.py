@@ -46,7 +46,7 @@ class ResponseEntry:
     """A single response from a batch request."""
 
     type: int  # 0 = text, 1 = image
-    data: bytes = b""
+    data: bytes | memoryview = b""
 
 
 ########################################################################################
@@ -164,7 +164,7 @@ class MochiRendererClient:
         responses = self.request_batch([entry])
         if not responses:
             raise RuntimeError("Server returned zero responses for a single command")
-        return responses[0].data
+        return bytes(responses[0].data)
 
     def request_batch(self, commands: list[CommandEntry]) -> list[ResponseEntry]:
         """
@@ -215,7 +215,7 @@ class MochiRendererClient:
         return b"".join(parts)
 
     @staticmethod
-    def _decode_response(payload: bytes) -> list[ResponseEntry]:
+    def _decode_response(payload: bytes | memoryview) -> list[ResponseEntry]:
         """
         Decode a response payload into a list of ResponseEntry objects.
 
@@ -250,23 +250,22 @@ class MochiRendererClient:
         sock.sendall(header + payload)
 
     @staticmethod
-    def _recv_framed(sock: socket.socket) -> bytes:
+    def _recv_framed(sock: socket.socket) -> memoryview:
         """Receive a length-prefixed payload from the socket."""
         header = MochiRendererClient._recv_exact(sock, 4)
         (length,) = struct.unpack("<I", header)
         return MochiRendererClient._recv_exact(sock, length)
 
     @staticmethod
-    def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes:
+    def _recv_exact(sock: socket.socket, num_bytes: int) -> memoryview:
         """Read exactly *num_bytes* from *sock*, raising on premature EOF."""
-        chunks: list[bytes] = []
-        remaining = num_bytes
-        while remaining > 0:
-            chunk = sock.recv(min(remaining, 65536))
-            if not chunk:
+        view = memoryview(bytearray(num_bytes))
+        received = 0
+        while received < num_bytes:
+            chunk = sock.recv_into(view[received:])
+            if chunk == 0:
                 raise ConnectionError(
                     "Connection closed while reading from mochi_renderer"
                 )
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+            received += chunk
+        return view

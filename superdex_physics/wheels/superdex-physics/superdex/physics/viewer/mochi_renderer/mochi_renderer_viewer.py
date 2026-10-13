@@ -1530,7 +1530,7 @@ class MochiRendererViewer:
         )
 
     @staticmethod
-    def _decode_image_response(data: bytes) -> RenderFrame | None:
+    def _decode_image_response(data: bytes | memoryview) -> RenderFrame | None:
         """
         Decode an image response from the server.
 

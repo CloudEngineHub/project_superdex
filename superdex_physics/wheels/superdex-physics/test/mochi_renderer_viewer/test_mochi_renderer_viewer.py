@@ -31,6 +31,28 @@ from superdex.physics.viewer.mochi_renderer.mochi_renderer_client import (
 )
 
 ########################################################################################
+
+
+def _mock_recv_into(mock_sock: MagicMock, *chunks: bytes) -> None:
+    """Make ``mock_sock.recv_into`` deliver *chunks*, then EOF, like a real socket."""
+    pending = list(chunks)
+
+    def recv_into(view: memoryview) -> int:
+        if not pending:
+            return 0
+        chunk = pending[0]
+        n = min(len(chunk), len(view))
+        view[:n] = chunk[:n]
+        if n == len(chunk):
+            pending.pop(0)
+        else:
+            pending[0] = chunk[n:]
+        return n
+
+    mock_sock.recv_into.side_effect = recv_into
+
+
+########################################################################################
 # Dataclass tests
 ########################################################################################
 
@@ -259,6 +281,21 @@ class TestDecodeResponse:
         entries = MochiRendererClient._decode_response(payload)
         assert len(entries) == 0
 
+    def test_received_payload_is_not_copied(self) -> None:
+        image = struct.pack("<III", 1, 1, 4) + b"\xff\x00\x00\xff"
+        payload = struct.pack("<I", 2)
+        payload += struct.pack("<B", 0) + struct.pack("<I", 2) + b"ok"
+        payload += struct.pack("<B", 1) + struct.pack("<I", len(image)) + image
+        received = memoryview(bytearray(payload))
+
+        entries = MochiRendererClient._decode_response(received)
+
+        for entry in entries:
+            assert isinstance(entry.data, memoryview)
+            assert entry.data.obj is received.obj
+        assert entries[0].data == b"ok"
+        assert entries[1].data == image
+
 
 ########################################################################################
 # Roundtrip tests
@@ -375,8 +412,7 @@ class TestRequestBatch(unittest.TestCase):
         # Frame it
         response_frame = struct.pack("<I", len(response_payload)) + response_payload
 
-        # Mock recv to return the framed response
-        mock_sock.recv.side_effect = [response_frame[:4], response_frame[4:]]
+        _mock_recv_into(mock_sock, response_frame[:4], response_frame[4:])
 
         commands = [CommandEntry(text="vget /objects")]
         results = client.request_batch(commands)
@@ -396,9 +432,10 @@ class TestRequestBatch(unittest.TestCase):
         response_payload += response_text
         response_frame = struct.pack("<I", len(response_payload)) + response_payload
 
-        mock_sock.recv.side_effect = [response_frame[:4], response_frame[4:]]
+        _mock_recv_into(mock_sock, response_frame)
 
         data = client.request("vset /object/box/show")
+        assert type(data) is bytes
         assert data == b"ok"
 
 
@@ -412,19 +449,25 @@ class TestRecvExact(unittest.TestCase):
 
     def test_recv_exact_single_chunk(self) -> None:
         mock_sock = MagicMock()
-        mock_sock.recv.return_value = b"hello"
+        _mock_recv_into(mock_sock, b"hello")
         result = MochiRendererClient._recv_exact(mock_sock, 5)
         assert result == b"hello"
 
     def test_recv_exact_multiple_chunks(self) -> None:
         mock_sock = MagicMock()
-        mock_sock.recv.side_effect = [b"he", b"ll", b"o"]
+        _mock_recv_into(mock_sock, b"he", b"ll", b"o")
         result = MochiRendererClient._recv_exact(mock_sock, 5)
         assert result == b"hello"
 
+    def test_recv_exact_leaves_following_data_unread(self) -> None:
+        mock_sock = MagicMock()
+        _mock_recv_into(mock_sock, b"hello world")
+        assert MochiRendererClient._recv_exact(mock_sock, 5) == b"hello"
+        assert MochiRendererClient._recv_exact(mock_sock, 6) == b" world"
+
     def test_recv_exact_connection_closed(self) -> None:
         mock_sock = MagicMock()
-        mock_sock.recv.return_value = b""
+        _mock_recv_into(mock_sock, b"hel")
         with self.assertRaises(ConnectionError):
             MochiRendererClient._recv_exact(mock_sock, 5)
 
