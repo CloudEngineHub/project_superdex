@@ -167,12 +167,14 @@ void MochiDebuggerApp::OnInitialize() {
   {
     DebugClientSettings settings;
 
-    // Continuously sync the selected scene's actors, surface meshes, and debug-draw geometry.
+    // Continuously sync the selected scene's actors, surface meshes, debug-draw geometry, and step
+    // profile data.
     settings.sync.enabled = true;
     settings.sync.syncInterval = 1.0f / 100.0f; // Max sync rate: 100 Hz
     settings.sync.syncActors = true;
     settings.sync.syncDebugDraw = true;
     settings.sync.syncMeshes = true;
+    settings.sync.syncPerformance = true;
     _client->SetSettings(settings);
 
     // Start paused

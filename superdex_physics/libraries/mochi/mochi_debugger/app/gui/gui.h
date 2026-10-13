@@ -19,6 +19,7 @@
 #include "../viewport/render_scene.h"
 #include "connect_dialog.h"
 #include "log_view.h"
+#include "profiling_panel.h"
 #include "properties_panel.h"
 #include "scene_panel.h"
 #include "terminal_panel.h"
@@ -44,6 +45,7 @@ constexpr char const* kPanelNameScene = "Scene";
 constexpr char const* kPanelNameViewport = "Viewport";
 constexpr char const* kPanelNameProperties = "Properties";
 constexpr char const* kPanelNameTerminal = "Terminal";
+constexpr char const* kPanelNameProfiler = "Profiler";
 
 enum class CommandId {
   Exit,
@@ -98,6 +100,7 @@ struct UiState : NoCopy {
   TerminalPanelState terminal;
   ScenePanelState scene;
   IslandsPropertiesState islands;
+  ProfilerPanelState profiler;
 };
 
 void InitializeUi(UiState& state);

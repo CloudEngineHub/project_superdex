@@ -17,6 +17,7 @@
 #include "gui.h"
 
 #include "connect_dialog.h"
+#include "profiling_panel.h"
 #include "properties_panel.h"
 #include "scene_panel.h"
 #include "terminal_panel.h"
@@ -159,7 +160,7 @@ static void BuildMainMenuBar(UiState& state) {
 */
 
 // Build a sensible default dock layout: Scene on the left, Viewport in the center, and Properties
-// tabbed on the right, and the Terminal along the bottom.
+// tabbed on the right, and the Profiler along the bottom with the Terminal tabbed behind it.
 static void BuildDefaultLayout(UiState& state, ImGuiID dockspaceId) {
   ImGui::DockBuilderRemoveNode(dockspaceId);
   ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
@@ -182,6 +183,7 @@ static void BuildDefaultLayout(UiState& state, ImGuiID dockspaceId) {
   dock(kPanelNameViewport, center);
   dock(kPanelNameProperties, right);
   dock(kPanelNameTerminal, bottom);
+  dock(kPanelNameProfiler, bottom);
 
   ImGui::DockBuilderFinish(dockspaceId);
 }
@@ -248,6 +250,8 @@ void dbg::InitializeUi(UiState& state) {
       kPanelNameProperties, ICON_FA_SLIDERS_H, kPanelNameProperties, &BuildPropertiesPanel);
   state.panels.try_emplace(
       kPanelNameTerminal, ICON_FA_TERMINAL, kPanelNameTerminal, &BuildTerminalPanel);
+  state.panels.try_emplace(
+      kPanelNameProfiler, ICON_FA_CHART_BAR, kPanelNameProfiler, &BuildProfilerPanel);
 }
 
 /*****************************************************************************
