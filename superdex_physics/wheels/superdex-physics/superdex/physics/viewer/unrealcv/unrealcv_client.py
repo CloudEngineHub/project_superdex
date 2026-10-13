@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -265,21 +266,33 @@ class UnrealCVClient:
         return result[0]
 
     def _mark_disconnected(self) -> None:
-        """Tear down the connection after a timed-out request.
+        """Tear down the connection after a request that timed out or failed.
 
         Flips ``is_connected()`` to False so later requests short-circuit
         instead of touching the client (whose request/response counters are now
-        out of sync), and closes the socket so the vendored background recv()
-        thread can unwind.
+        out of sync), and shuts down and closes the socket so the vendored
+        background recv() thread unwinds at once.
         """
         self._connected = False
         sock = getattr(self._client, "sock", None)
         if sock is not None:
+            # close() alone does not wake a thread blocked in recv() on this
+            # socket, which would then outlive the request by up to its timeout.
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 sock.close()
             except OSError:
                 pass
         self._client.sock = None
+        # The vendored client's receive thread may instead wait on its count queue,
+        # which the socket shutdown does not wake; its quit signal (what
+        # disconnect() sends) does.
+        recv_num_q = getattr(self._client, "recv_num_q", None)
+        if recv_num_q is not None:
+            recv_num_q.put(None)
 
     def disconnect(self):
         """Close the connection to the UnrealCV server."""
@@ -306,22 +319,23 @@ class UnrealCVClient:
         Returns:
             The response string, or None if the request failed.
         """
-        if not self.is_connected():
-            logger.warning("Cannot send request: not connected to UnrealCV server")
-            return None
-
-        try:
-            if use_async:
-                self._client.request_async(command)
+        with self._request_lock:
+            # Checked under the lock: a request that failed while this one waited
+            # has retired the client.
+            if not self.is_connected():
+                logger.warning("Cannot send request: not connected to UnrealCV server")
                 return None
 
-            # sync request
-            with self._request_lock:
-                response = self._blocking_call(self._client.request, command)
-            return response
-        except Exception as e:
-            logger.error(f"Request failed for command '{command}': {e}")
-            return None
+            try:
+                if use_async:
+                    self._client.request_async(command)
+                    return None
+
+                return self._blocking_call(self._client.request, command)
+            except Exception as e:
+                logger.error(f"Request failed for command '{command}': {e}")
+                self._mark_disconnected()
+                return None
 
     def _request_batch(  # noqa: C901
         self, commands: list[str], use_async: bool = False, profile: bool = False
@@ -344,15 +358,17 @@ class UnrealCVClient:
         if not commands:
             return ([], {}) if profile else []
 
-        if not self.is_connected():
-            logger.warning(
-                "Cannot send batch request: not connected to UnrealCV server"
-            )
-            empty: list[str | None] = [None] * len(commands)  # pyre-ignore[9]
-            return (empty, {}) if profile else empty
+        with self._request_lock:
+            # Checked under the lock: a request that failed while this one waited
+            # has retired the client.
+            if not self.is_connected():
+                logger.warning(
+                    "Cannot send batch request: not connected to UnrealCV server"
+                )
+                empty: list[str | None] = [None] * len(commands)  # pyre-ignore[9]
+                return (empty, {}) if profile else empty
 
-        try:
-            with self._request_lock:
+            try:
                 if use_async:
                     self._client.request_batch_async(commands)
                     empty: list[str | None] = [None] * len(commands)  # pyre-ignore[9]
@@ -441,10 +457,14 @@ class UnrealCVClient:
                     profiling["transform_response_bytes"] = transform_bytes
 
                 return (responses, profiling)
-        except Exception as e:
-            logger.error(f"Batch request failed: {e}")
-            empty: list[str | None] = [None] * len(commands)  # pyre-ignore[9]
-            return (empty, {}) if profile else empty
+            except Exception as e:
+                logger.error(f"Batch request failed: {e}")
+                # Part of the batch may have reached the server, whose replies would
+                # then answer later commands, so the client is retired before the
+                # lock lets a waiting request send.
+                self._mark_disconnected()
+                empty: list[str | None] = [None] * len(commands)  # pyre-ignore[9]
+                return (empty, {}) if profile else empty
 
     ####################################################################################
     # Command Building (no network I/O — just returns command strings)

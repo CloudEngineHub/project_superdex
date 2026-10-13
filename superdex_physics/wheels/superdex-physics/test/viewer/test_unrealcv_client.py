@@ -14,7 +14,12 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 import unittest
+from collections.abc import Callable
+from socket import SHUT_RDWR
+from unittest.mock import call, Mock
 
 import numpy as np
 from superdex.physics.viewer.unrealcv.unrealcv_client import UnrealCVClient
@@ -38,6 +43,111 @@ class RecordingUnrealCVClient(UnrealCVClient):
         if profile:
             return self.batch_responses, {}
         return self.batch_responses
+
+
+class _FailingBatchClient:
+    """A connected unrealcv ``Client`` stand-in whose batch write fails mid-send."""
+
+    def __init__(self) -> None:
+        self.sock: Mock | None = Mock()
+        self.batches: list[list[str]] = []
+        self.recv_num_q: queue.SimpleQueue[int | None] = queue.SimpleQueue()
+        self.before_first_failure: Callable[[], None] | None = None
+
+    def isconnected(self) -> bool:
+        return self.sock is not None
+
+    def request_batch(self, commands: list[str]) -> list[str]:
+        self.batches.append(commands)
+        hook, self.before_first_failure = self.before_first_failure, None
+        if hook is not None:
+            hook()
+        raise ConnectionResetError("Connection reset by peer")
+
+    def request_async(self, command: str) -> None:
+        self.batches.append([command])
+
+
+class _ContendedLock:
+    """A request lock that flags when a second caller starts waiting for it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.contended = threading.Event()
+
+    def __enter__(self) -> None:
+        if not self._lock.acquire(blocking=False):
+            self.contended.set()
+            self._lock.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+
+class TestUnrealCVClientFailedBatch(unittest.TestCase):
+    def test_a_failed_batch_retires_the_connection_before_the_next_request(
+        self,
+    ) -> None:
+        client = UnrealCVClient(request_timeout=0)
+        failing = _FailingBatchClient()
+        socket = failing.sock
+        client._client = failing  # pyre-ignore[8]
+        client._connected = True
+
+        self.assertEqual([None, None], client._request_batch(["vget /a", "vget /b"]))
+        self.assertFalse(client.is_connected())
+        # Shut down before closing, so a receive thread blocked in recv() wakes now.
+        self.assertEqual([call.shutdown(SHUT_RDWR), call.close()], socket.method_calls)
+        # The receive thread gets its quit signal, as on a disconnect.
+        self.assertIsNone(failing.recv_num_q.get_nowait())
+        # The next request short-circuits instead of writing to the broken socket.
+        self.assertEqual([None], client._request_batch(["vget /c"]))
+        self.assertEqual([["vget /a", "vget /b"]], failing.batches)
+
+    def _fail_a_batch_while_another_request_waits(
+        self, waiting_request: Callable[[UnrealCVClient], object]
+    ) -> tuple[list[object], list[list[str]]]:
+        client = UnrealCVClient(request_timeout=0)
+        failing = _FailingBatchClient()
+        lock = _ContendedLock()
+        client._client = failing  # pyre-ignore[8]
+        client._connected = True
+        client._request_lock = lock  # pyre-ignore[8]
+        waited: list[object] = []
+        waiter = threading.Thread(
+            target=lambda: waited.append(waiting_request(client)), daemon=True
+        )
+
+        def start_the_waiter() -> None:
+            waiter.start()
+            lock.contended.wait(timeout=10)
+
+        failing.before_first_failure = start_the_waiter
+        self.assertEqual([None], client._request_batch(["vget /a"]))
+        waiter.join(timeout=10)
+        # The second request was queued on the lock while the batch failed.
+        self.assertTrue(lock.contended.is_set())
+        return waited, failing.batches
+
+    def test_a_batch_waiting_on_a_failing_batch_never_reaches_the_socket(
+        self,
+    ) -> None:
+        waited, sent = self._fail_a_batch_while_another_request_waits(
+            lambda client: client._request_batch(["vget /b"])
+        )
+
+        self.assertEqual([[None]], waited)
+        self.assertEqual([["vget /a"]], sent)
+
+    def test_an_async_request_waits_for_a_batch_and_then_short_circuits(
+        self,
+    ) -> None:
+        waited, sent = self._fail_a_batch_while_another_request_waits(
+            lambda client: client._request("vset /action/scene/reset", use_async=True)
+        )
+
+        self.assertEqual([None], waited)
+        self.assertEqual([["vget /a"]], sent)
 
 
 class TestUnrealCVClientCameraCalibration(unittest.TestCase):
