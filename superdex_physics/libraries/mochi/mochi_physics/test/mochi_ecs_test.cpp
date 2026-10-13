@@ -54,6 +54,8 @@ struct ComponentC {
 
 struct TagA {};
 
+struct TagB {};
+
 struct ExternalData {
   int valueToAdd;
 };
@@ -666,7 +668,7 @@ static void TestInvokeForEachLocal() {
     EXPECT_EQ(1, result.count.load());
     EXPECT_EQ(reg.get<ComponentA const>(allEntities[0]).value, result.total.load());
 
-    // One entity at a time: single-entity subsets skip the view.
+    // One entity at a time: single-entity subsets stop at the first pool that rules the entity out.
     for (int i = 0; i < 3; ++i) {
       result.Reset();
       TestInvokeForEachLocal<kMethod>(filteredSumFn, reg, List{allEntities[i]});
@@ -798,14 +800,27 @@ static void TestInvokeForEach() {
     EXPECT_EQ(2, data.callCount.load()); // Was also called for e5
   }
 
-  // Write ComponentA, exclude TagA
+  // Write ComponentA, exclude TagB, which no entity has, then TagA twice
   {
     reset(1);
-    auto fn = +[](ComponentA& compA, Excluded<TagA>) { compA.value++; };
+    auto fn =
+        +[](ComponentA& compA, Excluded<TagB>, Excluded<TagA>, Excluded<TagA>) { compA.value++; };
     TestInvokeForEach<kMethod>(fn, reg);
     EXPECT_EQ(reg.get<ComponentA>(e1).value, 2); // A += 1
     EXPECT_EQ(reg.get<ComponentA>(e2).value, 2); // A += 1
     EXPECT_EQ(reg.get<ComponentA>(e3).value, 1); // TagA, no change
+  }
+
+  // Read or exclude ComponentC, which no entity has, so the registry has no pool for it
+  {
+    reset(1);
+    auto readFn = +[](ComponentA& compA, ComponentC const&) { compA.value++; };
+    auto excludeFn = +[](ComponentA& compA, Excluded<ComponentC>) { compA.value += 2; };
+    TestInvokeForEach<kMethod>(readFn, reg);
+    TestInvokeForEach<kMethod>(excludeFn, reg);
+    EXPECT_EQ(reg.get<ComponentA>(e1).value, 3); // No C: A += 2
+    EXPECT_EQ(reg.get<ComponentA>(e2).value, 3); // No C: A += 2
+    EXPECT_EQ(reg.get<ComponentA>(e3).value, 3); // No C: A += 2
   }
 
   // External data passed by value
