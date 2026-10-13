@@ -1823,6 +1823,12 @@ TEST(Sphere, HasOverlap_Obb) {
         return HasOverlap(sphere2, box2);
       },
       1e1_r * std::numeric_limits<real>::epsilon());
+
+  Real3 const unit{1_r, 1_r, 1_r};
+  Sphere const sphere = GetBoundingSphere(Obb(TransformRT{}, unit));
+  EXPECT_TRUE(IsObbOutsideSphere(Obb(TransformRT{Real3{5_r, 0_r, 0_r}}, unit), sphere));
+  // Touching at a corner, with tangent bounding spheres.
+  EXPECT_FALSE(IsObbOutsideSphere(Obb(TransformRT{Real3{2_r, 2_r, 2_r}}, unit), sphere));
 }
 
 // Pack one Sphere per SIMD lane into a BatchSphere<kBatchSize>.

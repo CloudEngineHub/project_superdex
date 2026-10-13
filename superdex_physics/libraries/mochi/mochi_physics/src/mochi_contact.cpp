@@ -397,10 +397,15 @@ static void UpdatePotentialColliders(
     }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
     if constexpr (kIsSync) {
+      // A bounding sphere test culls most of the distant Obbs before the exact test.
+      Sphere const sphereColliding = GetBoundingSphere(worldBoundsColliding);
       // Precondition: this island's CollisionDetectionPipeline computed these bounds in this call.
       auto const& colliderWorldBounds = reg.storage<CColliderWorldBounds>();
       for (entt::entity const collider : conservativeColliders) {
-        if (HasOverlap(worldBoundsColliding, colliderWorldBounds.get(collider).shape)) {
+        AnyShape const& worldBoundsCollider = colliderWorldBounds.get(collider).shape;
+        bool const isCulled = std::holds_alternative<Obb>(worldBoundsCollider) &&
+            IsObbOutsideSphere(std::get<Obb>(worldBoundsCollider), sphereColliding);
+        if (!isCulled && HasOverlap(worldBoundsColliding, worldBoundsCollider)) {
           potentialColliders.emplace_back(collider);
         }
       }

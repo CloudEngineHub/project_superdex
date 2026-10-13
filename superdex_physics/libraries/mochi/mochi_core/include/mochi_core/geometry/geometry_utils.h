@@ -889,6 +889,14 @@ template <typename ShapeT, MOCHI_CONCEPT(IsPrimitiveShape<ShapeT>)>
   return std::visit([&rhs](auto& x) { return HasOverlap(x, rhs); }, lhs);
 }
 
+// Whether the Obb's bounding sphere is certainly disjoint from the sphere.
+[[nodiscard]] MOCHI_FORCE_INLINE bool IsObbOutsideSphere(Obb const& oobb, Sphere const& s) {
+  // Rounding in this test is under 4 epsilons of the summed radii, well within this 32-epsilon pad.
+  real constexpr kPaddedScale = 1_r + 32_r * std::numeric_limits<real>::epsilon();
+  real const radius = (Norm<3>(oobb.VGetHalfExtents()) + s.GetRadius()) * kPaddedScale;
+  return NormSqr<3>(oobb.VGetCenter() - s.VGetCenter()) > Sqr(radius);
+}
+
 /**************************************************************************************************
   Tetrahedral Geometry Utils
 */
