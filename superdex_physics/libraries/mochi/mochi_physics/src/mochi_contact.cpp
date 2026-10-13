@@ -4702,12 +4702,21 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
   };
 
   // Loop over colliding actors and find collisions with colliders.
+  auto const& usesContact = reg.storage<TagUseContact>();
+  auto const& rigidActors = reg.storage<TagRigidActor>();
   for (auto e : descendants.actors) {
-    if (reg.all_of<TagUseContact>(e)) {
-      if (ecs::CanInvokeOnEntity(
-              UpdateCollisionSamplePositions<CFemBoundaryDiscretization, kTimeStep, kSpaceDim3>,
-              reg,
-              e)) {
+    if (usesContact.contains(e)) {
+      // Rigid actors' contact samples are fixed in their local frame, so they have none to update.
+      if (rigidActors.contains(e)) {
+        Schedule(sem, "AsyncCollisionAndResponse", [&, e]() { asyncCollisionAndResponse(e); });
+        Schedule(sem, "SyncCollisionAndResponse", [&, e]() { syncCollisionAndResponse(e); });
+      } else if (ecs::CanInvokeOnEntity(
+                     UpdateCollisionSamplePositions<
+                         CFemBoundaryDiscretization,
+                         kTimeStep,
+                         kSpaceDim3>,
+                     reg,
+                     e)) {
         Schedule(sem, "UpdateCollisionSamplePositions<CFemBoundaryDiscretization>", [&, e, sem]() {
           // Compute the soft actor's sample positions before we schedule collision detection
           ecs::InvokeOnEntity(
@@ -4765,8 +4774,7 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
           syncCollisionAndResponse(e); // Do the work on this thread
         });
       } else {
-        Schedule(sem, "AsyncCollisionAndResponse", [&, e]() { asyncCollisionAndResponse(e); });
-        Schedule(sem, "SyncCollisionAndResponse", [&, e]() { syncCollisionAndResponse(e); });
+        MOCHI_ASSERT(false, "Contact actors must be rigid or update their contact samples.");
       }
     }
   }
