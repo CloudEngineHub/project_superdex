@@ -27,6 +27,7 @@
 #include "mochi_snle.h"
 
 #include <mochi_core/utils/array_utils.h>
+#include <mochi_core/utils/dynamic_array.h>
 
 #include <algorithm>
 #include <functional>
@@ -42,6 +43,10 @@ namespace {
 struct CTempIslandPartitioningData {
   std::vector<entt::entity> islands;
   std::vector<int> actorPartitions;
+  // memberIndices[p] is the index, among the members of the island being partitioned, of the
+  // entity at position p of the CIslandMemberInfo storage. Entries of other entities are stale or
+  // uninitialized.
+  DynamicArray<int> memberIndices;
 };
 
 // Global context component with special support for unit tests
@@ -369,6 +374,9 @@ static void TrySplitIslands(entt::registry& reg) {
   auto const& syncColliders = reg.storage<CConservativePotentialColliders</*kIsSync*/ true>>();
   auto const& memberInfos = reg.storage<CIslandMemberInfo>();
   auto const& groupMemberInfos = reg.storage<CGroupMemberInfo>();
+  // Splitting only edits CIslandMemberInfo in place, so positions in its storage don't change.
+  auto& memberIndices = ctx.memberIndices;
+  memberIndices.resize_noinit(memberInfos.size());
 
   // For each island
   int const numIslandsBeforeAnySplits = isize(islands);
@@ -380,6 +388,10 @@ static void TrySplitIslands(entt::registry& reg) {
     // actorPartitions[i] is the partition index for actor i
     actorPartitions.clear();
     actorPartitions.resize(members.size(), -1);
+
+    for (int i = 0; i < isize(members); ++i) {
+      memberIndices[memberInfos.index(members[i])] = i;
+    }
 
     // We will partition the actors by walking the graph of potential colliders.
     // Actors in the same partition must remain in the same island.
@@ -415,12 +427,10 @@ static void TrySplitIslands(entt::registry& reg) {
               continue; // Self contact
             }
 
-            // Find the index of jActor in this island. This will be fast for small islands.
-            // If islands become large, then it might be worth caching this index with
-            // CIslandMemberInfo.
-            auto itr = std::find(members.begin(), members.end(), jActor);
-            MOCHI_ASSERT_VERBOSE(itr != members.end(), "CIslandMemberInfo must be out-of-sync");
-            int j = static_cast<int>(itr - members.begin());
+            int const j = memberIndices[memberInfos.index(jActor)];
+            MOCHI_ASSERT_VERBOSE(
+                0 <= j && j < isize(members) && members[j] == jActor,
+                "CIslandMemberInfo is out of sync");
 
             if (actorPartitions[j] != actorPartitions[i]) {
               if (actorPartitions[j] == -1) {
