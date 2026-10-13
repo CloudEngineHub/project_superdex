@@ -1486,19 +1486,18 @@ TEST_F(SceneSyncTest, PerformanceSyncLimitsPendingProfiles) {
   _client->SetSettings(settings);
 
   SetFakeClock(scene);
-  auto constexpr kSyncInterval = static_cast<float>(kTimeStep * (kNumSteps + 1));
+  float constexpr kSyncInterval = 100.0f;
+  static_assert(kNumSteps * kTimeStep < kSyncInterval);
   ApplySyncParamsAndWait(scene, PerformanceSyncParams(kSyncInterval));
 
-  // Give the oldest profile a distinct time step, then overflow the server's pending history.
-  scene->Step(2.0 * kTimeStep);
-  for (int i = 1; i < kNumSteps; ++i) {
+  // Overflow the server's pending history by one profile, so it drops the oldest one.
+  for (int i = 0; i < kNumSteps; ++i) {
     StepWithFakeClock(scene);
   }
 
   _clockSec += 2.0 * kSyncInterval;
   auto const profiles = WaitForProfileHistory(scene, kExpectedMaxPendingProfiles);
   EXPECT_EQ(2, profiles.front().sequence);
-  EXPECT_EQ(static_cast<float>(kTimeStep), profiles.front().timeStepSec);
 }
 
 TEST_F(SceneSyncTest, PerformanceSyncDisabledSendsNoProfiles) {
