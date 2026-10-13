@@ -1457,6 +1457,15 @@ struct NonEmptyView;
 
 template <typename... IncludeT, typename... ExcludeT>
 struct NonEmptyView<ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
+  // EnTT's view iterator skips every included pool equal to the leading one, the smallest, so two
+  // types that share a pool, like C and C const, leave the iterator a null pool when it leads.
+  static_assert(
+      entt::type_list_unique_t<entt::type_list<std::remove_const_t<IncludeT>...>>::size ==
+          sizeof...(IncludeT),
+      "Per-entity systems invoked globally cannot take a component both as C& and as C const& or "
+      "Included<C>, because iterating their view can crash. Please take the component once, for "
+      "example as C& alone, or invoke the system on a list of entities or a single entity instead.");
+
   using ViewT = ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>;
 
   MOCHI_FORCE_INLINE static std::optional<ViewT> Get(entt::registry& reg) {
