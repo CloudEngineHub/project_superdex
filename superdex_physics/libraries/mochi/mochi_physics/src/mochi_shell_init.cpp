@@ -199,13 +199,13 @@ static void EmplaceShellShellContact(
   MOCHI_ERROR_RETURN(error);
   auto& pcComponent = reg.emplace<CPointCloudColliderParams>(e, params.pointCloudCollider);
   pcComponent.integralDim = 2;
+  int const numNodes = actorTriMesh.GetNumNodes();
   auto const& nodalWeights = reg.emplace<CNodalWeights>(
-      e, InitializeNodalWeights(reg.get<CFemSurfaceDiscretizationP1Q1>(e)));
+      e, InitializeNodalWeights(reg.get<CFemSurfaceDiscretizationP1Q1>(e), numNodes));
   // Create collider surface discretization from colliderTriangleElementType.
   CColliderPointCloudDiscretization colliderDisc = [&]() -> CColliderPointCloudDiscretization {
     if (!params.pointCloudCollider.colliderTriangleElementType.has_value()) {
       NodalColliderDiscretization nodalDisc;
-      int const numNodes = isize(actorTriMesh.GetNodeCoordinates());
       auto coordinates = actorTriMesh.GetNodeCoordinates();
       nodalDisc.femElements.reserve(numNodes);
       for (int i = 0; i < numNodes; ++i) {

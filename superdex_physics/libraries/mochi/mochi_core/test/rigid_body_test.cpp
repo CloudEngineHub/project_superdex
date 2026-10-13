@@ -71,14 +71,18 @@ static void TestMomentOfInertia(
   }
 
   TriangularMesh boundaryMesh = CreateBoundaryMesh(*mesh);
+  // Append a zero-area face, which must contribute nothing rather than a NaN.
+  auto const meshConnectivity = boundaryMesh.GetElementConnectivity();
+  std::vector<Int3> boundaryConnectivity(meshConnectivity.begin(), meshConnectivity.end());
+  boundaryConnectivity.emplace_back(0, 0, 1);
 
   using BoundaryElementT = triangular::Pk2DElement<1>;
   std::vector<BoundaryElementT> boundaryElements;
-  int numBoundaryElements = boundaryMesh.GetNumElements();
+  int numBoundaryElements = isize(boundaryConnectivity);
   boundaryElements.reserve(numBoundaryElements);
   for (int i = 0; i < numBoundaryElements; ++i) {
     boundaryElements.emplace_back(
-        i, boundaryMesh.GetNodeCoordinates(), boundaryMesh.GetElementConnectivity());
+        i, boundaryMesh.GetNodeCoordinates(), MakeConstSpan(boundaryConnectivity));
   }
   Vec4r boundaryComLocal = {};
   real boundaryMass = {};

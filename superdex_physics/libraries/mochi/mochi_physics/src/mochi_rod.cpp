@@ -1298,10 +1298,11 @@ static void EmplaceRodActorContact(
     if (!params.pointCloudCollider.colliderSegmentElementType.has_value()) {
       // Nodal collider: one point per node, weighted by lumped segment lengths assembled from the
       // contact discretization (mirroring the shell pattern with InitializeNodalWeights).
-      DynamicArray<real> nodalWeights;
-      segmentDisc.Visit([&](auto const& disc) { nodalWeights = InitializeNodalWeights(disc); });
-      NodalColliderDiscretization nodalDisc;
       int const numNodes = isize(nodes);
+      DynamicArray<real> nodalWeights;
+      segmentDisc.Visit(
+          [&](auto const& disc) { nodalWeights = InitializeNodalWeights(disc, numNodes); });
+      NodalColliderDiscretization nodalDisc;
       nodalDisc.femElements.reserve(numNodes);
       for (int i = 0; i < numNodes; ++i) {
         nodalDisc.femElements.emplace_back(i, MakeConstSpan(nodes), i, nodalWeights[i]);

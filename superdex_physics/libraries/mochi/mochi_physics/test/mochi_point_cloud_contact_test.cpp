@@ -180,8 +180,8 @@ class MochiShellContactTest : public ::testing::Test {
       std::optional<ActorBoundaryElementType> colliderTriangleElementType) {
     if (!colliderTriangleElementType.has_value()) {
       NodalColliderDiscretization nodalDisc;
-      DynamicArray<real> const weights = InitializeNodalWeights(_discretization);
       int const numNodes = isize(_coordinates);
+      DynamicArray<real> const weights = InitializeNodalWeights(_discretization, numNodes);
       nodalDisc.femElements.reserve(numNodes);
       for (int i = 0; i < numNodes; ++i) {
         nodalDisc.femElements.emplace_back(i, MakeConstSpan(_coordinates), i, weights[i]);
@@ -304,7 +304,7 @@ INSTANTIATE_TEST_SUITE_P(
 // Test InitializeNodalWeights function
 TEST_F(MochiShellContactTest, InitializeNodalWeights_BasicProperties) {
   // Assemble nodal weights
-  DynamicArray<real> weights = InitializeNodalWeights(_discretization);
+  DynamicArray<real> weights = InitializeNodalWeights(_discretization, isize(_coordinates));
 
   // Check that we have the right number of weights (5 nodes in our mesh: 4 corners + 1 center)
   int constexpr kNumNodes = 5;

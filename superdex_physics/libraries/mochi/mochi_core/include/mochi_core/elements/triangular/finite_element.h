@@ -18,7 +18,6 @@
 
 #include <mochi_core/elements/triangular/basis_functions_evaluated.h>
 #include <mochi_core/utils/math_utils.h>
-#include <mochi_core/utils/matrix_utils.h>
 namespace mochi::triangular {
 
 /**
@@ -39,8 +38,11 @@ class Pk2DElement final {
   static constexpr int kPolyOrder = kPolyOrder_;
   static constexpr int kNumQuadPoints = kNumQuadPoints_;
   static constexpr int kNumNodes = 3;
+  static constexpr int kSpaceDim = 3;
+  static constexpr int kSpaceDimParam = 2;
   using Basis = BarycentricBasisTriangular<kPolyOrder>;
   using BasisEvaluated = BasisFunctionsEvaluatedTriangular<kPolyOrder, kNumQuadPoints>;
+  static constexpr int kNumDofs = Basis::kNumDofs;
 
   /**
    The constructor for a lagrange tet element
@@ -54,67 +56,46 @@ class Pk2DElement final {
   */
   Pk2DElement(int elementIndex, Span<Real3 const> coordinates, Span<Int3 const> connectivity)
       : elementIndex(elementIndex), coordinates(coordinates), connectivity(connectivity) {
-    // Construct the array containing the physical coordinates
-    // corresponding to the coordinates of each degree of freedom
-    InterpolateInteriorNodes();
-
-    Initialize();
+    Initialize(InterpolateInteriorNodes(coordinates, Nodes()));
   }
 
  private:
   /**
-    Tabulate the isoparametric map, the normals, the quadrature weights and the basis derivatives
-    with respect to physical coordinates at the quad points
+    Tabulate the isoparametric map and the quadrature weights at the quad points
   */
-  void Initialize() {
+  void Initialize(NdArray<real, kNumDofs, kSpaceDim> const& nodesCrdsPhys) {
     for (int q = 0; q < kNumQuadPoints; ++q) {
       // Here we are using an isoparametric map
       mapEvaluated[q] = {};
-      NdArray<real, kSpaceDim, kSpaceDimParam> dMap = {};
+      Real3 tangent0 = {};
+      Real3 tangent1 = {};
       for (int f = 0; f < kNumDofs; ++f) {
-        // Get the map of the quadrature point
+        auto const& dBasis = kBasisEvaluatedParametric.kDBasisEvaluated[q][f];
         mapEvaluated[q] += kBasisEvaluatedParametric.kBasisEvaluated[q][f] * nodesCrdsPhys[f];
-
-        // Get the tangent map at the quadrature point
-        // effectively here we have the induced basis from the mapping
-        // the matrix is a space_dim x param_dim so in each column
-        // we have an induced base
-        dMap += Outer(nodesCrdsPhys[f], kBasisEvaluatedParametric.kDBasisEvaluated[q][f]);
+        tangent0 += dBasis[0] * nodesCrdsPhys[f];
+        tangent1 += dBasis[1] * nodesCrdsPhys[f];
       }
-      normals[q] = Cross(Transpose(dMap)[0], Transpose(dMap)[1]);
-      normals[q] /= Norm(normals[q]);
 
-      // Get the metric change
-      // this is the norm of the cross product of the
-      // induced basis (each stored in [:,baseIndex])
-      NdArray<real, kSpaceDimParam, kSpaceDim> dMapInv;
-      real dMapDet = 0_r;
-      PseudoInvert(dMap, &dMapInv, &dMapDet);
-
-      // Compute quadrature weight
-      quadWeights[q] = kQuadrature.weights[q] * dMapDet;
-
-      // Compute gradient with respect to physical coordinates
-      dBasisEvaluated[q] = {};
-      for (int f = 0; f < kNumDofs; ++f) {
-        dBasisEvaluated[q][f] =
-            DotMatVec(Transpose(dMapInv), kBasisEvaluatedParametric.kDBasisEvaluated[q][f]);
-      }
+      // Compute quadrature weight. The metric change is the norm of the cross product of the
+      // tangents.
+      quadWeights[q] = kQuadrature.weights[q] * Norm(Cross(tangent0, tangent1));
     }
   }
 
   /**
-    Computes the nodal position in physical space of interior nodes.
-
-    Only relevant for higher order elements this method interpolates
-    linearly the mid and interior nodes on the physical domain.
+    Returns the physical coordinates of the element nodes: the vertices, plus linearly
+    interpolated interior nodes for higher orders.
   */
-  void InterpolateInteriorNodes() {
+  static NdArray<real, kNumDofs, kSpaceDim> InterpolateInteriorNodes(
+      Span<Real3 const> coordinates,
+      Int3 nodes) {
+    NdArray<real, kNumDofs, kSpaceDim> nodesCrdsPhys;
+
     // Here we are simply interpolating linearly the physical coordinates
     // of the interior nodes this could be more general
     constexpr int kNumVertex = 3;
     for (int i = 0; i < kNumVertex; ++i) {
-      nodesCrdsPhys[i] = coordinates[connectivity[elementIndex][i]];
+      nodesCrdsPhys[i] = coordinates[nodes[i]];
     }
 
     if constexpr (kPolyOrder > 1) {
@@ -125,12 +106,10 @@ class Pk2DElement final {
             (1_r - nodeCrdsParams[0] - nodeCrdsParams[1]) * nodeCrdsParams[2];
       }
     }
+    return nodesCrdsPhys;
   }
 
  public:
-  static constexpr int kSpaceDim = 3;
-  static constexpr int kSpaceDimParam = 2;
-  static constexpr int kNumDofs = Basis::kNumDofs;
   static constexpr TriangleQuadrature<kNumQuadPoints> kQuadrature = {};
   static constexpr BasisEvaluated kBasisEvaluatedParametric = {};
   static constexpr Basis kBasis = {};
@@ -174,22 +153,23 @@ class Pk2DElement final {
     return elementIndex;
   }
 
+  // The unit normal, constant over the element, oriented by the node order (right-hand rule), or
+  // zero if the element has zero area. Recomputed from the node coordinates on each call: call it
+  // once per element, outside quadrature and per-step loops.
+  Real3 Normal() const {
+    Int3 const nodes = Nodes();
+    return Normalize(Cross(
+        coordinates[nodes[1]] - coordinates[nodes[0]],
+        coordinates[nodes[2]] - coordinates[nodes[0]]));
+  }
+
   // Set by constructor
   int const elementIndex;
   Span<Real3 const> const coordinates;
   Span<Int3 const> const connectivity;
 
-  // The nodal position in physical space of interior nodes.
-  NdArray<real, kNumDofs, kSpaceDim> nodesCrdsPhys;
-
   // The array of mapped quadrature points into physical space
   NdArray<real, kNumQuadPoints, kSpaceDim> mapEvaluated;
-
-  // The unit normal at the quadrature points
-  NdArray<real, kNumQuadPoints, kSpaceDim> normals;
-
-  // dbasis evaluated at quad pts
-  NdArray<real, kNumQuadPoints, kNumDofs, kSpaceDim> dBasisEvaluated;
 
   // The quadrature weights for area integration
   NdArray<real, kNumQuadPoints> quadWeights = {};

@@ -786,6 +786,15 @@ static void InitRigidActor_Dynamic(
   std::shared_ptr<TriangularMesh const> boundaryMesh;
   if (meshComponent) {
     boundaryMesh = meshComponent->mesh;
+    bool hasZeroAreaTriangle = false;
+    for (int i = 0; i < boundaryMesh->GetNumElements(); ++i) {
+      hasZeroAreaTriangle |= boundaryMesh->GetElementMeasure(i) == 0_r;
+    }
+    MOCHI_ERROR_IF(
+        hasZeroAreaTriangle,
+        error,
+        "Unable to create dynamic rigid actor. The shape mesh has a zero-area triangle.");
+    MOCHI_ERROR_RETURN(error);
     reg.emplace<CFemSurfaceDiscretizationLite>(
         e, CFemSurfaceDiscretizationLite::Create(params.boundaryElementType, *boundaryMesh));
     surfDiscr = std::make_unique<CFemSurfaceDiscretization>(
@@ -1013,11 +1022,11 @@ static void InitRigidActor_Dynamic(
       for (int i = 0; i < numBoundFaces; ++i) {
         bool const storePointAsActive = activeBoundaryFaces && activeBoundaryFaces->Contains(i);
         auto& posLocalQuads = discrImpl.femElements[i].mapEvaluated;
-        auto& normalLocalQuads = discrImpl.femElements[i].normals;
+        Real3 const normalLocal = discrImpl.femElements[i].Normal();
         for (int j = 0; j < kNumQuadsPerFace; ++j) {
           contactSamples.positions[count] = posLocalQuads[j];
           contactSamples.weights[count] = discrImpl.femElements[i].quadWeights[j];
-          (*contactSamples.normals)[count] = normalLocalQuads[j];
+          (*contactSamples.normals)[count] = normalLocal;
           if (storePointAsActive) {
             contactSamples.activePositions.push_back(posLocalQuads[j]);
             contactSamples.activeIndices.push_back(count);

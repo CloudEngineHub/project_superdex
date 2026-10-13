@@ -210,18 +210,23 @@ void ComputePointCloudContactDetectionFields(
 
 /// Assembles nodal weights from any FemDiscretization by accumulating basis-weighted quadrature.
 /// Works for surface, segment, or any element type with the standard FemDiscretization interface.
+/// @p numNodes is the number of nodes of the mesh the elements were built from.
 template <typename ElementT>
-DynamicArray<real> InitializeNodalWeights(FemDiscretization<ElementT> const& femDiscretization) {
+DynamicArray<real> InitializeNodalWeights(
+    FemDiscretization<ElementT> const& femDiscretization,
+    int numNodes) {
   int constexpr kNumNodes = FemDiscretization<ElementT>::kNumEleNodes;
   int constexpr kNumQuadPoints = FemDiscretization<ElementT>::kNumQuads;
   int const numElements = isize(femDiscretization.femElements);
   MOCHI_ASSERT(numElements > 0, "Attempting to compute nodal weights with no elements");
-  int const numNodes = isize(femDiscretization.femElements[0].coordinates);
   DynamicArray<real> nodalWeights(numNodes, 0_r);
   for (int elementIndex = 0; elementIndex < numElements; ++elementIndex) {
     auto const& element = femDiscretization.femElements[elementIndex];
     for (int localNodeIndex = 0; localNodeIndex < kNumNodes; ++localNodeIndex) {
       int const globalNodeIndex = element.connectivity[elementIndex][localNodeIndex];
+      MOCHI_ASSERT_VERBOSE(
+          globalNodeIndex >= 0 && globalNodeIndex < numNodes,
+          "numNodes must exceed every node index referenced by the elements.");
       for (int quadPointIndex = 0; quadPointIndex < kNumQuadPoints; ++quadPointIndex) {
         real const basisEval = ElementT::kBasisEvaluated[quadPointIndex][localNodeIndex];
         real const quadPointWeight = element.quadWeights[quadPointIndex];

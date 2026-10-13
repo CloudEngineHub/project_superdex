@@ -743,20 +743,6 @@ TEST(MatrixUtils, Trace2x2) {
   EXPECT_NEAR_EQ(10_r, Trace2x2(ToSimdMatrix(m * 2_r)));
 }
 
-TEST(MatrixUtils, PseudoInvert) {
-  // Compare values from pyMochi
-  Matrix3x2r const a = {Real2{1_r, 2_r}, Real2{3_r, 4_r}, Real2{5_r, 6_r}};
-  Matrix2x3r inv;
-  real det = 0_r;
-  PseudoInvert(a, &inv, &det);
-  EXPECT_TRUE(NearEqual(
-      Matrix2x3r{
-          Real3{-1.33333333_r, -0.33333333_r, 0.66666667_r},
-          Real3{1.08333333_r, 0.33333333_r, -0.41666667_r}},
-      inv));
-  EXPECT_TRUE(NearEqual(4.89897949_r, det));
-}
-
 TEST(MatrixUtils, DiagonalMatrix) {
   static_assert(NearEqual(NdArray<real, 1, 1>{Real1{1.23_r}}, DiagonalMatrix<1>(1.23_r)));
   static_assert(NearEqual(

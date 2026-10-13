@@ -417,11 +417,11 @@ inline void ComputeCenterOfMassFem(
 
   // Integrate
   for (auto element : finiteElements) {
+    Real3 const normal = element.Normal();
     for (int q = 0; q < kNumQuad; ++q) {
       outCenterOfMass += 0.25_r * ToSimd(element.mapEvaluated[q]) *
-          Dot(element.mapEvaluated[q], element.normals[q]) * element.quadWeights[q];
-      outMass +=
-          1_r / 3_r * Dot(element.mapEvaluated[q], element.normals[q]) * element.quadWeights[q];
+          Dot(element.mapEvaluated[q], normal) * element.quadWeights[q];
+      outMass += 1_r / 3_r * Dot(element.mapEvaluated[q], normal) * element.quadWeights[q];
     }
   }
 
@@ -478,8 +478,8 @@ inline VMatrix3x3r ComputeSecondMomentOfInertiaFem(
   VMatrix3x3r outInertia = {};
   // Integrate
   for (auto element : finiteElements) {
+    Vec4r const normal = ToSimd(element.Normal());
     for (int q = 0; q < kNumQuad; ++q) {
-      Vec4r normal = ToSimd(element.normals[q]);
       Vec4r y = ToSimd(element.mapEvaluated[q]) - centerOfMass;
       outInertia += Outer3(y, y) * Dot(y, normal) * element.quadWeights[q];
     }

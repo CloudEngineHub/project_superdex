@@ -16,11 +16,8 @@
 
 #include <mochi_core/element_operations/element_operation_utils.h>
 #include <mochi_core/element_operations/fem_shell.h>
-#include <mochi_core/element_operations/fem_stress.h>
-#include <mochi_core/elements/triangular/finite_element.h>
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/linear_algebra/matrix_operations.h>
-#include <mochi_core/materials/batched_st_venant_kirchhoff.h>
 #include <mochi_core/test/batch_helpers.h>
 #include <mochi_core/test/batched_work_test_utils.h>
 #include <mochi_core/test/mochi_test_helpers.h>
@@ -1256,80 +1253,6 @@ static void VerifyShellRest(ShellStencilConfig const& cfg) {
   }
 }
 
-static void VerifyMembraneMatchesStressWork() {
-  real constexpr kYoungsModulus = 1e6_r;
-  real constexpr kPoissonsRatio = 0.3_r;
-  real const membraneLambda =
-      (kYoungsModulus * kPoissonsRatio) / ((1_r + kPoissonsRatio) * (1_r - 2_r * kPoissonsRatio));
-  real const membraneMu = kYoungsModulus / (2_r * (1_r + kPoissonsRatio));
-  real constexpr kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-8_r : 1e-3_r;
-
-  for (auto const& cfg : MakeHelperConfigs()) {
-    DynamicArray<Real3> coordinates;
-    coordinates.reserve(kBendingStencilNodes);
-    for (int n = 0; n < kBendingStencilNodes; ++n) {
-      coordinates.push_back(cfg.refPositions[n]);
-    }
-
-    DynamicArray<Int3> connectivity = {{0, 1, 2}};
-    using ElementT = triangular::Pk2DElement<1, 1>;
-    ElementT element(0, coordinates, connectivity);
-    DynamicArray<ElementT> elements = {element};
-
-    BatchDouble<1> shellEnergy{};
-    ShellBatchVector<1> shellRes{};
-    bool success = ShellWork<1>(
-        BroadcastStencilNodes<1>(cfg.globalNodeIndices),
-        MakeConstSpan(coordinates),
-        BroadcastNodeValues<1>(cfg.displacements),
-        &shellEnergy,
-        &shellRes,
-        nullptr,
-        membraneLambda,
-        membraneMu,
-        0_r,
-        0_r,
-        false);
-    EXPECT_TRUE(success);
-
-    BatchElementVector<1, ElementT> stressDisp{};
-    for (int dof = 0; dof < ElementT::kNumDofs * ElementT::kSpaceDim; ++dof) {
-      stressDisp[dof] = BatchReal<1>{cfg.displacements[dof / kSpaceDim3][dof % kSpaceDim3]};
-    }
-
-    StVenantKirchhoffMaterialParams materialParams;
-    materialParams.youngsModulus = kYoungsModulus;
-    materialParams.poissonRatio = kPoissonsRatio;
-    materialParams.psdStrategy = MaterialPsdStrategy::None;
-    auto const perElementParams = materials::BuildPerElementParams(materialParams);
-    auto const constitutiveResponse =
-        materials::MakeBatchedConstitutiveResponse<StVenantKirchhoffMaterialParams, 1>(
-            perElementParams);
-
-    BatchDouble<1> stressEnergy{};
-    BatchElementVector<1, ElementT> stressRes{};
-    success = StressWork<1>(
-        NdArray<int, 1>{0},
-        MakeConstSpan(elements),
-        stressDisp,
-        &stressEnergy,
-        &stressRes,
-        nullptr,
-        false,
-        constitutiveResponse);
-    EXPECT_TRUE(success);
-
-    EXPECT_NEAR_TOL(
-        static_cast<real>(shellEnergy[0]),
-        static_cast<real>(stressEnergy[0]),
-        Max(kTol, kTol * Abs(static_cast<real>(stressEnergy[0]))));
-    for (int dof = 0; dof < ElementT::kNumDofs * ElementT::kSpaceDim; ++dof) {
-      real const ref = stressRes[dof][0];
-      EXPECT_NEAR_TOL(shellRes[dof][0], ref, Max(kTol, kTol * Abs(ref)));
-    }
-  }
-}
-
 TEST(ShellHelpers, MetricAndStrain) {
   RunSupportedFemShellRodBatchSizes([&]<int kBS>() { VerifyMetricAndStrainHelpers<kBS>(); });
 }
@@ -1411,8 +1334,48 @@ TEST(ShellHelpers, BendingResiduals) {
   RunSupportedFemShellRodBatchSizes([&]<int kBS>() { VerifyBendingResidualHelpers<kBS>(); });
 }
 
-TEST(ShellWork, MembraneMatchesStressWork) {
-  VerifyMembraneMatchesStressWork();
+// Anchors the membrane energy magnitude, which finite differences cannot check, and the residual.
+// The central triangle has a constant Green strain, ε = G⁻¹ (g - G) / 2 in terms of the reference
+// and current edge metrics G and g, so its St. Venant-Kirchhoff energy is
+// (μ tr(ε²) + λ/2 tr(ε)²) · area. Its gradient with respect to the current edge eᵢ is
+// area · Σⱼ Sᵢⱼ eⱼ, with the symmetric stress S = (λ tr(ε) I + 2μ ε) G⁻¹.
+TEST(ShellWork, MembraneMatchesClosedForm) {
+  ShellFdOptions options;
+  options.bendingAlpha = 0_r;
+  options.bendingBeta = 0_r;
+  for (auto const& cfg : MakeHelperConfigs()) {
+    auto const edges = [&](real dispScale) {
+      auto const position = [&](int n) {
+        return cfg.refPositions[n] + dispScale * cfg.displacements[n];
+      };
+      return std::array<Real3, 2>{position(1) - position(0), position(2) - position(0)};
+    };
+    auto const metric = [](std::array<Real3, 2> const& e) {
+      return SymMatrix2x2(Dot(e[0], e[0]), Dot(e[0], e[1]), Dot(e[1], e[1]));
+    };
+    auto const e = edges(1_r);
+    Matrix2x2r const G = metric(edges(0_r));
+    Matrix2x2r const GInv = Invert(G);
+    Matrix2x2r const strain = Dot(GInv, 0.5_r * (metric(e) - G));
+    real const trace = Trace(strain);
+    real const traceOfSquare = Trace(Dot(strain, strain));
+    real const area = 0.5_r * Sqrt(Det(G));
+    Matrix2x2r const stress =
+        kMembraneLambda * trace * GInv + 2_r * kMembraneMu * Dot(strain, GInv);
+    NdArray<real, kBendingStencilDofs> residual{};
+    for (int i = 0; i < 2; ++i) {
+      Real3 const edgeGradient = area * (stress[i][0] * e[0] + stress[i][1] * e[1]);
+      for (int d = 0; d < kSpaceDim3; ++d) {
+        residual[kSpaceDim3 * (i + 1) + d] = edgeGradient[d];
+        residual[d] -= edgeGradient[d];
+      }
+    }
+    auto const out = RunShell(
+        ShellHarness<1>(BroadcastConfig<1>(cfg), options), {.energy = true, .residual = true});
+    ExpectNearEnergy(
+        (kMembraneMu * traceOfSquare + 0.5_r * kMembraneLambda * Sqr(trace)) * area, out.energy[0]);
+    ExpectNearL2(residual, GetLane(out.res, 0));
+  }
 }
 
 TEST(ShellWork, BendingEnergyInvariantUnderCentralNodePermutations) {

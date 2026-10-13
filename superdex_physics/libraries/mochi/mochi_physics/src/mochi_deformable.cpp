@@ -162,8 +162,12 @@ void deformable::SetupActiveCollisionNormals(
         auto const baseElementDofIndices = kSpaceDim3 * element.GetBaseElement().Nodes();
         NdArray<Vec4r, kNumEleNodes> nodeCoords;
         for (int j = 0; j < kNumEleNodes; ++j) {
-          nodeCoords[j] = ToSimd(element.nodesCrdsPhys[j]) +
-              Load<3, Vec4r>(&displForNormals[baseElementDofIndices[j]]);
+          if constexpr (std::is_same_v<DiscretizationT, CFemBoundaryDiscretization>) {
+            nodeCoords[j] = ToSimd(element.nodesCrdsPhys[j]);
+          } else {
+            nodeCoords[j] = ToSimd(element.coordinates[element.Nodes()[j]]);
+          }
+          nodeCoords[j] += Load<3, Vec4r>(&displForNormals[baseElementDofIndices[j]]);
         }
 
         // Compute the surface normal in the colliding actor's local frame. Linear elements have a
@@ -179,8 +183,7 @@ void deformable::SetupActiveCollisionNormals(
           element.QuadraturePointEvaluateWeightNormal(
               quadPointIndex, det, Invert3x3(vdmap, det), unused, normalColliding);
         } else {
-          // Triangular surface: evaluate the deformed tangent map as in
-          // Pk2DElement::QuadratureEvaluateMap.
+          // Triangular surface: evaluate the deformed tangent map as in Pk2DElement::Initialize.
           using ElementImplT = std::decay_t<decltype(element)>;
           Vec4r tangent0{};
           Vec4r tangent1{};

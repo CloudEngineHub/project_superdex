@@ -412,16 +412,6 @@ MOCHI_FORCE_INLINE constexpr NdArray<T, 3, 3> Invert(NdArray<T, 3, 3> const& A, 
 }
 
 template <typename T>
-inline void PseudoInvert(NdArray<T, 3, 2> const& a, NdArray<T, 2, 3>* outInv, T* outDet) {
-  NdArray<T, 2, 3> const at = Transpose(a);
-  NdArray<T, 3, 3> const coef_1 = Outer(at[0], at[1]) - Outer(at[1], at[0]);
-  T const coef_2 = Dot(DotVecMat(at[0], coef_1), at[1]);
-  (*outInv)[0] = DotMatVec(coef_1, at[1]) / coef_2;
-  (*outInv)[1] = -DotMatVec(coef_1, at[0]) / coef_2;
-  *outDet = Norm(Cross(at[0], at[1]));
-}
-
-template <typename T>
 MOCHI_FORCE_INLINE constexpr T
 Minor4x4(T const m[16], int r0, int r1, int r2, int c0, int c1, int c2) {
   return m[4 * r0 + c0] * (m[4 * r1 + c1] * m[4 * r2 + c2] - m[4 * r2 + c1] * m[4 * r1 + c2]) -

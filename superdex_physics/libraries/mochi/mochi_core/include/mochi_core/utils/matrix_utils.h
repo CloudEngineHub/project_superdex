@@ -272,10 +272,6 @@ template <typename T>
     NdArray<T, 3, 3> const& a,
     T det);
 
-// The left pseudoinverse of a 3x2 matrix
-template <typename T>
-void PseudoInvert(NdArray<T, 3, 2> const& a, NdArray<T, 2, 3>* outInv, T* outDet);
-
 // Invert a 4x4 matrix
 template <typename T>
 [[nodiscard]] MOCHI_FORCE_INLINE constexpr NdArray<T, 4, 4> Invert(NdArray<T, 4, 4> const& A);
