@@ -1653,7 +1653,7 @@ class UnrealCVClient:
     # Scene Reset
     ####################################################################################
 
-    def trigger_scene_reset(self) -> bool:
+    def trigger_scene_reset(self, seed: int | None = None) -> bool:
         """
         Trigger a scene reset event in Unreal.
 
@@ -1661,11 +1661,21 @@ class UnrealCVClient:
         the JitterMaterial function (UFUNCTION). Use this when resetting the
         environment to randomize materials or other visual properties.
 
+        Args:
+            seed: Non-negative seed for the JitterMaterial draws. Renderers
+                started with ``-ControlPolicyDeterministicDR`` use it; others
+                ignore it. Builds without the seeded command reject it, so pass
+                it only to renderers that list the ``seeded_scene_reset``
+                capability.
+
         Returns:
             True if successful, False otherwise.
         """
+        command = "vset /action/scene/reset"
+        if seed is not None:
+            command += f" {seed}"
         try:
-            self._request("vset /action/scene/reset", use_async=True)
+            self._request(command, use_async=True)
             return True
         except Exception as e:
             logger.error(f"Failed to trigger scene reset: {e}")

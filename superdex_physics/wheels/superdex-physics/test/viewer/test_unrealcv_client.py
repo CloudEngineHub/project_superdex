@@ -380,5 +380,23 @@ class TestUnrealCVClientMultiViewCapture(unittest.TestCase):
         self.assertEqual(layout_queries(), 4)
 
 
+class TestUnrealCVClientSceneReset(unittest.TestCase):
+    def test_appends_the_seed_only_when_one_is_given(self) -> None:
+        client = RecordingUnrealCVClient()
+
+        self.assertTrue(client.trigger_scene_reset())
+        self.assertTrue(client.trigger_scene_reset(seed=0))
+        self.assertTrue(client.trigger_scene_reset(seed=2**31 - 1))
+
+        self.assertEqual(
+            client.commands,
+            [
+                "vset /action/scene/reset",
+                "vset /action/scene/reset 0",
+                "vset /action/scene/reset 2147483647",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

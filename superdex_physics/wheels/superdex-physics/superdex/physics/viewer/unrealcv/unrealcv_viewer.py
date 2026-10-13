@@ -593,7 +593,7 @@ class UnrealCVViewer:
         """Returns the scene bounding box."""
         return self._state.scene.aabb
 
-    def trigger_scene_reset(self) -> bool:
+    def trigger_scene_reset(self, seed: int | None = None) -> bool:
         """
         Trigger a scene reset event in Unreal.
 
@@ -601,10 +601,14 @@ class UnrealCVViewer:
         the JitterMaterial function (UFUNCTION). Use this when resetting the
         environment to randomize materials or other visual properties.
 
+        Args:
+            seed: Optional JitterMaterial seed; see
+                ``UnrealCVClient.trigger_scene_reset``.
+
         Returns:
             True if successful, False otherwise.
         """
-        return self._client.trigger_scene_reset()
+        return self._client.trigger_scene_reset(seed)
 
     def _update_scene_bounds(self):
         """Update the scene bounding box from actor AABBs."""
