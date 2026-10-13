@@ -446,7 +446,7 @@ TEST(ContactPenalties, ConsistencyTests) {
   }
 }
 
-TEST(ContactPenalties, FadeFriction_DegenerateAlignmentUsesUnfadedFactor) {
+TEST(ContactPenalties, Friction_DegenerateNormalsKeepFullStrength) {
   ContactEvalConfig fadedConfig;
   fadedConfig.fadeFriction = true;
   fadedConfig.validCollidingNormals = true;
@@ -460,10 +460,11 @@ TEST(ContactPenalties, FadeFriction_DegenerateAlignmentUsesUnfadedFactor) {
   params.frictionFalloffVel = 0.01_r;
 
   real const distance[1] = {-0.001_r};
-  Real3 const distanceGrad[1] = {Real3{0_r, 0_r, 1_r}};
+  Real3 distanceGrad[1] = {Real3{0_r, 0_r, 1_r}};
+  bool isSdfGradUnitary = true;
   Real3 const normalColliding[1] = {Real3{0_r, 0_r, -1_r}};
   Real3 const posColliding[1] = {Real3{0_r, 0_r, 0_r}};
-  Real3 const posCollidingStageStart[1] = {Real3{0.001_r, 0_r, 0_r}};
+  Real3 posCollidingStageStart[1] = {Real3{0.001_r, 0_r, 0_r}};
 
   auto const eval = [&](ContactEvalConfig const& config) {
     double energy[1] = {};
@@ -485,7 +486,7 @@ TEST(ContactPenalties, FadeFriction_DegenerateAlignmentUsesUnfadedFactor) {
         true /* assemEnergy */,
         true /* assemForce */,
         false /* assemDForce */,
-        true /* isSdfGradUnitary */);
+        isSdfGradUnitary);
     return std::pair{energy[0], force[0]};
   };
 
@@ -501,6 +502,15 @@ TEST(ContactPenalties, FadeFriction_DegenerateAlignmentUsesUnfadedFactor) {
   auto const [invalidNormalEnergy, invalidNormalForce] = eval(fadedConfig);
   EXPECT_DOUBLE_EQ(unfadedEnergy, invalidNormalEnergy);
   EXPECT_NEAR_EQ(unfadedForce, invalidNormalForce);
+
+  // Without either normal, friction opposes the whole displacement, even along the former normal,
+  // and no penalty force acts.
+  distanceGrad[0] = Real3{};
+  isSdfGradUnitary = false;
+  posCollidingStageStart[0] = Real3{0_r, 0_r, 0.001_r};
+  auto const [zeroNormalEnergy, zeroNormalForce] = eval(fadedConfig);
+  EXPECT_DOUBLE_EQ(unfadedEnergy, zeroNormalEnergy);
+  EXPECT_NEAR_EQ((Real3{0_r, 0_r, unfadedForce[0]}), zeroNormalForce);
 }
 
 // Expect that two vectors point in the same direction +/- some angle

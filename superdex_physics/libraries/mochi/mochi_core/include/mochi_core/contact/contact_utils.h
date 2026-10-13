@@ -729,6 +729,9 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
     normal = sdfGrad;
     real constexpr kNormalIsZeroThreshold = 100_r * kDefaultNearEqualEpsilon<real>;
     [[maybe_unused]] real constexpr kNormalIsUnitThreshold = 10_r * kDefaultNearEqualEpsilon<real>;
+#if MOCHI_ASSERT_VERBOSE_ENABLED
+    V isZeroNormal{};
+#endif
     if (!isSdfGradUnitary) {
       V norm = Norm(normal);
       normal *= 1_r / norm;
@@ -741,14 +744,20 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
           normal[1] = Select(isNearZero, -nColliding[1], normal[1]);
           normal[2] = Select(isNearZero, -nColliding[2], normal[2]);
         } else {
+          // No direction is available: a zero normal makes the tangent plane projection the
+          // identity, so friction acts in all directions and normal viscous damping vanishes.
           normal[0] = Select(isNearZero, V{0_r}, normal[0]);
           normal[1] = Select(isNearZero, V{0_r}, normal[1]);
           normal[2] = Select(isNearZero, V{0_r}, normal[2]);
+#if MOCHI_ASSERT_VERBOSE_ENABLED
+          isZeroNormal = isNearZero;
+#endif
         }
       }
     }
     MOCHI_ASSERT_VERBOSE(
-        (NearEqual<kBatchSize, real, V::kSize, real>(Norm(normal), V{1_r}, kNormalIsUnitThreshold)),
+        AllTrue<kBatchSize>(
+            VNearEqual(Norm(normal), V{1_r}, V{kNormalIsUnitThreshold}) | isZeroNormal),
         "Collider normal must be unitary.");
   } else {
     normal = -nColliding;
