@@ -117,7 +117,7 @@ void mochi::DefineMochiPhysics_MochiDiffsim([[maybe_unused]] nb::module_& m, [[m
       }
     }
       , nb::arg("scene").none()
-      , "Make a scene differentiable.\n\nFor accuracy reasons, differentiability is only recommended in double precision.\nDifferentiability is only supported for rigid and articulated actors, and\nrequires :attr:`~superdex.physics.SolverParams.integration_method` to be\n:class:`BACKWARD_EULER <superdex.physics.IntegrationMethod>`. It adds internal\ndata to support the invocation of the functions\n:func:`~superdex.physics.diffsim.back_propagate` and\n:func:`~superdex.physics.diffsim.get_step_jacobian`. It also calls\n:func:`~superdex.physics.experimental.apply_improved_convergence_settings`, and\nit logs warnings when overriding non-default scene or actor settings selected by\nthe user. Consider changing those settings to retain the same simulation\nbehavior if the scene is used elsewhere.\n\nArgs:\n    scene (Scene): The scene to make differentiable.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs."
+      , "Make a scene differentiable.\n\nFor accuracy reasons, differentiability is only recommended in double precision.\nDifferentiability is only supported for rigid and articulated actors, and\nrequires :attr:`~superdex.physics.SolverParams.integration_method` to be\n:class:`BACKWARD_EULER <superdex.physics.IntegrationMethod>`. It adds internal\ndata to support the invocation of the function\n:func:`~superdex.physics.diffsim.back_propagate`. It also calls\n:func:`~superdex.physics.experimental.apply_improved_convergence_settings`, and\nit logs warnings when overriding non-default scene or actor settings selected by\nthe user. Consider changing those settings to retain the same simulation\nbehavior if the scene is used elsewhere.\n\nArgs:\n    scene (Scene): The scene to make differentiable.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs."
     );
 
     m_diffsim.def("get_back_propagation_solver_params", [](mochi::Scene const* scene) {
@@ -191,22 +191,6 @@ void mochi::DefineMochiPhysics_MochiDiffsim([[maybe_unused]] nb::module_& m, [[m
       , nb::arg("scene").none()
       , "Backward mode differentiation through the step function.\n\nSolves the adjoint system to propagate gradients backward through one simulation\nstep. Per-step loss gradients should be accumulated into per-actor adjoint\ncomponents after calling\n:func:`~superdex.physics.diffsim.prepare_back_propagate` and before calling this\nfunction, using output backward functions (e.g.,\n:func:`~superdex.physics.diffsim.get_center_of_mass_transform_backward`,\n:func:`~superdex.physics.diffsim.get_articulated_pose_backward`). The internal\nadjoint buffers are managed by the scene and must be initialized via\n:func:`~superdex.physics.diffsim.reset_back_propagation` before the first call.\nEach call to this function must be preceded by\n:func:`~superdex.physics.diffsim.prepare_back_propagate` for the same state\npair. Per-actor gradients wrt control inputs and initial conditions can be\nextracted via the corresponding backward functions (e.g.,\n:func:`~superdex.physics.diffsim.set_articulated_target_pose_backward`,\n:func:`~superdex.physics.diffsim.set_center_of_mass_transform_backward`) after\neach BackPropagate call. This function assumes that the forward simulation is\nexecuted per step by setting inputs, running the step, and reading outputs. The\nstate handles must be captured right before and after stepping the simulation\nforward, without setting any inputs in between.\n\nArgs:\n    scene (Scene): The differentiable scene.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    TODO: The function is not tested with variable time-stepping yet."
       , nb::call_guard<nb::gil_scoped_release>()
-    );
-
-    m_diffsim.def("get_step_jacobian", [](mochi::Scene* scene, mochi::StateHandle state_new, mochi::StateHandle state_curr, mochi::StateHandle state_old, mochi::Span<mochi::real> out_jac_curr, mochi::Span<mochi::real> out_jac_old) {
-      mochi::Error error;
-      mochi::diffsim::GetStepJacobian(scene, state_new, state_curr, state_old, out_jac_curr, out_jac_old, error);
-      if (!error.IsOK()) {
-        throw MochiErrorException(error);
-      }
-    }
-      , nb::arg("scene").none()
-      , nb::arg("state_new")
-      , nb::arg("state_curr")
-      , nb::arg("state_old")
-      , nb::arg("out_jac_curr")
-      , nb::arg("out_jac_old")
-      , "Forward mode differentiation through the step function.\n\nProvides the full column-major Jacobian matrices with the following sizes:\noutJacCurr = dq_t/dq_t-1 (|q| x |q|) and outJacOld = dq_t/dq_t-2 (|q| x |q|).\nThe rows and columns of the Jacobian matrices are sorted according to the order\ngiven in Scene.GetActors(). The input states are three consecutive states\ncaptured during a simulated trajectory: stateNew = state_t, stateCurr =\nstate_t-1, stateOld = state_t-2.\n\nArgs:\n    scene (Scene): The differentiable scene.\n    state_new (StateHandle): State handle at step t.\n    state_curr (StateHandle): State handle at step t-1.\n    state_old (StateHandle): State handle at step t-2.\n    out_jac_curr (ArrayLikeReal): Jacobian dq_t/dq_t-1, column-major, sized |q|\n        x |q|.\n    out_jac_old (ArrayLikeReal): Jacobian dq_t/dq_t-2, column-major, sized |q| x\n        |q|.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid actors without contact, integrated with backward\n    Euler."
     );
 
     m_diffsim.def("convert_rigid_gradient_lie_to_rotation_vector", [](mochi::TransformRT const& state, mochi::Span<mochi::real> out_grad) {

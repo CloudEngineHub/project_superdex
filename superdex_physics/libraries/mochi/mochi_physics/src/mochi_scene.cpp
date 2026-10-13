@@ -1436,82 +1436,6 @@ void SceneImpl::BackPropagate(Error& error) {
   ComputeAggregateBackPropSolverSceneStats(_registry, backPropStats);
 }
 
-void SceneImpl::GetStepJacobian(
-    StateHandle stateNew,
-    StateHandle stateCurr,
-    StateHandle stateOld,
-    Span<real> outJacCurr,
-    Span<real> outJacOld,
-    Error& error) {
-  MOCHI_ERROR_RETURN(error);
-
-  MOCHI_PROFILE_SCOPE();
-
-  // Check the state handles
-  FindState(stateNew, error);
-  FindState(stateCurr, error);
-  FindState(stateOld, error);
-  MOCHI_ERROR_RETURN(error);
-
-  // Check Jacobian sizes
-  int sceneDofs = 0;
-  ForEachActor([&sceneDofs](Actor* actor) { sceneDofs += actor->GetNumDofs(); });
-  MOCHI_ERROR_IF(isize(outJacCurr) != sceneDofs * sceneDofs, error, "Invalid Jacobian size");
-  MOCHI_ERROR_IF(isize(outJacOld) != sceneDofs * sceneDofs, error, "Invalid Jacobian size");
-  MOCHI_ERROR_RETURN(error);
-
-  // Check if all actors are valid. Currently only rigid actors are supported.
-  bool allActorsValid = true;
-  ForEachActor([&](Actor* actor) { allActorsValid &= actor->GetType() == ActorType::Rigid; });
-  MOCHI_ERROR_IF(!allActorsValid, error, "All actors must be rigid");
-
-  // Check time integrator is backward Euler.
-  MOCHI_ERROR_IF(
-      _registry.ctx<CSimulationParams const>().integrationMethod !=
-          IntegrationMethod::BackwardEuler,
-      error,
-      "GetStepJacobian is only supported with backward Euler.");
-  MOCHI_ERROR_RETURN(error);
-
-  // Validate necessary solver settings for accurate differentiability
-  WarnIfNotImprovedConvergenceSettings();
-
-  // Enforce scheduler binding to this thread, for parallel work.
-  ScopedSchedulerBinding schedulerBinding(this);
-
-  // Compute scene state offset
-  int dofOffset = 0;
-  ForEachActor([&](Actor* actor) {
-    MOCHI_ASSERT(actor->GetType() == ActorType::Rigid, "GetStepJacobian only supports rigid actors")
-    MOCHI_ASSERT(!actor->IsNestedLinkActor(), "GetStepJacobian does not support articulated body")
-    if (!actor->IsStatic()) {
-      int const numDofs = actor->GetNumDofs();
-      auto e = GetEntity(_registry, actor->GetHandle(), ErrorAssert{});
-      _registry.get<CSceneStateOffset>(e).dofsOffset = dofOffset;
-      dofOffset += numDofs;
-    }
-  });
-
-  // Set the new state (with the current state as previous).
-  RestoreStatePair(stateNew, stateCurr, error);
-  MOCHI_ERROR_RETURN(error);
-
-  // Compute dq_t/dq_t-1 and dq_t/dDx
-  // Store dq_t/dq_t-1 in jacCurrView
-  // Store dq_t/dDx_t-1 in per-actor CForwardPropContainerDerivedState
-  MatrixView<real> jacCurrView(outJacCurr.data(), sceneDofs, sceneDofs);
-  StepJacobianSolve(_registry, jacCurrView);
-
-  // Set the current state (with the old state as previous).
-  RestoreStatePair(stateCurr, stateOld, error);
-  MOCHI_ERROR_RETURN(error);
-
-  // Accumulate dq_t/dq_t-1 += dq_t/dδ * dδ/dx_t-1 in jacCurrView
-  // Compute dq_t/dq_t-2 = dq_t/dδ dδ/dx_t-2 in jacOldView
-  MatrixView<real> jacOldView(outJacOld.data(), sceneDofs, sceneDofs);
-  StepJacobianShiftAndProject(_registry, jacCurrView, jacOldView);
-}
-
 #define MOCHI_DESTROY_AND_RETURN_IF_ERROR()         \
   if (!error.IsOK()) {                              \
     if (_registry.all_of<TagArticulatedActor>(e)) { \
@@ -3619,18 +3543,6 @@ void diffsim::PrepareBackPropagate(
 void diffsim::BackPropagate(Scene* scene, Error& error) {
   MOCHI_RETURN_IF_NOT_DIFFERENTIABLE(, );
   sceneImpl->BackPropagate(error);
-}
-
-void diffsim::GetStepJacobian(
-    Scene* scene,
-    StateHandle stateNew,
-    StateHandle stateCurr,
-    StateHandle stateOld,
-    Span<real> outJacCurr,
-    Span<real> outJacOld,
-    Error& error) {
-  MOCHI_RETURN_IF_NOT_DIFFERENTIABLE(, );
-  sceneImpl->GetStepJacobian(stateNew, stateCurr, stateOld, outJacCurr, outJacOld, error);
 }
 
 #undef MOCHI_RETURN_IF_NOT_DIFFERENTIABLE

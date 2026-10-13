@@ -232,19 +232,11 @@ class SceneImpl final : public Scene {
   // the TimeStep::Previous state, with constraint/controller targets set as they would be at the
   // beginning of a step. Unlike RestoreState (which restores a single post-step snapshot), this
   // reconstructs the full pre-step pair by restoring prev, advancing time via PreStepEcs, then
-  // restoring curr. Used by BackPropagate and GetStepJacobian to evaluate residuals across two
-  // consecutive states.
+  // restoring curr. Used by BackPropagate to evaluate residuals across two consecutive states.
   void RestoreStatePair(StateHandle curr, StateHandle prev, Error& err);
   void ResetBackPropagation();
   void PrepareBackPropagate(StateHandle stateNew, StateHandle stateOld, Error& error);
   void BackPropagate(Error& error);
-  void GetStepJacobian(
-      StateHandle stateNew,
-      StateHandle stateCurr,
-      StateHandle stateOld,
-      Span<real> outJacCurr,
-      Span<real> outJacOld,
-      Error& error);
 
   // For unit test access:
   entt::registry& GetRegistry() {

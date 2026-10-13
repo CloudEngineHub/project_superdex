@@ -666,9 +666,6 @@ static_assert(std::is_same_v<decltype(&mochi::diffsim::PrepareBackPropagate), vo
 // free function mochi::diffsim::BackPropagate
 static_assert(std::is_same_v<decltype(&mochi::diffsim::BackPropagate), void (*)(mochi::Scene*, mochi::Error&)>, "\n  ERROR: Function mochi::diffsim::BackPropagate is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
-// free function mochi::diffsim::GetStepJacobian
-static_assert(std::is_same_v<decltype(&mochi::diffsim::GetStepJacobian), void (*)(mochi::Scene*, mochi::StateHandle, mochi::StateHandle, mochi::StateHandle, mochi::Span<mochi::real>, mochi::Span<mochi::real>, mochi::Error&)>, "\n  ERROR: Function mochi::diffsim::GetStepJacobian is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
-
 // free function mochi::diffsim::ConvertRigidGradientLieToRotationVector
 static_assert(std::is_same_v<decltype(&mochi::diffsim::ConvertRigidGradientLieToRotationVector), void (*)(mochi::TransformRT const&, mochi::Span<mochi::real>, mochi::Error&)>, "\n  ERROR: Function mochi::diffsim::ConvertRigidGradientLieToRotationVector is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
