@@ -1450,6 +1450,34 @@ struct ViewOfEntity<ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
   }
 };
 
+// Builds a view of the given type, unless an included pool is empty, which leaves the view empty.
+// It stops at the first empty pool, such as a missing pool's placeholder.
+template <typename ViewT>
+struct NonEmptyView;
+
+template <typename... IncludeT, typename... ExcludeT>
+struct NonEmptyView<ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
+  using ViewT = ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>;
+
+  MOCHI_FORCE_INLINE static std::optional<ViewT> Get(entt::registry& reg) {
+    return Get(reg, std::index_sequence_for<IncludeT...>{});
+  }
+
+ private:
+  // Keeps the pools by position, like ViewOfEntity.
+  template <std::size_t... I>
+  MOCHI_FORCE_INLINE static std::optional<ViewT> Get(
+      entt::registry& reg,
+      std::index_sequence<I...>) {
+    std::tuple<PoolT<IncludeT>*...> includes{};
+    if (((std::get<I>(includes) = &FindPool<IncludeT>(reg))->empty() || ...)) {
+      return std::nullopt;
+    }
+    // Excluded pools come from the mutable registry, as in ViewFromTypeLists.
+    return ViewT{*std::get<I>(includes)..., reg.storage<std::remove_const_t<ExcludeT>>()...};
+  }
+};
+
 // A syntactic sugar class that automatically retrieves the necessary component references
 // from the registry to invoke a system on a single entity. Here ExternalT is all of the
 // parameters of a system that are not retrieved from the registry, but rather passed in by
@@ -1520,6 +1548,12 @@ struct InvokerImpl {
     return ViewOfEntity<decltype(GetViewFromSystem(system, reg))>::Get(reg, entity);
   }
 
+  // Returns nothing if an included pool is empty. The view it returns may still be empty.
+  template <typename SystemT>
+  MOCHI_FORCE_INLINE static auto GetViewFromSystemIfNotEmpty(SystemT system, entt::registry& reg) {
+    return NonEmptyView<decltype(GetViewFromSystem(system, reg))>::Get(reg);
+  }
+
   // Invokes the system as a global system
   template <typename... LookupT>
   inline void InvokeGlobal(
@@ -1582,9 +1616,12 @@ struct ForEachInvokerImpl : InvokerImpl<PolicyList, ExternalT...> {
   template <typename SystemT>
   void InvokeForEachEntityInView(SystemT system, entt::registry& reg) const {
     static_assert(BaseClass::EnforcePerEntitySystemPolicies(SystemT{}));
-    auto view = BaseClass::GetViewFromSystem(system, reg);
-    for (entt::entity e : view) {
-      BaseClass::InvokeOnEntityInView(system, reg, view, e);
+    auto const view = BaseClass::GetViewFromSystemIfNotEmpty(system, reg);
+    if (!view) {
+      return;
+    }
+    for (entt::entity e : *view) {
+      BaseClass::InvokeOnEntityInView(system, reg, *view, e);
     }
   }
 
@@ -1683,9 +1720,12 @@ inline void ScheduleInvokeForEachGlobal(
     entt::registry& reg,
     ExternalT... extParams) {
   auto invoker = InvokerImpl<entt::type_list<Policies...>, ExternalT...>{extParams...};
-  auto view = invoker.GetViewFromSystem(system, reg);
-  for (entt::entity e : view) {
-    Schedule(sem, debugLabel, [invoker, system, &reg, view, e]() {
+  auto const view = invoker.GetViewFromSystemIfNotEmpty(system, reg);
+  if (!view) {
+    return;
+  }
+  for (entt::entity e : *view) {
+    Schedule(sem, debugLabel, [invoker, system, &reg, view = *view, e]() {
       invoker.InvokeOnEntityInView(system, reg, view, e);
     });
   }
