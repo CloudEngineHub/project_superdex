@@ -649,6 +649,30 @@ static void TestInvokeForEachLocal() {
     EXPECT_EQ(kNumEntities, result.count.load());
     EXPECT_EQ(totalValue, result.total.load());
   }
+
+  // Mixed matching, missing, and excluded entities
+  {
+    auto filteredSumFn =
+        +[](ComponentA const& comp, Excluded<TagA>, CtxGlobal<MutableResult const> out) {
+          out->count++;
+          out->total += comp.value;
+        };
+    reg.emplace<TagA>(allEntities[1]);
+    reg.erase<ComponentA>(allEntities[2]);
+
+    result.Reset();
+    TestInvokeForEachLocal<kMethod>(
+        filteredSumFn, reg, List{allEntities[0], allEntities[1], allEntities[2]});
+    EXPECT_EQ(1, result.count.load());
+    EXPECT_EQ(reg.get<ComponentA const>(allEntities[0]).value, result.total.load());
+
+    // One entity at a time: single-entity subsets skip the view.
+    for (int i = 0; i < 3; ++i) {
+      result.Reset();
+      TestInvokeForEachLocal<kMethod>(filteredSumFn, reg, List{allEntities[i]});
+      EXPECT_EQ(i == 0 ? 1 : 0, result.count.load());
+    }
+  }
 }
 
 template <MethodToTest kMethod>
@@ -702,15 +726,17 @@ static void TestInvokeForEach() {
     EXPECT_EQ(reg.get<ComponentA>(e3).value, 2); // A += 1
   }
 
-  // Read ComponentA, write ComponentB
+  // Read ComponentA twice, write ComponentB
   {
     reset(1);
-    auto fn = +[](ComponentA const& compA, ComponentB& compB) { compB.value += compA.value; };
+    auto fn = +[](ComponentA const& compA, ComponentA const& compA2, ComponentB& compB) {
+      compB.value += compA.value + compA2.value;
+    };
     TestInvokeForEach<kMethod>(fn, reg);
     EXPECT_EQ(reg.get<ComponentA>(e1).value, 1); // A is const
-    EXPECT_EQ(reg.get<ComponentB>(e1).value, 2); // B += A
+    EXPECT_EQ(reg.get<ComponentB>(e1).value, 3); // B += A + A
     EXPECT_EQ(reg.get<ComponentA>(e2).value, 1); // A is const
-    EXPECT_EQ(reg.get<ComponentB>(e2).value, 2); // B += A
+    EXPECT_EQ(reg.get<ComponentB>(e2).value, 3); // B += A + A
     EXPECT_EQ(reg.get<ComponentA>(e3).value, 1); // A is const
     EXPECT_EQ(reg.get<ComponentB>(e4).value, 1); // Skipped. No A.
   }

@@ -43,7 +43,7 @@ void GetSolutions(
  */
 void SetSolutions(
     entt::registry& reg,
-    Span<entt::entity const> entities,
+    CIslandDescendants const& descendants,
     ColumnVectorView<real const> solution);
 } // namespace mochi
 

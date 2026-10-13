@@ -604,6 +604,11 @@ static void UpdateIslandDescendants(
     if (reg.any_of<TagRigidActor>(e)) {
       outDescendants.rigidActors.push_back(e);
     }
+    if (reg.any_of<TagArticulatedLinkActor>(e)) {
+      MOCHI_ASSERT_VERBOSE(
+          reg.all_of<TagRigidActor>(e), "An articulated link must also be a rigid actor.");
+      outDescendants.articulatedLinkActors.push_back(e);
+    }
     if (reg.any_of<TagSoftActor>(e)) {
       outDescendants.softActors.push_back(e);
     }

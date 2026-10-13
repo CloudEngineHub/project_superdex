@@ -112,7 +112,8 @@ void RestoreKinematicStatePair(
         // Run PreStage pipeline, but only for rigid and articulated body
         ecs::InvokeForEach(&mochi::rigid::EntityPreStage, reg, descendants.rigidActors);
         if (!descendants.compoundActors.empty()) {
-          mochi::articulated::compound::PreStagePipeline(reg, descendants.actors);
+          mochi::articulated::compound::PreStagePipeline(
+              reg, descendants.compoundActors, descendants.articulatedLinkActors);
         }
       });
 

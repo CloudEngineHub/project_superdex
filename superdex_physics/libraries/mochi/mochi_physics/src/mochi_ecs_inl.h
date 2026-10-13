@@ -244,7 +244,7 @@ struct SystemParamFetchSingleFromRegistry {
 // trait.
 template <typename T, typename ViewT>
 struct SystemParamFetchSingleFromView {
-  static T Get(ViewT /*view*/, entt::entity /*e*/) {
+  static T Get(ViewT const& /*view*/, entt::entity /*e*/) {
     static_assert(
         std::is_void_v<T>, "No Matching specialization of SystemParamFetchSingleFromView!");
   }
@@ -359,7 +359,9 @@ template <typename T, typename... IncludeT, typename... ExcludeT>
 struct SystemParamFetchSingleFromView<
     T const&,
     ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
-  static T const& Get(ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> view, entt::entity e) {
+  static T const& Get(
+      ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> const& view,
+      entt::entity e) {
     return view.template get<T const>(e);
   }
 };
@@ -420,7 +422,7 @@ struct SystemParamFetchSingleFromRegistry<T&> {
 
 template <typename T, typename... IncludeT, typename... ExcludeT>
 struct SystemParamFetchSingleFromView<T&, ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
-  static T& Get(ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> view, entt::entity e) {
+  static T& Get(ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> const& view, entt::entity e) {
     return view.template get<T>(e);
   }
 };
@@ -470,7 +472,7 @@ struct SystemParamFetchSingleFromRegistry<Included<T...>> {
 
 template <typename ViewT, typename... T>
 struct SystemParamFetchSingleFromView<Included<T...>, ViewT> {
-  static Included<T...> Get(ViewT /*view*/, entt::entity /*e*/) {
+  static Included<T...> Get(ViewT const& /*view*/, entt::entity /*e*/) {
     return Included<T...>{};
   }
 };
@@ -1358,7 +1360,7 @@ struct InvokerUnwrap<std::reference_wrapper<T>> {
 // Converts a fetch call with a view and registry into a fetch call with only a registry
 template <typename T, typename ViewT>
 struct FetchWithViewWrapperRegistry {
-  static inline auto Get(entt::registry& reg, ViewT /*view*/, entt::entity e)
+  static inline auto Get(entt::registry& reg, ViewT const& /*view*/, entt::entity e)
       -> decltype(SystemParamFetchSingleFromRegistry<T>::Get(reg, e)) {
     return SystemParamFetchSingleFromRegistry<T>::Get(reg, e);
   }
@@ -1367,7 +1369,7 @@ struct FetchWithViewWrapperRegistry {
 // Converts a fetch call with a view and registry into a fetch call with only a view
 template <typename T, typename ViewT>
 struct FetchWithViewWrapperView {
-  static inline auto Get(entt::registry& /*reg*/, ViewT view, entt::entity e)
+  static inline auto Get(entt::registry& /*reg*/, ViewT const& view, entt::entity e)
       -> decltype(SystemParamFetchSingleFromView<T, ViewT>::Get(view, e)) {
     return SystemParamFetchSingleFromView<T, ViewT>::Get(view, e);
   }
@@ -1442,7 +1444,9 @@ struct InvokerImpl {
   static auto GetViewFromSystem(
       void (* /*system*/)(typename InvokerUnwrap<ExternalT>::result..., LookupT...),
       entt::registry& reg) {
-    using IncludeList = IncludeInViewFilter_t<entt::type_list<LookupT...>>;
+    // A view looks its pools up by type, so each required type may appear only once.
+    using IncludeList =
+        entt::type_list_unique_t<IncludeInViewFilter_t<entt::type_list<LookupT...>>>;
     static_assert(
         IncludeList::size,
         "Per-entity systems must lookup at least one argument which depends on the entity. "
@@ -1478,10 +1482,10 @@ struct InvokerImpl {
   inline void InvokeOnEntityInView(
       void (*system)(typename InvokerUnwrap<ExternalT>::result..., LookupT...),
       entt::registry& reg,
-      ViewT view,
+      ViewT const& view,
       entt::entity entity) const {
-    // This code is used when you invoke a per-entity system using the global registry (all matching
-    // entities). Such invocations should be order-independent and parallelizable.
+    // This code is used when you invoke a per-entity system for each matching entity in the
+    // registry or in a subset. Such invocations should be order-independent and parallelizable.
     static_assert(EnforcePerEntitySystemPolicies(decltype(system){}));
 
     // Lookup system parameters from the registry
@@ -1533,9 +1537,20 @@ struct ForEachInvokerImpl : InvokerImpl<PolicyList, ExternalT...> {
   void InvokeForEachEntityInSet(SystemT system, entt::registry& reg, EntitySetT const& entitySet)
       const {
     static_assert(BaseClass::EnforcePerEntitySystemPolicies(SystemT{}));
-    for (entt::entity e : entitySet) {
+    // A view looks up all of the system's pools up front, which only pays off across entities.
+    if (std::size(entitySet) == 1) {
+      entt::entity const e = *std::begin(entitySet);
+      MOCHI_ASSERT_VERBOSE(reg.valid(e), "Invalid entity in entity set.");
       if (BaseClass::CanInvokeOnEntity(system, reg, e)) {
         BaseClass::InvokeOnEntity(system, reg, e);
+      }
+      return;
+    }
+    auto view = BaseClass::GetViewFromSystem(system, reg);
+    for (entt::entity e : entitySet) {
+      MOCHI_ASSERT_VERBOSE(reg.valid(e), "Invalid entity in entity set.");
+      if (view.contains(e)) {
+        BaseClass::InvokeOnEntityInView(system, reg, view, e);
       }
     }
   }
@@ -1662,10 +1677,23 @@ inline void ScheduleInvokeForEachImpl(
       std::unique(sorted.begin(), sorted.end()) == sorted.end(),
       "Repeat entities detected in list!");
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
-  for (auto e : entitySet) {
+  // A view looks up all of the system's pools up front, which only pays off across entities.
+  if (std::size(entitySet) == 1) {
+    entt::entity const e = *std::begin(entitySet);
+    MOCHI_ASSERT_VERBOSE(reg.valid(e), "Invalid entity in entity set.");
     if (invoker.CanInvokeOnEntity(system, reg, e)) {
       Schedule(sem, debugLabel, [invoker, system, &reg, e]() {
         invoker.InvokeOnEntity(system, reg, e);
+      });
+    }
+    return;
+  }
+  auto view = invoker.GetViewFromSystem(system, reg);
+  for (auto e : entitySet) {
+    MOCHI_ASSERT_VERBOSE(reg.valid(e), "Invalid entity in entity set.");
+    if (view.contains(e)) {
+      Schedule(sem, debugLabel, [invoker, system, &reg, view, e]() {
+        invoker.InvokeOnEntityInView(system, reg, view, e);
       });
     }
   }

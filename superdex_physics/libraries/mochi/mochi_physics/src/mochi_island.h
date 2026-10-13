@@ -50,8 +50,9 @@ struct CIslandDescendants : NoCopy {
   std::vector<entt::entity> actors;
 
   // Entities of specific types
-  std::vector<entt::entity> compoundActors; // TagCompoundActor (includes articulated compounds)
-  std::vector<entt::entity> rigidActors; // TagRigidActor (includes articulated rigids)
+  std::vector<entt::entity> compoundActors; // TagCompoundActor (includes articulated actors)
+  std::vector<entt::entity> rigidActors; // TagRigidActor (includes articulated links)
+  std::vector<entt::entity> articulatedLinkActors; // TagArticulatedLinkActor
   std::vector<entt::entity> softActors; // TagSoftActor (includes roms)
   std::vector<entt::entity> shellActors; // TagShellActor
   std::vector<entt::entity> rodActors; // TagRodActor
@@ -62,6 +63,7 @@ struct CIslandDescendants : NoCopy {
     actors.clear();
     compoundActors.clear();
     rigidActors.clear();
+    articulatedLinkActors.clear();
     softActors.clear();
     shellActors.clear();
     rodActors.clear();

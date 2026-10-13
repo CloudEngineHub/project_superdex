@@ -739,17 +739,26 @@ void EntityPreFirstStage(
 /*
  * Pipeline executed before each time integration stage.
  */
-void PreStagePipeline(entt::registry& reg, Span<entt::entity const> entities);
+void PreStagePipeline(
+    entt::registry& reg,
+    Span<entt::entity const> compounds,
+    Span<entt::entity const> links);
 
 /*
  * Pipeline executed after each time integration stage.
  */
-void PostStagePipeline(entt::registry& reg, Span<entt::entity const> entities);
+void PostStagePipeline(
+    entt::registry& reg,
+    Span<entt::entity const> compounds,
+    Span<entt::entity const> links);
 
 /*
  * Pipeline executed after the last time integration stage of the time step.
  */
-void PostLastStagePipeline(entt::registry& reg, Span<entt::entity const> entities);
+void PostLastStagePipeline(
+    entt::registry& reg,
+    Span<entt::entity const> compounds,
+    Span<entt::entity const> links);
 
 /*
  * ECS system to record the target state of an articulated pose controller.

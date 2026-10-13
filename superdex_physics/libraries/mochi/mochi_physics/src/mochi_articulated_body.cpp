@@ -2984,35 +2984,37 @@ void articulated::compound::ReconstructPreviousStepPipeline(entt::registry& reg)
 
 void articulated::compound::PreStagePipeline(
     entt::registry& reg,
-    Span<entt::entity const> entities) {
+    Span<entt::entity const> compounds,
+    Span<entt::entity const> links) {
   MOCHI_PROFILE_SCOPE();
   // First, compute the state and velocity of the articulated compound at the beginning of the
   // stage.
   ecs::InvokeForEach(
-      &ComputeStateAndVelocity<TimeTarget::StageStart, TimeStep::StageStart>, reg, entities);
+      &ComputeStateAndVelocity<TimeTarget::StageStart, TimeStep::StageStart>, reg, compounds);
 
   // Then, update the rigid actors in the compound (if any).
-  ecs::InvokeForEach(&articulated::rigid::EntityPreStage, reg, entities);
+  ecs::InvokeForEach(&articulated::rigid::EntityPreStage, reg, links);
 
-  ecs::InvokeForEach(&ResolveSkinning<TimeStep::StageStart>, reg, entities);
+  ecs::InvokeForEach(&ResolveSkinning<TimeStep::StageStart>, reg, compounds);
 }
 
 void articulated::compound::PostStagePipeline(
     entt::registry& reg,
-    Span<entt::entity const> entities) {
+    Span<entt::entity const> compounds,
+    Span<entt::entity const> links) {
   MOCHI_PROFILE_SCOPE();
   // Compute the velocity
-  ecs::InvokeForEach(&ComputeCurrentVelocity, reg, entities);
+  ecs::InvokeForEach(&ComputeCurrentVelocity, reg, compounds);
 
   // Handle potential solver divergence.
-  ecs::InvokeForEach(&HandleSolverDivergence, reg, entities);
+  ecs::InvokeForEach(&HandleSolverDivergence, reg, compounds);
 
   // Then, push the state and velocity to the integration stages, update the rigid actors in the
   // compound (if any), and compute skinning on the visual mesh. These operations are independent
   // of each other.
-  ecs::InvokeForEach(&PushCurrentStateAndVelocityToIntegrationStages, reg, entities);
-  ecs::InvokeForEach(&articulated::rigid::EntityPostStage, reg, entities);
-  ecs::InvokeForEach(&ResolveSkinning<TimeStep::Current>, reg, entities);
+  ecs::InvokeForEach(&PushCurrentStateAndVelocityToIntegrationStages, reg, compounds);
+  ecs::InvokeForEach(&articulated::rigid::EntityPostStage, reg, links);
+  ecs::InvokeForEach(&ResolveSkinning<TimeStep::Current>, reg, compounds);
 }
 
 // Synchronize the derived ordered link-velocity mirror from authoritative link components.
@@ -3029,24 +3031,26 @@ static void UpdateLinkVelocityArray(
 
 void articulated::compound::PostLastStagePipeline(
     entt::registry& reg,
-    Span<entt::entity const> entities) {
+    Span<entt::entity const> compounds,
+    Span<entt::entity const> links) {
   MOCHI_PROFILE_SCOPE();
   // First, compute the state and velocity of the articulated compound at the end of the time
   // step.
   ecs::InvokeForEach(
-      &ComputeStateAndVelocity<TimeTarget::StepEnd, TimeStep::Current>, reg, entities);
+      &ComputeStateAndVelocity<TimeTarget::StepEnd, TimeStep::Current>, reg, compounds);
 
   // Update the Jacobian to match the step-end pose.
-  ecs::InvokeForEach(&articulated::compound::UpdateJacobianState<TimeStep::Current>, reg, entities);
+  ecs::InvokeForEach(
+      &articulated::compound::UpdateJacobianState<TimeStep::Current>, reg, compounds);
 
   // Then, update the rigid actors in the compound (if any) and gather their velocities.
-  ecs::InvokeForEach(&articulated::rigid::EntityPostLastStage, reg, entities);
-  ecs::InvokeForEach(&UpdateLinkVelocityArray, reg, entities);
+  ecs::InvokeForEach(&articulated::rigid::EntityPostLastStage, reg, links);
+  ecs::InvokeForEach(&UpdateLinkVelocityArray, reg, compounds);
 
   // Resolve skinning on the full mesh because this is where we need to do this
   // for, e.g., rendering purposes
   ecs::InvokeForEach(
-      &ResolveSkinning<TimeStep::Current, /*kForceUseAllNodes = */ true>, reg, entities);
+      &ResolveSkinning<TimeStep::Current, /*kForceUseAllNodes = */ true>, reg, compounds);
 }
 
 template <typename ContainerT, size_t... DIMS>

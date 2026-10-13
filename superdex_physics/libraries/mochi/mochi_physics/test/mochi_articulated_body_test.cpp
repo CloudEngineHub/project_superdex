@@ -29,6 +29,7 @@
 #include <mochi_physics/src/mochi_context.h>
 #include <mochi_physics/src/mochi_discretization_components.h>
 #include <mochi_physics/src/mochi_group.h>
+#include <mochi_physics/src/mochi_island.h>
 #include <mochi_physics/src/mochi_rigid.h>
 #include <mochi_physics/src/mochi_shape.h>
 #include <mochi_physics/src/mochi_snle.h>
@@ -684,9 +685,17 @@ TEST_F(ArticulatedBodyTest, Articulated_LinkTransformsInSync) {
   // Compare at initialization.
   runChecks();
 
-  // Compare after a step.
+  // Compare after a step, in an island that also holds rigid actors other than the links.
+  _scene->SetForceSingleIsland(true);
   _scene->Step(1e-2_r);
   runChecks();
+
+  auto const& reg = GetRegistry();
+  auto const& descendants =
+      reg.get<CIslandDescendants const>(reg.get<CIslandMemberInfo const>(_eAC).island);
+  auto const& links = reg.get<CGroupMembers const>(_eAC).actors;
+  EXPECT_GT(descendants.rigidActors.size(), links.size());
+  EXPECT_EQ(links, descendants.articulatedLinkActors);
 }
 
 // Guards link-authored pose projection from republishing off-manifold transforms.

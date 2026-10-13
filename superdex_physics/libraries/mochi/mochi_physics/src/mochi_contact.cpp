@@ -1942,7 +1942,7 @@ static void InitColliderJacobians(
       &articulated::rigid::SetupColliderJacobians<kTimeStep>,
       reg,
       colliderJacsStorage,
-      descendants.rigidActors);
+      descendants.articulatedLinkActors);
 
   // Rigid actors are pretty cheap. Do them on the calling thread.
   for (auto e : descendants.rigidActors) {
