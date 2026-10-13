@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import threading
 import unittest
@@ -22,7 +23,10 @@ from socket import SHUT_RDWR
 from unittest.mock import call, Mock
 
 import numpy as np
-from superdex.physics.viewer.unrealcv.unrealcv_client import UnrealCVClient
+from superdex.physics.viewer.unrealcv.unrealcv_client import (
+    LitMultiLayout,
+    UnrealCVClient,
+)
 
 
 class RecordingUnrealCVClient(UnrealCVClient):
@@ -270,6 +274,110 @@ class TestUnrealCVClientCameraCalibration(unittest.TestCase):
 
         self.assertEqual(client.apply_camera_calibration(9), [])
         self.assertEqual(client.batch_commands, [])
+
+
+_LAYOUT_COMMAND = "vget /cameras/lit_layout_multi 2,0"
+
+
+def _layout_reply(**overrides: object) -> str:
+    layout = {
+        "width": 721,
+        "height": 480,
+        "format": "BGRA8",
+        "ids": [2, 0],
+        "tiles": [[0, 0, 640, 480], [640, 0, 81, 64]],
+    }
+    layout.update(overrides)
+    return json.dumps(layout)
+
+
+class TestUnrealCVClientMultiViewCapture(unittest.TestCase):
+    def test_builds_exact_multi_view_capture_commands(self) -> None:
+        self.assertEqual(
+            UnrealCVClient.build_start_lit_async_multi_command([2, 0, 5]),
+            "vget /cameras/lit_async_multi 2,0,5",
+        )
+        self.assertEqual(
+            UnrealCVClient.build_get_lit_latest_multi_command((2, 0, 5)),
+            "vget /cameras/lit_get_latest_multi 2,0,5 npy",
+        )
+
+    def test_parses_the_layout_reply(self) -> None:
+        client = RecordingUnrealCVClient()
+        client.responses = {_LAYOUT_COMMAND: _layout_reply()}
+
+        self.assertEqual(
+            client.get_lit_layout_multi([2, 0]),
+            LitMultiLayout(
+                width=721,
+                height=480,
+                ids=(2, 0),
+                tiles=((0, 0, 640, 480), (640, 0, 81, 64)),
+            ),
+        )
+
+    def test_rejects_failed_and_unexpected_layout_replies(self) -> None:
+        missing_tiles = json.loads(_layout_reply())
+        del missing_tiles["tiles"]
+        replies: dict[str, str | None] = {
+            "error reply": "error Camera 9 not found",
+            "no reply": None,
+            "bad json": "{width: 721",
+            "missing key": json.dumps(missing_tiles),
+            "not bgra8": _layout_reply(format="RGBA8"),
+            "reordered ids": _layout_reply(ids=[0, 2]),
+            "other ids": _layout_reply(ids=[2, 1]),
+            "missing tile": _layout_reply(tiles=[[0, 0, 640, 480]]),
+            "malformed tile": _layout_reply(tiles=[[0, 0, 640], [640, 0, 81, 64]]),
+            "tile past the atlas": _layout_reply(
+                tiles=[[0, 0, 640, 480], [641, 0, 81, 64]]
+            ),
+            "negative origin": _layout_reply(
+                tiles=[[0, -1, 640, 480], [640, 0, 81, 64]]
+            ),
+            "empty tile": _layout_reply(tiles=[[0, 0, 640, 480], [640, 0, 0, 64]]),
+        }
+        for case, reply in replies.items():
+            with self.subTest(case=case):
+                client = RecordingUnrealCVClient()
+                client.responses = {_LAYOUT_COMMAND: reply}
+
+                with self.assertRaisesRegex(RuntimeError, "lit_layout_multi 2,0"):
+                    client.get_lit_layout_multi([2, 0])
+                with self.assertRaises(RuntimeError):
+                    client.get_lit_layout_multi([2, 0])
+                self.assertEqual(client.commands, [_LAYOUT_COMMAND] * 2)
+
+    def test_rejects_a_repeated_camera_before_querying_ue(self) -> None:
+        client = RecordingUnrealCVClient()
+
+        with self.assertRaisesRegex(ValueError, "repeats a camera"):
+            client.get_lit_layout_multi([2, 0, 2])
+        self.assertEqual(client.commands, [])
+
+    def test_caches_the_layout_until_a_camera_size_or_crop_changes(self) -> None:
+        client = RecordingUnrealCVClient()
+        client.responses = {_LAYOUT_COMMAND: _layout_reply()}
+
+        def layout_queries() -> int:
+            return client.commands.count(_LAYOUT_COMMAND)
+
+        for _ in range(3):
+            client.get_lit_layout_multi((2, 0))
+        self.assertEqual(layout_queries(), 1)
+
+        client.set_camera_size(2, 640, 480)
+        client.get_lit_layout_multi((2, 0))
+        client.get_lit_layout_multi((2, 0))
+        self.assertEqual(layout_queries(), 2)
+
+        client.set_all_camera_sizes([0], 81, 64)
+        client.get_lit_layout_multi((2, 0))
+        self.assertEqual(layout_queries(), 3)
+
+        client.set_camera_crop(2, 0.0, 0.0, 0.5, 0.5)
+        client.get_lit_layout_multi((2, 0))
+        self.assertEqual(layout_queries(), 4)
 
 
 if __name__ == "__main__":

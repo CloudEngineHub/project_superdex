@@ -21,12 +21,15 @@ with methods for object manipulation, camera control, and image capture.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from functools import cached_property
 from io import BytesIO
 from typing import TYPE_CHECKING, TypeVar
 
@@ -59,6 +62,21 @@ def _fmt(value: float) -> str:
         String representation in decimal notation.
     """
     return f"{float(value):.10f}".rstrip("0").rstrip(".")
+
+
+def _camera_id_list(camera_ids: Sequence[int]) -> str:
+    return ",".join(str(camera_id) for camera_id in camera_ids)
+
+
+@dataclass(frozen=True)
+class LitMultiLayout:
+    """Where a multi-view lit capture places each camera in its BGRA8 atlas."""
+
+    width: int
+    height: int
+    ids: tuple[int, ...]
+    tiles: tuple[tuple[int, int, int, int], ...]
+    """One ``(x, y, width, height)`` pixel rectangle per camera, in ``ids`` order."""
 
 
 ########################################################################################
@@ -387,7 +405,7 @@ class UnrealCVClient:
                 capture_cmd_indices: list[int] = []
                 transform_cmd_indices: list[int] = []
                 for i, c in enumerate(commands):
-                    if c.startswith("vget /camera/"):
+                    if c.startswith(("vget /camera/", "vget /cameras/lit_")):
                         capture_cmd_indices.append(i)
                     else:
                         transform_cmd_indices.append(i)
@@ -656,6 +674,80 @@ class UnrealCVClient:
     def build_get_lit_latest_command(camera_id: int, fmt: str = "npy") -> str:
         """Build a command to get the most recent async lit capture (no key needed)."""
         return f"vget /camera/{camera_id}/lit_get_latest {fmt}"
+
+    @staticmethod
+    def build_start_lit_async_multi_command(camera_ids: Sequence[int]) -> str:
+        """Build a command that starts one multi-view async lit capture (replies "ok")."""
+        return f"vget /cameras/lit_async_multi {_camera_id_list(camera_ids)}"
+
+    @staticmethod
+    def build_get_lit_latest_multi_command(
+        camera_ids: Sequence[int], fmt: str = "npy"
+    ) -> str:
+        """Build a command to get the latest multi-view atlas (or "pending")."""
+        return f"vget /cameras/lit_get_latest_multi {_camera_id_list(camera_ids)} {fmt}"
+
+    @cached_property
+    def _lit_layout_multi_cache(self) -> dict[tuple[int, ...], LitMultiLayout]:
+        return {}
+
+    def get_lit_layout_multi(self, camera_ids: Sequence[int]) -> LitMultiLayout:
+        """Return the atlas layout of a multi-view lit capture of ``camera_ids``.
+
+        UE derives the layout from the camera sizes, so it is cached per ordered
+        id tuple until a camera size or crop setter invalidates it.
+
+        Raises:
+            ValueError: If ``camera_ids`` names a camera twice, since its tiles
+                would collide in the per-camera frames.
+            RuntimeError: If UE replies with an error or an unexpected layout.
+        """
+        ids = tuple(camera_ids)
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"Multi-view capture repeats a camera: {list(ids)}")
+        cached = self._lit_layout_multi_cache.get(ids)
+        if cached is not None:
+            return cached
+
+        command = f"vget /cameras/lit_layout_multi {_camera_id_list(ids)}"
+        response = self._request(command)
+        try:
+            parsed = json.loads(response or "")
+            atlas_format = parsed["format"]
+            layout = LitMultiLayout(
+                width=int(parsed["width"]),
+                height=int(parsed["height"]),
+                ids=tuple(int(camera_id) for camera_id in parsed["ids"]),
+                tiles=tuple(
+                    (int(x), int(y), int(w), int(h)) for x, y, w, h in parsed["tiles"]
+                ),
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            raise RuntimeError(f"UnrealCV '{command}' failed: {response!r}") from e
+        tiles_in_atlas = all(
+            x >= 0
+            and y >= 0
+            and w > 0
+            and h > 0
+            and x + w <= layout.width
+            and y + h <= layout.height
+            for x, y, w, h in layout.tiles
+        )
+        if (
+            atlas_format != "BGRA8"
+            or layout.ids != ids
+            or len(layout.tiles) != len(ids)
+            or not tiles_in_atlas
+        ):
+            raise RuntimeError(
+                f"UnrealCV '{command}' returned an unexpected layout: {response!r}"
+            )
+        self._lit_layout_multi_cache[ids] = layout
+        return layout
+
+    def invalidate_lit_layout_multi(self) -> None:
+        """Forget every cached multi-view layout so the next lookup queries UE."""
+        self._lit_layout_multi_cache.clear()
 
     ####################################################################################
     # Object Manipulation
@@ -1216,6 +1308,7 @@ class UnrealCVClient:
             True if successful, False otherwise.
         """
         response = self._request(f"vset /camera/{camera_id}/size {width} {height}")
+        self.invalidate_lit_layout_multi()
         return response is not None and response.lower() == "ok"
 
     def set_camera_crop(
@@ -1242,6 +1335,7 @@ class UnrealCVClient:
             f"vset /camera/{camera_id}/crop {_fmt(left)} {_fmt(top)} "
             f"{_fmt(right)} {_fmt(bottom)}"
         )
+        self.invalidate_lit_layout_multi()
         success = response is not None and response.lower() == "ok"
         if success:
             if (left, top, right, bottom) == (0.0, 0.0, 1.0, 1.0):
@@ -1272,6 +1366,7 @@ class UnrealCVClient:
             for camera_id in camera_ids
         ]
         result = self._request_batch(commands)
+        self.invalidate_lit_layout_multi()
         # When profile=False (default), _request_batch returns list[str | None]
         responses: list[str | None] = result if isinstance(result, list) else result[0]
 

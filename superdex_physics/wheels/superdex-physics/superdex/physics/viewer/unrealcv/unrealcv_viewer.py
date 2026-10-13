@@ -42,7 +42,7 @@ from superdex.physics.utils.coordinate_systems import (
 from superdex.physics.utils.profiling import Profiler
 from superdex.physics.viewer.utils.aabb import AABB
 
-from .unrealcv_client import UnrealCVClient
+from .unrealcv_client import LitMultiLayout, UnrealCVClient
 from .unrealcv_image import bgr_to_rgb, npy_view
 from .unrealcv_viewer_cfg import CaptureFormat, CaptureMode, UnrealCVViewerCfg
 from .unrealcv_viewer_state import UnrealCVActorState, UnrealCVViewerState
@@ -56,6 +56,12 @@ logger = logging.getLogger(__name__)
 
 RenderFrame = npt.NDArray[np.uint8]
 """A render frame, consists of an RGB image."""
+
+
+def _convert_capture_array(arr: np.ndarray) -> RenderFrame:
+    if arr.ndim == 3 and arr.shape[2] in (3, 4):
+        return bgr_to_rgb(arr)
+    return arr.copy()
 
 
 class UnrealCVViewer:
@@ -432,13 +438,40 @@ class UnrealCVViewer:
                 img = Image.open(BytesIO(response)).convert("RGB")
                 return np.array(img)
             else:
-                arr = npy_view(response)
-                if arr.ndim == 3 and arr.shape[2] in (3, 4):
-                    return bgr_to_rgb(arr)
-                return arr.copy()
+                return _convert_capture_array(npy_view(response))
         except Exception as e:
             logger.error(f"Failed to decode captured image: {e}")
             return None
+
+    @staticmethod
+    def _decode_multiview_response(
+        response: str | bytes, layout: LitMultiLayout
+    ) -> dict[int, RenderFrame]:
+        """Split a ``lit_get_latest_multi`` npy atlas into per-camera RGB frames.
+
+        Each tile goes through the per-camera npy conversion, so the frames have
+        the same type and layout as :meth:`_decode_capture_response` returns.
+
+        Raises:
+            RuntimeError: If UE replied with text instead of an atlas, or the
+                atlas is not a BGRA8 image of ``layout``'s size.
+        """
+        if isinstance(response, str):
+            raise RuntimeError(
+                f"UnrealCV multi-view capture of cameras {list(layout.ids)} failed: "
+                f"{response!r}"
+            )
+        atlas = npy_view(response)
+        if atlas.shape != (layout.height, layout.width, 4):
+            raise RuntimeError(
+                f"UnrealCV multi-view atlas of shape {atlas.shape} does not match the "
+                f"{layout.width}x{layout.height} BGRA8 layout of cameras "
+                f"{list(layout.ids)}"
+            )
+        return {
+            camera_id: _convert_capture_array(atlas[y : y + h, x : x + w])
+            for camera_id, (x, y, w, h) in zip(layout.ids, layout.tiles)
+        }
 
     def _get_img_and_decode(
         self, get_img_cmds: list[str], cam_order: list[int]
