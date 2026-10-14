@@ -31,6 +31,8 @@
 namespace superdex::recorder {
 namespace {
 
+using mochi::operator""_r;
+
 class TemporaryDirectory final {
  public:
   TemporaryDirectory() {
@@ -283,6 +285,8 @@ TEST(SuperDexRecorderTest, CreateSeriesRejectsExistingEntityPath) {
   auto* const transformSeries = episode->CreateTransformSeries("world/test", transformError);
   mochi::Error arrowError;
   auto* const arrowSeries = episode->CreateArrow3DSeries("world/test", arrowError);
+  mochi::Error pointsError;
+  auto* const pointsSeries = episode->CreatePoints3DSeries("world/test", pointsError);
 
   EXPECT_EQ(scalarSeries, nullptr);
   EXPECT_FALSE(scalarError.IsOK());
@@ -290,6 +294,8 @@ TEST(SuperDexRecorderTest, CreateSeriesRejectsExistingEntityPath) {
   EXPECT_FALSE(transformError.IsOK());
   EXPECT_EQ(arrowSeries, nullptr);
   EXPECT_FALSE(arrowError.IsOK());
+  EXPECT_EQ(pointsSeries, nullptr);
+  EXPECT_FALSE(pointsError.IsOK());
 }
 
 TEST(SuperDexRecorderTest, TransformSeriesChecksTheTimeOfUnchangedTransforms) {
@@ -351,6 +357,88 @@ TEST(SuperDexRecorderTest, WriteMeshRejectsOutOfRangeIndices) {
   episode->WriteMesh("world/test", vertices, triangles, {255, 255, 255, 255}, error);
 
   EXPECT_FALSE(error.IsOK());
+}
+
+TEST(SuperDexRecorderTest, Points3DSeriesStoresOnlyChangedBatches) {
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  mochi::Error error;
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  auto* const series = episode->CreatePoints3DSeries("world/test", error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(series, nullptr);
+  std::array<mochi::Real3, 2> const points{mochi::Real3{0_r, 0_r, 0_r}, {0.1_r, 0_r, 0_r}};
+  auto const firstPoint = mochi::Span<mochi::Real3 const>{points}.subspan(0, 1);
+  auto moved = points;
+  moved[1][2] = 0.01_r;
+
+  series->Append({.frame = 1, .simulationTimeSec = 0.1}, points, error);
+  series->Append({.frame = 2, .simulationTimeSec = 0.2}, points, error);
+  EXPECT_EQ(series->GetNumSamples(), 1U);
+  // moved repeats the last batch but not the earlier batch of the same length.
+  series->Append({.frame = 3, .simulationTimeSec = 0.3}, moved, error);
+  series->Append({.frame = 4, .simulationTimeSec = 0.4}, moved, error);
+  EXPECT_EQ(series->GetNumSamples(), 2U);
+  series->Append({.frame = 5, .simulationTimeSec = 0.5}, firstPoint, error);
+  EXPECT_EQ(series->GetNumSamples(), 3U);
+  series->Append({.frame = 6, .simulationTimeSec = 0.6}, {}, error);
+  series->Append({.frame = 7, .simulationTimeSec = 0.7}, {}, error);
+  EXPECT_EQ(series->GetNumSamples(), 4U);
+  series->Append({.frame = 8, .simulationTimeSec = 0.8}, points, error);
+  EXPECT_EQ(series->GetNumSamples(), 5U);
+  episode->Commit(error);
+
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+}
+
+TEST(SuperDexRecorderTest, Points3DSeriesChecksTheTimeOfUnchangedBatches) {
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  mochi::Error error;
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  auto* const series = episode->CreatePoints3DSeries("world/test", error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(series, nullptr);
+  series->Append({.frame = 1, .simulationTimeSec = 0.1}, {}, error);
+  series->Append({.frame = 2, .simulationTimeSec = 0.2}, {}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_EQ(series->GetNumSamples(), 1U);
+
+  mochi::Error repeatedFrameError;
+  series->Append({.frame = 2, .simulationTimeSec = 0.3}, {}, repeatedFrameError);
+  mochi::Error earlierTimeError;
+  series->Append({.frame = 3, .simulationTimeSec = 0.15}, {}, earlierTimeError);
+
+  EXPECT_FALSE(repeatedFrameError.IsOK());
+  EXPECT_FALSE(earlierTimeError.IsOK());
+}
+
+TEST(SuperDexRecorderTest, WriteKeypointSkeletonRejectsOutOfRangeConnectionsAndRadii) {
+  TemporaryDirectory directory;
+  Recorder recorder{{.outputDirectory = directory.Path()}};
+  mochi::Error error;
+  auto episode = recorder.BeginEpisode({}, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  ASSERT_NE(episode, nullptr);
+  std::array<std::string, 2> const names{"root", "tip"};
+  std::array<std::array<uint16_t, 2>, 1> const connection{{{0, 1}}};
+  std::array<std::array<uint16_t, 2>, 1> const outOfRange{{{0, 2}}};
+  std::array<uint8_t, 4> const color{255, 255, 255, 255};
+
+  episode->WriteKeypointSkeleton("world/test", "test", names, connection, color, 0.01F, error);
+  mochi::Error connectionError;
+  episode->WriteKeypointSkeleton(
+      "world/test", "test", names, outOfRange, color, 0.01F, connectionError);
+  mochi::Error radiusError;
+  episode->WriteKeypointSkeleton("world/test", "test", names, connection, color, 0.0F, radiusError);
+
+  EXPECT_TRUE(error.IsOK()) << error.ToString();
+  EXPECT_FALSE(connectionError.IsOK());
+  EXPECT_FALSE(radiusError.IsOK());
 }
 
 } // namespace

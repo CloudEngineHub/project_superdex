@@ -29,6 +29,8 @@ from superdex.physics.paths import resolve_asset
 from superdex.physics.utils.scene_helpers import load_bot_scene
 from superdex.recorder.reader import EpisodeReader
 
+from . import rrd_verify
+
 # The Rerun wheel does not expose its experimental API to static type checkers.
 _rr_experimental: Any = rr_experimental
 
@@ -48,6 +50,12 @@ MIDDLE_FRAME = NUM_FRAMES // 2
 TIME_STEP = 0.005
 # Recorded transforms are float32, and a link's pose composes about 20 of them.
 TOLERANCE = 1e-5
+# A wrist with a one-segment thumb and a two-segment index finger.
+KEYPOINT_NAMES = ["wrist", "thumb_tip", "index_knuckle", "index_tip"]
+KEYPOINT_PARENTS = [-1, 0, 0, 2]
+HAND_COLOR = (10, 200, 30, 255)
+HAND_RADIUS = 0.005
+TRACKED_HAND_PATH = f"/world/shadows/{ROBOT_NAME}/tracked_hand"
 
 
 def recorded_world_transforms(
@@ -207,6 +215,52 @@ class LinkRecordingTest(unittest.TestCase):
         episode.commit()
         return episode.output_path, poses
 
+    def record_tracked_hand(
+        self,
+    ) -> tuple[Path, list[list[list[float]] | None], dict[str, sdp.TransformRT]]:
+        """Record the scene with a command shadow and a tracked hand that repeats
+        samples and loses tracking. Return the episode's path, the hand's keypoints at
+        each frame, or None where untracked, and Mochi's link poses at the last frame."""
+        real_dtype = np.asarray(self.scene.get_gravity()).dtype
+        keypoints = np.array(
+            [[0.0, 0.0, 0.0], [0.03, 0.02, 0.0], [0.0, 0.04, 0.0], [0.0, 0.08, 0.01]]
+        )
+        hand_samples = [keypoints, keypoints, None, None, keypoints + 0.01]
+        episode = self.episode_recorder.begin_episode()
+        physics = recorder.PhysicsRecorder(episode, self.scene)
+        command = recorder.RobotShadow(episode, self.bot, "command")
+        hand = recorder.SkeletonShadow(
+            episode,
+            self.bot,
+            "tracked_hand",
+            KEYPOINT_NAMES,
+            KEYPOINT_PARENTS,
+            label="tracked hand",
+            color_rgba=HAND_COLOR,
+            keypoint_radius_meters=HAND_RADIUS,
+        )
+        pose = np.zeros(self.robot.get_num_dofs(), dtype=real_dtype)
+        for frame, sample in enumerate(hand_samples):
+            if frame > 0:
+                self.scene.step(TIME_STEP)
+            time_sec = self.scene.get_total_simulation_time()
+            physics.record(frame, time_sec)
+            self.robot.get_articulated_pose(pose)
+            command.record(frame, time_sec, self.robot.get_root_transform(), pose)
+            if sample is None:
+                hand.record_untracked(frame, time_sec)
+            else:
+                hand.record(frame, time_sec, sample.astype(real_dtype).reshape(-1))
+        episode.commit()
+        return (
+            episode.output_path,
+            [
+                None if sample is None else sample.astype(np.float32).tolist()
+                for sample in hand_samples
+            ],
+            link_poses(self.links),
+        )
+
     def test_robot_links_compose_to_mochi_link_poses(self) -> None:
         episode = self.episode_recorder.begin_episode()
         physics = recorder.PhysicsRecorder(episode, self.scene)
@@ -300,6 +354,124 @@ class LinkRecordingTest(unittest.TestCase):
                     self.assert_transform_near(
                         transform, self.links[name].get_root_transform()
                     )
+
+    def test_skeleton_shadows_record_keypoints_and_their_topology(self) -> None:
+        path, hand_samples, _ = self.record_tracked_hand()
+
+        rrd_verify.assert_rerun_accepts(path)
+        recording = EpisodeReader(path)
+        positions = recording.component_samples(
+            "Points3D:positions", entity_path=TRACKED_HAND_PATH
+        )
+        # Repeated samples are skipped, and an untracked frame stores an empty batch.
+        self.assertEqual(
+            [(sample.timelines["frame"], sample.value) for sample in positions],
+            [(0, hand_samples[0]), (2, []), (4, hand_samples[4])],
+        )
+        # The topology is constant, so it is stored once, in the entity's static row.
+        static_chunks = [
+            chunk
+            for chunk in _rr_experimental.RrdReader(path).stream()
+            if chunk.is_static and chunk.entity_path == TRACKED_HAND_PATH
+        ]
+        [[constants]] = [chunk.to_record_batch().to_pylist() for chunk in static_chunks]
+        [skeleton] = constants["AnnotationContext:context"][0]
+        description = skeleton["class_description"]
+        self.assertEqual(description["info"]["label"], "tracked hand")
+        self.assertEqual(
+            [
+                (keypoint["id"], keypoint["label"])
+                for keypoint in description["keypoint_annotations"]
+            ],
+            list(enumerate(KEYPOINT_NAMES)),
+        )
+        self.assertEqual(
+            [
+                (connection["keypoint0"], connection["keypoint1"])
+                for connection in description["keypoint_connections"]
+            ],
+            [(0, 1), (0, 2), (2, 3)],
+        )
+        self.assertEqual(
+            constants["Points3D:class_ids"],
+            [skeleton["class_id"]] * len(KEYPOINT_NAMES),
+        )
+        self.assertEqual(
+            constants["Points3D:keypoint_ids"], list(range(len(KEYPOINT_NAMES)))
+        )
+        self.assertEqual(constants["Points3D:show_labels"], [False])
+        np.testing.assert_allclose(constants["Points3D:radii"], [HAND_RADIUS])
+        red, green, blue, alpha = HAND_COLOR
+        self.assertEqual(
+            description["info"]["color"], red << 24 | green << 16 | blue << 8 | alpha
+        )
+        self.assertEqual(constants["Points3D:colors"], [description["info"]["color"]])
+        self.assertNotIn("Points3D:positions", constants)
+
+    def test_skeleton_shadow_record_takes_flat_or_per_keypoint_xyz(self) -> None:
+        real_dtype = np.asarray(self.scene.get_gravity()).dtype
+        keypoints = np.linspace(0.0, 0.11, 12, dtype=real_dtype).reshape(4, 3)
+        episode = self.episode_recorder.begin_episode()
+        flat, rows = [
+            recorder.SkeletonShadow(
+                episode, self.bot, shadow_id, KEYPOINT_NAMES, KEYPOINT_PARENTS
+            )
+            for shadow_id in ("flat", "rows")
+        ]
+
+        flat.record(0, 0.0, keypoints.reshape(-1))
+        rows.record(0, 0.0, keypoints)
+        with self.assertRaisesRegex(sdp.Error, "must be XYZ triples"):
+            rows.record(1, TIME_STEP, np.zeros(10, dtype=real_dtype))
+        # As many values as 4 keypoints, but not in rows of XYZ.
+        with self.assertRaisesRegex(sdp.Error, "must be XYZ triples"):
+            rows.record(1, TIME_STEP, np.zeros((6, 2), dtype=real_dtype))
+        with self.assertRaisesRegex(sdp.Error, "one position per keypoint"):
+            rows.record(1, TIME_STEP, keypoints[:3])
+        episode.commit()
+
+        positions = EpisodeReader(episode.output_path).component_samples(
+            "Points3D:positions"
+        )
+        self.assertEqual(
+            {sample.entity_path: sample.value for sample in positions},
+            {
+                f"/world/shadows/{ROBOT_NAME}/{shadow_id}": keypoints.astype(
+                    np.float32
+                ).tolist()
+                for shadow_id in ("flat", "rows")
+            },
+        )
+
+    def test_a_stored_24_keypoint_sample_takes_under_400_bytes(self) -> None:
+        real_dtype = np.asarray(self.scene.get_gravity()).dtype
+        num_keypoints = 24
+        episode = self.episode_recorder.begin_episode()
+        hand = recorder.SkeletonShadow(
+            episode,
+            self.bot,
+            "tracked_hand",
+            [f"keypoint_{index}" for index in range(num_keypoints)],
+            list(range(-1, num_keypoints - 1)),
+        )
+        rng = np.random.default_rng(0)
+
+        for frame in range(NUM_FRAMES):
+            hand.record(
+                frame,
+                frame * TIME_STEP,
+                rng.random((num_keypoints, 3)).astype(real_dtype),
+            )
+        episode.commit()
+
+        batches = [
+            chunk.to_record_batch()
+            for chunk in _rr_experimental.RrdReader(episode.output_path).stream()
+            if not chunk.is_static and chunk.entity_path == TRACKED_HAND_PATH
+        ]
+        self.assertEqual(sum(batch.num_rows for batch in batches), NUM_FRAMES)
+        # Decoded Arrow bytes, not the LZ4-compressed bytes in the file.
+        self.assertLess(sum(batch.nbytes for batch in batches) / NUM_FRAMES, 400)
 
     def test_robot_id_is_the_recorded_physics_actor_name(self) -> None:
         episode = self.episode_recorder.begin_episode()

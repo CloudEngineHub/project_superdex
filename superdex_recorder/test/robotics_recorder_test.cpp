@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
+#include <superdex_recorder/robot_shadow.h>
 #include <superdex_recorder/robotics_recorder.h>
+#include <superdex_recorder/skeleton_shadow.h>
 
 #include <superdex_robotics/core/context.h>
 #include <superdex_robotics/utils/bot_utils.h>
@@ -25,10 +27,13 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace superdex::recorder {
 namespace {
@@ -106,6 +111,13 @@ robotics::BotPrefab MakeRobotPrefab(Error& error) {
   prefab.joints[1].axis = {0_r, 0_r, 1_r};
   robotics::RebuildBotData(prefab, error);
   return prefab;
+}
+
+SkeletonShadowConfig MakeSkeletonConfig(std::string id) {
+  return {
+      .id = std::move(id),
+      .keypointNames = {"wrist", "knuckle", "tip"},
+      .parentIndices = {-1, 0, 1}};
 }
 
 void WriteState(robotics::ControllerRecordingSink& sink, std::string_view field, Error& error) {
@@ -254,6 +266,139 @@ TEST_F(RoboticsRecorderTest, RecordFailsAfterRecordedRobotIsDestroyed) {
 
   EXPECT_NE(error.ToString().find("The recorded robot was destroyed."), std::string::npos)
       << error.ToString();
+}
+
+TEST_F(RoboticsRecorderTest, SkeletonShadowCommitsKeypointsAndUntrackedSamples) {
+  SkeletonShadow skeleton{*episode, *robot, MakeSkeletonConfig("tracked_hand"), error};
+  std::array<Real3, 3> const keypoints{Real3{0_r, 0_r, 0_r}, {0.1_r, 0_r, 0_r}, {0.2_r, 0_r, 0_r}};
+
+  skeleton.Record({.frame = 0, .simulationTimeSec = 0.0}, keypoints, error);
+  skeleton.RecordUntracked({.frame = 1, .simulationTimeSec = 0.01}, error);
+  skeleton.Record({.frame = 2, .simulationTimeSec = 0.02}, keypoints, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  Error repeatedFrameError;
+  skeleton.RecordUntracked({.frame = 2, .simulationTimeSec = 0.02}, repeatedFrameError);
+  episode->Commit(error);
+
+  EXPECT_FALSE(repeatedFrameError.IsOK());
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  EXPECT_TRUE(std::filesystem::exists(episode->GetOutputPath()));
+}
+
+TEST_F(RoboticsRecorderTest, SkeletonShadowRejectsInvalidConfigs) {
+  auto const withTopology =
+      [](std::string id, std::vector<std::string> names, std::vector<int32_t> parents) {
+        auto config = MakeSkeletonConfig(std::move(id));
+        config.keypointNames = std::move(names);
+        config.parentIndices = std::move(parents);
+        return config;
+      };
+  auto const withRadius = [](std::string id, float radius) {
+    auto config = MakeSkeletonConfig(std::move(id));
+    config.keypointRadiusMeters = radius;
+    return config;
+  };
+  std::vector<std::string> tooManyNames(size_t{std::numeric_limits<uint16_t>::max()} + 2);
+  for (size_t i = 0; i < tooManyNames.size(); ++i) {
+    tooManyNames[i] = std::to_string(i);
+  }
+  // Each case has its own ID, so no case fails because an earlier case created its series.
+  std::vector<std::pair<SkeletonShadowConfig, std::string_view>> const cases{
+      {MakeSkeletonConfig(""), "Shadow ID must not be empty."},
+      {withTopology("no_keypoints", {}, {}), "at least one keypoint"},
+      {withTopology("missing_parent", {"wrist", "tip"}, {-1}), "differ in size"},
+      {withTopology("duplicate_name", {"wrist", "tip", "tip"}, {-1, 0, 1}), "must be unique"},
+      {withTopology("empty_name", {"wrist", "", "tip"}, {-1, 0, 1}), "must be unique"},
+      {withTopology("own_parent", {"wrist", "knuckle", "tip"}, {-1, 1, 1}), "must precede it"},
+      {withTopology("later_parent", {"wrist", "knuckle", "tip"}, {-1, 2, 0}), "must precede it"},
+      {withTopology("invalid_parent", {"wrist", "knuckle", "tip"}, {-2, 0, 1}), "must precede it"},
+      {withTopology(
+           "too_many_keypoints", tooManyNames, std::vector<int32_t>(tooManyNames.size(), -1)),
+       "too many keypoints"},
+      {withRadius("zero_radius", 0.0f), "radius must be finite and positive"},
+      {withRadius("nan_radius", std::numeric_limits<float>::quiet_NaN()),
+       "radius must be finite and positive"},
+      {withRadius("infinite_radius", std::numeric_limits<float>::infinity()),
+       "radius must be finite and positive"},
+  };
+
+  for (auto const& [config, expectedError] : cases) {
+    SCOPED_TRACE(config.id);
+    Error constructionError;
+    SkeletonShadow skeleton{*episode, *robot, config, constructionError};
+    EXPECT_NE(constructionError.ToString().find(expectedError), std::string::npos)
+        << constructionError.ToString();
+  }
+}
+
+TEST_F(RoboticsRecorderTest, ShadowsOfOneRobotNeedDistinctIds) {
+  RobotShadow command{*episode, *robot, {.id = "command"}, error};
+  SkeletonShadow trackedHand{*episode, *robot, MakeSkeletonConfig("tracked_hand"), error};
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+
+  Error skeletonError;
+  SkeletonShadow skeletonClash{*episode, *robot, MakeSkeletonConfig("command"), skeletonError};
+  Error robotError;
+  RobotShadow robotClash{*episode, *robot, {.id = "tracked_hand"}, robotError};
+  Error duplicateError;
+  SkeletonShadow duplicate{*episode, *robot, MakeSkeletonConfig("tracked_hand"), duplicateError};
+  Error recordError;
+  skeletonClash.RecordUntracked({.frame = 0, .simulationTimeSec = 0.0}, recordError);
+  Error robotRecordError;
+  robotClash.Record(
+      {.frame = 0, .simulationTimeSec = 0.0}, TransformRT::Identity(), {}, robotRecordError);
+
+  for (Error const* clashError : {&skeletonError, &robotError, &duplicateError}) {
+    EXPECT_NE(clashError->ToString().find("A series already exists"), std::string::npos)
+        << clashError->ToString();
+  }
+  for (Error const* failedRecordError : {&recordError, &robotRecordError}) {
+    EXPECT_NE(failedRecordError->ToString().find("construction failed"), std::string::npos)
+        << failedRecordError->ToString();
+  }
+}
+
+TEST_F(RoboticsRecorderTest, SkeletonShadowWithAnInvalidRadiusRecordsNothing) {
+  auto config = MakeSkeletonConfig("tracked_hand");
+  config.keypointRadiusMeters = -0.01f;
+  std::array<Real3, 3> const keypoints{Real3{0_r, 0_r, 0_r}, {0.1_r, 0_r, 0_r}, {0.2_r, 0_r, 0_r}};
+
+  Error constructionError;
+  SkeletonShadow invalid{*episode, *robot, config, constructionError};
+  Error recordError;
+  invalid.Record({.frame = 0, .simulationTimeSec = 0.0}, keypoints, recordError);
+  // The failed shadow left its path free.
+  SkeletonShadow valid{*episode, *robot, MakeSkeletonConfig("tracked_hand"), error};
+
+  EXPECT_NE(constructionError.ToString().find("radius"), std::string::npos)
+      << constructionError.ToString();
+  EXPECT_NE(recordError.ToString().find("construction failed"), std::string::npos)
+      << recordError.ToString();
+  EXPECT_TRUE(error.IsOK()) << error.ToString();
+}
+
+TEST_F(RoboticsRecorderTest, SkeletonShadowRejectsMissingAndNonFiniteKeypoints) {
+  SkeletonShadow skeleton{*episode, *robot, MakeSkeletonConfig("tracked_hand"), error};
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  std::array<Real3, 3> keypoints{Real3{0_r, 0_r, 0_r}, {0.1_r, 0_r, 0_r}, {0.2_r, 0_r, 0_r}};
+
+  Error missingError;
+  skeleton.Record(
+      {.frame = 0, .simulationTimeSec = 0.0},
+      Span<Real3 const>{keypoints}.subspan(0, 2),
+      missingError);
+  keypoints[1][2] = std::numeric_limits<real>::quiet_NaN();
+  Error nanError;
+  skeleton.Record({.frame = 1, .simulationTimeSec = 0.01}, keypoints, nanError);
+  keypoints[1][2] = std::numeric_limits<real>::infinity();
+  Error infinityError;
+  skeleton.Record({.frame = 2, .simulationTimeSec = 0.02}, keypoints, infinityError);
+
+  EXPECT_NE(missingError.ToString().find("one position per keypoint"), std::string::npos)
+      << missingError.ToString();
+  EXPECT_NE(nanError.ToString().find("must be finite"), std::string::npos) << nanError.ToString();
+  EXPECT_NE(infinityError.ToString().find("must be finite"), std::string::npos)
+      << infinityError.ToString();
 }
 
 } // namespace
