@@ -355,7 +355,7 @@ class SceneImpl final : public Scene {
   bool IsProbablyMyCallbackHandle(CallbackHandle handle) const;
 
   // Callbacks:
-  uint32_t _nextCallbackId = 1;
+  std::atomic<uint32_t> _nextCallbackId = 1;
   CallbackSet<void(StepInfo const&)> _preStepCallbacks;
   CallbackSet<void(StepInfo const&)> _postStepCallbacks;
 

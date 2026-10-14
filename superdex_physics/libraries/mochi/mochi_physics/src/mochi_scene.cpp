@@ -3344,11 +3344,11 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
 }
 
 CallbackHandle SceneImpl::GenerateNewCallbackHandle(CallbackType type) {
-  auto newCallbackId = _nextCallbackId++;
-  if (_nextCallbackId == 0) {
+  uint32_t newCallbackId = _nextCallbackId++;
+  if (newCallbackId == 0) {
     MOCHI_LOG_WARNING(
         "Too many callbacks have been registered. The CallbackHandle may not be unique.");
-    _nextCallbackId++;
+    newCallbackId = _nextCallbackId++;
   }
 
   // Pack the callback type into the handle, so we know what to do in CancelCallback.
