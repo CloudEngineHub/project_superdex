@@ -1772,6 +1772,22 @@ void ModelEditor::ShowMeshModifierStack() {
             ImVec4 const c = HashStringToColor(path);
             return mochi::Real3{c.x, c.y, c.z};
           },
+      .runBackgroundTask =
+          [this](
+              char const* title,
+              char const* label,
+              std::function<bool()> work,
+              std::function<void()> onDone) {
+            std::vector<AsyncTask> tasks;
+            tasks.push_back(AsyncTask{label, [work = std::move(work)](AsyncCancelToken const&) {
+                                        return work();
+                                      }});
+            return _studio->BeginAsyncTasks(
+                title, std::move(tasks), [onDone = std::move(onDone)](bool /*allSucceeded*/) {
+                  onDone();
+                });
+          },
+      .isBackgroundTaskRunning = [this] { return _studio->IsAsyncTasksRunning(); },
       .sourceFilePath = sourceFilePath,
       .modelFolder = OriginModelFolder(),
       .cadFilePath = _cadModelAsset ? _cadModelAsset->GetPath().ToString() : std::string()};

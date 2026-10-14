@@ -94,6 +94,17 @@ struct ModifierGuiContext {
       dragTransformRT;
   // The stable color the app derives from a file path, so a default matches the models' colors.
   std::function<mochi::Real3(std::string_view path)> pathColor;
+  // Runs @p work on a worker thread behind the app's progress modal, then @p onDone on the main
+  // thread. Returns false when no task could start. Set together with isBackgroundTaskRunning.
+  std::function<bool(
+      char const* title,
+      char const* label,
+      std::function<bool()> work,
+      std::function<void()> onDone)>
+      runBackgroundTask;
+  // True while a background task is running; only one runs at a time.
+  std::function<bool()> isBackgroundTaskRunning;
+  // File path of the stack's
   // File path of the stack's first (source) modifier, used to pre-populate export default paths.
   std::string sourceFilePath;
   // Folder of the model this editor was opened for. Used only as the Browse dialog's starting point
