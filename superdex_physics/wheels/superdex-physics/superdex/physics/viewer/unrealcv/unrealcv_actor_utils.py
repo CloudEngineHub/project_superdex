@@ -697,6 +697,29 @@ def _resp_diag(resp: str) -> str:
 _ABSENT_ACTORS_REPORTED: set[str] | None = None
 
 
+# Material DR partial results already reported. A material that lacks a parameter
+# lacks it on every reset, so per-reset warnings repeat one fact: ~800 lines/s per
+# training host, which crowds out every other log line. Lazily initialized (see
+# .llms/rules/python.md on module-scope state).
+_MATERIAL_DR_REPORTED: set[tuple[str, str, str]] | None = None
+
+
+def _first_material_dr_reports(
+    kind: str, results: list[tuple[str, str | None]]
+) -> list[tuple[str, str | None]]:
+    """The results whose (kind, label, diagnostic) this process hasn't reported."""
+    global _MATERIAL_DR_REPORTED
+    if _MATERIAL_DR_REPORTED is None:
+        _MATERIAL_DR_REPORTED = set()
+    first = []
+    for cmd, resp in results:
+        key = (kind, _cmd_label(cmd), _resp_diag(resp) if resp else "")
+        if key not in _MATERIAL_DR_REPORTED:
+            _MATERIAL_DR_REPORTED.add(key)
+            first.append((cmd, resp))
+    return first
+
+
 def _cmd_actor(cmd: str) -> str:
     """Actor name from a ``vset /object/<actor>/<prop> ...`` command."""
     parts = cmd.split()
@@ -785,7 +808,8 @@ def _log_material_dr_results(
 
     for cmd in succeeded:
         logger.info("%sMaterial DR OK: %s%s", _GREEN, _cmd_label(cmd), _RESET)
-    for cmd, resp in warnings:
+    # Partial results repeat on every reset; each is reported once per process.
+    for cmd, resp in _first_material_dr_reports("warning", warnings):
         logger.warning(
             "%sMaterial DR WARNING: %s — %s%s",
             _YELLOW,
@@ -793,7 +817,7 @@ def _log_material_dr_results(
             _resp_diag(resp),
             _RESET,
         )
-    for cmd, resp in soft_fails:
+    for cmd, resp in _first_material_dr_reports("unsupported", soft_fails):
         logger.warning(
             "%sMaterial DR UNSUPPORTED: %s — %s%s",
             _ORANGE,

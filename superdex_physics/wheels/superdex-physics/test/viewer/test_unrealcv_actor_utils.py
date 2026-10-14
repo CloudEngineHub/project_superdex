@@ -678,6 +678,58 @@ class AbsentActorDrFailuresTest(unittest.TestCase):
         self.assertEqual(mock_logger.error.call_count, 6)
 
 
+class MaterialDrPartialResultsTest(unittest.TestCase):
+    """A material that lacks a DR parameter lacks it on every reset; at ~800
+    warnings/s per training host the repeats crowded out every other log line."""
+
+    _CMD = "vset /object/BP_Robot_T3_Left_UCV_C_0/roughness 0.5"
+    _PARTIAL = "warning: 9/22 materials set, 13 missing 'Roughness' parameter"
+
+    def setUp(self) -> None:
+        patcher = patch(
+            "superdex.physics.viewer.unrealcv.unrealcv_actor_utils._MATERIAL_DR_REPORTED",
+            None,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("superdex.physics.viewer.unrealcv.unrealcv_actor_utils.logger")
+    def test_a_partial_result_is_reported_once_across_resets(self, mock_logger):
+        for _ in range(3):
+            _log_material_dr_results([self._CMD], [self._PARTIAL], ["a"])
+        mock_logger.warning.assert_called_once()
+
+    @patch("superdex.physics.viewer.unrealcv.unrealcv_actor_utils.logger")
+    def test_each_property_and_diagnostic_gets_its_own_line(self, mock_logger):
+        _log_material_dr_results([self._CMD], [self._PARTIAL], ["a"])
+        _log_material_dr_results(
+            ["vset /object/BP_Robot_T3_Left_UCV_C_0/hsva 1 2 3 4"],
+            [self._PARTIAL],
+            ["a"],
+        )
+        _log_material_dr_results(
+            [self._CMD], ["warning: 21/22 materials set, 1 missing 'Roughness'"], ["a"]
+        )
+        _log_material_dr_results([self._CMD], ["0/22 materials set, 22 missing"], ["a"])
+        self.assertEqual(mock_logger.warning.call_count, 4)
+
+    @patch("superdex.physics.viewer.unrealcv.unrealcv_actor_utils.logger")
+    def test_an_unsupported_result_is_reported_once_across_resets(self, mock_logger):
+        unsupported = "warning: 0/22 materials set, 22 missing 'Roughness' parameter"
+        for _ in range(3):
+            _log_material_dr_results([self._CMD], [unsupported], ["a"])
+        mock_logger.warning.assert_called_once()
+        self.assertIn("UNSUPPORTED", mock_logger.warning.call_args.args[0])
+
+    @patch("superdex.physics.viewer.unrealcv.unrealcv_actor_utils.logger")
+    def test_failures_still_report_on_every_reset(self, mock_logger):
+        for _ in range(3):
+            _log_material_dr_results([self._CMD], ["error rejected"], ["a"])
+        self.assertEqual(mock_logger.warning.call_count, 3)
+        for logged in mock_logger.warning.call_args_list:
+            self.assertIn("FAILED", logged.args[0])
+
+
 class GetMaterialParamsTest(unittest.TestCase):
     _ACTOR = "BP_NIST_Board_Render_UCV_C_0"
     _PAYLOAD = '{"actor":"A","scope":"actor","materials":[]}'
