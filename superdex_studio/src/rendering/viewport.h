@@ -242,6 +242,11 @@ class Viewport {
       float orthoHeight,
       std::optional<mochi::Real3> dir,
       bool animate) const;
+  // The focus used when no visible object has bounds: the whole ground grid.
+  void GetEmptySceneFocus(
+      filament::math::double3& outFrom,
+      filament::math::double3& outTo,
+      float& outOrthoHeight) const;
   bool ShowCameraOrientationGizmo() const;
   bool ShowCameraOrientationToolbar() const;
   bool ShowTransformGizmo(float x, float y, float width, float height) const;

@@ -832,7 +832,11 @@ void ModelEditor::Initialize() {
   UpdateCadModel();
   UpdateRenderModel();
   UpdateMochiModel();
-  _viewport->FocusCameraOnScene();
+  // A STEP tessellates in the background, so a CAD-only open has nothing to frame yet; the
+  // tessellation focuses once its geometry arrives.
+  if (!_studio->IsAsyncTasksRunning() || _viewport->HasVisibleGeometry()) {
+    _viewport->FocusCameraOnScene();
+  }
 }
 
 void ModelEditor::OnRender(Renderer const* renderer) {
@@ -1250,8 +1254,9 @@ void ModelEditor::RegenerateCadModel() {
     _cadModelAsset->SetTessellation(sections, _studio->GetResourceManager());
     _cadSectionsOriginal = std::move(sections);
     _cadHasFileColors = false;
+    bool const wasEmpty = !_viewport->HasVisibleGeometry();
     ApplyCadModelTransform();
-    if (_renderModelPath.empty() && _mochiModelPath.empty()) {
+    if (wasEmpty) {
       _viewport->FocusCameraOnScene();
     }
     return;
@@ -1297,10 +1302,11 @@ void ModelEditor::RegenerateCadModel() {
         // transform derives the displayed _cadSections from it and rebuilds the meshes.
         _cadSectionsOriginal = std::move(*result);
         _cadHasFileColors = true;
+        // Frame the geometry when it is the first thing to show, as on a CAD-only open. Slotted
+        // siblings start hidden, so their paths alone do not mean the scene had anything to frame.
+        bool const wasEmpty = !_viewport->HasVisibleGeometry();
         ApplyCadModelTransform();
-        // A CAD-only open starts with an empty scene, so the initial camera focus saw nothing;
-        // focus again now that the geometry exists.
-        if (_renderModelPath.empty() && _mochiModelPath.empty()) {
+        if (wasEmpty) {
           _viewport->FocusCameraOnScene();
         }
       });

@@ -699,6 +699,18 @@ void Viewport::ApplyCameraFocus(
   }
 }
 
+void Viewport::GetEmptySceneFocus(
+    filament::math::double3& outFrom,
+    filament::math::double3& outTo,
+    float& outOrthoHeight) const {
+  // With nothing to frame, pull back to the whole ground grid so the view reads as an empty scene
+  // rather than a close-up of nothing.
+  float const halfExtents = 0.5f * _studio->GetAppSettings().viewport.groundGrid.gridExtents;
+  _renderScene->GetCameraFocusOnSphere(
+      {0.0f, _groundPlaneHeight, 0.0f}, halfExtents * std::numbers::sqrt2_v<float>, outFrom, outTo);
+  outOrthoHeight = 2.4f * halfExtents;
+}
+
 void Viewport::FocusCameraOnScene(std::optional<mochi::Real3> dir, bool animate) const {
   filament::math::double3 from = {1.0f, 0.5f, 1.0f};
   filament::math::double3 to = {0.0f, 0.0f, 0.0f};
@@ -723,6 +735,8 @@ void Viewport::FocusCameraOnScene(std::optional<mochi::Real3> dir, bool animate)
       _renderScene->GetCameraFocusOnSphere(box.center, length(box.halfExtent), from, to)) {
     // The margin Scene::GetCameraFocusOnAllSceneObjects uses.
     orthoHeight = 2.4f * std::max({box.halfExtent.x, box.halfExtent.y, box.halfExtent.z});
+  } else {
+    GetEmptySceneFocus(from, to, orthoHeight);
   }
   ApplyCameraFocus(from, to, orthoHeight, dir, animate);
 }
@@ -766,8 +780,8 @@ void Viewport::FocusCameraOnSceneObjects(
       focused = _renderScene->GetCameraFocusOnSphere(center, radius, from, to);
     }
   }
-  if (!focused) {
-    _renderScene->GetCameraFocusOnAllSceneObjects(from, to, orthoHeight);
+  if (!focused && !_renderScene->GetCameraFocusOnAllSceneObjects(from, to, orthoHeight)) {
+    GetEmptySceneFocus(from, to, orthoHeight);
   }
   ApplyCameraFocus(from, to, orthoHeight, dir, animate);
 }
