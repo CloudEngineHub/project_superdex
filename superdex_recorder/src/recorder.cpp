@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <exception>
 #include <random>
@@ -309,19 +310,45 @@ void Episode::WriteMesh(
       "Mesh triangle index exceeds the vertex count.");
   MOCHI_ERROR_RETURN(error);
 
+  // Rerun shades with per-vertex normals, so flat shading needs each triangle's own vertices.
+  // Zero-area triangles cover no pixels and have no normal.
   std::vector<rerun::Position3D> vertices;
-  vertices.reserve(vertexPositions.size() / 3);
-  for (size_t i = 0; i < vertexPositions.size(); i += 3) {
-    vertices.emplace_back(vertexPositions[i], vertexPositions[i + 1], vertexPositions[i + 2]);
-  }
-  std::vector<rerun::TriangleIndices> triangles;
-  triangles.reserve(triangleIndices.size() / 3);
+  std::vector<rerun::components::Vector3D> normals;
+  vertices.reserve(triangleIndices.size());
+  normals.reserve(triangleIndices.size());
   for (size_t i = 0; i < triangleIndices.size(); i += 3) {
-    triangles.emplace_back(triangleIndices[i], triangleIndices[i + 1], triangleIndices[i + 2]);
+    std::array<float const*, 3> const corners{
+        &vertexPositions[size_t{triangleIndices[i]} * 3],
+        &vertexPositions[size_t{triangleIndices[i + 1]} * 3],
+        &vertexPositions[size_t{triangleIndices[i + 2]} * 3]};
+    std::array<float, 3> const ab{
+        corners[1][0] - corners[0][0],
+        corners[1][1] - corners[0][1],
+        corners[1][2] - corners[0][2]};
+    std::array<float, 3> const ac{
+        corners[2][0] - corners[0][0],
+        corners[2][1] - corners[0][1],
+        corners[2][2] - corners[0][2]};
+    std::array<float, 3> normal{
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0]};
+    float const length =
+        std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+    if (length == 0.0f) {
+      continue;
+    }
+    for (float& component : normal) {
+      component /= length;
+    }
+    for (float const* corner : corners) {
+      vertices.emplace_back(corner[0], corner[1], corner[2]);
+      normals.emplace_back(normal[0], normal[1], normal[2]);
+    }
   }
 
   auto mesh = rerun::archetypes::Mesh3D{std::move(vertices)}
-                  .with_triangle_indices(std::move(triangles))
+                  .with_vertex_normals(std::move(normals))
                   .with_albedo_factor(
                       rerun::components::AlbedoFactor{
                           rerun::datatypes::Rgba32{color[0], color[1], color[2], color[3]}});
