@@ -71,6 +71,8 @@ def create_simulation() -> tuple[Scene, Actor]:
     )
     # Use heavy mass damping to drive the dynamics toward the static solution.
     material.mass_damping_coefficient = MASS_DAMPING_COEFFICIENT
+    # Solve the same plain StVK problem as the literature benchmark.
+    material.membrane_collapse_barrier_scale = 0.0
     actor = sdp.experimental.create_shell_actor(
         scene,
         sdp.experimental.ShellActorParams(

@@ -479,6 +479,7 @@ struct experimental::ShellMaterialParams {
   real density [units("kg/m^2")] = 1.0;
   real massDampingCoefficient [units("1/s")] = 0;
   real stiffnessDampingCoefficient [units("s")] = 0;
+  real membraneCollapseBarrierScale = 1e-3;
 }
 
 // @brief Parameters for creating an experimental shell actor.

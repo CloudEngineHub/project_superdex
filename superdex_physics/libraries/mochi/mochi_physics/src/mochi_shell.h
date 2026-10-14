@@ -72,6 +72,7 @@ template <typename TriElementLow, typename TriElementHigh>
     real membraneMu,
     real bendingAlpha,
     real bendingBeta,
+    real membraneCollapseBarrierStiffness,
     Real3 gravity,
     real density,
     real dtfi2,
@@ -207,6 +208,7 @@ template <typename TriElementLow, typename TriElementHigh>
         membraneMu,
         bendingAlpha,
         bendingBeta,
+        membraneCollapseBarrierStiffness,
         projectPsd,
         stiffnessDampingFactor,
         hasStiffnessDamping ? &stageStartDispBatch : nullptr);
@@ -397,13 +399,15 @@ void InitializeOnce(entt::registry& reg);
 [[nodiscard]] real GetActorMass(entt::registry const& reg, entt::entity actor);
 
 // Validate ShellMaterialParams for physical admissibility:
-//  - All seven fields finite.
-//  - membraneMu > 0 and membraneLambda > -membraneMu (2D plane-strain bulk-modulus positivity).
+//  - All fields finite.
+//  - membraneMu > 0 and membraneLambda > -membraneMu (positive 2D bulk modulus
+//    membraneLambda + membraneMu).
 //  - bendingBeta > 0 and bendingAlpha > -bendingBeta / 2 (analogous bound for bending
 //    coefficients).
 //  - density > 0.
 //  - massDampingCoefficient >= 0.
 //  - stiffnessDampingCoefficient >= 0.
+//  - membraneCollapseBarrierScale >= 0.
 void ValidateShellMaterialParams(experimental::ShellMaterialParams const& params, Error& error);
 
 } // namespace mochi::shell

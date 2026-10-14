@@ -464,10 +464,12 @@ struct DeepModelParams {
 // (material_params.h) as shell modeling matures.  For now, it is a stub to ensure analogous code
 // structure elsewhere between shell and soft actors.
 struct ShellMaterialParams {
-  // The membrane Lame parameters, lambda and mu, for plane-stress linear elasticity.  These should
-  // be thought of as "2D" parameters, where the conversion from 3D material properties through the
-  // membrane thickness has already been applied.  The units are [Pa*m] = [N/m], i.e., force per
-  // unit length.
+  // The 2D membrane Lame parameters, lambda and mu, where the conversion from 3D material
+  // properties through the membrane thickness has already been applied.  The units are
+  // [Pa*m] = [N/m], i.e., force per unit length.  The plane-stress reduction of any valid isotropic
+  // 3D material gives membraneLambda / membraneMu < 2, approaching 2 in the incompressible limit.
+  // Larger ratios are still well-posed, but do not correspond to any valid isotropic 3D material,
+  // so shell actor creation logs a warning for them.
   real membraneLambda = 300_r; // [Pa*m]
   real membraneMu = 400_r; // [Pa*m]
   // These define a basic isotropic bending stiffness, which can be combined with any in-plane
@@ -482,6 +484,13 @@ struct ShellMaterialParams {
   real massDampingCoefficient = 0_r; // [1/s]
   // Stiffness-proportional damping coefficient.
   real stiffnessDampingCoefficient = 0_r; // [s]
+  // Dimensionless scale of an optional barrier energy
+  // 2*membraneCollapseBarrierScale*membraneMu*max(tr(C^-1) - 2, 0)^3 per unit reference area, with
+  // the 2D (in-plane) right Cauchy-Green tensor C.  It vanishes unless some direction is
+  // compressed, adds no reference stiffness, and resists membrane collapse under large
+  // compression.  Increase it if elements still collapse under in-plane compression;
+  // membraneLambda / membraneMu > 2 may need more.  Zero disables it, leaving plain StVK.
+  real membraneCollapseBarrierScale = 1e-3_r;
 };
 
 struct PointCloudColliderParams {

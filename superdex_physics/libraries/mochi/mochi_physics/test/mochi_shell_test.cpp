@@ -25,6 +25,8 @@
 #include "mochi_physics_test_fixture.h"
 
 #include <array>
+#include <cmath>
+#include <numbers>
 #include <utility>
 
 using namespace mochi;
@@ -263,6 +265,9 @@ class MochiShellActorSimplySupportedPlateScene : public test::MochiSceneTestBase
 
     params.material = mochi::experimental::ShellMaterialParamsFrom3dIsotropic(
         kYoungsModulus3d, kPoissonsRatio3d, kDensity2d / kThickness, kThickness, ErrorAssert{});
+    // The literature reference (and gold value) is for plain StVK, even though the collapse barrier
+    // contribution is negligible here for typical choices of the scale value.
+    params.material.membraneCollapseBarrierScale = 0_r;
 
     params.shape = _scene->GetContext()->CreateTriMeshShape(
         Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), ErrorAssert{});
@@ -353,6 +358,10 @@ TEST(ShellMaterialValidation, ValidateShellMaterialParams) {
   reject([](ShellMaterialParams& p) {
     p.membraneMu = std::numeric_limits<real>::quiet_NaN();
   }); // finite
+  reject([](ShellMaterialParams& p) { p.membraneCollapseBarrierScale = -1_r; });
+  reject([](ShellMaterialParams& p) {
+    p.membraneCollapseBarrierScale = std::numeric_limits<real>::infinity();
+  });
 }
 
 TEST(ShellMaterialValidation, ShellMaterialParamsFrom3dIsotropic) {
@@ -393,6 +402,31 @@ TEST_F(MochiShellCreateActorValidationScene, CreateShellActor_RejectsInvalidPara
   EXPECT_EQ(nullptr, CreateShellActor(_scene, params, test::ExpectNotOK{}));
 }
 
+// Unexpected warnings fail tests, so the non-warning cases are checked implicitly.
+TEST_F(MochiShellCreateActorValidationScene, CreateShellActor_WarnsAboveIncompressibleLameRatio) {
+  auto&& [coords, conn] = test::CreateMinimalTriMeshUnitCube();
+  ShellActorParams params;
+  params.shape = _scene->GetContext()->CreateTriMeshShape(
+      Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), test::ExpectOK{});
+  auto createAndDestroy = [&]() {
+    _scene->DestroyActor(CreateShellActor(_scene, params, test::ExpectOK{}));
+  };
+
+  // Plane stress of a nearly incompressible 3D material approaches the ratio 2 from below.
+  params.material = ShellMaterialParamsFrom3dIsotropic(
+      1e5_r, std::nextafter(0.5_r, 0_r), 1e3_r, 1e-2_r, test::ExpectOK{});
+  createAndDestroy();
+
+  params.material.membraneLambda = (2_r + 5e-5_r) * params.material.membraneMu;
+  createAndDestroy();
+
+  params.material.membraneLambda = 2.5_r * params.material.membraneMu;
+  {
+    test::ExpectLoggingInScope expectWarning(_mochiContext, LogChannel::Warning);
+    createAndDestroy();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shell damping validation tests
 // ---------------------------------------------------------------------------
@@ -417,6 +451,56 @@ TEST(ShellMaterialValidation, ValidateShellDampingCoefficients) {
   reject([](ShellMaterialParams& p) {
     p.stiffnessDampingCoefficient = std::numeric_limits<real>::quiet_NaN();
   });
+}
+
+class MochiShellCollapseBarrierScene : public test::MochiSceneTestBase {};
+
+// Between otherwise identical actors, the objective differs by the barrier 2ημ·A·⟨tr(C⁻¹) − 2⟩³
+// for scale η, membrane μ, and reference area A.
+TEST_F(MochiShellCollapseBarrierScene, BarrierEnergyUnderEquibiaxialCompression) {
+  real constexpr kBarrierScale = 0.1_r;
+  real constexpr kStretch = 0.5_r;
+  double constexpr kEnergyRelTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-9 : 1e-4;
+
+  DynamicArray<Real3> const coords = {
+      Real3{0_r, 0_r, 0_r}, Real3{1_r, 0_r, 0_r}, Real3{0.5_r, kSqrt3Over2, 0_r}};
+  DynamicArray<Int3> const conn = {Int3{0, 1, 2}};
+  ShellActorParams params;
+  params.material = MakeValidShellMaterialParams();
+  params.hasGravity = false;
+  params.colliderType = ColliderType::None;
+  params.shape = _scene->GetContext()->CreateTriMeshShape(
+      Flatten(MakeConstSpan(coords)), Flatten(MakeConstSpan(conn)), test::ExpectOK{});
+  params.material.membraneCollapseBarrierScale = 0_r;
+  Actor* const withoutBarrier = CreateShellActor(_scene, params, test::ExpectOK{});
+  params.material.membraneCollapseBarrierScale = kBarrierScale;
+  Actor* const withBarrier = CreateShellActor(_scene, params, test::ExpectOK{});
+  ASSERT_NE(nullptr, withoutBarrier);
+  ASSERT_NE(nullptr, withBarrier);
+
+  // A unit step at rest initializes the integrator state without moving either actor.
+  test::SetSceneIntegrationMethod(_scene, IntegrationMethod::BackwardEuler);
+  _scene->Step(1_r);
+
+  auto& reg = GetRegistry();
+  AssemblyParams const objectiveOnly{.assemObj = true, .assemRes = false, .assemDRes = false};
+  auto compressedObjective = [&](Actor* actor) {
+    entt::entity const entity = GetEntity(actor);
+    auto& displacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(entity).value;
+    for (int n = 0; n < isize(coords); ++n) {
+      for (int d = 0; d < kSpaceDim3; ++d) {
+        displacement(kSpaceDim3 * n + d) = (kStretch - 1_r) * coords[n][d];
+      }
+    }
+    ecs::InvokeOnEntity(shell::AssembleBody, reg, entity, std::cref(objectiveOnly));
+    return reg.get<CActorSnle const>(entity).objective;
+  };
+
+  double const g = 2.0 / Sqr(static_cast<double>(kStretch)) - 2.0;
+  double const expected = 2.0 * static_cast<double>(kBarrierScale * params.material.membraneMu) *
+      (std::numbers::sqrt3 / 4.0) * g * g * g;
+  double const actual = compressedObjective(withBarrier) - compressedObjective(withoutBarrier);
+  EXPECT_NEAR(expected, actual, kEnergyRelTol * expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -808,6 +892,9 @@ class MochiShellActorExternalForcesScene : public test::MochiSceneTestBase,
     params.worldFromLocal = _worldFromLocal;
     params.material = mochi::experimental::ShellMaterialParamsFrom3dIsotropic(
         kYoungsModulus3d, kPoissonsRatio3d, kDensity3d, kThickness, ErrorAssert{});
+    // The exact stretch-from-load check below is specific to plain StVK, even though the collapse
+    // barrier is inactive in this tension-only deformation.
+    params.material.membraneCollapseBarrierScale = 0_r;
     params.shape = _scene->GetContext()->CreateTriMeshShape(
         Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), ErrorAssert{});
     _actor = CreateShellActor(_scene, params, ErrorAssert{});

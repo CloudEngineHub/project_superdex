@@ -32,7 +32,9 @@
 
 #include <algorithm>
 #include <array>
+#include <numbers>
 #include <optional>
+#include <utility>
 
 using namespace mochi;
 using namespace mochi::fem;
@@ -377,6 +379,7 @@ struct ShellFdOptions {
   real membraneMu = kMembraneMu;
   real bendingAlpha = kBendingAlpha;
   real bendingBeta = kBendingBeta;
+  real membraneCollapseBarrierStiffness = 0_r;
   real stiffnessDampingFactor = 0_r;
   real stageStartDispScale = 0_r; // Scale for stage-start displacements (0 = no damping data).
 };
@@ -502,6 +505,7 @@ struct ShellHarness {
         fdOptions.membraneMu,
         fdOptions.bendingAlpha,
         fdOptions.bendingBeta,
+        fdOptions.membraneCollapseBarrierStiffness,
         projectPsd,
         fdOptions.stiffnessDampingFactor,
         stageStartDisp ? &*stageStartDisp : nullptr);
@@ -1149,8 +1153,10 @@ static void VerifyShellFd(
 }
 
 template <int kBS>
-static void VerifyShellOutputModes(std::array<ShellStencilConfig const*, kBS> const& cfgs) {
-  ShellHarness<kBS> h(cfgs);
+static void VerifyShellOutputModes(
+    std::array<ShellStencilConfig const*, kBS> const& cfgs,
+    ShellFdOptions const& options = {}) {
+  ShellHarness<kBS> h(cfgs, options);
   auto const all = RunShell(h, {.energy = true, .residual = true, .dresidual = true});
   for (OutputConfig const cfg : kAllOutputConfigs) {
     auto const actual = RunShell(h, cfg);
@@ -1343,6 +1349,7 @@ TEST(ShellWork, MembraneMatchesClosedForm) {
   ShellFdOptions options;
   options.bendingAlpha = 0_r;
   options.bendingBeta = 0_r;
+  options.membraneCollapseBarrierStiffness = 0_r;
   for (auto const& cfg : MakeHelperConfigs()) {
     auto const edges = [&](real dispScale) {
       auto const position = [&](int n) {
@@ -1515,3 +1522,245 @@ TEST(ShellWork, EnergyResidualFdWithStiffnessDampingBendingOnly) {
 // NOTE: Bending-only DRes with stiffness damping is not tested separately because the
 // approximate bending tangent (which omits geometric stiffness) has larger error when damping
 // amplifies the stress. This is tested indirectly through the combined membrane+bending DRes test.
+
+// ---------------------------------------------------------------------------
+// Membrane collapse barrier k·⟨tr(C⁻¹) − 2⟩³
+// ---------------------------------------------------------------------------
+
+static constexpr real kCollapseBarrierStiffness = 50_r;
+
+// cfg with homogeneous principal stretches along the world axes, plus perturbationScale times its
+// own displacements.
+static ShellStencilConfig
+MakeStretchedConfig(ShellStencilConfig cfg, Real3 const& stretches, real perturbationScale) {
+  for (int n = 0; n < kBendingStencilNodes; ++n) {
+    cfg.displacements[n] =
+        (stretches - 1_r) * cfg.refPositions[n] + perturbationScale * cfg.displacements[n];
+  }
+  return cfg;
+}
+
+// Flat interior config in the xy-plane with in-plane principal stretches (sx, sy). The central
+// triangle has reference metric A = I and reference area 0.5.
+static ShellStencilConfig
+MakeStretchedInteriorConfig(real sx, real sy, real perturbationScale = 0_r) {
+  return MakeStretchedConfig(MakeInteriorConfig(), Real3{sx, sy, 1_r}, perturbationScale);
+}
+
+// Flat equilateral config in the xz-plane with in-plane principal stretches (sx, sz). The central
+// triangle has a non-identity reference metric A and reference area √3/4.
+static ShellStencilConfig
+MakeStretchedEquilateralConfig(real sx, real sz, real perturbationScale = 0_r) {
+  return MakeStretchedConfig(MakeEquilateralConfig(), Real3{sx, 1_r, sz}, perturbationScale);
+}
+
+static std::array<ShellStencilConfig, 5> MakeCompressedConfigs() {
+  return {
+      MakeStretchedInteriorConfig(0.7_r, 0.8_r),
+      MakeStretchedInteriorConfig(0.6_r, 1.1_r),
+      MakeStretchedInteriorConfig(0.7_r, 0.8_r, 0.1_r),
+      MakeStretchedEquilateralConfig(0.7_r, 0.8_r),
+      MakeStretchedEquilateralConfig(0.6_r, 1.1_r, 0.1_r)};
+}
+
+// Barrier contribution: outputs with the barrier minus outputs without it, all else equal.
+template <int kBS>
+static ShellOutputs<kBS> CollapseBarrierContribution(
+    std::array<ShellStencilConfig const*, kBS> const& cfgs,
+    ShellFdOptions options = {},
+    bool projectPsd = false) {
+  OutputConfig constexpr kAll{.energy = true, .residual = true, .dresidual = true};
+  options.membraneCollapseBarrierStiffness = kCollapseBarrierStiffness;
+  auto const with = RunShell(ShellHarness<kBS>(cfgs, options), kAll, projectPsd);
+  options.membraneCollapseBarrierStiffness = 0_r;
+  auto const without = RunShell(ShellHarness<kBS>(cfgs, options), kAll, projectPsd);
+  return {with.energy - without.energy, with.res - without.res, with.dres - without.dres};
+}
+
+template <int kBS>
+static void ExpectZeroLane(ShellOutputs<kBS> const& out, int b) {
+  using LaneVector = NdArray<real, kBendingStencilDofs>;
+  using LaneMatrix = NdArray<real, kBendingStencilDofs * kBendingStencilDofs>;
+  EXPECT_EQ(0.0, out.energy[b]);
+  EXPECT_SPAN_EQ(LaneVector{}, GetLane(out.res, b));
+  EXPECT_SPAN_EQ(LaneMatrix{}, GetLane(out.dres, b));
+}
+
+// Homogeneous in-plane principal stretches (s₀, s₁) give g = s₀⁻² + s₁⁻² − 2, independent of the
+// reference triangle. Anisotropic cases guard against formulas that agree only when s₀ = s₁, and
+// cases with g = 0 must leave every output unchanged.
+TEST(ShellWork, CollapseBarrierEnergyClosedForm) {
+  double constexpr kEnergyRelTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-9 : 1e-4;
+  std::array<Real2, 14> constexpr kStretches = {
+      Real2{0.01_r, 0.01_r},
+      Real2{0.3_r, 0.3_r},
+      Real2{0.5_r, 0.5_r},
+      Real2{0.8_r, 0.8_r},
+      Real2{0.95_r, 0.95_r},
+      Real2{1_r, 1_r},
+      Real2{1.2_r, 1.2_r},
+      Real2{2_r, 2_r},
+      Real2{0.6_r, 1.1_r},
+      Real2{0.5_r, 0.9_r},
+      Real2{1.3_r, 0.7_r},
+      Real2{0.05_r, 1_r},
+      Real2{1_r, 0.01_r},
+      Real2{1.5_r, 0.95_r}};
+  RunSupportedFemShellRodBatchSizes([&]<int kBS>() {
+    for (Real2 const& s : kStretches) {
+      auto const s0 = static_cast<double>(s[0]);
+      auto const s1 = static_cast<double>(s[1]);
+      double const g = Max(1.0 / (s0 * s0) + 1.0 / (s1 * s1) - 2.0, 0.0);
+      for (auto const& [cfg, refArea] :
+           {std::pair{MakeStretchedInteriorConfig(s[0], s[1]), 0.5},
+            std::pair{MakeStretchedEquilateralConfig(s[0], s[1]), std::numbers::sqrt3 / 4.0}}) {
+        auto const barrier = CollapseBarrierContribution<kBS>(BroadcastConfig<kBS>(cfg));
+        double const expected =
+            static_cast<double>(kCollapseBarrierStiffness) * refArea * g * g * g;
+        for (int b = 0; b < kBS; ++b) {
+          if (g == 0.0) {
+            ExpectZeroLane(barrier, b);
+          } else {
+            EXPECT_NEAR(expected, barrier.energy[b], kEnergyRelTol * expected);
+          }
+        }
+      }
+    }
+  });
+}
+
+TEST(ShellWork, CollapseBarrierOutputModes) {
+  ShellFdOptions options;
+  options.membraneCollapseBarrierStiffness = kCollapseBarrierStiffness;
+  for (auto const& cfg : MakeCompressedConfigs()) {
+    RunSupportedFemShellRodBatchSizes(
+        [&]<int kBS>() { VerifyShellOutputModes<kBS>(BroadcastConfig<kBS>(cfg), options); });
+  }
+}
+
+// Inactive lanes must be unaffected by active neighbors.
+TEST(ShellWork, CollapseBarrierInactiveUnderTensionBesideCompressedLanes) {
+  auto const biaxial = MakeStretchedInteriorConfig(1.3_r, 1.1_r);
+  auto const compressed = MakeStretchedInteriorConfig(0.7_r, 0.8_r);
+  std::array<ShellStencilConfig const*, kDefaultFemBatchSize> mixed{};
+  for (int b = 0; b < kDefaultFemBatchSize; ++b) {
+    mixed[b] = (b % 2 == 0) ? &compressed : &biaxial;
+  }
+  auto const barrier = CollapseBarrierContribution<kDefaultFemBatchSize>(mixed);
+  for (int b = 0; b < kDefaultFemBatchSize; ++b) {
+    if (b % 2 == 0) {
+      EXPECT_GT(barrier.energy[b], 0.0);
+    } else {
+      ExpectZeroLane(barrier, b);
+    }
+  }
+}
+
+TEST(ShellWork, CollapseBarrierEnergyResidualFd) {
+  for (real const dampingFactor : {0_r, 3_r}) {
+    ShellFdOptions options;
+    options.checkResidualDResidual = false;
+    options.membraneCollapseBarrierStiffness = kCollapseBarrierStiffness;
+    options.stiffnessDampingFactor = dampingFactor;
+    options.stageStartDispScale = 0.5_r;
+    for (auto const& cfg : MakeCompressedConfigs()) {
+      RunSupportedFemShellRodBatchSizes(
+          [&]<int kBS>() { VerifyShellFdBroadcast<kBS>(cfg, options); });
+    }
+  }
+}
+
+// The DRes contribution is the Gauss–Newton tangent 6kAg·∇g∇gᵀ. With barrier energy E = kAg³ and
+// residual r = 3kAg²·∇g, this equals 2·r rᵀ / (3E).
+TEST(ShellWork, CollapseBarrierGaussNewtonDResidual) {
+  constexpr int kN = kBendingStencilDofs;
+  real constexpr kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-8_r : 1e-4_r;
+  auto const compressed = MakeCompressedConfigs();
+  DynamicArray<ShellStencilConfig> cfgs(compressed.begin(), compressed.end());
+  cfgs.push_back(MakeStretchedInteriorConfig(0.03_r, 0.03_r));
+  for (bool const projectPsd : {false, true}) {
+    RunSupportedFemShellRodBatchSizes([&]<int kBS>() {
+      for (auto const& cfg : cfgs) {
+        auto const barrier =
+            CollapseBarrierContribution<kBS>(BroadcastConfig<kBS>(cfg), {}, projectPsd);
+        for (int b = 0; b < kBS; ++b) {
+          ASSERT_GT(barrier.energy[b], 0.0);
+          auto const r = GetLane(barrier.res, b);
+          real const scale = static_cast<real>(2.0 / (3.0 * barrier.energy[b]));
+          NdArray<real, kN * kN> expected MOCHI_NO_INIT;
+          for (int i = 0; i < kN; ++i) {
+            for (int j = 0; j < kN; ++j) {
+              expected[i * kN + j] = scale * r[i] * r[j];
+            }
+          }
+          ExpectNearL2(expected, GetLane(barrier.dres, b), kTol);
+        }
+      }
+    });
+  }
+}
+
+// Ordered by increasing g. The residual and tangent saturate near collapse (J ≤ 1e-10) in single
+// precision only; exact collapse onto a line or a point (J = 0) saturates every term in both
+// precisions. The energy keeps growing past force saturation, and while not fully collapsed, the
+// saturated barrier must still push back. At J = 0, the residual vanishes regardless: a is
+// quadratic in x, so ∂a/∂x has no component along the collapsed direction.
+TEST(ShellWork, CollapseBarrierNearCollapse) {
+  RunSupportedFemShellRodBatchSizes([&]<int kBS>() {
+    double previousEnergy = 0.0;
+    for (auto const& stretches :
+         {Real2{1e-2_r, 1e-2_r},
+          Real2{1e-3_r, 1e-3_r},
+          Real2{1e-4_r, 1e-4_r},
+          Real2{1e-5_r, 1e-5_r},
+          Real2{1e-3_r, 1e-7_r},
+          Real2{0_r, 1_r},
+          Real2{0_r, 1e-3_r},
+          Real2{0_r, 0_r}}) {
+      bool const isFullyCollapsed = stretches[0] == 0_r;
+      auto const cfg = MakeStretchedInteriorConfig(stretches[0], stretches[1]);
+      auto const barrier = CollapseBarrierContribution<kBS>(BroadcastConfig<kBS>(cfg));
+      for (int b = 0; b < kBS; ++b) {
+        EXPECT_TRUE(IsFinite(barrier.energy[b]));
+        for (real const v : GetLane(barrier.res, b)) {
+          EXPECT_TRUE(IsFinite(v));
+        }
+        for (real const v : GetLane(barrier.dres, b)) {
+          EXPECT_TRUE(IsFinite(v));
+        }
+        if (isFullyCollapsed) {
+          EXPECT_GE(barrier.energy[b], previousEnergy);
+        } else {
+          EXPECT_GT(barrier.energy[b], previousEnergy);
+          EXPECT_GT(Norm(GetLane(barrier.res, b)), 0_r);
+          EXPECT_GT(Norm(GetLane(barrier.dres, b)), 0_r);
+        }
+      }
+      if (!isFullyCollapsed) {
+        previousEnergy = barrier.energy[kBS - 1];
+      }
+    }
+  });
+}
+
+TEST(ShellWork, CollapseBarrierIndependentOfStiffnessDamping) {
+  real constexpr kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-9_r : 1e-4_r;
+  ShellFdOptions damped;
+  damped.stiffnessDampingFactor = 3_r;
+  damped.stageStartDispScale = 0.5_r;
+  RunSupportedFemShellRodBatchSizes([&]<int kBS>() {
+    for (auto const& cfg : MakeCompressedConfigs()) {
+      auto const cfgs = BroadcastConfig<kBS>(cfg);
+      auto const undampedBarrier = CollapseBarrierContribution<kBS>(cfgs);
+      auto const dampedBarrier = CollapseBarrierContribution<kBS>(cfgs, damped);
+      for (int b = 0; b < kBS; ++b) {
+        EXPECT_NEAR(
+            undampedBarrier.energy[b],
+            dampedBarrier.energy[b],
+            static_cast<double>(kTol) * undampedBarrier.energy[b]);
+        ExpectNearL2(GetLane(undampedBarrier.res, b), GetLane(dampedBarrier.res, b), kTol);
+        ExpectNearL2(GetLane(undampedBarrier.dres, b), GetLane(dampedBarrier.dres, b), kTol);
+      }
+    }
+  });
+}

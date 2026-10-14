@@ -346,6 +346,37 @@ MOCHI_FORCE_INLINE void AddMembraneDResidual(
   }
 }
 
+/// @brief Gauss–Newton tangent of the membrane collapse barrier, @p scale · v ⊗ v with
+/// v = @p dq_da : ∂a/∂x (upper node-pair blocks only), for any direction dq/da in metric space. PSD
+/// whenever @p scale ≥ 0.
+template <int kBatchSize>
+MOCHI_FORCE_INLINE void AddMembraneCollapseBarrierDResidual(
+    NdArray<BatchSymMatrix2x2<kBatchSize>, kTriangleNodes, kSpaceDim3> const& da_dx,
+    BatchReal2x2<kBatchSize> const& dq_da,
+    BatchReal<kBatchSize> scale,
+    NdArray<BatchReal<kBatchSize>, kBendingStencilDofs * kBendingStencilDofs>& outDRes) {
+  using V = BatchReal<kBatchSize>;
+  BatchSymMatrix2x2<kBatchSize> const dq = Sym2x2Components(dq_da);
+  NdArray<V, kTriangleNodes, kSpaceDim3> dq_dx MOCHI_NO_INIT;
+  for (int a = 0; a < kTriangleNodes; ++a) {
+    for (int i = 0; i < kSpaceDim3; ++i) {
+      dq_dx[a][i] = ColonSym2x2(da_dx[a][i], dq);
+    }
+  }
+  for (int testNode = 0; testNode < kTriangleNodes; ++testNode) {
+    for (int i = 0; i < kSpaceDim3; ++i) {
+      V const scaledTest = scale * dq_dx[testNode][i];
+      for (int trialNode = testNode; trialNode < kTriangleNodes; ++trialNode) {
+        int const outBase =
+            (testNode * kSpaceDim3 + i) * kBendingStencilDofs + trialNode * kSpaceDim3;
+        for (int j = 0; j < kSpaceDim3; ++j) {
+          outDRes[outBase + j] += scaledTest * dq_dx[trialNode][j];
+        }
+      }
+    }
+  }
+}
+
 /**************************************************************************************************
   Second fundamental form and derivatives.
 */
@@ -776,6 +807,11 @@ MOCHI_FORCE_INLINE void AddBendingDResidual(
 /// @param[in] membraneMu  Membrane Lamé second parameter [Pa·m].
 /// @param[in] bendingAlpha  Bending stiffness first parameter [Pa·m³].
 /// @param[in] bendingBeta  Bending stiffness second parameter [Pa·m³].
+/// @param[in] membraneCollapseBarrierStiffness  Stiffness k ≥ 0 of the membrane collapse barrier
+///   k·⟨tr(C⁻¹) − 2⟩³ per unit reference area [Pa·m]; skipped when zero. Its stiffness uses a
+///   PSD Gauss–Newton approximation, and it is excluded from stiffness damping. Near total
+///   collapse, the energy, residual, and stiffness each saturate independently to avoid overflow,
+///   so there the residual and stiffness are not exact derivatives of the energy.
 /// @param[in] projectPsd  If true, project membrane geometric stiffness to be PSD.
 /// @param[in] stiffnessDampingFactor  β/dt factor for stiffness damping (dimensionless). Unified
 ///   into the elastic response by scaling the material stiffnesses to (1+factor)·k and using
@@ -794,6 +830,7 @@ bool ShellWork(
     real membraneMu,
     real bendingAlpha,
     real bendingBeta,
+    real membraneCollapseBarrierStiffness,
     bool projectPsd,
     real stiffnessDampingFactor = 0_r,
     NdArray<BatchReal<kBatchSize>, kBendingStencilDofs> const* stageStartDisp = nullptr);

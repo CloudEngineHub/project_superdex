@@ -247,6 +247,17 @@ void mochi::InitShellActor(
       error,
       "Shell mesh must not contain nodes that are unreferenced by its triangles.");
   MOCHI_ERROR_RETURN(error);
+  // Plane stress of any valid isotropic 3D material gives membraneLambda / membraneMu < 2. The
+  // tolerance avoids warning on rounding error near the incompressible limit.
+  real constexpr kMaxPlaneStressLameRatio = 2_r + 1e-4_r;
+  if (params.material.membraneLambda > kMaxPlaneStressLameRatio * params.material.membraneMu) {
+    MOCHI_LOG_WARNING(
+        "Creating shell actor \"%s\" with membraneLambda / membraneMu = %g > 2, which exceeds the "
+        "plane-stress limit of any valid isotropic 3D material. The model remains well-posed, but "
+        "is not derivable from an isotropic 3D material.",
+        params.name.c_str(),
+        static_cast<double>(params.material.membraneLambda / params.material.membraneMu));
+  }
 
   // Identification
   reg.emplace<TagShellActor>(e);

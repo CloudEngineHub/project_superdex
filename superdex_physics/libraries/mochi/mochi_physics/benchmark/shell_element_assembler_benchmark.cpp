@@ -185,13 +185,13 @@ static void ShellElementAssemblerBenchmark(
   constexpr real kDt = 0.1_r; // Arbitrary
   constexpr real kOneOverDt2 = 1_r / Sqr(kDt);
 
-  // Shell elasticity material (arbitrary values).
+  // Shell elasticity material (arbitrary values, plane-stress membrane parameters).
   constexpr real kBendingAlpha = 1e-6_r;
   constexpr real kBendingBeta = 1e-6_r;
   constexpr real kYoungsModulus = 1e3_r;
   constexpr real kPoissonRatio = 0.3_r;
   real const kMembraneLambda =
-      (kYoungsModulus * kPoissonRatio) / ((1_r + kPoissonRatio) * (1_r - 2_r * kPoissonRatio));
+      (kYoungsModulus * kPoissonRatio) / (1_r - kPoissonRatio * kPoissonRatio);
   real const kMembraneMu = kYoungsModulus / (2_r * (1_r + kPoissonRatio));
 
   bool const hasGravity = elopFlags & kShellElOpGravity;
@@ -216,6 +216,7 @@ static void ShellElementAssemblerBenchmark(
         kMembraneMu,
         kBendingAlpha,
         kBendingBeta,
+        /*membraneCollapseBarrierStiffness*/ 0_r,
         kDefaultGravity,
         kShellDensity,
         kOneOverDt2,

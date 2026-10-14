@@ -448,6 +448,7 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::ShellMaterialParams:
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellMaterialParams::density), mochi::real mochi::experimental::ShellMaterialParams::*>, "\n  ERROR: Field mochi::experimental::ShellMaterialParams::density is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellMaterialParams::massDampingCoefficient), mochi::real mochi::experimental::ShellMaterialParams::*>, "\n  ERROR: Field mochi::experimental::ShellMaterialParams::massDampingCoefficient is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellMaterialParams::stiffnessDampingCoefficient), mochi::real mochi::experimental::ShellMaterialParams::*>, "\n  ERROR: Field mochi::experimental::ShellMaterialParams::stiffnessDampingCoefficient is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::experimental::ShellMaterialParams::membraneCollapseBarrierScale), mochi::real mochi::experimental::ShellMaterialParams::*>, "\n  ERROR: Field mochi::experimental::ShellMaterialParams::membraneCollapseBarrierScale is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
 // struct mochi::experimental::ShellActorParams
 static_assert(std::is_same_v<decltype(&mochi::experimental::ShellActorParams::name), mochi::DynamicString mochi::experimental::ShellActorParams::*>, "\n  ERROR: Field mochi::experimental::ShellActorParams::name is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
@@ -1557,6 +1558,7 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT_EQ(params.density, 1.0_r, "DSL default value for ShellMaterialParams::density doesn't match C++ default. DSL says 1.0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.massDampingCoefficient, 0.0_r, "DSL default value for ShellMaterialParams::massDampingCoefficient doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.stiffnessDampingCoefficient, 0.0_r, "DSL default value for ShellMaterialParams::stiffnessDampingCoefficient doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.membraneCollapseBarrierScale, 0.001_r, "DSL default value for ShellMaterialParams::membraneCollapseBarrierScale doesn't match C++ default. DSL says 0.001, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::experimental::ShellActorParams params{};
