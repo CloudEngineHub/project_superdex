@@ -20,7 +20,8 @@ import threading
 import unittest
 from collections.abc import Callable
 from socket import SHUT_RDWR
-from unittest.mock import call, Mock
+from typing import Any, cast
+from unittest.mock import call, Mock, patch
 
 import numpy as np
 from superdex.physics.viewer.unrealcv.unrealcv_client import (
@@ -152,6 +153,67 @@ class TestUnrealCVClientFailedBatch(unittest.TestCase):
 
         self.assertEqual([None], waited)
         self.assertEqual([["vget /a"]], sent)
+
+
+class _ScriptedClient:
+    """An unrealcv ``Client`` stand-in that answers batches, or never answers them."""
+
+    def __init__(self, answers: bool) -> None:
+        self.sock: Mock | None = Mock()
+        self.answers = answers
+        self.batches: list[list[str]] = []
+        self.recv_num_q: queue.SimpleQueue[int | None] = queue.SimpleQueue()
+        self.release = threading.Event()
+
+    def connect(self, timeout: float) -> None:
+        pass
+
+    def isconnected(self) -> bool:
+        return self.sock is not None
+
+    def request_batch(self, commands: list[str]) -> list[str]:
+        self.batches.append(commands)
+        if not self.answers:
+            self.release.wait(timeout=10)
+        return [f"ok {command}" for command in commands]
+
+
+class TestUnrealCVClientNeverResends(unittest.TestCase):
+    def _client(self) -> UnrealCVClient:
+        client = UnrealCVClient(request_timeout=0.05)
+        self.hung = _ScriptedClient(answers=False)
+        self.addCleanup(self.hung.release.set)
+        client._client = cast(Any, self.hung)
+        client._connected = True
+        return client
+
+    def test_a_timed_out_batch_is_not_sent_again(self) -> None:
+        client = self._client()
+
+        with patch("unrealcv.Client") as new_client:
+            responses = client._request_batch(["vget /a", "vget /b"])
+
+        # UE may have run the batch and only the reply was lost.
+        self.assertEqual([None, None], responses)
+        self.assertEqual([["vget /a", "vget /b"]], self.hung.batches)
+        new_client.assert_not_called()
+        self.assertFalse(client.is_connected())
+        # The stalled connection was shut down, not reused.
+        self.assertIsNone(self.hung.sock)
+
+    def test_reconnect_serves_a_retry_from_an_episode_boundary(self) -> None:
+        client = self._client()
+        client._request_batch(["vset /actor/x 1"])
+        fresh = _ScriptedClient(answers=True)
+
+        with patch("unrealcv.Client", return_value=fresh):
+            self.assertTrue(client.reconnect())
+            responses = client._request_batch(["vget /a"])
+
+        self.assertEqual(["ok vget /a"], responses)
+        # Only the caller's new request reaches the new connection.
+        self.assertEqual([["vget /a"]], fresh.batches)
+        self.assertEqual([["vset /actor/x 1"]], self.hung.batches)
 
 
 class TestUnrealCVClientCameraCalibration(unittest.TestCase):

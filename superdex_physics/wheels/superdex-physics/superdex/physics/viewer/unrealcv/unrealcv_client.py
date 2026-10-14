@@ -205,6 +205,24 @@ class UnrealCVClient:
         )
         return False
 
+    def reconnect(self) -> bool:
+        """Replace the connection with a fresh one to the same server.
+
+        For a caller retrying from an episode or reset boundary after a request
+        failed: the client never re-sends a request itself, since a request whose
+        reply timed out may have run in UE (actor updates, a capture that advances
+        temporal state) with only the reply lost. The old client's
+        request/response counters can't be trusted again. Camera ids and the
+        camera mapping are kept, since they index UE-side state that outlives
+        the connection.
+        """
+        import unrealcv
+
+        if self._connected:
+            self._mark_disconnected()
+        self._client = unrealcv.Client((self._host, self._port))
+        return self.connect(resolve_cameras=False)
+
     def resolve_camera_mapping(self) -> None:
         """
         Resolve pending camera mapping after connection.
@@ -393,10 +411,7 @@ class UnrealCVClient:
                     return (empty, {}) if profile else empty
 
                 if not profile:
-                    responses = self._blocking_call(
-                        self._client.request_batch, commands
-                    )
-                    return responses
+                    return self._blocking_call(self._client.request_batch, commands)
 
                 # ---- Profiled path ----
                 profiling: dict = {}
