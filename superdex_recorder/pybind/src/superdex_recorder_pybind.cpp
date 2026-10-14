@@ -18,6 +18,7 @@
 #include <superdex_recorder/recorder.h>
 #include <superdex_recorder/robot_shadow.h>
 #include <superdex_recorder/robotics_recorder.h>
+#include <superdex_recorder/skeleton_shadow.h>
 
 #include <mochi_physics/pybind/core/pybind_core.h>
 #include <superdex_robotics/superdex_robotics.h>
@@ -40,6 +41,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace nb = nanobind;
 
@@ -238,4 +240,73 @@ NB_MODULE(SUPERDEX_RECORDER_MODULE_NAME, module) {
           nb::arg("simulation_time_sec"),
           nb::arg("world_from_anchor"),
           nb::arg("joint_positions"));
+
+  nb::class_<SkeletonShadow>(module, "SkeletonShadow")
+      .def(
+          nb::new_([](Episode& episode,
+                      superdex::robotics::Bot& robot,
+                      std::string id,
+                      std::vector<std::string> keypointNames,
+                      std::vector<int32_t> parentIndices,
+                      std::string label,
+                      std::array<uint8_t, 4> color,
+                      float keypointRadiusMeters) {
+            return CallWithErrorResult([&](mochi::Error& error) {
+              return std::make_unique<SkeletonShadow>(
+                  episode,
+                  robot,
+                  SkeletonShadowConfig{
+                      .id = std::move(id),
+                      .label = std::move(label),
+                      .keypointNames = std::move(keypointNames),
+                      .parentIndices = std::move(parentIndices),
+                      .colorRgba = color,
+                      .keypointRadiusMeters = keypointRadiusMeters},
+                  error);
+            });
+          }),
+          nb::arg("episode"),
+          nb::arg("robot"),
+          nb::arg("id"),
+          nb::arg("keypoint_names"),
+          nb::arg("parent_indices"),
+          nb::arg("label") = "",
+          nb::arg("color_rgba") = SkeletonShadowConfig{}.colorRgba,
+          nb::arg("keypoint_radius_meters") = SkeletonShadowConfig{}.keypointRadiusMeters,
+          nb::keep_alive<0, 2>())
+      .def(
+          "record",
+          [](SkeletonShadow& self,
+             uint64_t frame,
+             double simulationTimeSec,
+             nb::ndarray<mochi::real const, nb::c_contig, nb::device::cpu> const&
+                 worldKeypointsXyz) {
+            CallWithError([&](mochi::Error& error) {
+              MOCHI_ERROR_IF_NOT(
+                  (worldKeypointsXyz.ndim() == 1 && worldKeypointsXyz.size() % 3 == 0) ||
+                      (worldKeypointsXyz.ndim() == 2 && worldKeypointsXyz.shape(1) == 3),
+                  error,
+                  "Skeleton shadow keypoints must be XYZ triples, as a flat or an (N, 3) array.");
+              MOCHI_ERROR_RETURN(error);
+              mochi::Span<mochi::real const> const xyz{
+                  worldKeypointsXyz.data(), worldKeypointsXyz.size()};
+              std::vector<mochi::Real3> keypoints(xyz.size() / 3);
+              for (size_t i = 0; i < keypoints.size(); ++i) {
+                keypoints[i] = {xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]};
+              }
+              self.Record(Sample(frame, simulationTimeSec), keypoints, error);
+            });
+          },
+          nb::arg("frame"),
+          nb::arg("simulation_time_sec"),
+          nb::arg("world_keypoints_xyz"))
+      .def(
+          "record_untracked",
+          [](SkeletonShadow& self, uint64_t frame, double simulationTimeSec) {
+            CallWithError([&](mochi::Error& error) {
+              self.RecordUntracked(Sample(frame, simulationTimeSec), error);
+            });
+          },
+          nb::arg("frame"),
+          nb::arg("simulation_time_sec"));
 }

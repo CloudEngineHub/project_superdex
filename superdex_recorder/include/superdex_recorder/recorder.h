@@ -44,6 +44,7 @@ class Series;
 class ScalarSeries;
 class TransformSeries;
 class Arrow3DSeries;
+class Points3DSeries;
 
 inline constexpr std::string_view kSchemaName = "superdex.episode";
 inline constexpr uint32_t kSchemaVersionMajor = 1;
@@ -88,6 +89,7 @@ class SUPERDEX_RECORDER_API Episode final {
       mochi::Error& error);
   TransformSeries* CreateTransformSeries(std::string_view entityPath, mochi::Error& error);
   Arrow3DSeries* CreateArrow3DSeries(std::string_view entityPath, mochi::Error& error);
+  Points3DSeries* CreatePoints3DSeries(std::string_view entityPath, mochi::Error& error);
   void WriteConstantText(
       std::string_view entityPath,
       ComponentField const& field,
@@ -121,6 +123,17 @@ class SUPERDEX_RECORDER_API Episode final {
       mochi::Span<float const> vertexPositions,
       mochi::Span<uint32_t const> triangleIndices,
       std::array<uint8_t, 4> const& color,
+      mochi::Error& error);
+  /* Labels the points of a Points3DSeries at entityPath as one keypoint skeleton: point i of every
+   * sample is keypoint i, named keypointNames[i], and the viewer draws a line for each connection
+   * between two keypoint indices. */
+  void WriteKeypointSkeleton(
+      std::string_view entityPath,
+      std::string_view label,
+      mochi::Span<std::string const> keypointNames,
+      mochi::Span<std::array<uint16_t, 2> const> connections,
+      std::array<uint8_t, 4> const& color,
+      float keypointRadiusMeters,
       mochi::Error& error);
 
   /* Every sample stays in memory until Commit, which blocks the calling thread while it writes the
@@ -184,8 +197,14 @@ class SUPERDEX_RECORDER_API Recorder final {
 SUPERDEX_RECORDER_API void SetLogCallback(mochi::LogFn const& callback);
 
 namespace detail {
-// Not exported: it returns std::string, which must not cross the DLL boundary.
+// Not exported: they return std::string, which must not cross the DLL boundary.
 std::string EncodeEntityPathSegment(std::string_view segment);
+/* Names a robot's entities after its articulated actor's name, or "robot" if that is null or
+ * empty. */
+std::string RobotEntityId(char const* actorName);
+/* Returns world/shadows/<robot>/<id>. Every kind of shadow builds its path here, so the episode
+ * rejects two shadows with one ID on one robot. */
+std::string ShadowEntityPath(char const* actorName, std::string_view id, mochi::Error& error);
 } // namespace detail
 
 } // namespace superdex::recorder

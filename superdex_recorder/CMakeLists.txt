@@ -60,8 +60,10 @@ if (TARGET superdex_robotics)
     add_library(superdex_recorder_robotics STATIC
         src/robot_shadow.cpp
         src/robotics_recorder.cpp
+        src/skeleton_shadow.cpp
         include/superdex_recorder/robot_shadow.h
         include/superdex_recorder/robotics_recorder.h
+        include/superdex_recorder/skeleton_shadow.h
     )
     target_include_directories(superdex_recorder_robotics PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
     target_link_libraries(superdex_recorder_robotics PUBLIC superdex_recorder_core superdex_robotics)

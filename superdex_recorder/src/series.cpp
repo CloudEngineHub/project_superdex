@@ -18,7 +18,10 @@
 
 #include <mochi_core/utils/log.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -271,6 +274,57 @@ void Arrow3DSeries::BuildColumns(std::vector<rerun::ComponentColumn>& output, mo
   }
   output.emplace_back(std::move(origins.value));
   output.emplace_back(std::move(vectors.value));
+}
+
+Points3DSeries::Points3DSeries(std::string_view entityPath) : Series{entityPath} {}
+
+void Points3DSeries::Append(
+    SampleTime time,
+    mochi::Span<mochi::Real3 const> positions,
+    mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(
+      positions.size() > std::numeric_limits<uint32_t>::max(),
+      error,
+      "Point series sample is too large to record.");
+  MOCHI_ERROR_RETURN(error);
+  auto const toPosition = [](mochi::Real3 const& position) {
+    return rerun::components::Position3D{
+        static_cast<float>(position[0]),
+        static_cast<float>(position[1]),
+        static_cast<float>(position[2])};
+  };
+  bool const repeatsLastSample = !_lengths.empty() && _lengths.back() == positions.size() &&
+      std::equal(
+          positions.begin(),
+          positions.end(),
+          _positions.end() - static_cast<std::ptrdiff_t>(positions.size()),
+          [&](mochi::Real3 const& position, rerun::components::Position3D const& stored) {
+            return toPosition(position).xyz.xyz == stored.xyz.xyz;
+          });
+  if (repeatsLastSample) {
+    AdvanceTime(time, error);
+    return;
+  }
+  AppendTime(time, error);
+  MOCHI_ERROR_RETURN(error);
+
+  _lengths.push_back(static_cast<uint32_t>(positions.size()));
+  std::transform(positions.begin(), positions.end(), std::back_inserter(_positions), toPosition);
+}
+
+void Points3DSeries::BuildColumns(
+    std::vector<rerun::ComponentColumn>& output,
+    mochi::Error& error) {
+  auto positions = rerun::ComponentColumn::from_loggable_with_lengths(
+      rerun::Collection<rerun::components::Position3D>::borrow(_positions),
+      rerun::Collection<uint32_t>::borrow(_lengths),
+      rerun::archetypes::Points3D::Descriptor_positions);
+  if (positions.is_err()) {
+    SetRerunError(positions.error, error, "Failed to encode point positions.");
+    return;
+  }
+  output.emplace_back(std::move(positions.value));
 }
 
 } // namespace superdex::recorder

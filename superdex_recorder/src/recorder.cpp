@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <limits>
 #include <random>
 #include <system_error>
 #include <utility>
@@ -37,6 +38,7 @@ namespace {
 
 constexpr std::string_view kApplicationId = "superdex";
 constexpr std::string_view kEpisodeArchetype = "superdex.archetypes.Episode";
+constexpr std::string_view kShadowsPath = "world/shadows";
 
 bool HasValidPropertyKeys(std::map<std::string, std::string> const& properties) {
   return std::none_of(properties.begin(), properties.end(), [](auto const& property) {
@@ -182,6 +184,17 @@ Arrow3DSeries* Episode::CreateArrow3DSeries(std::string_view entityPath, mochi::
   MOCHI_ERROR_RETURN(error, nullptr);
 
   auto series = std::make_unique<Arrow3DSeries>(entityPath);
+  auto* const result = series.get();
+  _series.push_back(std::move(series));
+  return result;
+}
+
+Points3DSeries* Episode::CreatePoints3DSeries(std::string_view entityPath, mochi::Error& error) {
+  ValidateWrite(error);
+  ValidateSeriesPath(entityPath, error);
+  MOCHI_ERROR_RETURN(error, nullptr);
+
+  auto series = std::make_unique<Points3DSeries>(entityPath);
   auto* const result = series.get();
   _series.push_back(std::move(series));
   return result;
@@ -361,6 +374,80 @@ void Episode::WriteMesh(
   row.insert(row.end(), batches.value.begin(), batches.value.end());
 }
 
+void Episode::WriteKeypointSkeleton(
+    std::string_view entityPath,
+    std::string_view label,
+    mochi::Span<std::string const> keypointNames,
+    mochi::Span<std::array<uint16_t, 2> const> connections,
+    std::array<uint8_t, 4> const& color,
+    float keypointRadiusMeters,
+    mochi::Error& error) {
+  ValidateWrite(error);
+  MOCHI_ERROR_IF(entityPath.empty(), error, "Keypoint skeleton entity path must not be empty.");
+  MOCHI_ERROR_IF(
+      keypointNames.size() > size_t{std::numeric_limits<uint16_t>::max()} + 1,
+      error,
+      "Keypoint skeleton has too many keypoints.");
+  MOCHI_ERROR_IF_NOT(
+      std::all_of(
+          connections.begin(),
+          connections.end(),
+          [&](auto const& connection) {
+            return connection[0] < keypointNames.size() && connection[1] < keypointNames.size();
+          }),
+      error,
+      "Keypoint skeleton connection index exceeds the keypoint count.");
+  MOCHI_ERROR_IF_NOT(
+      std::isfinite(keypointRadiusMeters) && keypointRadiusMeters > 0.0f,
+      error,
+      "Keypoint radius must be finite and positive.");
+  MOCHI_ERROR_RETURN(error);
+
+  // The viewer joins points by their class and keypoint IDs, and draws the connections in the
+  // class color rather than the point color.
+  constexpr uint16_t kClassId = 0;
+  rerun::datatypes::Rgba32 const rgba{color[0], color[1], color[2], color[3]};
+  std::vector<rerun::datatypes::AnnotationInfo> keypoints;
+  std::vector<rerun::components::KeypointId> keypointIds;
+  keypoints.reserve(keypointNames.size());
+  keypointIds.reserve(keypointNames.size());
+  for (size_t i = 0; i < keypointNames.size(); ++i) {
+    keypoints.emplace_back(static_cast<uint16_t>(i), keypointNames[i]);
+    keypointIds.emplace_back(static_cast<uint16_t>(i));
+  }
+  std::vector<rerun::datatypes::KeypointPair> pairs;
+  pairs.reserve(connections.size());
+  for (auto const& connection : connections) {
+    pairs.emplace_back(connection[0], connection[1]);
+  }
+  std::vector<rerun::datatypes::ClassDescriptionMapElem> classes;
+  classes.emplace_back(
+      rerun::datatypes::ClassDescription{
+          rerun::datatypes::AnnotationInfo{kClassId, std::string{label}, rgba},
+          std::move(keypoints),
+          std::move(pairs)});
+  auto contextBatches = rerun::AsComponents<rerun::archetypes::AnnotationContext>::as_batches(
+      rerun::archetypes::AnnotationContext{
+          rerun::components::AnnotationContext{std::move(classes)}});
+  auto pointBatches = rerun::AsComponents<rerun::archetypes::Points3D>::as_batches(
+      rerun::archetypes::Points3D::update_fields()
+          .with_class_ids(std::vector<rerun::components::ClassId>(keypointNames.size(), kClassId))
+          .with_keypoint_ids(std::move(keypointIds))
+          .with_colors(rerun::components::Color{rgba})
+          .with_radii(rerun::components::Radius::scene_units(keypointRadiusMeters))
+          .with_show_labels(rerun::components::ShowLabels{false}));
+  if (contextBatches.is_err() || pointBatches.is_err()) {
+    SetRerunError(
+        contextBatches.is_err() ? contextBatches.error : pointBatches.error,
+        error,
+        "Failed to encode constant keypoint skeleton data.");
+    return;
+  }
+  auto& row = _staticRows->batchesByEntity[std::string{entityPath}];
+  row.insert(row.end(), contextBatches.value.begin(), contextBatches.value.end());
+  row.insert(row.end(), pointBatches.value.begin(), pointBatches.value.end());
+}
+
 void Episode::Commit(mochi::Error& error) {
   ValidateWrite(error);
   MOCHI_ERROR_RETURN(error);
@@ -430,6 +517,19 @@ bool Episode::IsActive() const {
 
 std::string detail::EncodeEntityPathSegment(std::string_view segment) {
   return rerun::escape_entity_path_part(segment);
+}
+
+std::string detail::RobotEntityId(char const* actorName) {
+  return actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
+}
+
+std::string
+detail::ShadowEntityPath(char const* actorName, std::string_view id, mochi::Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  MOCHI_ERROR_IF(id.empty(), error, "Shadow ID must not be empty.");
+  MOCHI_ERROR_RETURN(error, {});
+  return std::string{kShadowsPath} + "/" + EncodeEntityPathSegment(RobotEntityId(actorName)) + "/" +
+      EncodeEntityPathSegment(id);
 }
 
 void Episode::ValidateWrite(mochi::Error& error) const {

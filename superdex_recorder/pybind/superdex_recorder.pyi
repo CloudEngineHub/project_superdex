@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, Self
@@ -84,3 +85,25 @@ class RobotShadow:
         world_from_anchor: Any,
         joint_positions: npt.NDArray[np.floating[Any]],
     ) -> None: ...
+
+class SkeletonShadow:
+    def __init__(
+        self,
+        episode: Episode,
+        robot: Any,
+        id: str,
+        keypoint_names: Sequence[str],
+        parent_indices: Sequence[int],
+        label: str = ...,
+        color_rgba: tuple[int, int, int, int] = ...,
+        keypoint_radius_meters: float = ...,
+    ) -> None: ...
+    # world_keypoints_xyz holds every keypoint's world X, Y and Z, in keypoint order, as a flat
+    # array of 3N values or an (N, 3) array.
+    def record(
+        self,
+        frame: int,
+        simulation_time_sec: float,
+        world_keypoints_xyz: npt.NDArray[np.floating[Any]],
+    ) -> None: ...
+    def record_untracked(self, frame: int, simulation_time_sec: float) -> None: ...

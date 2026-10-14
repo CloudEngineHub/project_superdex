@@ -136,4 +136,19 @@ class SUPERDEX_RECORDER_API Arrow3DSeries final : public Series {
   std::vector<rerun::components::Vector3D> _vectors;
 };
 
+/* @brief Stores a variable-length batch of world-space 3D points per sample. A batch equal to the
+ * previous sample is not stored, because readers take the latest sample at or before a time. */
+class SUPERDEX_RECORDER_API Points3DSeries final : public Series {
+ public:
+  explicit Points3DSeries(std::string_view entityPath);
+
+  void Append(SampleTime time, mochi::Span<mochi::Real3 const> positions, mochi::Error& error);
+
+ private:
+  void BuildColumns(std::vector<rerun::ComponentColumn>& output, mochi::Error& error) override;
+
+  std::vector<uint32_t> _lengths;
+  std::vector<rerun::components::Position3D> _positions;
+};
+
 } // namespace superdex::recorder

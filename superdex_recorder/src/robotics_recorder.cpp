@@ -204,8 +204,7 @@ RoboticsRecorder::RoboticsRecorder(Episode& episode, robotics::Bot& robot, mochi
   _numDofs = static_cast<size_t>(actor->GetNumDofs());
   _appliedEffort.resize(_numDofs);
 
-  char const* const actorName = actor->GetName();
-  std::string const robotId = actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
+  std::string const robotId = detail::RobotEntityId(actor->GetName());
   std::string const robotPath = "data/robotics/robots/" + detail::EncodeEntityPathSegment(robotId);
   _appliedEffortSeries = episode.CreateScalarSeries(
       robotPath + "/" + std::string{kAppliedCommandStreamName},

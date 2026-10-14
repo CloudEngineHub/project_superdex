@@ -22,13 +22,12 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace superdex::recorder {
 namespace {
-
-constexpr std::string_view kShadowsPath = "world/shadows";
 
 void WriteGeometry(
     Episode& episode,
@@ -80,13 +79,8 @@ RobotShadow::RobotShadow(
     MOCHI_ERROR_SET(error, "Robot scene or actor is unavailable.");
     return;
   }
-  MOCHI_ERROR_IF(config.id.empty(), error, "Robot shadow ID must not be empty.");
+  std::string const shadowPath = detail::ShadowEntityPath(actor->GetName(), config.id, error);
   MOCHI_ERROR_RETURN(error);
-
-  char const* const actorName = actor->GetName();
-  std::string const robotId = actorName == nullptr || *actorName == '\0' ? "robot" : actorName;
-  std::string const shadowPath = std::string{kShadowsPath} + "/" +
-      detail::EncodeEntityPathSegment(robotId) + "/" + detail::EncodeEntityPathSegment(config.id);
 
   auto const linkHandles = actor->GetNestedLinkActors(error);
   auto const shapeInfo = actor->GetArticulatedShapeInfo(error);
@@ -117,9 +111,9 @@ RobotShadow::RobotShadow(
       shapeInfo.jointFromChildLink.subspan(0, numLinks),
       shapeInfo.parentLinkFromJoint.subspan(0, numLinks),
       error);
-  _anchorSeries = episode.CreateTransformSeries(shadowPath, error);
+  auto* const anchorSeries = episode.CreateTransformSeries(shadowPath, error);
   MOCHI_ERROR_RETURN(error);
-  if (_anchorSeries == nullptr) {
+  if (anchorSeries == nullptr) {
     MOCHI_ERROR_SET(error, "Failed to create a robot shadow transform series.");
     return;
   }
@@ -143,6 +137,7 @@ RobotShadow::RobotShadow(
     }
     _links.push_back({i, *series});
   }
+  _anchorSeries = anchorSeries;
 }
 
 RobotShadow::~RobotShadow() = default;
@@ -153,6 +148,10 @@ void RobotShadow::Record(
     mochi::Span<mochi::real const> jointPositions,
     mochi::Error& error) {
   MOCHI_ERROR_RETURN(error);
+  if (_anchorSeries == nullptr) {
+    MOCHI_ERROR_SET(error, "Robot shadow construction failed.");
+    return;
+  }
   _kinematics->Compute(jointPositions, error);
   _anchorSeries->Append(time, worldFromAnchor, error);
   MOCHI_ERROR_RETURN(error);

@@ -22,4 +22,5 @@
 #if defined(SUPERDEX_RECORDER_WITH_ROBOTICS)
 #include <superdex_recorder/robot_shadow.h>
 #include <superdex_recorder/robotics_recorder.h>
+#include <superdex_recorder/skeleton_shadow.h>
 #endif

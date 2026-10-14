@@ -76,6 +76,7 @@ class SUPERDEX_RECORDER_API RobotShadow final {
  private:
   std::optional<size_t> _subtreeRootLinkIndex;
   std::optional<detail::LinkKinematics> _kinematics;
+  /* Null unless construction succeeded. */
   TransformSeries* _anchorSeries = nullptr;
   std::vector<detail::ShadowLink> _links;
 };
