@@ -57,6 +57,7 @@
 #include <mochi_core/utils/span.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cfloat>
 #include <chrono>
@@ -80,6 +81,18 @@ using namespace mochi_renderer;
 namespace superdex::studio {
 
 namespace {
+
+// Extra vertical frame padding for header rows, so the toggle icons sit inset in the bar.
+float HeaderExtraPadY() {
+  return IM_TRUNC(ImGui::GetFontSize() * 0.2f);
+}
+
+// Frame padding for header-row widgets: taller than the default by HeaderExtraPadY(). Pair with
+// ImGui::PopStyleVar().
+void PushHeaderRowFramePadding() {
+  ImVec2 const padding = ImGui::GetStyle().FramePadding;
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(padding.x, padding.y + HeaderExtraPadY()));
+}
 
 // Configuration for DrawReorderableBubbleList
 struct ReorderableBubbleList {
@@ -160,8 +173,10 @@ void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList co
     drawList->ChannelsSplit(2);
     drawList->ChannelsSetCurrent(1);
     ImGui::BeginGroup();
-
+    // As tall as the row's header bar (see CollapsingHeaderWithToggles).
+    PushHeaderRowFramePadding();
     ImGui::Button("="); // drag grip
+    ImGui::PopStyleVar();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Drag to reorder.");
     }
@@ -526,6 +541,147 @@ void DrawMeshVizControls(
     DrawMeshStatsBlock("##stats", statsText, statsFont);
   }
   ImGui::PopID();
+}
+
+void ApplySurfaceVisibility(StageBuffer const& buffer) {
+  if (buffer.surfaceMesh) {
+    buffer.surfaceMesh->SetVisible(buffer.viz.showSurface);
+  }
+}
+
+void ApplyWireframeVisibility(StageBuffer const& buffer) {
+  if (buffer.wireframeMesh) {
+    buffer.wireframeMesh->SetVisible(buffer.viz.showWireframe);
+  }
+}
+
+// Icon button that flips @p value; the icon is dimmed while off. Returns true when clicked.
+bool IconToggle(char const* label, bool& value) {
+  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+  ImGui::PushStyleColor(
+      ImGuiCol_Text, ImGui::GetStyleColorVec4(value ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+  bool const clicked = ImGui::Button(label);
+  ImGui::PopStyleColor(2);
+  if (clicked) {
+    value = !value;
+  }
+  return clicked;
+}
+
+// Hover tooltip for the most recently submitted widget (shown even when disabled); long text wraps.
+void HoverTooltip(char const* text) {
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(45, 55, 72, 230));
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+    ImGui::PopStyleColor();
+  }
+}
+
+// Surface / wireframe icon toggles for a header row, mirroring a mesh's Surface / Wireframe
+// checkboxes. @p what names the mesh in the tooltips.
+void DrawVizToggles(
+    char const* idScope,
+    char const* what,
+    bool& showSurface,
+    bool& showWireframe,
+    std::function<void()> const& onShowSurface,
+    std::function<void()> const& onShowWireframe) {
+  ImGui::PushID(idScope);
+  if (IconToggle(ICON_FA_CUBE, showSurface)) {
+    onShowSurface();
+  }
+  HoverTooltip(("Show the " + std::string(what) + " surface.").c_str());
+  ImGui::SameLine();
+  if (IconToggle(ICON_FA_DRAW_POLYGON, showWireframe)) {
+    onShowWireframe();
+  }
+  HoverTooltip(("Show the " + std::string(what) + " wireframe.").c_str());
+  ImGui::PopID();
+}
+
+void DrawVizToggles(char const* idScope, char const* what, StageBuffer& buffer) {
+  DrawVizToggles(
+      idScope,
+      what,
+      buffer.viz.showSurface,
+      buffer.viz.showWireframe,
+      [&buffer] { ApplySurfaceVisibility(buffer); },
+      [&buffer] { ApplyWireframeVisibility(buffer); });
+}
+
+void SameLineAfterTogglePair() {
+  ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
+  ImGui::Dummy(ImVec2(0.0f, 0.0f));
+  ImGui::SameLine();
+}
+
+// Width of @p pairs toggle pairs laid out with SameLineAfterTogglePair between them.
+float VizTogglesWidth(int pairs) {
+  ImGuiStyle const& style = ImGui::GetStyle();
+  float const pair = ImGui::CalcTextSize(ICON_FA_CUBE).x +
+      ImGui::CalcTextSize(ICON_FA_DRAW_POLYGON).x + style.FramePadding.x * 4.0f +
+      style.ItemSpacing.x;
+  return static_cast<float>(pairs) * pair +
+      static_cast<float>(pairs - 1) * style.ItemSpacing.x * 2.0f;
+}
+
+// A framed CollapsingHeader, taller than default, with @p togglePairs pairs of icons drawn by
+// @p drawToggles in a gutter between the arrow and the label. The header is submitted with only
+// @p id ("###..."), so its open state is keyed as usual, and @p label is drawn after the gutter.
+bool CollapsingHeaderWithToggles(
+    std::string const& label,
+    char const* id,
+    ImGuiTreeNodeFlags flags,
+    bool dim,
+    int togglePairs,
+    std::function<void()> const& drawToggles) {
+  ImGuiStyle const& style = ImGui::GetStyle();
+  ImVec4 const textColor = ImGui::GetStyleColorVec4(dim ? ImGuiCol_TextDisabled : ImGuiCol_Text);
+  ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+  PushHeaderRowFramePadding();
+  bool const open = ImGui::CollapsingHeader(id, flags | ImGuiTreeNodeFlags_AllowOverlap);
+  ImGui::PopStyleVar();
+  ImGui::PopStyleColor();
+  ImVec2 const min = ImGui::GetItemRectMin();
+  ImVec2 const max = ImGui::GetItemRectMax();
+
+  float const outerExtend = IM_TRUNC(ImGui::GetCurrentWindow()->WindowPadding.x * 0.5f);
+  float const labelX = min.x + outerExtend + ImGui::GetFontSize() + style.FramePadding.x * 3.0f;
+  float const iconsY = min.y + HeaderExtraPadY();
+  float const gutterPad = IM_TRUNC(style.FramePadding.x * 0.5f);
+  ImVec2 const gutterMin(labelX - style.FramePadding.x - gutterPad, iconsY);
+  ImVec2 const gutterMax(
+      gutterMin.x + VizTogglesWidth(togglePairs) + gutterPad * 2.0f,
+      iconsY + ImGui::GetFrameHeight());
+  ImDrawList* const drawList = ImGui::GetWindowDrawList();
+  drawList->AddRectFilled(
+      gutterMin, gutterMax, ImGui::GetColorU32(ImGuiCol_FrameBg), style.FrameRounding);
+  // Headers can share a scope (the fixed slots sit at the window root), so key the gutter and its
+  // icons by this header's own id.
+  ImGui::PushID(id);
+  ImGui::SameLine();
+  ImGui::SetCursorScreenPos(gutterMin);
+  ImGui::SetNextItemAllowOverlap();
+  ImGui::InvisibleButton(
+      "##toggleGutter", ImVec2(gutterMax.x - gutterMin.x, gutterMax.y - gutterMin.y));
+  ImGui::SameLine();
+  ImGui::SetCursorScreenPos(ImVec2(gutterMin.x + gutterPad, iconsY));
+  ImGui::BeginGroup();
+  ImGui::GetCurrentWindow()->DC.IsSameLine = false;
+  drawToggles();
+  ImGui::EndGroup();
+  ImGui::PopID();
+
+  ImVec2 const textPos(
+      gutterMax.x + style.ItemSpacing.x, min.y + style.FramePadding.y + HeaderExtraPadY());
+  drawList->PushClipRect(min, ImVec2(max.x - style.FramePadding.x, max.y), true);
+  drawList->AddText(textPos, ImGui::GetColorU32(textColor), label.c_str());
+  drawList->PopClipRect();
+  return open;
 }
 
 // Reads a render-model file into renderer-space mesh sections, so the editor can build a wireframe
@@ -1697,17 +1853,7 @@ void ModelEditor::ShowMeshModifierStack() {
 
   // Hover tooltip for the most recently submitted widget (shown even when disabled); long text
   // wraps.
-  auto tooltip = [](char const* text) {
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(45, 55, 72, 230));
-      ImGui::BeginTooltip();
-      ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-      ImGui::TextUnformatted(text);
-      ImGui::PopTextWrapPos();
-      ImGui::EndTooltip();
-      ImGui::PopStyleColor();
-    }
-  };
+  auto tooltip = [](char const* text) { HoverTooltip(text); };
 
   // Populate Default Processing: replace the stack with a shipped preset pipeline (from
   // processing_presets/ next to the studio exe). Selecting a preset loads it (confirmed first when
@@ -1863,14 +2009,11 @@ void ModelEditor::ShowMeshModifierStack() {
     ImGui::TextUnformatted(indexText.c_str());
 
     ImGui::SameLine();
+    float const rowY = ImGui::GetCursorScreenPos().y;
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, rowY + HeaderExtraPadY()));
     ImGui::Checkbox("##enabled", &modifier.enabled);
     tooltip("When unchecked this modifier is skipped (passthrough).");
-
     ImGui::SameLine();
-    // Grey the collapse header's label when disabled, but leave it clickable (visual only).
-    if (!modifier.enabled) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    }
     // Reserve room on the right for the remove button so the framed header stops before it. A
     // framed CollapsingHeader always spans the full work rect, so temporarily shrink the work
     // rect's right edge around it (restored immediately after).
@@ -1884,18 +2027,34 @@ void ModelEditor::ShowMeshModifierStack() {
     float const savedWorkRectMaxX = window->WorkRect.Max.x;
     window->WorkRect.Max.x -= removeWidth + removeGap;
     ImGui::SetNextItemOpen(!modifier.collapsed);
-    std::string const header = modifier.HeaderLabel() + "###header";
-    bool const bodyOpen = ImGui::CollapsingHeader(header.c_str());
+    // Mirrors of the Surface / Wireframe checkboxes in the bar. A disabled modifier's arrow and
+    // label are greyed but stay clickable (visual only).
+    bool const showsInput = modifier.ActiveMethod().ShowsInputVisualization();
+    bool const bodyOpen = CollapsingHeaderWithToggles(
+        modifier.HeaderLabel(),
+        "###header",
+        0,
+        !modifier.enabled,
+        showsInput ? 2 : 1,
+        [&modifier, showsInput] {
+          if (showsInput) {
+            // Export Mochi Model holds two meshes: the triangle mesh it exports, then the SDF.
+            DrawVizToggles("inputViz", "Mochi triangle mesh", modifier.inputView);
+            SameLineAfterTogglePair();
+            DrawVizToggles("stageViz", "SDF", modifier.output);
+          } else {
+            DrawVizToggles("stageViz", "output", modifier.output);
+          }
+        });
     window->WorkRect.Max.x = savedWorkRectMaxX;
-    if (!modifier.enabled) {
-      ImGui::PopStyleColor();
-    }
     modifier.collapsed = !bodyOpen;
-
-    // Remove button in the reserved gap at the far right (same height as the other header buttons).
+    // Remove button in the reserved gap at the far right, as tall as the header bar.
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - removeWidth);
-    if (ImGui::Button(ICON_FA_TRASH)) {
+    PushHeaderRowFramePadding();
+    bool const removeClicked = ImGui::Button(ICON_FA_TRASH);
+    ImGui::PopStyleVar();
+    if (removeClicked) {
       removeIndex = static_cast<int>(i);
     }
     tooltip("Remove this modifier.");
@@ -1983,16 +2142,8 @@ void ModelEditor::ShowMeshModifierStack() {
             buffer.viz.opacity,
             buffer.stats.display,
             _studio->GetFont("Roboto Mono"),
-            [&buffer] {
-              if (buffer.surfaceMesh) {
-                buffer.surfaceMesh->SetVisible(buffer.viz.showSurface);
-              }
-            },
-            [&buffer] {
-              if (buffer.wireframeMesh) {
-                buffer.wireframeMesh->SetVisible(buffer.viz.showWireframe);
-              }
-            },
+            [&buffer] { ApplySurfaceVisibility(buffer); },
+            [&buffer] { ApplyWireframeVisibility(buffer); },
             [this, &buffer, colorFn] {
               if (!buffer.surfaceMesh) {
                 return;
@@ -2826,8 +2977,62 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
   ImGui::Begin("Model Viewer", open);
   auto const& assetManager = _studio->GetAssetManager();
 
+  // Shared by each section's header icons and its Surface / Wireframe checkboxes.
+  auto const showCadSurface = [this] {
+    if (_cadModelSurfaceMesh) {
+      _cadModelSurfaceMesh->SetVisible(_showCadModelSurface);
+    }
+  };
+  auto const showCadWireframe = [this] {
+    if (_cadModelWireframeMesh) {
+      _cadModelWireframeMesh->SetVisible(_showCadModelWireframe);
+    }
+  };
+  auto const showRenderSurface = [this] {
+    if (_renderModelSurfaceMesh) {
+      _renderModelSurfaceMesh->SetVisible(_showRenderModelSurface);
+    }
+  };
+  auto const showRenderWireframe = [this] {
+    if (_renderModelWireframeMesh) {
+      _renderModelWireframeMesh->SetVisible(_showRenderModelWireframe);
+    }
+  };
+  auto const showMochiSurface = [this] {
+    if (_mochiModelSurfaceMesh) {
+      _mochiModelSurfaceMesh->SetVisible(_showMochiModelSurface);
+    }
+  };
+  auto const showMochiWireframe = [this] {
+    if (_mochiModelWireframeMesh) {
+      _mochiModelWireframeMesh->SetVisible(_showMochiModelWireframe);
+    }
+  };
+  auto const showSdfSurface = [this] {
+    if (_sdfSurfaceMesh) {
+      _sdfSurfaceMesh->SetVisible(_showSdfSurface);
+    }
+  };
+  auto const showSdfWireframe = [this] {
+    if (_sdfWireframeMesh) {
+      _sdfWireframeMesh->SetVisible(_showSdfWireframe);
+    }
+  };
+
   ImGuiTreeNodeFlags flags = _cadModelPath.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen;
-  if (ImGui::CollapsingHeader("CAD Model", flags)) {
+  bool const cadOpen =
+      CollapsingHeaderWithToggles("CAD Model", "###CadModelHeader", flags, false, 1, [&] {
+        ImGui::BeginDisabled(_cadModelPath.empty());
+        DrawVizToggles(
+            "cadHeaderViz",
+            "CAD model",
+            _showCadModelSurface,
+            _showCadModelWireframe,
+            showCadSurface,
+            showCadWireframe);
+        ImGui::EndDisabled();
+      });
+  if (cadOpen) {
     ImGui::PushID("CadModel");
     // Fixed slot: bound to the sibling-folder asset set, so drag-drop and clear are disabled (the
     // slot can still be viewed and browsed to). Reassigning models is done via the sibling folders
@@ -2914,16 +3119,8 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
           _cadModelOpacity,
           _cadStats.display,
           _studio->GetFont("Roboto Mono"),
-          [this] {
-            if (_cadModelSurfaceMesh) {
-              _cadModelSurfaceMesh->SetVisible(_showCadModelSurface);
-            }
-          },
-          [this] {
-            if (_cadModelWireframeMesh) {
-              _cadModelWireframeMesh->SetVisible(_showCadModelWireframe);
-            }
-          },
+          showCadSurface,
+          showCadWireframe,
           [&applyCadMaterial] { applyCadMaterial(); });
     }
     if (_cadModelAsset) {
@@ -2940,7 +3137,19 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
   }
 
   flags = _renderModelPath.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen;
-  if (ImGui::CollapsingHeader("Render Model", flags)) {
+  bool const renderOpen =
+      CollapsingHeaderWithToggles("Render Model", "###RenderModelHeader", flags, false, 1, [&] {
+        ImGui::BeginDisabled(_renderModelPath.empty());
+        DrawVizToggles(
+            "renderHeaderViz",
+            "render model",
+            _showRenderModelSurface,
+            _showRenderModelWireframe,
+            showRenderSurface,
+            showRenderWireframe);
+        ImGui::EndDisabled();
+      });
+  if (renderOpen) {
     ImGui::PushID("RenderModel");
     // Fixed slot (see the CAD Model note): drag-drop and clear disabled; view + browse only.
     ImGui::AssetSlot(
@@ -2979,23 +3188,39 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
           _renderModelOpacity,
           _renderStats.display,
           _studio->GetFont("Roboto Mono"),
-          [this] {
-            if (_renderModelSurfaceMesh) {
-              _renderModelSurfaceMesh->SetVisible(_showRenderModelSurface);
-            }
-          },
-          [this] {
-            if (_renderModelWireframeMesh) {
-              _renderModelWireframeMesh->SetVisible(_showRenderModelWireframe);
-            }
-          },
+          showRenderSurface,
+          showRenderWireframe,
           [this] { RebuildRenderModelSurface(); });
     }
     ImGui::PopID();
   }
 
   flags = _mochiModelPath.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen;
-  if (ImGui::CollapsingHeader("Collision Model", flags)) {
+  // A collision model holds two meshes, like Export Mochi Model: the triangle mesh, then the SDF.
+  bool const mochiHasSdf = _mochiModelAsset && _mochiModelAsset->GetModelData().sdf.has_value();
+  bool const mochiOpen = CollapsingHeaderWithToggles(
+      "Collision Model", "###CollisionModelHeader", flags, false, 2, [&] {
+        ImGui::BeginDisabled(_mochiModelPath.empty());
+        DrawVizToggles(
+            "mochiHeaderViz",
+            "Mochi triangle mesh",
+            _showMochiModelSurface,
+            _showMochiModelWireframe,
+            showMochiSurface,
+            showMochiWireframe);
+        ImGui::EndDisabled();
+        SameLineAfterTogglePair();
+        ImGui::BeginDisabled(!mochiHasSdf);
+        DrawVizToggles(
+            "sdfHeaderViz",
+            "SDF",
+            _showSdfSurface,
+            _showSdfWireframe,
+            showSdfSurface,
+            showSdfWireframe);
+        ImGui::EndDisabled();
+      });
+  if (mochiOpen) {
     ImGui::PushID("MochiModel");
     // Fixed slot (see the CAD Model note): drag-drop and clear disabled; view + browse only.
     ImGui::AssetSlot(
@@ -3040,16 +3265,8 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
           _mochiModelOpacity,
           _mochiStats.display,
           _studio->GetFont("Roboto Mono"),
-          [this] {
-            if (_mochiModelSurfaceMesh) {
-              _mochiModelSurfaceMesh->SetVisible(_showMochiModelSurface);
-            }
-          },
-          [this] {
-            if (_mochiModelWireframeMesh) {
-              _mochiModelWireframeMesh->SetVisible(_showMochiModelWireframe);
-            }
-          },
+          showMochiSurface,
+          showMochiWireframe,
           [&applyMochiMaterial] { applyMochiMaterial(); });
 
       // Mochi models carry their own surface mesh + SDF; this section only visualizes them. To
@@ -3067,16 +3284,8 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
           _sdfOpacity,
           _sdfStats.display,
           _studio->GetFont("Roboto Mono"),
-          [this] {
-            if (_sdfSurfaceMesh) {
-              _sdfSurfaceMesh->SetVisible(_showSdfSurface);
-            }
-          },
-          [this] {
-            if (_sdfWireframeMesh) {
-              _sdfWireframeMesh->SetVisible(_showSdfWireframe);
-            }
-          },
+          showSdfSurface,
+          showSdfWireframe,
           [this] {
             if (!_sdfSurfaceMesh) {
               return;
@@ -3143,40 +3352,78 @@ void ModelEditor::ShowReferenceModelsSection() {
   };
   list.drawContent = [&](std::size_t i) {
     ReferenceModel& rm = _referenceModels[i];
+    StageVisualization& viz = rm.buffer.viz;
+    // Shared by the header icons and the Surface / Wireframe checkboxes. Visibility toggles are
+    // discrete edits, so they persist immediately.
+    auto const showSurface = [this, &rm] {
+      ApplySurfaceVisibility(rm.buffer);
+      SaveProcessingPipelineToDisk();
+    };
+    auto const showWireframe = [this, &rm] {
+      ApplyWireframeVisibility(rm.buffer);
+      SaveProcessingPipelineToDisk();
+    };
 
-    // --- top row (after the drag grip): Type (left) + remove trashcan (far right) ---
-    // Changing the type reinterprets the slotted path and reloads; an incompatible path is left in
-    // place but will simply fail to load until repointed.
-    char const* const kTypeItems[] = {"CAD Model", "Render Model", "Collision Model"};
-    AssetType const kTypeValues[] = {
+    std::array<char const*, 3> const kTypeItems{"CAD Model", "Render Model", "Collision Model"};
+    std::array<AssetType, 3> const kTypeValues{
         AssetType::CadModel, AssetType::RenderModel, AssetType::MochiModel};
     int typeIndex = 1; // default to Render Model (index into kTypeItems above)
-    for (int t = 0; t < IM_ARRAYSIZE(kTypeValues); ++t) {
-      if (kTypeValues[t] == rm.type) {
+    for (int t = 0; t < static_cast<int>(kTypeValues.size()); ++t) {
+      if (kTypeValues[static_cast<std::size_t>(t)] == rm.type) {
         typeIndex = t;
       }
     }
+
+    // --- header row (after the drag grip): [collapsible name  [surface][wireframe]] ... [trash]
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::Combo("Type", &typeIndex, kTypeItems, IM_ARRAYSIZE(kTypeItems))) {
-      rm.type = kTypeValues[typeIndex];
-      UpdateReferenceModel(rm, /*assignDefaultColor=*/true);
-      _studio->GetAssetManager().RegisterReferencer(this);
-      SaveProcessingPipelineToDisk();
-    }
-    // Natural button width matching the AssetSlot clear-trashcan (see the modifier-row remove
-    // button).
+    // Reserve room on the right for the remove button so the framed header stops before it (see
+    // the modifier rows). Natural width matches the AssetSlot clear-trashcan.
     float const removeWidth =
         ImGui::CalcTextSize(ICON_FA_TRASH).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGuiWindow* const window = ImGui::GetCurrentWindow();
+    float const savedWorkRectMaxX = window->WorkRect.Max.x;
+    window->WorkRect.Max.x -= removeWidth + ImGui::GetStyle().ItemSpacing.x;
+    std::string const header =
+        list.ghostLabel(i) + " [" + kTypeItems[static_cast<std::size_t>(typeIndex)] + "]";
+    bool const bodyOpen = CollapsingHeaderWithToggles(
+        header, "###refHeader", ImGuiTreeNodeFlags_DefaultOpen, false, 1, [&] {
+          ImGui::BeginDisabled(rm.path.empty());
+          DrawVizToggles(
+              "refHeaderViz",
+              "reference model",
+              viz.showSurface,
+              viz.showWireframe,
+              showSurface,
+              showWireframe);
+          ImGui::EndDisabled();
+        });
+    window->WorkRect.Max.x = savedWorkRectMaxX;
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - removeWidth);
     // Distinct ID (##suffix) from the AssetSlot's own clear-trashcan below, which shares the same
-    // icon glyph and would otherwise collide (breaking the slot's clear button).
-    if (ImGui::Button(ICON_FA_TRASH "##removeReferenceModel")) {
+    // icon glyph and would otherwise collide (breaking the slot's clear button). As tall as the
+    // header bar.
+    PushHeaderRowFramePadding();
+    bool const removeClicked = ImGui::Button(ICON_FA_TRASH "##removeReferenceModel");
+    ImGui::PopStyleVar();
+    if (removeClicked) {
       removeIndex = static_cast<int>(i);
     }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Remove this reference model.");
+    }
+    if (!bodyOpen) {
+      return;
+    }
+
+    // Changing the type reinterprets the slotted path and reloads; an incompatible path is left in
+    // place but will simply fail to load until repointed.
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("Type", &typeIndex, kTypeItems.data(), static_cast<int>(kTypeItems.size()))) {
+      rm.type = kTypeValues[static_cast<std::size_t>(typeIndex)];
+      UpdateReferenceModel(rm, /*assignDefaultColor=*/true);
+      _studio->GetAssetManager().RegisterReferencer(this);
+      SaveProcessingPipelineToDisk();
     }
 
     // --- model socket + path + browse + clear ---
@@ -3187,8 +3434,6 @@ void ModelEditor::ShowReferenceModelsSection() {
     }
 
     if (!rm.path.empty()) {
-      StageVisualization& viz = rm.buffer.viz;
-
       // --- color + optional override ---
       // A render reference keeps its real materials/textures unless "Override with color" is
       // checked; CAD/mochi references are always shown in this color.
@@ -3232,18 +3477,8 @@ void ModelEditor::ShowReferenceModelsSection() {
           viz.opacity,
           rm.buffer.stats.display,
           _studio->GetFont("Roboto Mono"),
-          [this, &rm, &viz] {
-            if (rm.buffer.surfaceMesh) {
-              rm.buffer.surfaceMesh->SetVisible(viz.showSurface);
-            }
-            SaveProcessingPipelineToDisk();
-          },
-          [this, &rm, &viz] {
-            if (rm.buffer.wireframeMesh) {
-              rm.buffer.wireframeMesh->SetVisible(viz.showWireframe);
-            }
-            SaveProcessingPipelineToDisk();
-          },
+          showSurface,
+          showWireframe,
           [this, &rm] {
             RebuildReferenceMeshes(rm);
             _referenceModelsDirty = true;
