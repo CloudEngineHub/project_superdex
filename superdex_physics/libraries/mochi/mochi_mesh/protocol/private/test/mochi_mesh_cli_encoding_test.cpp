@@ -91,6 +91,35 @@ SurfaceRemeshingParams DistinctSurfaceRemeshingParams() {
   return params;
 }
 
+// Every field distinct within and across entries, so a swapped or dropped field fails the round
+// trip. The last entry uses the largest valid color.
+std::vector<StepFaceColorSizing> DistinctStepFaceColorSizings() {
+  return {
+      {0xE87108u, 0.5, 0.01, 0.1, 0.003},
+      {kMaxPackedRgb, 1.5, 0.02, 0.2, 0.004},
+  };
+}
+
+std::vector<StepFaceColorInfo> DistinctStepFaceColorInfos() {
+  return {
+      {0xFF0000u, 3, 120.5},
+      {kMaxPackedRgb, 7, 42.25},
+  };
+}
+
+void ExpectSameSizings(
+    std::vector<StepFaceColorSizing> const& actual,
+    std::vector<StepFaceColorSizing> const& expected) {
+  ASSERT_EQ(actual.size(), expected.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(actual[i].rgb, expected[i].rgb);
+    EXPECT_EQ(actual[i].targetEdgeLength, expected[i].targetEdgeLength);
+    EXPECT_EQ(actual[i].linearDeflection, expected[i].linearDeflection);
+    EXPECT_EQ(actual[i].angularDeflection, expected[i].angularDeflection);
+    EXPECT_EQ(actual[i].targetEdgeLengthFraction, expected[i].targetEdgeLengthFraction);
+  }
+}
+
 StepMeshBodyParams DistinctStepMeshBodyParams() {
   StepMeshBodyParams params;
   params.linearDeflection = 1.25;
@@ -100,6 +129,7 @@ StepMeshBodyParams DistinctStepMeshBodyParams() {
   params.edgeSampling = StepMeshBodyParams::EdgeSampling::Adaptive;
   params.allowPartialFailure = false;
   params.combineTouchingSolids = false;
+  params.faceColorSizing = DistinctStepFaceColorSizings();
   return params;
 }
 
@@ -467,6 +497,70 @@ TEST(MochiMeshCliEncoding, StepMeshBodyParamsRoundTrip) {
   EXPECT_EQ(decoded.edgeSampling, params.edgeSampling);
   EXPECT_EQ(decoded.allowPartialFailure, params.allowPartialFailure);
   EXPECT_EQ(decoded.combineTouchingSolids, params.combineTouchingSolids);
+  ExpectSameSizings(decoded.faceColorSizing, params.faceColorSizing);
+}
+
+TEST(MochiMeshCliEncoding, StepFaceColorSizingsRejectOutOfRangeColor) {
+  PayloadWriter writer;
+  writer.WriteStepFaceColorSizings(DistinctStepFaceColorSizings());
+  // The first entry's rgb sits immediately after the u64 count.
+  auto const bytes = WithU32At(writer.Bytes(), sizeof(uint64_t), kMaxPackedRgb + 1);
+
+  PayloadReader reader(bytes);
+  std::vector<StepFaceColorSizing> decoded;
+  EXPECT_FALSE(reader.ReadStepFaceColorSizings(decoded));
+}
+
+TEST(MochiMeshCliEncoding, StepFaceColorSizingsRejectOversizedCount) {
+  PayloadWriter writer;
+  writer.WriteStepFaceColorSizings(DistinctStepFaceColorSizings());
+  std::vector<char> bytes = writer.Bytes();
+  uint64_t const count = std::numeric_limits<uint64_t>::max();
+  std::memcpy(bytes.data(), &count, sizeof(count));
+
+  PayloadReader reader(bytes);
+  std::vector<StepFaceColorSizing> decoded;
+  EXPECT_FALSE(reader.ReadStepFaceColorSizings(decoded));
+}
+
+TEST(MochiMeshCliEncoding, StepFaceColorInfosRoundTrip) {
+  std::vector<StepFaceColorInfo> const infos = DistinctStepFaceColorInfos();
+
+  PayloadWriter writer;
+  writer.WriteStepFaceColorInfos(infos);
+
+  PayloadReader reader(writer.Bytes());
+  std::vector<StepFaceColorInfo> decoded;
+  EXPECT_TRUE(reader.ReadStepFaceColorInfos(decoded));
+  EXPECT_TRUE(reader.AtEnd());
+  ASSERT_EQ(decoded.size(), infos.size());
+  for (size_t i = 0; i < infos.size(); ++i) {
+    EXPECT_EQ(decoded[i].rgb, infos[i].rgb);
+    EXPECT_EQ(decoded[i].faceCount, infos[i].faceCount);
+    EXPECT_EQ(decoded[i].area, infos[i].area);
+  }
+}
+
+TEST(MochiMeshCliEncoding, StepFaceColorInfosRejectOutOfRangeColor) {
+  PayloadWriter writer;
+  writer.WriteStepFaceColorInfos(DistinctStepFaceColorInfos());
+  auto const bytes = WithU32At(writer.Bytes(), sizeof(uint64_t), kMaxPackedRgb + 1);
+
+  PayloadReader reader(bytes);
+  std::vector<StepFaceColorInfo> decoded;
+  EXPECT_FALSE(reader.ReadStepFaceColorInfos(decoded));
+}
+
+TEST(MochiMeshCliEncoding, StepFaceColorInfosRejectOversizedCount) {
+  PayloadWriter writer;
+  writer.WriteStepFaceColorInfos(DistinctStepFaceColorInfos());
+  std::vector<char> bytes = writer.Bytes();
+  uint64_t const count = std::numeric_limits<uint64_t>::max();
+  std::memcpy(bytes.data(), &count, sizeof(count));
+
+  PayloadReader reader(bytes);
+  std::vector<StepFaceColorInfo> decoded;
+  EXPECT_FALSE(reader.ReadStepFaceColorInfos(decoded));
 }
 
 TEST(MochiMeshCliEncoding, StepVisualExportParamsRoundTrip) {

@@ -87,6 +87,9 @@ if (MOCHI_BUILD_TESTS AND TARGET mochi_mesh_test)
         "${CMAKE_CURRENT_SOURCE_DIR}/test"
     )
     target_link_libraries(mochi_mesh_test PRIVATE mochi_mesh_protocol_private)
+    target_compile_definitions(
+        mochi_mesh_test
+        PRIVATE "MOCHI_MESH_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test/assets/\"")
 endif ()
 
 if (MOCHI_BUILD_TESTS)

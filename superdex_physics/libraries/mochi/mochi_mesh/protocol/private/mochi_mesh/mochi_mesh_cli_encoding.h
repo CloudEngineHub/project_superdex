@@ -62,10 +62,11 @@ enum class GeometryOp : uint32_t {
   ExportStepVisual = 10, ///< Write a STEP file out as one or more render-ready GLB/glTF/OBJ/STL
                          ///< files, keeping the CAD colors and the surfaces' analytic normals. The
                          ///< STEP is loaded and tessellated once for the whole request.
+  ReadStepFaceColors = 11, ///< List the distinct resolved face colors of a STEP file.
 };
 
 inline constexpr uint32_t kFrameMagic = 0x53445832u; ///< Frame magic ("SDX2").
-inline constexpr uint32_t kProtocolVersion = 3u; ///< Wire protocol version.
+inline constexpr uint32_t kProtocolVersion = 4u; ///< Wire protocol version.
 
 // Plain mesh data transmitted over the wire.
 struct MeshData {
@@ -122,6 +123,11 @@ class PayloadWriter {
   void WriteVisualExportOutputs(std::span<VisualExportOutput const> outputs);
   /// [u64 count][count x u32 status]
   void WriteVisualExportStatuses(std::span<VisualExportStatus const> statuses);
+  /// [u64 count][count x ([u32 rgb][double targetEdgeLength][double linear][double angular]
+  ///                      [double targetEdgeLengthFraction])]
+  void WriteStepFaceColorSizings(std::span<StepFaceColorSizing const> sizings);
+  /// [u64 count][count x ([u32 rgb][u32 faceCount][double area])]
+  void WriteStepFaceColorInfos(std::span<StepFaceColorInfo const> infos);
   void WriteScalarField3d(ScalarField3d const& field); ///< [u32 dims x3][values][4 x double bounds
                                                        ///< triple]
 
@@ -161,6 +167,10 @@ class PayloadReader {
   /// Rejects an out-of-range format and a count larger than the remaining bytes could describe.
   [[nodiscard]] bool ReadVisualExportOutputs(std::vector<VisualExportOutput>& outOutputs);
   [[nodiscard]] bool ReadVisualExportStatuses(std::vector<VisualExportStatus>& outStatuses);
+  /// Rejects an rgb above @ref kMaxPackedRgb and an unsatisfiable count.
+  [[nodiscard]] bool ReadStepFaceColorSizings(std::vector<StepFaceColorSizing>& outSizings);
+  /// Rejects an rgb above @ref kMaxPackedRgb and an unsatisfiable count.
+  [[nodiscard]] bool ReadStepFaceColorInfos(std::vector<StepFaceColorInfo>& outInfos);
   [[nodiscard]] bool ReadScalarField3d(ScalarField3d& outField);
 
   // Operation parameters. Each rejects an out-of-range enumerator or a bool that is not 0 or 1.

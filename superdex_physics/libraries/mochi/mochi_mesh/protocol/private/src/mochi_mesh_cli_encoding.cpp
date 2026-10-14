@@ -209,6 +209,31 @@ void PayloadWriter::WriteVisualExportStatuses(std::span<VisualExportStatus const
   }
 }
 
+// Mirror of ReadStepFaceColorSizings.
+void PayloadWriter::WriteStepFaceColorSizings(std::span<StepFaceColorSizing const> sizings) {
+  WriteU64(static_cast<uint64_t>(sizings.size()));
+  for (StepFaceColorSizing const& sizing : sizings) {
+    auto const& [rgb, targetEdgeLength, linearDeflection, angularDeflection, targetEdgeLengthFraction] =
+        sizing;
+    WriteU32(rgb);
+    WriteDouble(targetEdgeLength);
+    WriteDouble(linearDeflection);
+    WriteDouble(angularDeflection);
+    WriteDouble(targetEdgeLengthFraction);
+  }
+}
+
+// Mirror of ReadStepFaceColorInfos.
+void PayloadWriter::WriteStepFaceColorInfos(std::span<StepFaceColorInfo const> infos) {
+  WriteU64(static_cast<uint64_t>(infos.size()));
+  for (StepFaceColorInfo const& info : infos) {
+    auto const& [rgb, faceCount, area] = info;
+    WriteU32(rgb);
+    WriteU32(faceCount);
+    WriteDouble(area);
+  }
+}
+
 // Mirror of ReadScalarField3d: dims (as u32) come first, then the value array, then the four
 // bounds triples. Kept colocated so encode and decode cannot drift.
 void PayloadWriter::WriteScalarField3d(ScalarField3d const& field) {
@@ -265,7 +290,7 @@ void PayloadWriter::WriteStepTessellationParams(StepTessellationParams const& pa
 }
 
 void PayloadWriter::WriteStepMeshBodyParams(StepMeshBodyParams const& params) {
-  auto const& [linearDeflection, angularDeflection, targetEdgeLength, targetEdgeLengthFraction, edgeSampling, allowPartialFailure, combineTouchingSolids] =
+  auto const& [linearDeflection, angularDeflection, targetEdgeLength, targetEdgeLengthFraction, edgeSampling, allowPartialFailure, combineTouchingSolids, faceColorSizing] =
       params;
   WriteDouble(linearDeflection);
   WriteDouble(angularDeflection);
@@ -274,6 +299,7 @@ void PayloadWriter::WriteStepMeshBodyParams(StepMeshBodyParams const& params) {
   WriteU32(static_cast<uint32_t>(edgeSampling));
   WriteBool(allowPartialFailure);
   WriteBool(combineTouchingSolids);
+  WriteStepFaceColorSizings(faceColorSizing);
 }
 
 void PayloadWriter::WriteStepVisualExportParams(StepVisualExportParams const& params) {
@@ -432,6 +458,49 @@ bool PayloadReader::ReadVisualExportStatuses(std::vector<VisualExportStatus>& ou
   return true;
 }
 
+bool PayloadReader::ReadStepFaceColorSizings(std::vector<StepFaceColorSizing>& outSizings) {
+  outSizings.clear();
+  uint64_t count = 0;
+  if (!ReadU64(count)) {
+    return false;
+  }
+  uint64_t constexpr kBytesPerSizing = sizeof(uint32_t) + 4 * sizeof(double);
+  if (count > (_data.size() - _pos) / kBytesPerSizing) {
+    return false;
+  }
+  outSizings.resize(count);
+  for (StepFaceColorSizing& sizing : outSizings) {
+    auto& [rgb, targetEdgeLength, linearDeflection, angularDeflection, targetEdgeLengthFraction] =
+        sizing;
+    if (!ReadU32(rgb) || rgb > kMaxPackedRgb || !ReadDouble(targetEdgeLength) ||
+        !ReadDouble(linearDeflection) || !ReadDouble(angularDeflection) ||
+        !ReadDouble(targetEdgeLengthFraction)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool PayloadReader::ReadStepFaceColorInfos(std::vector<StepFaceColorInfo>& outInfos) {
+  outInfos.clear();
+  uint64_t count = 0;
+  if (!ReadU64(count)) {
+    return false;
+  }
+  uint64_t constexpr kBytesPerInfo = 2 * sizeof(uint32_t) + sizeof(double);
+  if (count > (_data.size() - _pos) / kBytesPerInfo) {
+    return false;
+  }
+  outInfos.resize(count);
+  for (StepFaceColorInfo& info : outInfos) {
+    auto& [rgb, faceCount, area] = info;
+    if (!ReadU32(rgb) || rgb > kMaxPackedRgb || !ReadU32(faceCount) || !ReadDouble(area)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool PayloadReader::ReadScalarField3d(ScalarField3d& outField) {
   outField = {};
   uint64_t sampleCount = 1;
@@ -489,12 +558,12 @@ bool PayloadReader::ReadStepTessellationParams(StepTessellationParams& outParams
 
 bool PayloadReader::ReadStepMeshBodyParams(StepMeshBodyParams& outParams) {
   outParams = {};
-  auto& [linearDeflection, angularDeflection, targetEdgeLength, targetEdgeLengthFraction, edgeSampling, allowPartialFailure, combineTouchingSolids] =
+  auto& [linearDeflection, angularDeflection, targetEdgeLength, targetEdgeLengthFraction, edgeSampling, allowPartialFailure, combineTouchingSolids, faceColorSizing] =
       outParams;
   return ReadDouble(linearDeflection) && ReadDouble(angularDeflection) &&
       ReadDouble(targetEdgeLength) && ReadDouble(targetEdgeLengthFraction) &&
       ReadEnum(*this, edgeSampling, kEdgeSamplingCount) && ReadBool(allowPartialFailure) &&
-      ReadBool(combineTouchingSolids);
+      ReadBool(combineTouchingSolids) && ReadStepFaceColorSizings(faceColorSizing);
 }
 
 bool PayloadReader::ReadStepVisualExportParams(StepVisualExportParams& outParams) {

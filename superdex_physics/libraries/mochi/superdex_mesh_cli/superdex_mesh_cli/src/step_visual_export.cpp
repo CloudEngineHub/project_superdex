@@ -24,15 +24,13 @@
 #if MOCHI_USE_OCCT
 
 #include "occ_shape_meshing.h"
+#include "step_face_colors.h"
 
 #include <BRepBndLib.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
-#include <CDM_CanCloseStatus.hxx>
-#include <IFSelect_ReturnStatus.hxx>
 #include <IMeshData_Status.hxx>
-#include <Interface_Static.hxx>
 #include <Message_ProgressRange.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
@@ -41,8 +39,6 @@
 #include <RWMesh_CoordinateSystem.hxx>
 #include <RWMesh_CoordinateSystemConverter.hxx>
 #include <RWObj_CafWriter.hxx>
-#include <STEPCAFControl_Reader.hxx>
-#include <STEPControl_Controller.hxx>
 #include <Standard_Failure.hxx>
 #include <Standard_Integer.hxx>
 #include <StlAPI_Writer.hxx>
@@ -58,7 +54,6 @@
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
-#include <XCAFApp_Application.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
@@ -89,54 +84,6 @@ constexpr double kDegenerateTriangleArea = 1e-10;
 
 // OpenCascade emits geometry in millimeters (see LoadStepDocument).
 constexpr double kMillimetersToMeters = 0.001;
-
-// Reads a STEP file into an XCAF document, preserving colors, materials, names and layers.
-bool LoadStepDocument(
-    std::string const& path,
-    Handle(TDocStd_Document) & outDocument,
-    CliError& error) {
-  // Statics are unregistered, and silently ignored, until the controller is initialized.
-  STEPControl_Controller::Init();
-  Interface_Static::SetCVal("xstep.cascade.unit", "MM");
-  // Fix for SolidWorks' single-part export with a non-identity coordinate transform. This flag is
-  // benign in most cases.
-  Interface_Static::SetCVal("read.step.root.transformation", "OFF");
-
-  Handle(XCAFApp_Application) const application = XCAFApp_Application::GetApplication();
-  application->NewDocument("BinXCAF", outDocument);
-  MOCHI_MESH_CLI_ERROR_IF(
-      outDocument.IsNull(), error, "Failed to create an OpenCascade XCAF document.");
-  MOCHI_MESH_CLI_ERROR_RETURN(error, false);
-
-  STEPCAFControl_Reader reader;
-  reader.SetColorMode(true);
-  reader.SetMatMode(true);
-  reader.SetLayerMode(true);
-  reader.SetNameMode(true);
-  reader.SetPropsMode(true);
-
-  IFSelect_ReturnStatus status = IFSelect_RetFail;
-  try {
-    status = reader.ReadFile(path.c_str());
-  } catch (...) {
-    MOCHI_MESH_CLI_ERROR_SET(error, "OpenCascade threw while reading the STEP file.");
-    return false;
-  }
-  MOCHI_MESH_CLI_ERROR_IF(status != IFSelect_RetDone, error, "Failed to read STEP file.");
-  MOCHI_MESH_CLI_ERROR_RETURN(error, false);
-
-  if (!reader.Transfer(outDocument, Message_ProgressRange())) {
-    MOCHI_MESH_CLI_ERROR_SET(error, "Failed to transfer the STEP file into an XCAF document.");
-    return false;
-  }
-
-  TDF_LabelSequence freeShapes;
-  XCAFDoc_DocumentTool::ShapeTool(outDocument->Main())->GetFreeShapes(freeShapes);
-  MOCHI_MESH_CLI_ERROR_IF(
-      freeShapes.Length() == 0, error, "STEP file contains no shapes to export.");
-  MOCHI_MESH_CLI_ERROR_RETURN(error, false);
-  return true;
-}
 
 // Tessellates one shape in place, using the backend the caller asked for.
 IMeshData_Status MeshShapeForVisualExport(
@@ -539,7 +486,7 @@ bool mochi::mesh::cli::ExportStepVisual(
   MOCHI_MESH_CLI_ERROR_RETURN(error, false);
 
   Handle(TDocStd_Document) document;
-  if (!LoadStepDocument(std::string(stepFilePath), document, error)) {
+  if (!occ::LoadStepDocument(std::string(stepFilePath), document, error)) {
     return false;
   }
 
@@ -592,9 +539,7 @@ bool mochi::mesh::cli::ExportStepVisual(
     MOCHI_MESH_CLI_ERROR_SET(error, "OpenCascade threw during the STEP visual export.");
   }
 
-  if (document->CanClose() == CDM_CCS_OK) {
-    document->Close();
-  }
+  occ::CloseStepDocument(document);
   MOCHI_MESH_CLI_ERROR_RETURN(error, false);
   return meshed;
 }
