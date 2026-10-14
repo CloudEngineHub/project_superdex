@@ -216,6 +216,99 @@ class TestUnrealCVClientNeverResends(unittest.TestCase):
         self.assertEqual([["vset /actor/x 1"]], self.hung.batches)
 
 
+class TestUnrealCVClientCallWorker(unittest.TestCase):
+    """A thread per request created ~1000 threads/s on a training pod."""
+
+    def test_requests_share_one_long_lived_thread(self) -> None:
+        client = UnrealCVClient(request_timeout=5.0)
+        answering = _ScriptedClient(answers=True)
+        client._client = cast(Any, answering)
+        client._connected = True
+        threads: list[int] = []
+
+        def record(commands: list[str]) -> list[str]:
+            threads.append(threading.get_ident())
+            return [f"ok {command}" for command in commands]
+
+        answering.request_batch = record  # pyre-ignore[8]
+        for _ in range(5):
+            self.assertEqual(["ok vget /a"], client._request_batch(["vget /a"]))
+
+        self.assertEqual(1, len(set(threads)))
+        self.assertNotEqual(threading.get_ident(), threads[0])
+
+    def _client(self, request_timeout: float) -> UnrealCVClient:
+        client = UnrealCVClient(request_timeout=request_timeout)
+        client._client = cast(Any, _ScriptedClient(answers=True))
+        client._connected = True
+        return client
+
+    def test_worker_starts_on_first_call_and_is_reused(self) -> None:
+        client = self._client(request_timeout=5.0)
+        self.assertIsNone(client._call_worker)
+
+        first = client._blocking_call(threading.get_ident)
+        worker = client._call_worker
+        self.assertIsNotNone(worker)
+        second = client._blocking_call(threading.get_ident)
+
+        self.assertIs(worker, client._call_worker)
+        self.assertEqual(first, second)
+
+    def test_calls_run_on_a_daemon_thread_that_is_not_the_callers(self) -> None:
+        client = self._client(request_timeout=5.0)
+
+        thread = client._blocking_call(threading.current_thread)
+
+        # A call stuck on a hung UE process must not block interpreter exit.
+        self.assertTrue(thread.daemon)
+        self.assertIsNot(threading.current_thread(), thread)
+        self.assertIsNot(threading.main_thread(), thread)
+
+    def test_results_and_errors_reach_the_caller_and_keep_the_worker(self) -> None:
+        client = self._client(request_timeout=5.0)
+
+        self.assertEqual(5, client._blocking_call(lambda a, b: a + b, 2, 3))
+        worker = client._call_worker
+
+        def fail() -> None:
+            raise ValueError("bad reply")
+
+        with self.assertRaisesRegex(ValueError, "bad reply"):
+            client._blocking_call(fail)
+        self.assertIs(worker, client._call_worker)
+        self.assertTrue(client.is_connected())
+
+    def test_a_timeout_drops_the_worker_and_the_next_call_gets_a_fresh_one(
+        self,
+    ) -> None:
+        client = self._client(request_timeout=0.05)
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def hang() -> int:
+            release.wait(timeout=10)
+            return threading.get_ident()
+
+        hung_thread = client._blocking_call(threading.get_ident)
+        with self.assertRaisesRegex(TimeoutError, "exceeded 0.05s"):
+            client._blocking_call(hang)
+
+        self.assertIsNone(client._call_worker)
+        self.assertFalse(client.is_connected())
+        # The stuck call still holds the old thread, so a fresh one serves the next.
+        self.assertNotEqual(hung_thread, client._blocking_call(threading.get_ident))
+        self.assertIsNotNone(client._call_worker)
+
+    def test_no_timeout_calls_directly_on_the_callers_thread(self) -> None:
+        client = self._client(request_timeout=0)
+
+        self.assertEqual(
+            threading.get_ident(), client._blocking_call(threading.get_ident)
+        )
+        self.assertIsNone(client._call_worker)
+
+
 class TestUnrealCVClientCameraCalibration(unittest.TestCase):
     def test_builds_exact_camera_calibration_commands(self) -> None:
         self.assertEqual(

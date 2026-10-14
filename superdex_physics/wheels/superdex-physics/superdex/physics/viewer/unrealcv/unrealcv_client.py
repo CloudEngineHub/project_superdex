@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import socket
 import threading
 import time
@@ -31,7 +32,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
-from typing import TYPE_CHECKING, TypeVar
+from typing import cast, TYPE_CHECKING, TypeVar
 
 import numpy as np
 import numpy.typing as npt
@@ -80,6 +81,43 @@ class LitMultiLayout:
 
 
 ########################################################################################
+
+
+class _Call:
+    """One call handed to a :class:`_CallWorker` and its outcome."""
+
+    def __init__(self, fn: Callable[..., object], args: tuple[object, ...]) -> None:
+        self.fn = fn
+        self.args = args
+        self.result: object = None
+        self.error: Exception | None = None
+        self.done = threading.Event()
+
+
+class _CallWorker:
+    """A daemon thread that runs submitted calls one at a time.
+
+    Daemon, like the per-request threads it replaces, so a call stuck on a hung
+    UE process never blocks interpreter exit.
+    """
+
+    def __init__(self) -> None:
+        self._calls: queue.SimpleQueue[_Call] = queue.SimpleQueue()
+        threading.Thread(target=self._run, name="unrealcv-call", daemon=True).start()
+
+    def submit(self, fn: Callable[..., object], *args: object) -> _Call:
+        call = _Call(fn, args)
+        self._calls.put(call)
+        return call
+
+    def _run(self) -> None:
+        while True:
+            call = self._calls.get()
+            try:
+                call.result = call.fn(*call.args)
+            except Exception as e:
+                call.error = e
+            call.done.set()
 
 
 class UnrealCVClient:
@@ -147,6 +185,7 @@ class UnrealCVClient:
         self._connected = False
         self._supports_mesh_updates = None
         self._request_lock = threading.Lock()
+        self._call_worker: _CallWorker | None = None
 
         # Camera mapping state (resolved during connect)
         self._pending_camera_mapping: dict[str, dict] | None = camera_mapping
@@ -278,28 +317,24 @@ class UnrealCVClient:
         if self._request_timeout <= 0:
             return fn(*args)
 
-        result: list[_T] = []
-        error: list[Exception] = []
+        # One long-lived worker per client: a thread per request created ~1000
+        # threads/s on a training pod. Calls are already serialized by
+        # _request_lock, so a single worker never queues behind another caller.
+        if self._call_worker is None:
+            self._call_worker = _CallWorker()
+        call = self._call_worker.submit(fn, *args)
 
-        def _run() -> None:
-            try:
-                result.append(fn(*args))
-            except Exception as e:
-                error.append(e)
-
-        worker = threading.Thread(target=_run, daemon=True)
-        worker.start()
-        worker.join(self._request_timeout)
-
-        if worker.is_alive():
+        if not call.done.wait(self._request_timeout):
+            # The stuck call keeps this worker; the next request starts a new one.
+            self._call_worker = None
             self._mark_disconnected()
             raise TimeoutError(
                 f"UnrealCV request exceeded {self._request_timeout}s; "
                 "connection marked dead"
             )
-        if error:
-            raise error[0]
-        return result[0]
+        if call.error is not None:
+            raise call.error
+        return cast(_T, call.result)
 
     def _mark_disconnected(self) -> None:
         """Tear down the connection after a request that timed out or failed.
