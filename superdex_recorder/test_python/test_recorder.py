@@ -417,6 +417,62 @@ class RecorderTest(unittest.TestCase):
                     sdp.destroy_scene(scene)
                 sdp.shutdown()
 
+    def test_meshes_are_flat_shaded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            scene = None
+            physics = None
+            try:
+                scene = sdp.create_scene("flat shading")
+                tetrahedron = scene.create_rigid_actor(
+                    name="tetrahedron",
+                    shape=sdp.create_tri_mesh_shape(
+                        coordinates=[0, 0, 0, 0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.1],
+                        connectivity=[0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+                    ),
+                    density=1000,
+                )
+                assert tetrahedron is not None
+                episode = self.make_recorder(Path(directory_string)).begin_episode()
+                physics = recorder.PhysicsRecorder(episode, scene)
+                physics.record(0, 0.0)
+                episode.commit()
+
+                recording = EpisodeReader(episode.output_path)
+                self.assertEqual(
+                    recording.component_samples("Mesh3D:triangle_indices"), []
+                )
+                [positions] = recording.component_samples(
+                    "Mesh3D:vertex_positions", entity_path="world/tetrahedron"
+                )
+                [normals] = recording.component_samples(
+                    "Mesh3D:vertex_normals", entity_path="world/tetrahedron"
+                )
+                corners = np.asarray(positions.value, dtype=np.float64).reshape(
+                    -1, 3, 3
+                )
+                vertex_normals = np.asarray(normals.value, dtype=np.float64).reshape(
+                    -1, 3, 3
+                )
+                # Each face has its own three vertices, all with the face's normal.
+                self.assertEqual(corners.shape, (4, 3, 3))
+                self.assertEqual(vertex_normals.shape, corners.shape)
+                face_normals = np.cross(
+                    corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+                )
+                face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
+                np.testing.assert_allclose(
+                    vertex_normals,
+                    np.repeat(face_normals[:, np.newaxis], 3, axis=1),
+                    atol=1e-6,
+                )
+            finally:
+                physics = None
+                gc.collect()
+                if scene is not None:
+                    sdp.destroy_scene(scene)
+                sdp.shutdown()
+
     def test_reader_returns_only_requested_frames(self) -> None:
         with tempfile.TemporaryDirectory() as directory_string:
             sdp.initialize(num_worker_threads=0)
