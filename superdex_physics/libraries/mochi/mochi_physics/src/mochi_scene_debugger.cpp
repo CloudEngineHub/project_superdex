@@ -380,8 +380,8 @@ void SceneDebuggerImpl::WaitForRealTime(SceneImpl* scene) {
       break;
     }
 
-    // Cancel if mode changed.
-    if (!TracksRealTime(GetStepMode())) {
+    // Cancel if the mode changed or a handled message reset real-time tracking.
+    if (!TracksRealTime(GetStepMode()) || !_realTimeTracking.realTimeStart.has_value()) {
       return;
     }
 

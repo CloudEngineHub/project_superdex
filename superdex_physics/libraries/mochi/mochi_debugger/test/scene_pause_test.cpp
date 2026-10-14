@@ -405,35 +405,52 @@ TEST_F(ScenePauseTest, SetSceneStepModeUpdatesClientAndServer) {
   SetModeAndWait(scene, StepMode::Play);
 }
 
-TEST_F(ScenePauseTest, PlayWaitsForRealTimeClock) {
+TEST_F(ScenePauseTest, PlayWaitsForRealTimeClockOrRestore) {
   Scene* scene = CreateConnectedSelectedScene();
   auto sceneDebugger = GetDebugger(scene);
   ASSERT_NE(nullptr, sceneDebugger);
 
   std::atomic<double> clock{0.0};
-  sceneDebugger->SetClock([&clock]() { return clock.load(); });
+  std::atomic<int> clockReads{0};
+  sceneDebugger->SetClock([&]() {
+    ++clockReads;
+    return clock.load();
+  });
 
   scene->Step(kTimeStep);
 
-  std::atomic<bool> stepStarted{false};
-  std::atomic<bool> stepFinished{false};
-  std::thread thread{[&]() {
-    assert_cast<SceneImpl*>(scene)->SetThreadAffinity();
-    stepStarted.store(true);
-    scene->Step(kTimeStep);
-    stepFinished.store(true);
-  }};
+  auto const expectStepWaitsUntil = [&](auto const& release) {
+    clockReads = 0;
+    std::atomic<bool> stepFinished{false};
+    std::thread thread{[&]() {
+      assert_cast<SceneImpl*>(scene)->SetThreadAffinity();
+      scene->Step(kTimeStep);
+      stepFinished.store(true);
+    }};
 
-  test::WaitUntil([&]() { return stepStarted.load(); });
-  EXPECT_FALSE(
-      test::WaitUntil(
-          [&]() { return stepFinished.load(); },
-          kShortTimeout,
-          /*failOnTimeout*/ false));
+    // Two clock reads mean the step has handled queued messages and is waiting in the throttle.
+    test::WaitUntil([&]() { return clockReads.load() >= 2; });
+    EXPECT_FALSE(
+        test::WaitUntil(
+            [&]() { return stepFinished.load(); },
+            kShortTimeout,
+            /*failOnTimeout*/ false));
 
-  clock.store(kTimeStep);
-  test::WaitUntil([&]() { return stepFinished.load(); });
-  thread.join();
+    release();
+    if (!test::WaitUntil([&]() { return stepFinished.load(); })) {
+      clock.store(1e9); // Release a stuck step, so the test fails instead of hanging.
+    }
+    thread.join();
+  };
+
+  expectStepWaitsUntil([&]() { clock.store(kTimeStep); });
+
+  // A restore resets real-time tracking, which releases the waiting step. The clock moves behind
+  // the old start time first, so a throttle still using the old timeline would keep waiting.
+  expectStepWaitsUntil([&]() {
+    clock.store(-1.0);
+    _client->RestoreSceneState();
+  });
 }
 
 TEST_F(ScenePauseTest, PlayThrottlesEveryStepWithoutSpuriousReset) {
