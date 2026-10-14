@@ -149,6 +149,26 @@ std::vector<char> DispatchTessellateStep(std::vector<char> const& payload) {
   return MakeMeshResponse(result);
 }
 
+std::vector<char> DispatchTessellateStepByColor(std::vector<char> const& payload) {
+  PayloadReader reader(payload);
+  std::vector<char> pathBytes;
+  StepTessellationParams params;
+  if (!reader.ReadByteArray(pathBytes) || !reader.ReadStepTessellationParams(params) ||
+      !reader.AtEnd()) {
+    return MakeErrorResponse(1, "superdex_mesh_cli: malformed TessellateStepByColor request");
+  }
+
+  CliError error;
+  std::vector<ColorMeshData> const result =
+      TessellateStepByColor(std::string_view(pathBytes.data(), pathBytes.size()), params, error);
+  if (!error.IsOK()) {
+    return MakeErrorResponse(error);
+  }
+  PayloadWriter writer;
+  writer.WriteColorMeshes(result);
+  return EncodeResponseFrame(0, writer.Bytes());
+}
+
 std::vector<char> DispatchMeshStepBody(std::vector<char> const& payload) {
   PayloadReader reader(payload);
   std::vector<char> pathBytes;
@@ -301,6 +321,8 @@ std::vector<char> Dispatch(GeometryOp op, std::vector<char> const& payload) {
       return DispatchExportStepVisual(payload);
     case GeometryOp::ReadStepFaceColors:
       return DispatchReadStepFaceColors(payload);
+    case GeometryOp::TessellateStepByColor:
+      return DispatchTessellateStepByColor(payload);
   }
   return MakeErrorResponse(1, "superdex_mesh_cli: unknown operation");
 }

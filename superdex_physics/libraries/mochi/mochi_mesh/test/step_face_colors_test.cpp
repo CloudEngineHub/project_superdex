@@ -17,6 +17,7 @@
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_mesh/step_face_colors.h>
 #include <mochi_mesh/step_mesh_body.h>
+#include <mochi_mesh/step_tessellation.h>
 
 #include <gtest/gtest.h>
 
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -132,6 +134,35 @@ TEST(StepFaceColors, ReadRejectsMissingFile) {
   std::vector<StepFaceColorInfo> colors;
   EXPECT_FALSE(ReadStepFaceColors(AssetPath("does_not_exist.stp"), colors, expectNotOK));
   EXPECT_TRUE(colors.empty());
+}
+
+// A color picked off the per-color preview must be a valid sizing key, so the preview is split by
+// exactly the colors ReadStepFaceColors lists. Every face of the fixture is colored.
+TEST(StepFaceColors, TessellateByColorSplitsByTheListedColors) {
+  ExpectOK expectOK;
+  std::vector<StepFaceColorInfo> colors;
+  ASSERT_TRUE(ReadStepFaceColors(FixturePath(), colors, expectOK));
+  std::vector<StepColorMesh> const meshes =
+      TessellateStepByColor(FixturePath(), StepTessellationParams{}, expectOK);
+
+  std::set<uint32_t> listed;
+  for (StepFaceColorInfo const& info : colors) {
+    listed.insert(info.rgb);
+  }
+  std::set<uint32_t> tessellated;
+  for (StepColorMesh const& mesh : meshes) {
+    ASSERT_TRUE(mesh.rgb.has_value());
+    EXPECT_GT(mesh.mesh.GetNumElements(), 0);
+    tessellated.insert(*mesh.rgb);
+  }
+  EXPECT_EQ(tessellated, listed);
+}
+
+TEST(StepFaceColors, TessellateByColorRejectsMissingFile) {
+  ExpectNotOK expectNotOK;
+  EXPECT_TRUE(
+      TessellateStepByColor(AssetPath("does_not_exist.stp"), StepTessellationParams{}, expectNotOK)
+          .empty());
 }
 
 TEST(StepFaceColorSizing, ColorAbsentFromFileChangesNothing) {

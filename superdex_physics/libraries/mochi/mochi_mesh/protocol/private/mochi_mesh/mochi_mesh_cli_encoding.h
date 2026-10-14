@@ -63,6 +63,7 @@ enum class GeometryOp : uint32_t {
                          ///< files, keeping the CAD colors and the surfaces' analytic normals. The
                          ///< STEP is loaded and tessellated once for the whole request.
   ReadStepFaceColors = 11, ///< List the distinct resolved face colors of a STEP file.
+  TessellateStepByColor = 12, ///< As TessellateStep, but one mesh per resolved face color.
 };
 
 inline constexpr uint32_t kFrameMagic = 0x53445832u; ///< Frame magic ("SDX2").
@@ -73,6 +74,14 @@ struct MeshData {
   uint32_t nodesPerElement = 3; // 3 for triangles, 4 for tetrahedrons
   std::vector<double> coordinates; // 3 per vertex (x,y,z)
   std::vector<int32_t> connectivity; // 3 per triangle, or 4 per tetrahedron
+};
+
+// The faces of one resolved STEP face color, or of every uncolored face when !hasColor (rgb is then
+// 0).
+struct ColorMeshData {
+  bool hasColor = false;
+  uint32_t rgb = 0; // packed 0xRRGGBB sRGB
+  MeshData mesh;
 };
 
 // Plain Cartesian scalar field transmitted over the wire (e.g. an SDF sampled on a grid).
@@ -128,6 +137,8 @@ class PayloadWriter {
   void WriteStepFaceColorSizings(std::span<StepFaceColorSizing const> sizings);
   /// [u64 count][count x ([u32 rgb][u32 faceCount][double area])]
   void WriteStepFaceColorInfos(std::span<StepFaceColorInfo const> infos);
+  /// [u64 count][count x ([bool hasColor][u32 rgb][mesh])]
+  void WriteColorMeshes(std::span<ColorMeshData const> meshes);
   void WriteScalarField3d(ScalarField3d const& field); ///< [u32 dims x3][values][4 x double bounds
                                                        ///< triple]
 
@@ -171,6 +182,9 @@ class PayloadReader {
   [[nodiscard]] bool ReadStepFaceColorSizings(std::vector<StepFaceColorSizing>& outSizings);
   /// Rejects an rgb above @ref kMaxPackedRgb and an unsatisfiable count.
   [[nodiscard]] bool ReadStepFaceColorInfos(std::vector<StepFaceColorInfo>& outInfos);
+  /// Rejects an rgb above @ref kMaxPackedRgb, a nonzero rgb without a color, and an unsatisfiable
+  /// count.
+  [[nodiscard]] bool ReadColorMeshes(std::vector<ColorMeshData>& outMeshes);
   [[nodiscard]] bool ReadScalarField3d(ScalarField3d& outField);
 
   // Operation parameters. Each rejects an out-of-range enumerator or a bool that is not 0 or 1.

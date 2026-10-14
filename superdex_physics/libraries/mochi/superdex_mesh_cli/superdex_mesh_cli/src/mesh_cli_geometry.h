@@ -67,6 +67,12 @@ RemeshSurface(MeshData const& surfaceMesh, SurfaceRemeshingParams const& params,
     std::string_view stepFilePath,
     StepTessellationParams const& params,
     CliError& error);
+/// As @ref TessellateStep, but one mesh per resolved face color (the colors of
+/// @ref ReadStepFaceColors), plus one for the uncolored faces if any. Uncolored first, then by rgb.
+[[nodiscard]] std::vector<ColorMeshData> TessellateStepByColor(
+    std::string_view stepFilePath,
+    StepTessellationParams const& params,
+    CliError& error);
 [[nodiscard]] MeshData
 MeshStepBody(std::string_view stepFilePath, StepMeshBodyParams const& params, CliError& error);
 /// Loads and tessellates @p stepFilePath once, then writes every entry of @p outputs from that one

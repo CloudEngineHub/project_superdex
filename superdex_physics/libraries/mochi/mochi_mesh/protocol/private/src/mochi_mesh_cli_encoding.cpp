@@ -234,6 +234,17 @@ void PayloadWriter::WriteStepFaceColorInfos(std::span<StepFaceColorInfo const> i
   }
 }
 
+// Mirror of ReadColorMeshes.
+void PayloadWriter::WriteColorMeshes(std::span<ColorMeshData const> meshes) {
+  WriteU64(static_cast<uint64_t>(meshes.size()));
+  for (ColorMeshData const& colorMesh : meshes) {
+    auto const& [hasColor, rgb, mesh] = colorMesh;
+    WriteBool(hasColor);
+    WriteU32(rgb);
+    WriteMeshData(mesh);
+  }
+}
+
 // Mirror of ReadScalarField3d: dims (as u32) come first, then the value array, then the four
 // bounds triples. Kept colocated so encode and decode cannot drift.
 void PayloadWriter::WriteScalarField3d(ScalarField3d const& field) {
@@ -495,6 +506,28 @@ bool PayloadReader::ReadStepFaceColorInfos(std::vector<StepFaceColorInfo>& outIn
   for (StepFaceColorInfo& info : outInfos) {
     auto& [rgb, faceCount, area] = info;
     if (!ReadU32(rgb) || rgb > kMaxPackedRgb || !ReadU32(faceCount) || !ReadDouble(area)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool PayloadReader::ReadColorMeshes(std::vector<ColorMeshData>& outMeshes) {
+  outMeshes.clear();
+  uint64_t count = 0;
+  if (!ReadU64(count)) {
+    return false;
+  }
+  // Each entry is at least its bool, rgb and mesh header (nodesPerElement plus two array lengths).
+  uint64_t constexpr kMinBytesPerMesh = 3 * sizeof(uint32_t) + 2 * sizeof(uint64_t);
+  if (count > (_data.size() - _pos) / kMinBytesPerMesh) {
+    return false;
+  }
+  outMeshes.resize(count);
+  for (ColorMeshData& colorMesh : outMeshes) {
+    auto& [hasColor, rgb, mesh] = colorMesh;
+    if (!ReadBool(hasColor) || !ReadU32(rgb) || rgb > kMaxPackedRgb || (!hasColor && rgb != 0) ||
+        !ReadMeshData(mesh)) {
       return false;
     }
   }

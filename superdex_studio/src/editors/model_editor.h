@@ -41,6 +41,7 @@
 namespace mochi_renderer {
 class MaterialInstance;
 class Mesh;
+class RenderModel;
 class WireframeMesh;
 } // namespace mochi_renderer
 
@@ -187,6 +188,12 @@ class ModelEditor : public AssetEditor {
   // (Re)builds the CAD surface + wireframe scene objects from _cadSections (the current opacity and
   // visibility flags apply). Does not re-tessellate.
   void RebuildCadModelMeshes();
+  // True when the CAD surface shows the file's own per-section colors: a colored STEP tessellation,
+  // no color override, and full opacity (translucency always uses the flat picker color).
+  bool ShowsCadFileColors() const;
+  // Unloads the render model backing a file-colored CAD surface. Its scene instance must already be
+  // destroyed.
+  void ReleaseCadColorModel();
   // Tessellates the slotted CAD file asynchronously (progress modal) into _cadSections and the
   // asset's thumbnail model, then rebuilds the CAD meshes. This is the standalone CAD-preview
   // tessellation (fixed default deflections); the modifier stack's source is where tessellation is
@@ -386,6 +393,10 @@ class ModelEditor : public AssetEditor {
   // color. The CAD and mochi surfaces are always flat-shaded with their color; the render surface
   // keeps its PBR materials/textures unless _renderOverrideColor is set (or it is translucent).
   mochi::Real3 _cadColor = {0.60f, 0.60f, 0.62f};
+  // A STEP tessellation arrives as one section per CAD color. Shown in those colors unless this is
+  // set (like _renderOverrideColor); an STL has none, so it always uses _cadColor.
+  bool _cadOverrideColor = false;
+  bool _cadHasFileColors = false;
   mochi::Real3 _renderColor = {0.70f, 0.70f, 0.72f};
   bool _renderOverrideColor = false;
   mochi::Real3 _mochiColor = {0.5f, 0.7f, 1.0f};
@@ -395,6 +406,9 @@ class ModelEditor : public AssetEditor {
   mochi::Real3 _sdfColor = {1.0f, 0.0f, 0.0f};
   // scene objects
   mochi_renderer::SceneObject* _cadModelSurfaceMesh = nullptr;
+  // Per-section PBR render model behind _cadModelSurfaceMesh while ShowsCadFileColors(); null when
+  // the surface is a flat-lit mesh.
+  mochi_renderer::RenderModel* _cadColorModel = nullptr;
   mochi_renderer::WireframeMesh* _cadModelWireframeMesh = nullptr;
   mochi_renderer::SceneObject* _renderModelSurfaceMesh = nullptr;
   mochi_renderer::WireframeMesh* _renderModelWireframeMesh = nullptr;

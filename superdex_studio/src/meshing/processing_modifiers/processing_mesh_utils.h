@@ -28,6 +28,8 @@
 
 #include <mochi_renderer/utils.h> // mochi_renderer::MeshSection
 
+#include <mochi_mesh/mochi_mesh_cli_types.h> // StepTessellationParams
+
 #include <array>
 #include <cstdint>
 #include <string>
@@ -78,9 +80,10 @@ bool EndsWithNoCase(std::string const& text, char const* suffix);
 //   .obj / .stl / .mochi.h5  -- read out in Mochi's space (CoordinateSpace::Default, Z-up);
 //                               MUST be converted here, and converted back on write
 //   .glb / .gltf / .dae      -- their readers already resolve the up-axis to Y-up
-//   .step / .stp             -- Z-up on disk, but mochi::mesh::TessellateStep / MeshStepBody fold
-//                               the Z-up -> Y-up rotation in inside the superdex_mesh_cli helper,
-//                               so their output is renderer-space ALREADY. Do not convert it.
+//   .step / .stp             -- Z-up on disk, but mochi::mesh::TessellateStep(ByColor) /
+//                               MeshStepBody fold the Z-up -> Y-up rotation in inside the
+//                               superdex_mesh_cli helper, so their output is renderer-space
+//                               ALREADY. Do not convert it.
 //
 // The two spaces are a quarter turn about X apart, so converting the wrong group -- or converting
 // twice -- tips the model over. ReadSectionsInRenderSpace and WriteObjFile below are where this
@@ -94,6 +97,14 @@ std::vector<mochi_renderer::MeshSection> ReadSectionsInRenderSpace(std::string c
 
 // Load a render-model file (obj/glb/stl/dae) as a neutral triangle MeshData in renderer space.
 mochi::MeshData LoadRenderMesh(std::string const& path, mochi::Error& error);
+
+// Tessellate a STEP file into renderer-space sections, one per CAD color (see
+// mochi::mesh::TessellateStepByColor), each carrying that color as its linear baseColor. Uncolored
+// faces, if any, form one section with the default baseColor. Blocking; safe off the main thread.
+std::vector<mochi_renderer::MeshSection> TessellateStepSections(
+    std::string const& path,
+    mochi::mesh::StepTessellationParams const& params,
+    mochi::Error& error);
 
 // Load a mochi-model file's surface as a neutral triangle MeshData in renderer space.
 mochi::MeshData LoadMochiMesh(std::string const& path, mochi::Error& error);

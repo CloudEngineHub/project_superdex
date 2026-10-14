@@ -34,6 +34,7 @@
 #include <superdex_robotics/utils/file_utils.h> // AssetRoleFolderForWrite / kIntermediatesSubdir
 
 #include <mochi_renderer/mesh.h>
+#include <mochi_renderer/resource.h> // RenderModel, RenderModelFormat
 #include <mochi_renderer/utils.h>
 
 #include <mochi_mesh/isosurface_reconstruction.h>
@@ -748,7 +749,13 @@ void ModelEditor::PollSlotFileChanges() {
 void ModelEditor::Shutdown() {
   // Persist the pipeline so reopening this model restores it (also saved on generate / build).
   SaveProcessingPipelineToDisk();
-  // All scene objects are owned by the viewport's render scene, so they are destroyed with it.
+  // All scene objects are owned by the viewport's render scene, so they are destroyed with it --
+  // except that the file-colored CAD surface's backing model lives in the resource manager, so its
+  // instance goes first and then the model.
+  if (_cadColorModel != nullptr) {
+    _viewport->GetRenderScene()->DestroySceneObject(_cadModelSurfaceMesh);
+    ReleaseCadColorModel();
+  }
   _cadModelSurfaceMesh = nullptr;
   _cadModelWireframeMesh = nullptr;
   _renderModelSurfaceMesh = nullptr;
@@ -914,6 +921,7 @@ void ModelEditor::UpdateCadModel() {
   // asynchronously by RegenerateCadModel below.
   _cadSectionsOriginal.clear();
   _cadSections.clear();
+  _cadHasFileColors = false;
   RebuildCadModelMeshes();
   // The processing-stage buffers derive from the CAD model, so they are stale once the slot
   // changes.
@@ -930,6 +938,7 @@ void ModelEditor::RebuildCadModelMeshes() {
     scene->DestroySceneObject(_cadModelSurfaceMesh);
     _cadModelSurfaceMesh = nullptr;
   }
+  ReleaseCadColorModel();
   if (_cadModelWireframeMesh) {
     scene->DestroySceneObject(_cadModelWireframeMesh);
     _cadModelWireframeMesh = nullptr;
@@ -940,8 +949,9 @@ void ModelEditor::RebuildCadModelMeshes() {
   _cadStats.fileSizeLabel = "File Size";
   ComposeStats(_cadStats);
 
-  // The CAD model is rendered flat-lit from its mesh-section backing (it has no PBR materials),
-  // with a wireframe overlay built from the same geometry.
+  // The CAD model is rendered from its mesh-section backing: in the file's own colors (one PBR
+  // primitive per section) or flat-lit in the picker color, with a wireframe overlay built from the
+  // same geometry.
   std::vector<float> positions;
   std::vector<float> normals;
   std::vector<int> indices;
@@ -951,19 +961,32 @@ void ModelEditor::RebuildCadModelMeshes() {
   }
 
   auto& resourceManager = _studio->GetResourceManager();
-  auto surfaceMaterial = _cadModelOpacity >= 1.0f
-      ? resourceManager.CreateFlatLitOpaqueMaterial(ToFloat3(_cadColor))
-      : resourceManager.CreateFlatLitSeeThroughMaterial(ToFloat3(_cadColor), _cadModelOpacity);
-  auto surface = mochi_renderer::Mesh::CreateMesh(
-      _studio->GetEngine(),
-      mochi::Span<float const>(positions.data(), positions.size()),
-      mochi::Span<float const>(normals.data(), normals.size()),
-      mochi::Span<int const>(indices.data(), indices.size()),
-      surfaceMaterial,
-      /*isDynamic=*/false,
-      /*isClosed=*/true);
-  if (surface) {
-    _cadModelSurfaceMesh = scene->AddSceneObjectToScene(std::move(surface));
+  if (ShowsCadFileColors()) {
+    // Keyed per editor: two editors may show the same CAD file under different transforms.
+    mochi::Path const key{
+        "superdex_cad_viewport_" + std::to_string(reinterpret_cast<std::uintptr_t>(this))};
+    _cadColorModel = resourceManager.LoadModelFromMeshSections(
+        key, _cadSections, mochi_renderer::RenderModelFormat::Cad);
+    if (_cadColorModel) {
+      _cadModelSurfaceMesh = scene->AddSceneObjectToScene(_cadColorModel->GetInstance());
+    }
+  } else {
+    auto surfaceMaterial = _cadModelOpacity >= 1.0f
+        ? resourceManager.CreateFlatLitOpaqueMaterial(ToFloat3(_cadColor))
+        : resourceManager.CreateFlatLitSeeThroughMaterial(ToFloat3(_cadColor), _cadModelOpacity);
+    auto surface = mochi_renderer::Mesh::CreateMesh(
+        _studio->GetEngine(),
+        mochi::Span<float const>(positions.data(), positions.size()),
+        mochi::Span<float const>(normals.data(), normals.size()),
+        mochi::Span<int const>(indices.data(), indices.size()),
+        surfaceMaterial,
+        /*isDynamic=*/false,
+        /*isClosed=*/true);
+    if (surface) {
+      _cadModelSurfaceMesh = scene->AddSceneObjectToScene(std::move(surface));
+    }
+  }
+  if (_cadModelSurfaceMesh) {
     _cadModelSurfaceMesh->SetVisible(_showCadModelSurface);
   }
 
@@ -978,6 +1001,17 @@ void ModelEditor::RebuildCadModelMeshes() {
   if (wireframe) {
     _cadModelWireframeMesh = scene->AddSceneObjectToScene(std::move(wireframe));
     _cadModelWireframeMesh->SetVisible(_showCadModelWireframe);
+  }
+}
+
+bool ModelEditor::ShowsCadFileColors() const {
+  return _cadHasFileColors && !_cadOverrideColor && _cadModelOpacity >= 1.0f;
+}
+
+void ModelEditor::ReleaseCadColorModel() {
+  if (_cadColorModel != nullptr) {
+    _studio->GetResourceManager().UnloadResource(_cadColorModel->GetPath());
+    _cadColorModel = nullptr;
   }
 }
 
@@ -999,6 +1033,7 @@ void ModelEditor::RegenerateCadModel() {
     }
     _cadModelAsset->SetTessellation(sections, _studio->GetResourceManager());
     _cadSectionsOriginal = std::move(sections);
+    _cadHasFileColors = false;
     ApplyCadModelTransform();
     if (_renderModelPath.empty() && _mochiModelPath.empty()) {
       _viewport->FocusCameraOnScene();
@@ -1045,6 +1080,7 @@ void ModelEditor::RegenerateCadModel() {
         // Keep the raw tessellation so the CAD transform can be re-applied cheaply; ApplyCadModel
         // transform derives the displayed _cadSections from it and rebuilds the meshes.
         _cadSectionsOriginal = std::move(*result);
+        _cadHasFileColors = true;
         ApplyCadModelTransform();
         // A CAD-only open starts with an empty scene, so the initial camera focus saw nothing;
         // focus again now that the geometry exists.
@@ -2805,8 +2841,14 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
         /*acceptDragDropPayload=*/false,
         /*showClearButton=*/false);
     if (_cadModelAsset) {
+      // Swaps between the file-colored and flat surfaces as needed; only a flat surface is
+      // recolored in place.
       auto applyCadMaterial = [this]() {
-        if (!_cadModelSurfaceMesh) {
+        if ((_cadColorModel != nullptr) != ShowsCadFileColors()) {
+          RebuildCadModelMeshes();
+          return;
+        }
+        if (!_cadModelSurfaceMesh || _cadColorModel != nullptr) {
           return;
         }
         auto& rm = _studio->GetResourceManager();
@@ -2825,6 +2867,16 @@ void ModelEditor::ShowModelViewerWindow(bool* open) {
         _cadColor = {cadCol[0], cadCol[1], cadCol[2]};
         applyCadMaterial();
         RecolorWireframe(_cadModelWireframeMesh, _cadColor);
+      }
+      if (_cadHasFileColors) {
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Override with color", &_cadOverrideColor)) {
+          applyCadMaterial();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+          ImGui::SetTooltip(
+              "Show the CAD model in this color instead of the STEP file's own face colors.");
+        }
       }
 
       // Transform applied to the imported CAD geometry. Editing it re-applies the transform to the

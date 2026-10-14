@@ -107,6 +107,19 @@ std::vector<StepFaceColorInfo> DistinctStepFaceColorInfos() {
   };
 }
 
+// An uncolored entry first, then colored entries with differently sized meshes, so a writer that
+// assumed a fixed stride per entry would fail the round trip.
+std::vector<ColorMeshData> DistinctColorMeshes() {
+  return {
+      {false, 0u, Triangle()},
+      {true, 0xE87108u, {3, {0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 2, 0}, {0, 1, 2, 1, 3, 2}}},
+      {true, kMaxPackedRgb, Triangle()},
+  };
+}
+
+// Byte offset of the first entry's rgb in a WriteColorMeshes payload: [u64 count][u32 hasColor].
+constexpr size_t kFirstColorMeshRgbOffset = sizeof(uint64_t) + sizeof(uint32_t);
+
 void ExpectSameSizings(
     std::vector<StepFaceColorSizing> const& actual,
     std::vector<StepFaceColorSizing> const& expected) {
@@ -561,6 +574,58 @@ TEST(MochiMeshCliEncoding, StepFaceColorInfosRejectOversizedCount) {
   PayloadReader reader(bytes);
   std::vector<StepFaceColorInfo> decoded;
   EXPECT_FALSE(reader.ReadStepFaceColorInfos(decoded));
+}
+
+TEST(MochiMeshCliEncoding, ColorMeshesRoundTrip) {
+  std::vector<ColorMeshData> const meshes = DistinctColorMeshes();
+
+  PayloadWriter writer;
+  writer.WriteColorMeshes(meshes);
+
+  PayloadReader reader(writer.Bytes());
+  std::vector<ColorMeshData> decoded;
+  EXPECT_TRUE(reader.ReadColorMeshes(decoded));
+  EXPECT_TRUE(reader.AtEnd());
+  ASSERT_EQ(decoded.size(), meshes.size());
+  for (size_t i = 0; i < meshes.size(); ++i) {
+    EXPECT_EQ(decoded[i].hasColor, meshes[i].hasColor);
+    EXPECT_EQ(decoded[i].rgb, meshes[i].rgb);
+    EXPECT_EQ(decoded[i].mesh.nodesPerElement, meshes[i].mesh.nodesPerElement);
+    EXPECT_EQ(decoded[i].mesh.coordinates, meshes[i].mesh.coordinates);
+    EXPECT_EQ(decoded[i].mesh.connectivity, meshes[i].mesh.connectivity);
+  }
+}
+
+TEST(MochiMeshCliEncoding, ColorMeshesRejectOutOfRangeColor) {
+  PayloadWriter writer;
+  writer.WriteColorMeshes(std::vector<ColorMeshData>{{true, 0xFF0000u, Triangle()}});
+  auto const bytes = WithU32At(writer.Bytes(), kFirstColorMeshRgbOffset, kMaxPackedRgb + 1);
+
+  PayloadReader reader(bytes);
+  std::vector<ColorMeshData> decoded;
+  EXPECT_FALSE(reader.ReadColorMeshes(decoded));
+}
+
+TEST(MochiMeshCliEncoding, ColorMeshesRejectColorOnUncoloredEntry) {
+  PayloadWriter writer;
+  writer.WriteColorMeshes(std::vector<ColorMeshData>{{false, 0u, Triangle()}});
+  auto const bytes = WithU32At(writer.Bytes(), kFirstColorMeshRgbOffset, 0xFF0000u);
+
+  PayloadReader reader(bytes);
+  std::vector<ColorMeshData> decoded;
+  EXPECT_FALSE(reader.ReadColorMeshes(decoded));
+}
+
+TEST(MochiMeshCliEncoding, ColorMeshesRejectOversizedCount) {
+  PayloadWriter writer;
+  writer.WriteColorMeshes(DistinctColorMeshes());
+  std::vector<char> bytes = writer.Bytes();
+  uint64_t const count = std::numeric_limits<uint64_t>::max();
+  std::memcpy(bytes.data(), &count, sizeof(count));
+
+  PayloadReader reader(bytes);
+  std::vector<ColorMeshData> decoded;
+  EXPECT_FALSE(reader.ReadColorMeshes(decoded));
 }
 
 TEST(MochiMeshCliEncoding, StepVisualExportParamsRoundTrip) {
