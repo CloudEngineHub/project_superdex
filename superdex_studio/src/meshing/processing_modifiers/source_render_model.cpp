@@ -92,10 +92,10 @@ class RenderFromFileMethod : public ReflectedMethod<RenderFileSourceProps> {
     return {"path"};
   }
   void ShowParams(ModifierGuiContext const& gui) override {
-    if (!gui.modelSlot) {
+    if (!gui.host) {
       return;
     }
-    gui.modelSlot("##rendersocket", _props.path, ModelSlotType::RenderModel);
+    gui.host->ModelSlot("##rendersocket", _props.path, ModelSlotType::RenderModel);
     gui.tooltip(
         "Drop a Render Model here (e.g. an .obj/.glb in the _render folder). This slot is "
         "independent of the editor's own Model Viewer slots.");

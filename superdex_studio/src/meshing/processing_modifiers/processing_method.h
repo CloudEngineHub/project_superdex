@@ -69,42 +69,46 @@ using ModifierTooltip = std::function<void(char const*)>;
 // The model types a source method's own file slot can hold.
 enum class ModelSlotType { CadModel, RenderModel, MochiModel };
 
-// GUI services a method may need to render its parameters (asset slots for file sources / exports,
-// the reference dropdown for edge flip). Most methods use only `tooltip`. Widgets that belong to
-// the app are injected the same way as `tooltip`, so the methods depend on Dear ImGui alone and
-// never on the app. A callable left empty leaves its widget out.
-struct ModifierGuiContext {
-  ModifierTooltip tooltip;
+// The app's widgets and services, for the methods whose parameters need more than Dear ImGui. The
+// editor implements it; without the app ModifierGuiContext::host is null and methods leave those
+// widgets out.
+class ModifierHost {
+ public:
+  virtual ~ModifierHost() = default;
+
   // Asset slot showing and accepting a model file of @p type, bound to @p path.
-  std::function<void(char const* id, mochi::DynamicString& path, ModelSlotType type)> modelSlot;
+  virtual void ModelSlot(char const* id, mochi::DynamicString& path, ModelSlotType type) = 0;
   // Native save dialog opened at @p defaultPath. Returns the chosen path, or empty on cancel.
-  std::function<std::string(
+  virtual std::string SaveFileDialog(
       char const* title,
       std::span<char const* const> filters,
       char const* filterDescription,
-      std::string const& defaultPath)>
-      saveFileDialog;
+      std::string const& defaultPath) = 0;
   // Editor for every field of the reflected struct at @p value. Returns true when a field changed.
-  std::function<bool(SReflect::StructTypeInfo const& type, void* value)> reflectedStruct;
+  virtual bool ReflectedStruct(SReflect::StructTypeInfo const& type, void* value) = 0;
   // Per-axis drag for @p value, moving @p speed per pixel and shown with the printf @p format, and
   // a rotation + translation editor. Return true on change.
-  std::function<bool(char const* label, mochi::Real3& value, float speed, char const* format)>
-      dragXYZ;
-  std::function<bool(char const* label, mochi::Quaternion& rotation, mochi::Real3& translation)>
-      dragTransformRT;
+  virtual bool DragXYZ(char const* label, mochi::Real3& value, float speed, char const* format) = 0;
+  virtual bool
+  DragTransformRT(char const* label, mochi::Quaternion& rotation, mochi::Real3& translation) = 0;
   // The stable color the app derives from a file path, so a default matches the models' colors.
-  std::function<mochi::Real3(std::string_view path)> pathColor;
+  virtual mochi::Real3 PathColor(std::string_view path) = 0;
   // Runs @p work on a worker thread behind the app's progress modal, then @p onDone on the main
-  // thread. Returns false when no task could start. Set together with isBackgroundTaskRunning.
-  std::function<bool(
+  // thread. Returns false when no task could start.
+  virtual bool RunBackgroundTask(
       char const* title,
       char const* label,
       std::function<bool()> work,
-      std::function<void()> onDone)>
-      runBackgroundTask;
+      std::function<void()> onDone) = 0;
   // True while a background task is running; only one runs at a time.
-  std::function<bool()> isBackgroundTaskRunning;
-  // File path of the stack's
+  virtual bool IsBackgroundTaskRunning() const = 0;
+};
+
+// What the editor hands each method's ShowParams. Methods draw with Dear ImGui and reach the app
+// only through @ref host, so they never depend on it.
+struct ModifierGuiContext {
+  ModifierTooltip tooltip;
+  ModifierHost* host = nullptr;
   // File path of the stack's first (source) modifier, used to pre-populate export default paths.
   std::string sourceFilePath;
   // Folder of the model this editor was opened for. Used only as the Browse dialog's starting point

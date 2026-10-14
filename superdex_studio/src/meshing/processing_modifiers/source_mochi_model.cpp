@@ -92,10 +92,10 @@ class MochiFromFileMethod : public ReflectedMethod<MochiFileSourceProps> {
     return {"path"};
   }
   void ShowParams(ModifierGuiContext const& gui) override {
-    if (!gui.modelSlot) {
+    if (!gui.host) {
       return;
     }
-    gui.modelSlot("##mochisocket", _props.path, ModelSlotType::MochiModel);
+    gui.host->ModelSlot("##mochisocket", _props.path, ModelSlotType::MochiModel);
     gui.tooltip(
         "Drop a Mochi Model here (e.g. a .mochi.h5 in the _mochi folder). This slot is independent "
         "of the editor's own Model Viewer slots.");

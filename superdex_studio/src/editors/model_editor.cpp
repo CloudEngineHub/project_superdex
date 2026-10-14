@@ -705,6 +705,66 @@ AssetType AssetTypeForModelSlot(ModelSlotType type) {
   return AssetType::Unknown;
 }
 
+class StudioModifierHost final : public ModifierHost {
+ public:
+  explicit StudioModifierHost(SuperDexStudio& studio) : _studio(studio) {}
+
+  void ModelSlot(char const* id, mochi::DynamicString& path, ModelSlotType type) override {
+    ImGui::AssetSlot(
+        id,
+        path,
+        _studio.GetAssetManager(),
+        &_studio,
+        AssetTypeForModelSlot(type),
+        /*acceptDragDropPayload=*/true);
+  }
+  std::string SaveFileDialog(
+      char const* title,
+      std::span<char const* const> filters,
+      char const* filterDescription,
+      std::string const& defaultPath) override {
+    return SuperDexStudio::GetFileDialogPath(
+               title,
+               filters.data(),
+               mochi::isize(filters),
+               filterDescription,
+               /*isSaveDialog=*/true,
+               mochi::Path{defaultPath})
+        .ToString();
+  }
+  bool ReflectedStruct(SReflect::StructTypeInfo const& type, void* value) override {
+    return ImGui::SimpleReflectionStruct(type, value);
+  }
+  bool DragXYZ(char const* label, mochi::Real3& value, float speed, char const* format) override {
+    return ImGui::DragRealXYZ(label, value, speed, 0.0f, 0.0f, format, 0, 1.0f);
+  }
+  bool DragTransformRT(char const* label, mochi::Quaternion& rotation, mochi::Real3& translation)
+      override {
+    return ImGui::DragTransformRT(label, rotation, translation);
+  }
+  mochi::Real3 PathColor(std::string_view path) override {
+    ImVec4 const c = HashStringToColor(path);
+    return mochi::Real3{c.x, c.y, c.z};
+  }
+  bool RunBackgroundTask(
+      char const* title,
+      char const* label,
+      std::function<bool()> work,
+      std::function<void()> onDone) override {
+    std::vector<AsyncTask> tasks;
+    tasks.push_back(
+        AsyncTask{label, [work = std::move(work)](AsyncCancelToken const&) { return work(); }});
+    return _studio.BeginAsyncTasks(
+        title, std::move(tasks), [onDone = std::move(onDone)](bool /*allSucceeded*/) { onDone(); });
+  }
+  bool IsBackgroundTaskRunning() const override {
+    return _studio.IsAsyncTasksRunning();
+  }
+
+ private:
+  SuperDexStudio& _studio;
+};
+
 } // namespace
 
 //--------------------------------------------------------------------------------------------------
@@ -1913,63 +1973,10 @@ void ModelEditor::ShowMeshModifierStack() {
   for (auto const& modifier : _modifiers) {
     modifierNames.emplace_back(modifier->DisplayName());
   }
+  StudioModifierHost host{*_studio};
   ModifierGuiContext gui{
       .tooltip = tooltip,
-      .modelSlot =
-          [this](char const* id, mochi::DynamicString& path, ModelSlotType type) {
-            ImGui::AssetSlot(
-                id,
-                path,
-                _studio->GetAssetManager(),
-                _studio,
-                AssetTypeForModelSlot(type),
-                /*acceptDragDropPayload=*/true);
-          },
-      .saveFileDialog =
-          [](char const* title,
-             std::span<char const* const> filters,
-             char const* filterDescription,
-             std::string const& defaultPath) {
-            return SuperDexStudio::GetFileDialogPath(
-                       title,
-                       filters.data(),
-                       mochi::isize(filters),
-                       filterDescription,
-                       /*isSaveDialog=*/true,
-                       mochi::Path{defaultPath})
-                .ToString();
-          },
-      .reflectedStruct = [](SReflect::StructTypeInfo const& type,
-                            void* value) { return ImGui::SimpleReflectionStruct(type, value); },
-      .dragXYZ =
-          [](char const* label, mochi::Real3& value, float speed, char const* format) {
-            return ImGui::DragRealXYZ(label, value, speed, 0.0f, 0.0f, format, 0, 1.0f);
-          },
-      .dragTransformRT =
-          [](char const* label, mochi::Quaternion& rotation, mochi::Real3& translation) {
-            return ImGui::DragTransformRT(label, rotation, translation);
-          },
-      .pathColor =
-          [](std::string_view path) {
-            ImVec4 const c = HashStringToColor(path);
-            return mochi::Real3{c.x, c.y, c.z};
-          },
-      .runBackgroundTask =
-          [this](
-              char const* title,
-              char const* label,
-              std::function<bool()> work,
-              std::function<void()> onDone) {
-            std::vector<AsyncTask> tasks;
-            tasks.push_back(AsyncTask{label, [work = std::move(work)](AsyncCancelToken const&) {
-                                        return work();
-                                      }});
-            return _studio->BeginAsyncTasks(
-                title, std::move(tasks), [onDone = std::move(onDone)](bool /*allSucceeded*/) {
-                  onDone();
-                });
-          },
-      .isBackgroundTaskRunning = [this] { return _studio->IsAsyncTasksRunning(); },
+      .host = &host,
       .sourceFilePath = sourceFilePath,
       .modelFolder = OriginModelFolder(),
       .cadFilePath = _cadModelAsset ? _cadModelAsset->GetPath().ToString() : std::string()};

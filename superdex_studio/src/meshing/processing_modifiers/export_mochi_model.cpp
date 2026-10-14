@@ -131,8 +131,8 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
 
   void ShowParams(ModifierGuiContext const& gui) override {
     ModifierTooltip const& tooltip = gui.tooltip;
-    if (gui.reflectedStruct) {
-      (void)gui.reflectedStruct(
+    if (gui.host) {
+      (void)gui.host->ReflectedStruct(
           static_cast<SReflect::StructTypeInfo const&>(
               SReflect::GetTypeInfo<mochi::GridSdfParams>()),
           &_props.sdf);
@@ -163,7 +163,7 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     ImGui::EndDisabled();
     // Browse stays live while Auto is on: choosing a file IS taking the path over, so it turns Auto
     // off. Cancelling leaves everything as it was -- Browse only ever turns Auto off, never on.
-    if (gui.saveFileDialog && ImGui::Button("Browse##sdfexport")) {
+    if (gui.host && ImGui::Button("Browse##sdfexport")) {
       // Filter on "*.h5" (not "*.mochi.h5"): the native save dialog treats the extension as the
       // text after the last dot, so a "*.mochi.h5" filter makes it re-append ".mochi.h5" to a name
       // that already ends in it (doubling the suffix). "*.h5" matches .mochi.h5 without
@@ -178,7 +178,7 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
       // last-used directory when a default's parent is missing, which would defeat suggesting it.
       superdex::robotics::EnsureDirectoriesCreated(
           defaultPath, mochi::ErrorLog{mochi::LogChannel::Warning});
-      std::string const chosen = gui.saveFileDialog(
+      std::string const chosen = gui.host->SaveFileDialog(
           "Export Mochi Model", filters, "Mochi Model (*.mochi.h5)", defaultPath);
       if (!chosen.empty()) {
         _props.exportPath = NormalizeMochiModelExportPath(chosen);

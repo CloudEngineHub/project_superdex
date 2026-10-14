@@ -121,8 +121,8 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
       std::string const currentPath{_props.path.data(), _props.path.size()};
       std::string const defaultPath =
           !currentPath.empty() ? currentPath : SuggestedExportPath(gui.sourceFilePath);
-      if (!defaultPath.empty() && gui.pathColor) {
-        _props.color = gui.pathColor(defaultPath);
+      if (!defaultPath.empty() && gui.host) {
+        _props.color = gui.host->PathColor(defaultPath);
         _colorInitialized = true;
       }
     }
@@ -148,7 +148,7 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
     ImGui::EndDisabled();
     // Browse stays live while Auto is on: choosing a file IS taking the path over, so it turns Auto
     // off. Cancelling leaves everything as it was -- Browse only ever turns Auto off, never on.
-    if (gui.saveFileDialog && ImGui::Button("Browse##meshexport")) {
+    if (gui.host && ImGui::Button("Browse##meshexport")) {
       char const* filters[] = {"*.obj", "*.glb"};
       std::string const defaultPath = processing::ExportDialogStartPath(
           std::string{_props.path.data(), _props.path.size()},
@@ -160,7 +160,7 @@ class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
       superdex::robotics::EnsureDirectoriesCreated(
           defaultPath, mochi::ErrorLog{mochi::LogChannel::Warning});
       std::string const chosen =
-          gui.saveFileDialog("Export Mesh", filters, "Mesh (*.obj, *.glb)", defaultPath);
+          gui.host->SaveFileDialog("Export Mesh", filters, "Mesh (*.obj, *.glb)", defaultPath);
       if (!chosen.empty()) {
         _props.path = chosen;
         _autoExportPath = false;

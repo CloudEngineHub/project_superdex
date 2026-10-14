@@ -49,16 +49,15 @@ class SrtTransformMethod : public ReflectedMethod<TransformSrtProps> {
   }
   void ShowParams(ModifierGuiContext const& gui) override {
     ModifierTooltip const& tooltip = gui.tooltip;
-    if (gui.dragXYZ) {
-      gui.dragXYZ("Scale", _props.scale, 0.01f, "%.4f");
-      tooltip("Per-axis scale applied to the input mesh first.");
+    if (!gui.host) {
+      return;
     }
-    if (gui.dragTransformRT) {
-      mochi::Quaternion rotation = _props.rotation;
-      gui.dragTransformRT("Transform", rotation, _props.translation);
-      _props.rotation = rotation;
-      tooltip("Rotation then translation applied after scaling.");
-    }
+    gui.host->DragXYZ("Scale", _props.scale, 0.01f, "%.4f");
+    tooltip("Per-axis scale applied to the input mesh first.");
+    mochi::Quaternion rotation = _props.rotation;
+    gui.host->DragTransformRT("Transform", rotation, _props.translation);
+    _props.rotation = rotation;
+    tooltip("Rotation then translation applied after scaling.");
   }
   mochi::MeshData Run(
       mochi::MeshData const& input,

@@ -262,11 +262,11 @@ class FaceColorSizingPanel {
       return;
     }
 
-    if (gui.runBackgroundTask) {
-      bool const busy = gui.isBackgroundTaskRunning() || _pending;
+    if (gui.host) {
+      bool const busy = gui.host->IsBackgroundTaskRunning() || _pending;
       ImGui::BeginDisabled(busy || stepPath.empty());
       if (ImGui::Button("Read Colors")) {
-        StartRead(stepPath, gui);
+        StartRead(stepPath, *gui.host);
       }
       ImGui::EndDisabled();
       tooltip("List the face colors used in the STEP file, adds new colors for those unlisted.");
@@ -374,11 +374,11 @@ class FaceColorSizingPanel {
     bool done = false; // main thread only
   };
 
-  void StartRead(std::string const& stepPath, ModifierGuiContext const& gui) {
+  void StartRead(std::string const& stepPath, ModifierHost& host) {
     auto result = std::make_shared<ReadResult>();
     result->path = stepPath;
     // CLI-backed: a cancel aborts it by killing the helper subprocess, so it needs no cancel check.
-    if (gui.runBackgroundTask(
+    if (host.RunBackgroundTask(
             "Reading STEP Face Colors",
             "Read face colors",
             [result] {
@@ -623,10 +623,10 @@ class CadFromFileMethod : public ReflectedMethod<CadFileSourceProps> {
     return ReflectedMethod::DeserializeProps(props);
   }
   void ShowParams(ModifierGuiContext const& gui) override {
-    if (!gui.modelSlot) {
+    if (!gui.host) {
       return;
     }
-    gui.modelSlot("##cadsocket", _props.path, ModelSlotType::CadModel);
+    gui.host->ModelSlot("##cadsocket", _props.path, ModelSlotType::CadModel);
     gui.tooltip(
         "Drop a CAD Model here (a STEP/STL in the 'cad' folder). This slot is independent of the "
         "editor's own Model Viewer slots.");
