@@ -416,7 +416,7 @@ void Reserve(size_t size, TupleContainers& outContainers) {
 // Selective cast for ActorHandle
 template <typename T>
 auto Cast(T data) {
-  if constexpr (std::is_same<T, ActorHandle>::value) {
+  if constexpr (std::is_same_v<T, ActorHandle>) {
     return static_cast<int>(data.value);
   } else {
     return data;
@@ -436,7 +436,7 @@ void Emplace(TupleData const& data, TupleContainers& outContainers) {
 // Selective Flatten for Real3
 template <typename T>
 auto Flatten(Span<T const> data) {
-  if constexpr (std::is_same<T, Real3>::value) {
+  if constexpr (std::is_same_v<T, Real3>) {
     return Flatten<real>(data);
   } else {
     return data;
@@ -474,7 +474,7 @@ void mochi::RecordQueryContactPoints(CQueryContactPoints const& contacts, CRecor
   auto containers = std::make_tuple(
       std::ref(actorA), std::ref(actorB), std::ref(distance), std::ref(posA), std::ref(posB), std::ref(normal), std::ref(force), std::ref(pointVelocityA), std::ref(pointVelocityB), std::ref(sampleIndex), std::ref(intWeight), std::ref(elementIndex), std::ref(parametricCoords));
   // clang-format on
-  constexpr size_t kNumContainers = std::tuple_size<decltype(containers)>::value;
+  constexpr size_t kNumContainers = std::tuple_size_v<decltype(containers)>;
   Reserve<kNumContainers>(contacts.contactPoints.size(), containers);
 
   // Copy the data to the containers
@@ -506,7 +506,7 @@ void mochi::RecordQueryNodeContactForces(
   DynamicArray<int> nodeIndex;
   DynamicArray<Real3> force;
   auto containers = std::make_tuple(std::ref(nodeIndex), std::ref(force));
-  constexpr size_t kNumContainers = std::tuple_size<decltype(containers)>::value;
+  constexpr size_t kNumContainers = std::tuple_size_v<decltype(containers)>;
   Reserve<kNumContainers>(forces.nodeContactForces.size(), containers);
 
   // Copy the data to the containers
@@ -531,7 +531,7 @@ void mochi::RecordQuerySdfDistances(CQuerySdfDistances const& distances, CRecord
       std::cref(distances.distances),
       std::cref(distances.distanceGrads),
       std::cref(distances.worldPositions));
-  constexpr size_t kNumContainers = std::tuple_size<decltype(containers)>::value;
+  constexpr size_t kNumContainers = std::tuple_size_v<decltype(containers)>;
 
   // Write to CRecordingData
   std::array<std::string, kNumContainers> names = {
