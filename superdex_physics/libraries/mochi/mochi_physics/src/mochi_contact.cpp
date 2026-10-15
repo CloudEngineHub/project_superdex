@@ -3291,6 +3291,7 @@ static void AppendActiveSdfSamplesWorldSpace(
 void mochi::UpdateQuerySdfDistances(
     CContactSamples<TimeStep::Current> const& collidingSamples,
     CRootTransform const& rootTransform,
+    ecs::OptionalTag<TagDeformableActor> isDeformable,
     CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const* collisionsAsync,
     CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const* collisionsSync,
     CRequiresFarSdfEvaluation const* farSdfEval,
@@ -3298,8 +3299,9 @@ void mochi::UpdateQuerySdfDistances(
     CQuerySdfDistances& outQuerySdfDistances) {
   MOCHI_PROFILE_SCOPE();
 
-  // Use the colliding actor's transform to convert positions to world space
-  auto const& collidingTransform = rootTransform.worldFromLocal;
+  // Deformable samples are expressed in the frame from before any post-step recentering.
+  auto const& collidingTransform =
+      isDeformable ? rootTransform.worldFromLocalPrev : rootTransform.worldFromLocal;
 
   // Compute the closest contact point for each sample index
   std::unordered_map<int, SdfSample> contactPointDetails;

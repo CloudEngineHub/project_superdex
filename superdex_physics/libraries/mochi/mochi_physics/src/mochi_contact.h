@@ -938,6 +938,7 @@ void UpdateQueryContactSamples(
 void UpdateQuerySdfDistances(
     CContactSamples<TimeStep::Current> const& collidingSamples,
     CRootTransform const& rootTransform,
+    ecs::OptionalTag<TagDeformableActor> isDeformable,
     CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const* collisionsAsync,
     CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const* collisionsSync,
     CRequiresFarSdfEvaluation const* farSdfEval,

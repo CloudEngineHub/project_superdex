@@ -835,3 +835,50 @@ TEST_F(MochiSoftContactSkin, PlaneContactUsesSkinnedAssemblyAndQueries) {
     }
   }
 }
+
+// After a step in which recentering moves a soft actor's root transform, the SDF distance query
+// must report sample positions in the same frame as the contact-point query.
+class MochiSoftRecenteringTest : public test::MochiSceneTestBase {};
+
+TEST_F(MochiSoftRecenteringTest, SdfDistancesMatchContactPointsAfterRecentering) {
+  SoftActorParams softParams;
+  softParams.shape = test::CreateUnitCubeTetMeshShape(_mochiContext);
+  softParams.worldFromLocal.SetTranslation(Real3{0_r, 0_r, -0.01_r});
+  Actor* const softActor = _scene->CreateSoftActor(softParams, test::ExpectOK{});
+  softActor->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{});
+  softActor->RegisterQuery(QueryType::SdfDistances, test::ExpectOK{});
+
+  // Slide the cube along the plane so that recentering moves its root transform.
+  softActor->SetVelocity(Real3{1_r, 0_r, 0_r}, Real3{}, test::ExpectOK{});
+
+  RigidActorParams planeParams;
+  planeParams.shape = _mochiContext->CreatePlaneShape(Real3{0_r, 0_r, 1_r}, 0_r, test::ExpectOK{});
+  planeParams.isStatic = true;
+  planeParams.colliderType = ColliderType::Plane;
+  _scene->CreateRigidActor(planeParams, test::ExpectOK{});
+
+  _scene->SetGravity({});
+  _scene->Step(1e-3_r);
+
+  real const recenteringDistance = Norm(
+      softActor->GetRootTransform().GetTranslation() - softParams.worldFromLocal.GetTranslation());
+  ASSERT_GT(recenteringDistance, 1e-4_r);
+  // Small relative to the recentering distance, so that pairing samples with the wrong root
+  // transform is detected.
+  real const tolerance = 1e-2_r * recenteringDistance;
+
+  auto const contactPoints = softActor->GetContactPointsWorld(test::ExpectOK{});
+  ASSERT_FALSE(contactPoints.empty());
+  SdfDistances const sdfDistances = softActor->GetSdfDistances(test::ExpectOK{});
+  for (ContactPoint const& contactPoint : contactPoints) {
+    auto const* const sdfIt = std::find(
+        sdfDistances.sampleIndices.begin(),
+        sdfDistances.sampleIndices.end(),
+        contactPoint.sampleIndex);
+    ASSERT_NE(sdfIt, sdfDistances.sampleIndices.end());
+    EXPECT_NEAR_TOL(
+        contactPoint.posA,
+        sdfDistances.worldPositions[sdfIt - sdfDistances.sampleIndices.begin()],
+        tolerance);
+  }
+}
