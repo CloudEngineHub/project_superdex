@@ -841,7 +841,7 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
             psdMode = PsdProjectionMode::Always;
           }
 
-          projectPsd = true;
+          projectPsd = (psdMode != PsdProjectionMode::Never);
           if (_params.verbosity >= VerbosityLevel::Verbose) {
             MOCHI_LOG(
                 "\n\t\tUnable to take a valid step. DResidual update, globally fitted Hessian, and/or PSD projection possible. Retrying step.\n");
