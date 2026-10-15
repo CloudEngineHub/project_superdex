@@ -81,7 +81,7 @@ endif ()
 # CTest only writes a testfile at the build root when testing is enabled here,
 # in the top-level source directory. Mochi enabling it for its own subtree is
 # not enough: without this, `ctest` from a Superdex build root finds nothing.
-if (MOCHI_BUILD_TESTS)
+if (MOCHI_BUILD_TESTS OR SUPERDEX_BUILD_ALL)
     enable_testing()
 endif ()
 

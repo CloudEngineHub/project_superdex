@@ -48,6 +48,10 @@ if (MOCHI_BUILD_TESTS)
         mochi_mesh_protocol_test
         PRIVATE mochi_mesh_protocol_private GTest::gtest_main)
     mochi_set_output_directories(mochi_mesh_protocol_test)
+    add_test(
+        NAME mochi_mesh_protocol_test
+        COMMAND mochi_mesh_protocol_test
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:mochi_mesh_protocol_test>")
 endif ()
 
 mochi_add_library(mochi_mesh)
