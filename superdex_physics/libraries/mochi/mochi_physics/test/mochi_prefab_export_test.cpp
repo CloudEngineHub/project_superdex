@@ -22,6 +22,8 @@
 #include <mochi_core/utils/file_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/span.h>
+#include <mochi_physics/mochi_physics_experimental.h>
+#include <mochi_physics/src/mochi_common_components.h>
 #include <mochi_physics/src/mochi_scene.h>
 #include <mochi_physics/utils/mochi_prefab.h>
 
@@ -2008,3 +2010,271 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ContactPairOverridesExcludeAndRou
       roundTripScene->GetContactPairParamsOverride(roundTripA, roundTripC, ExpectOK{})
           .penaltyCoefficient);
 }
+
+// A standalone soft actor, an articulated chain covering every DoF kind (Free, Revolute, Prismatic,
+// Spherical), and a soft-skinned actor, all built from procedural shapes.
+struct CurrentPoseExportActors {
+  Actor* soft = nullptr;
+  Actor* articulated = nullptr;
+  Actor* skinned = nullptr;
+};
+
+static CurrentPoseExportActors CreateCurrentPoseExportActors(Context* context, Scene* scene) {
+  CurrentPoseExportActors actors;
+
+  SoftActorParams softParams;
+  softParams.name = "Soft";
+  softParams.shape = CreateUnitCubeTetMeshShape(context);
+  softParams.worldFromLocal = TransformRT(
+      Quaternion::FromAxisAngle(Normalize(Real3{1_r, 2_r, 3_r}), 0.7_r), Real3{1_r, 2_r, 3_r});
+  actors.soft = scene->CreateSoftActor(softParams, ExpectOK{});
+
+  ArticulatedActorParams articulatedParams;
+  articulatedParams.name = "Chain";
+  articulatedParams.worldFromRoot = TransformRT(
+      Quaternion::FromAxisAngle(Normalize(Real3{-1_r, 0.5_r, 2_r}), 0.4_r), Real3{-2_r, 1_r, 0_r});
+  ShapeHandle const linkShape = CreateUnitCubeTetMeshShape(context);
+  ArticulatedJointType const jointTypes[] = {
+      ArticulatedJointType::Free,
+      ArticulatedJointType::Revolute,
+      ArticulatedJointType::Prismatic,
+      ArticulatedJointType::Spherical};
+  for (int i = 0; i < isize(jointTypes); ++i) {
+    articulatedParams.joints.push_back({.type = jointTypes[i], .axis = Real3{0_r, 0_r, 1_r}});
+    articulatedParams.links.push_back(
+        {.parentLink = i - 1, .shape = linkShape, .colliderType = ColliderType::None});
+  }
+  actors.articulated = scene->CreateArticulatedActor(articulatedParams, ExpectOK{});
+
+  SoftSkinnedActorParams skinnedParams;
+  skinnedParams.skeletonParams.name = "Skeleton";
+  skinnedParams.skeletonParams.worldFromRoot =
+      TransformRT(Quaternion::FromAxisAngle(Real3{0_r, 1_r, 0_r}, 1.1_r), Real3{3_r, 0_r, -1_r});
+  skinnedParams.skeletonParams.joints = {{.type = ArticulatedJointType::Free}};
+  skinnedParams.skeletonParams.links = {
+      {.name = "bone", .parentLink = -1, .shape = linkShape, .colliderType = ColliderType::None}};
+  auto& nestedSoft = skinnedParams.softParams.push_back();
+  nestedSoft.name = "soft";
+  nestedSoft.shape = CreateUnitCubeTetSoftShape(context);
+  nestedSoft.hasGravity = false;
+  actors.skinned = scene->CreateSoftSkinnedActor(skinnedParams, ExpectOK{});
+  return actors;
+}
+
+// Elastic (pre-skinning) displacements of a soft actor. For standalone soft actors, this matches
+// Actor::GetDisplacements.
+[[nodiscard]] static Span<real const> GetElasticDisplacements(Scene* scene, ActorHandle handle) {
+  return MakeConstSpan(GetRegistry(scene)
+                           .get<CDisplacementSlice<real, TimeStep::Current> const>(
+                               GetEntity(GetRegistry(scene), handle, ExpectOK{}))
+                           .value);
+}
+
+[[nodiscard]] static DynamicArray<real> GetPose(Actor const* actor) {
+  DynamicArray<real> pose(actor->GetNumDofs());
+  actor->GetArticulatedPose(pose, ExpectOK{});
+  return pose;
+}
+
+[[nodiscard]] static DynamicArray<real> MakeDisplacements(int size, real amplitude) {
+  DynamicArray<real> displacements(size);
+  for (int i = 0; i < size; ++i) {
+    displacements[i] = amplitude * StaticCast<real>((i % 5) - 2);
+  }
+  return displacements;
+}
+
+static void SetExportActorPoses(Scene* scene, CurrentPoseExportActors const& actors) {
+  actors.soft->SetDisplacements(
+      MakeDisplacements(isize(actors.soft->GetDisplacements(ExpectOK{})), 0.01_r), ExpectOK{});
+  actors.articulated->SetArticulatedPoseFromJoints(
+      DynamicArray<real>{
+          0.1_r, -0.2_r, 0.3_r, 0.2_r, -0.1_r, 0.3_r, 0.4_r, 0.05_r, -0.3_r, 0.2_r, 0.1_r},
+      ExpectOK{});
+  actors.skinned->SetArticulatedPoseFromJoints(
+      DynamicArray<real>{0.1_r, -0.2_r, 0.3_r, 0.2_r, -0.1_r, 0.3_r}, ExpectOK{});
+  ActorHandle const nestedSoft = actors.skinned->GetNestedSoftActors(ExpectOK{})[0];
+  scene->GetActor(nestedSoft)
+      ->SetDisplacements(
+          MakeDisplacements(isize(GetElasticDisplacements(scene, nestedSoft)), 0.02_r), ExpectOK{});
+}
+
+[[nodiscard]] static prefab::ScenePrefab ExportAndLoad(
+    Scene* scene,
+    std::filesystem::path const& outputDir,
+    prefab::ExportParams const& params) {
+  auto const prefabFile = ExportScene(scene, "current_pose", outputDir, params);
+  return prefab::ShallowLoadFromFile(prefabFile.string(), ExpectOK{});
+}
+
+static void ExpectNoCurrentPoseFields(prefab::ScenePrefab const& exported) {
+  ASSERT_EQ(1, isize(exported.actors.soft));
+  ASSERT_EQ(1, isize(exported.actors.articulated));
+  ASSERT_EQ(1, isize(exported.actors.softSkinned));
+  EXPECT_FALSE(exported.actors.soft[0].nodeDisplacements.has_value());
+  EXPECT_FALSE(exported.actors.articulated[0].jointPose.has_value());
+  auto const& skinned = exported.actors.softSkinned[0];
+  EXPECT_FALSE(skinned.skeletonParams.jointPose.has_value());
+  ASSERT_EQ(1, isize(skinned.softParams));
+  EXPECT_FALSE(skinned.softParams[0].nodeDisplacements.has_value());
+}
+
+class PrefabExportCurrentPoseTest : public MochiSceneTestBase {
+ protected:
+  void SetUp() override {
+    MochiSceneTestBase::SetUp();
+    actors = CreateCurrentPoseExportActors(_mochiContext, _scene);
+  }
+
+  CurrentPoseExportActors actors;
+};
+
+// Freshly created actors, including Free and Spherical joints whose rest pose converts through
+// quaternions, are exactly at rest and must not export current pose fields.
+TEST_IF_F(MOCHI_USE_HDF5, PrefabExportCurrentPoseTest, ExportScene_FreshActorsExportNoCurrentPose) {
+  auto tempDir = CreateTempDirectory("export_fresh_current_pose", ExpectOK{});
+  ExpectNoCurrentPoseFields(ExportAndLoad(_scene, tempDir.Path(), {.exportCurrentPose = true}));
+}
+
+TEST_IF_F(MOCHI_USE_HDF5, PrefabExportCurrentPoseTest, ExportScene_DefaultExportsNoCurrentPose) {
+  SetExportActorPoses(_scene, actors);
+  auto tempDir = CreateTempDirectory("export_default_current_pose", ExpectOK{});
+  ExpectNoCurrentPoseFields(ExportAndLoad(_scene, tempDir.Path(), {}));
+}
+
+TEST_IF_F(MOCHI_USE_HDF5, PrefabExportCurrentPoseTest, ExportScene_ExportCurrentPoseFalse) {
+  SetExportActorPoses(_scene, actors);
+  auto tempDir = CreateTempDirectory("export_current_pose_false", ExpectOK{});
+  ExpectNoCurrentPoseFields(ExportAndLoad(_scene, tempDir.Path(), {.exportCurrentPose = false}));
+}
+
+enum class PoseSource { SetDirectly, SteppedUnderGravity };
+
+class PrefabExportCurrentPoseRoundTrip : public PrefabExportCurrentPoseTest,
+                                         public ::testing::WithParamInterface<PoseSource> {};
+
+// Current-pose exports added back to a new scene restore the same deformation, joint pose,
+// and root transforms.
+TEST_IF_P(MOCHI_USE_HDF5, PrefabExportCurrentPoseRoundTrip, RestoresState) {
+  if (GetParam() == PoseSource::SetDirectly) {
+    SetExportActorPoses(_scene, actors);
+  } else {
+    for (int i = 0; i < 5; ++i) {
+      _scene->Step(0.01);
+    }
+  }
+  ActorHandle const nestedSoft = actors.skinned->GetNestedSoftActors(ExpectOK{})[0];
+
+  auto tempDir = CreateTempDirectory("export_displacement_round_trip", ExpectOK{});
+  auto const prefabFile =
+      ExportScene(_scene, "displacements", tempDir.Path(), {.exportCurrentPose = true});
+  auto const exported = prefab::ShallowLoadFromFile(prefabFile.string(), ExpectOK{});
+  ASSERT_EQ(1, isize(exported.actors.soft));
+  EXPECT_TRUE(exported.actors.soft[0].nodeDisplacements.has_value());
+  ASSERT_EQ(1, isize(exported.actors.articulated));
+  EXPECT_TRUE(exported.actors.articulated[0].jointPose.has_value());
+  ASSERT_EQ(1, isize(exported.actors.softSkinned));
+  auto const& exportedSkinned = exported.actors.softSkinned[0];
+  EXPECT_TRUE(exportedSkinned.skeletonParams.jointPose.has_value());
+  // Under gravity the nested soft only follows its bone, so its elastic deformation may be zero.
+  if (GetParam() == PoseSource::SetDirectly) {
+    EXPECT_TRUE(exportedSkinned.softParams[0].nodeDisplacements.has_value());
+  }
+
+  auto* reloaded = _mochiContext->CreateScene("reloaded");
+  MOCHI_DEFER(_mochiContext->DestroyScene(reloaded));
+  auto const result =
+      prefab::AddToScene(prefabFile.string(), tempDir.Path().string(), reloaded, ExpectOK{});
+  auto const softs = result.Filter(ActorType::Soft);
+  auto const articulated = result.Filter(ActorType::Articulated);
+  ASSERT_EQ(1, isize(softs));
+  ASSERT_EQ(2, isize(articulated));
+  auto findArticulated = [&](char const* name) -> Actor const* {
+    auto const* it = std::ranges::find_if(
+        articulated, [&](Actor const* a) { return std::string_view(a->GetName()) == name; });
+    return it == articulated.end() ? nullptr : *it;
+  };
+  Actor const* reloadedChain = findArticulated("Chain");
+  Actor const* reloadedSkinned = findArticulated("Skeleton");
+  ASSERT_NE(nullptr, reloadedChain);
+  ASSERT_NE(nullptr, reloadedSkinned);
+
+  real constexpr kTol = 1e-5_r;
+  EXPECT_TRUE(NearEqualSpan(
+      actors.soft->GetDisplacements(ExpectOK{}), softs[0]->GetDisplacements(ExpectOK{}), kTol));
+  EXPECT_NEAR_TOL(actors.soft->GetRootTransform(), softs[0]->GetRootTransform(), kTol);
+  EXPECT_TRUE(NearEqualSpan(GetPose(actors.articulated), GetPose(reloadedChain), kTol));
+  EXPECT_NEAR_TOL(actors.articulated->GetRootTransform(), reloadedChain->GetRootTransform(), kTol);
+  EXPECT_TRUE(NearEqualSpan(GetPose(actors.skinned), GetPose(reloadedSkinned), kTol));
+  EXPECT_NEAR_TOL(actors.skinned->GetRootTransform(), reloadedSkinned->GetRootTransform(), kTol);
+  EXPECT_TRUE(NearEqualSpan(
+      GetElasticDisplacements(_scene, nestedSoft),
+      GetElasticDisplacements(reloaded, reloadedSkinned->GetNestedSoftActors(ExpectOK{})[0]),
+      kTol));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    PrefabExport,
+    PrefabExportCurrentPoseRoundTrip,
+    ::testing::Values(PoseSource::SetDirectly, PoseSource::SteppedUnderGravity));
+
+// ExportActor honors ExportParams::exportCurrentPose and serializes the current pose.
+TEST_IF_F(MOCHI_USE_HDF5, PrefabExportCurrentPoseTest, ExportActor_CurrentPose) {
+  SetExportActorPoses(_scene, actors);
+  auto tempDir = CreateTempDirectory("export_actor_current_pose", ExpectOK{});
+
+  auto exportActor = [&](Actor const* actor, char const* name, prefab::ExportParams const& params) {
+    prefab::ExportActor(actor, name, tempDir.Path().string(), params, ExpectOK{});
+    return prefab::ShallowLoadFromFile(
+        (tempDir.Path() / name / (std::string(name) + ".mochi_scene")).string(), ExpectOK{});
+  };
+
+  auto const soft = exportActor(actors.soft, "soft", {.exportCurrentPose = true});
+  auto const chain = exportActor(actors.articulated, "chain", {.exportCurrentPose = true});
+  ASSERT_EQ(1, isize(soft.actors.soft));
+  ASSERT_EQ(1, isize(chain.actors.articulated));
+  ASSERT_TRUE(soft.actors.soft[0].nodeDisplacements.has_value());
+  ASSERT_TRUE(chain.actors.articulated[0].jointPose.has_value());
+  EXPECT_SPAN_EQ(actors.soft->GetDisplacements(ExpectOK{}), *soft.actors.soft[0].nodeDisplacements);
+  EXPECT_SPAN_EQ(GetPose(actors.articulated), *chain.actors.articulated[0].jointPose);
+
+  auto const softRest = exportActor(actors.soft, "soft_rest", {});
+  auto const chainRest = exportActor(actors.articulated, "chain_rest", {});
+  ASSERT_EQ(1, isize(softRest.actors.soft));
+  ASSERT_EQ(1, isize(chainRest.actors.articulated));
+  EXPECT_FALSE(softRest.actors.soft[0].nodeDisplacements.has_value());
+  EXPECT_FALSE(chainRest.actors.articulated[0].jointPose.has_value());
+}
+
+#if MOCHI_USE_HDF5 && MOCHI_ENABLE_ROM_ACTORS
+#define MOCHI_HDF5_AND_ROM 1
+#else
+#define MOCHI_HDF5_AND_ROM 0
+#endif
+
+// ROM soft actors recompute displacements from their reduced state, so none are exported.
+TEST_IF(MOCHI_HDF5_AND_ROM, PrefabExport, ExportScene_RomSoftActorExportsNoDisplacements) {
+  auto* context = CreateContext(0);
+  MOCHI_DEFER(DestroyContext(context));
+  auto* scene = context->CreateScene("rom");
+  MOCHI_DEFER(context->DestroyScene(scene));
+
+  SoftActorParams softParams;
+  softParams.name = "RomSoft";
+  softParams.shape = CreateUnitCubeTetMeshShape(context);
+  experimental::ExperimentalSoftActorParams experimentalParams;
+  experimentalParams.rom = experimental::RomParams{.source = "polynomial_crom_order_1"};
+  Actor* rom = experimental::CreateSoftActor(scene, softParams, experimentalParams, ExpectOK{});
+  for (int i = 0; i < 5; ++i) {
+    scene->Step(0.01);
+  }
+  auto const displacements = rom->GetDisplacements(ExpectOK{});
+  ASSERT_TRUE(std::ranges::any_of(displacements, [](real d) { return d != 0_r; }));
+
+  auto tempDir = CreateTempDirectory("export_rom_displacements", ExpectOK{});
+  auto const exported = ExportAndLoad(scene, tempDir.Path(), {.exportCurrentPose = true});
+  ASSERT_EQ(1, isize(exported.actors.soft));
+  EXPECT_FALSE(exported.actors.soft[0].nodeDisplacements.has_value());
+}
+
+#undef MOCHI_HDF5_AND_ROM

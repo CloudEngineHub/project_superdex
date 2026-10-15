@@ -3089,12 +3089,43 @@ class ExportParams:
         """
     @exclude_actors.setter
     def exclude_actors(self, value: mochi_physics.ArrayLikeActorHandle) -> None: ...
+    export_current_pose: bool
+    """Whether to export the current pose of soft and articulated actors.
+
+    When true, the current elastic displacements of soft actors (including nested
+    soft actors of soft-skinned actors) are written to
+    :attr:`~superdex.physics.prefab.SoftActorPrefab.node_displacements`, and the
+    current joint pose of articulated actors (including soft-skinned skeletons) is
+    written to :attr:`~superdex.physics.prefab.ArticulatedActorPrefab.joint_pose`.
+    Adding the exported prefab to a scene then restores that pose. Actors exactly at
+    rest omit these fields.
+
+    Note:
+        When false (the default), soft displacement and articulated joint pose
+        fields are omitted. Actor transforms are exported regardless of this option.
+
+    Note:
+        Displacements of ROM soft actors are never exported.
+
+    Note:
+        Velocities (soft nodal and articulated joint) are never exported.
+
+    Note:
+        A prefab with exported soft displacements cannot be added to a scene with
+        ``mochi::experimental::RomParams``. Set this to false to export a prefab for
+        that use.
+
+    Warning:
+        This documentation references the following C++ API, which is not available
+        in Python: ``mochi::experimental::RomParams``.
+    """
     @overload
     def __init__(self) -> None: ...
     @overload
     def __init__(
         self,
         exclude_actors: mochi_physics.ArrayLikeActorHandle = ...,
+        export_current_pose: bool = ...,
     ) -> None: ...
 
 def load_from_file(prefab_path: str, root_path: str) -> ScenePrefab:
@@ -3628,8 +3659,9 @@ def export_scene(
         shapes are NOT exported.
 
     Warning:
-        For articulated actors, current joint pose and joint velocities are NOT
-        exported.
+        Velocities are NOT exported. Soft actor displacements and articulated joint
+        poses are exported only when
+        :attr:`~superdex.physics.prefab.ExportParams.export_current_pose` is true.
 
     Warning:
         Scene export does not record explicit settings that enable contact between

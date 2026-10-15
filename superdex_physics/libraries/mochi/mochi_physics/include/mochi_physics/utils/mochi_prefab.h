@@ -393,6 +393,7 @@ EnsureFullyLoaded(ScenePrefab& prefab, std::string_view rootPath, Context* conte
 
 struct ExportParams {
   DynamicArray<ActorHandle> excludeActors{};
+  bool exportCurrentPose = false;
 };
 
 MOCHI_API void ExportScene(

@@ -19,6 +19,12 @@ from test.conftest import assets_dir, mochi, MochiTestBase, requires_internal_as
 
 
 class TestPrefab(MochiTestBase):
+    def test_export_params_current_pose_defaults_to_false(self):
+        self.assertFalse(mochi.prefab.ExportParams().export_current_pose)
+        self.assertTrue(
+            mochi.prefab.ExportParams(export_current_pose=True).export_current_pose
+        )
+
     @requires_internal_assets
     def test_add_to_scene_returns_result(self):
         """Verify that add_to_scene returns an AddToSceneResult with actors and constraints."""
@@ -411,7 +417,7 @@ class TestPrefab(MochiTestBase):
 
     @requires_internal_assets
     def test_export_actor_with_and_without_params(self):
-        """Verify export_actor with default params and with ExportParams, which it ignores."""
+        """Verify export_actor with default params and exclude_actors, which it ignores."""
         prefab_json = """{
             "actors": {
                 "rigid": [{"name": "Box", "shape": "cube/cube_minimal.mochi.json"}]

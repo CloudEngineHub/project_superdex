@@ -299,6 +299,7 @@ static_assert(std::is_same_v<decltype(static_cast<mochi::DynamicArray<mochi::Con
 
 // struct mochi::prefab::ExportParams
 static_assert(std::is_same_v<decltype(&mochi::prefab::ExportParams::excludeActors), mochi::DynamicArray<mochi::ActorHandle> mochi::prefab::ExportParams::*>, "\n  ERROR: Field mochi::prefab::ExportParams::excludeActors is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(&mochi::prefab::ExportParams::exportCurrentPose), bool mochi::prefab::ExportParams::*>, "\n  ERROR: Field mochi::prefab::ExportParams::exportCurrentPose is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
 
 // free function mochi::prefab::LoadFromFile
 static_assert(std::is_same_v<decltype(&mochi::prefab::LoadFromFile), mochi::prefab::ScenePrefab (*)(std::string_view, std::string_view, mochi::Context*, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::LoadFromFile is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
@@ -1503,6 +1504,10 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     mochi::prefab::PrefabParams params{};
     MOCHI_ASSERT_EQ(params.scale, 1.0_r, "DSL default value for PrefabParams::scale doesn't match C++ default. DSL says 1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.applySceneSettings == bool(true)), "DSL default value for PrefabParams::applySceneSettings doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::prefab::ExportParams params{};
+    MOCHI_ASSERT((params.exportCurrentPose == bool(false)), "DSL default value for ExportParams::exportCurrentPose doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::experimental::DisplacementControlActuatorParams params{};

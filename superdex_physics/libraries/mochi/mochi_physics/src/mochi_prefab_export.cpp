@@ -359,6 +359,14 @@ static RigidActorPrefab ExportRigidActor(
   return prefab;
 }
 
+// Actors at rest omit their soft displacements and joint pose.
+[[nodiscard]] static std::optional<DynamicArray<real>> NonZeroOrNullopt(Span<real const> values) {
+  if (std::ranges::all_of(values, [](real v) { return v == 0_r; })) {
+    return std::nullopt;
+  }
+  return DynamicArray<real>(values.begin(), values.end());
+}
+
 static SoftActorPrefab ExportSoftActor(
     Actor const* actor,
     entt::registry const& registry,
@@ -368,6 +376,7 @@ static SoftActorPrefab ExportSoftActor(
     std::unordered_map<std::string, int>& usedFileNames,
     std::string_view assetsDir,
     std::string_view relativePrefix,
+    bool exportCurrentPose,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
 
@@ -427,6 +436,18 @@ static SoftActorPrefab ExportSoftActor(
   // Export material properties
   prefab.material = actor->GetSoftMaterialParams(error);
   MOCHI_ERROR_RETURN(error, {});
+
+  // Read the Default layer rather than Actor::GetDisplacements, which for nested soft actors
+  // includes skinning. The Default layer is what SetDisplacements writes on load. The exported mesh
+  // is the runtime rest shape with an identity model transform, so its model space is the actor's
+  // local frame and the displacements need no remapping. ROM actors recompute displacements from
+  // their reduced state, so they are skipped.
+  if (exportCurrentPose && !registry.all_of<TagRomActor>(entity)) {
+    using ElasticDisplacement =
+        CDisplacementSlice<real, TimeStep::Current, DisplacementLayer::Default>;
+    prefab.nodeDisplacements =
+        NonZeroOrNullopt(MakeConstSpan(registry.get<ElasticDisplacement const>(entity).value));
+  }
 
   MOCHI_LOG("Exported soft actor '%s'", prefab.name.c_str());
   return prefab;
@@ -593,6 +614,7 @@ static ArticulatedActorPrefab ExportArticulatedActorImpl(
     std::unordered_map<std::string, int>& usedFileNames,
     std::string_view assetsDir,
     std::string_view relativePrefix,
+    bool exportCurrentPose,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
   MOCHI_ASSERT(actor != nullptr);
@@ -793,9 +815,15 @@ static ArticulatedActorPrefab ExportArticulatedActorImpl(
   prefabActor.links = std::move(links);
   prefabActor.skin = std::move(skin);
 
-  // Joint velocities are not currently exported. If we ever want this, then we will probably also
-  // want the current pose (not necessarily the rest pose).
-  prefabActor.jointVelocities = std::nullopt;
+  // The root transform is the fixed base frame, so the joint pose (including any free root joint)
+  // fully describes the current configuration. Joint velocities are not exported.
+  if (exportCurrentPose) {
+    DynamicArray<real> pose;
+    pose.resize_noinit(actor->GetNumDofs());
+    actor->GetArticulatedPose(pose, error);
+    MOCHI_ERROR_RETURN(error, {});
+    prefabActor.jointPose = NonZeroOrNullopt(pose);
+  }
 
   MOCHI_LOG("Exported articulated actor '%s'", prefabActor.name.c_str());
 
@@ -811,6 +839,7 @@ static SoftSkinnedActorPrefab ExportSoftSkinnedActor(
     std::unordered_map<std::string, int>& usedFileNames,
     std::string_view assetsDir,
     std::string_view relativePrefix,
+    bool exportCurrentPose,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
 
@@ -826,6 +855,7 @@ static SoftSkinnedActorPrefab ExportSoftSkinnedActor(
       usedFileNames,
       assetsDir,
       relativePrefix,
+      exportCurrentPose,
       error);
   MOCHI_ERROR_RETURN(error, {});
 
@@ -847,6 +877,7 @@ static SoftSkinnedActorPrefab ExportSoftSkinnedActor(
         usedFileNames,
         assetsDir,
         relativePrefix,
+        exportCurrentPose,
         error);
     MOCHI_ERROR_RETURN(error, {});
 
@@ -962,6 +993,7 @@ static bool ExportActorToPrefab(
     std::unordered_map<std::string, int>& usedFileNames,
     std::string_view assetsDir,
     std::string_view relativePrefix,
+    bool exportCurrentPose,
     ScenePrefab& prefab,
     Error& error) {
   MOCHI_ERROR_RETURN(error, false);
@@ -992,6 +1024,7 @@ static bool ExportActorToPrefab(
           usedFileNames,
           assetsDir,
           relativePrefix,
+          exportCurrentPose,
           error);
       MOCHI_ERROR_RETURN(error, false);
       prefab.actors.soft.push_back(std::move(softPrefab));
@@ -1010,6 +1043,7 @@ static bool ExportActorToPrefab(
             usedFileNames,
             assetsDir,
             relativePrefix,
+            exportCurrentPose,
             error);
         MOCHI_ERROR_RETURN(error, false);
         prefab.actors.softSkinned.push_back(std::move(softSkinnedPrefab));
@@ -1023,6 +1057,7 @@ static bool ExportActorToPrefab(
             usedFileNames,
             assetsDir,
             relativePrefix,
+            exportCurrentPose,
             error);
         MOCHI_ERROR_RETURN(error, false);
         prefab.actors.articulated.push_back(std::move(articulatedPrefab));
@@ -1253,6 +1288,7 @@ void prefab::ExportScene(
         usedFileNames,
         assetsDir.string(),
         relativePrefix,
+        params.exportCurrentPose,
         prefab,
         error);
     MOCHI_ERROR_RETURN(error);
@@ -1295,7 +1331,7 @@ void prefab::ExportActor(
     Actor const* actor,
     std::string_view exportName,
     std::string_view outputDir,
-    [[maybe_unused]] ExportParams const& params,
+    ExportParams const& params,
     Error& error) {
   MOCHI_ERROR_IF(actor == nullptr, error, "Actor must not be null");
   MOCHI_ERROR_RETURN(error);
@@ -1348,6 +1384,7 @@ void prefab::ExportActor(
       usedFileNames,
       assetsDir.string(),
       relativePrefix,
+      params.exportCurrentPose,
       prefab,
       error);
   MOCHI_ERROR_RETURN(error);
