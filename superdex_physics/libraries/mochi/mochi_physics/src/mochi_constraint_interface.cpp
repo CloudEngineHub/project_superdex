@@ -271,7 +271,7 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
 
   QueryHandle RegisterQuery(QueryType type, Error& error) override {
     constexpr bool kComputeImmediately = false;
-    return mochi::RegisterQuery(reg, e, type, kComputeImmediately, error);
+    return scene->RegisterQuery(e, type, kComputeImmediately, error);
   }
 
   void CancelQuery(QueryHandle handle) override {

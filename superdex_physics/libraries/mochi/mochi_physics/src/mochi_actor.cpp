@@ -2520,18 +2520,20 @@ class ActorInterfaceImpl : public ActorInterface {
 #undef MOCHI_ERROR_RETURN_IF_NO_CONTACT_QUERY
 
   QueryHandle RegisterQuery(QueryType type, Error& error) override {
+    auto* sceneImpl = assert_cast<SceneImpl*>(scene);
     // Bind scheduler because static actors force kComputeImmediately to true.
-    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+    ScopedSchedulerBinding schedulerBinding(sceneImpl);
 
     constexpr bool kComputeImmediately = false;
-    return mochi::RegisterQuery(reg, e, type, kComputeImmediately, error);
+    return sceneImpl->RegisterQuery(e, type, kComputeImmediately, error);
   }
 
   QueryHandle RegisterQueryAndCompute(QueryType type, Error& error) override {
-    ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(scene));
+    auto* sceneImpl = assert_cast<SceneImpl*>(scene);
+    ScopedSchedulerBinding schedulerBinding(sceneImpl);
 
     constexpr bool kComputeImmediately = true;
-    return mochi::RegisterQuery(reg, e, type, kComputeImmediately, error);
+    return sceneImpl->RegisterQuery(e, type, kComputeImmediately, error);
   }
 
   void CancelQuery(QueryHandle handle) override {

@@ -586,7 +586,8 @@ class TestScene(MochiTestBase):
             self.assertFalse(os.path.exists(temp_path))
 
             # Record a few steps
-            params = mochi.RecordingParams()
+            self._create_rigid_box_actor(scene)
+            params = mochi.RecordingParams.all()
             scene.start_recording(file_path=temp_path, params=params)
             scene.step(0.1)
             scene.step(0.2)

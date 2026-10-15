@@ -35,6 +35,8 @@
 
 namespace mochi {
 
+class SceneImpl;
+
 /**********************************************************************************************
   SceneRecorder captures data from a mochi::Scene and records it to disk using a GroupWriter
   interface. The GroupWriter determines the file format (example: see CreateGroupWriterHDF5).
@@ -50,7 +52,7 @@ class SceneRecorder final {
   // Construct a SceneRecorder. It will take ownership of the provided RecordWriter.
   SceneRecorder(
       std::unique_ptr<GroupWriter> writer,
-      entt::registry& registry,
+      SceneImpl& scene,
       RecordingParams const& params = {});
 
   // Call before a simulation step
@@ -80,6 +82,7 @@ class SceneRecorder final {
   void OnCreateActor(entt::registry& reg, entt::entity e);
   void OnDestroyActor(entt::registry& reg, entt::entity e);
 
+  SceneImpl& _scene;
   entt::registry& _registry;
   std::unique_ptr<GroupWriter> _writer;
   std::unique_ptr<GroupWriter::ScopeGuard> _eventsGroup;

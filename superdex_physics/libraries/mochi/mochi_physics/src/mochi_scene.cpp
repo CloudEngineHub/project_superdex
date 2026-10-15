@@ -966,7 +966,7 @@ void SceneImpl::StartRecording(
   writer->SetCompression(GroupWriter::kNoCompression);
 
   // Create a SceneRecorder
-  auto recorder = std::make_unique<SceneRecorder>(std::move(writer), _registry, params);
+  auto recorder = std::make_unique<SceneRecorder>(std::move(writer), *this, params);
 
   if (!recorder->IsOK()) {
     error = recorder->GetError().Copy();
@@ -3245,7 +3245,15 @@ void SceneImpl::SetThreadAffinity() {
 }
 
 QueryHandle SceneImpl::NewQueryHandle(QueryType type) {
-  return _registry.ctx<CQueryHandleAllocator>().NewHandleThreadSafe(type);
+  return CreateQueryHandle(type, _nextQueryId++);
+}
+
+QueryHandle
+SceneImpl::RegisterQuery(entt::entity e, QueryType type, bool computeImmediately, Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  QueryHandle const handle = NewQueryHandle(type);
+  mochi::RegisterQuery(_registry, e, handle, computeImmediately, error);
+  return error.IsOK() ? handle : QueryHandle{};
 }
 
 void SceneImpl::RegisterActorQuery(
@@ -3257,7 +3265,7 @@ void SceneImpl::RegisterActorQuery(
   MOCHI_ERROR_IF(!preallocatedHandle.IsValid(), error, "Invalid QueryHandle");
   MOCHI_ERROR_RETURN(error);
   entt::entity e = GetEntity(_registry, actor->GetHandle(), error);
-  RegisterQuery(_registry, e, preallocatedHandle, computeImmediately, error);
+  mochi::RegisterQuery(_registry, e, preallocatedHandle, computeImmediately, error);
 }
 
 // Called when a new actor is created. Attempts to catch bugs caused by inconsistently

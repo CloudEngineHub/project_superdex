@@ -203,6 +203,9 @@ class SceneImpl final : public Scene {
   [[nodiscard]] bool TryClaimOwnership();
   void SetThreadAffinity();
   QueryHandle NewQueryHandle(QueryType type); // thread-safe
+  // Allocate a QueryHandle and register it with entity e. Returns an invalid handle on failure.
+  [[nodiscard]] QueryHandle
+  RegisterQuery(entt::entity e, QueryType type, bool computeImmediately, Error& error);
   void RegisterActorQuery(
       Actor* actor,
       QueryHandle preallocatedHandle,
@@ -296,6 +299,7 @@ class SceneImpl final : public Scene {
   std::string const _name;
   uint64_t const _sceneId;
   std::atomic<bool> _ownershipClaimed = false;
+  // Scene thread only, ctx included: functions marked thread-safe must not access the registry.
   entt::registry _registry;
   PerformanceStats _lastPerformanceStats;
   SolverStats _lastSolverStats;
@@ -358,6 +362,9 @@ class SceneImpl final : public Scene {
   std::atomic<uint32_t> _nextCallbackId = 1;
   CallbackSet<void(StepInfo const&)> _preStepCallbacks;
   CallbackSet<void(StepInfo const&)> _postStepCallbacks;
+
+  // Queries:
+  std::atomic<uint32_t> _nextQueryId = 1;
 
   // Debugging:
   std::unique_ptr<DebugDrawInternal> _debugDraw; // ptr so we don't have to include the header here

@@ -36,10 +36,6 @@
 
 using namespace mochi;
 
-QueryHandle CQueryHandleAllocator::NewHandleThreadSafe(QueryType type) {
-  return CreateQueryHandle(type, ++(*nextId));
-}
-
 namespace {
 // Adds, removes or refs an auxiliary (visual or contact skin) mesh query, whose positions and
 // normals are computed together.
@@ -292,18 +288,6 @@ void mochi::SetErrorIfQueryNotSupported(
   }
 }
 
-QueryHandle mochi::RegisterQuery(
-    entt::registry& reg,
-    entt::entity e,
-    QueryType type,
-    bool computeImmediately,
-    Error& error) {
-  MOCHI_ERROR_RETURN(error, {});
-  QueryHandle newHandle = reg.ctx<CQueryHandleAllocator>().NewHandleThreadSafe(type);
-  RegisterQuery(reg, e, newHandle, computeImmediately, error);
-  return error.IsOK() ? newHandle : QueryHandle{};
-}
-
 void mochi::RegisterQuery(
     entt::registry& reg,
     entt::entity e,
@@ -381,7 +365,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CQueryArticulatedControllerForce>(reg);
   ecs::RegisterComponent<CQueryContactPoints>(reg);
   ecs::RegisterComponent<CQueryContactSamples>(reg);
-  ecs::RegisterComponent<CQueryHandleAllocator>(reg);
   ecs::RegisterComponent<CQuerySdfDistances>(reg);
   ecs::RegisterComponent<CQueryElasticEnergy>(reg);
   ecs::RegisterComponent<CQueryNodePositions>(reg);
@@ -397,9 +380,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CQueryElementsDeformationGradient>(reg);
   ecs::RegisterComponent<TagQueryActiveContacts>(reg);
   ecs::RegisterComponent<CQueryConstraintForce>(reg);
-
-  // Global Context
-  reg.set<CQueryHandleAllocator>();
 }
 } // namespace mochi::query
 

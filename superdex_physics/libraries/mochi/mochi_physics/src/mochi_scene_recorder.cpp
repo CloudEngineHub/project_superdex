@@ -23,6 +23,7 @@
 #include "mochi_ecs_utils.h"
 #include "mochi_island.h"
 #include "mochi_rod.h"
+#include "mochi_scene.h"
 #include "mochi_sleep.h"
 #include "mochi_soft_rom_systems.h"
 
@@ -44,9 +45,9 @@ namespace mochi {
 
 SceneRecorder::SceneRecorder(
     std::unique_ptr<GroupWriter> writer,
-    entt::registry& registry,
+    SceneImpl& scene,
     RecordingParams const& params)
-    : _registry(registry), _writer(std::move(writer)), _params(params) {
+    : _scene(scene), _registry(scene.GetRegistry()), _writer(std::move(writer)), _params(params) {
   // Create a scope called "events" at the root of the file. Every new event will be added as a
   // sub-group. Note that groups can remember the order in which their members were created, so they
   // can be iterated in the same order later. The root of an HDF5 file does not appear to have this
@@ -131,17 +132,18 @@ void SceneRecorder::OnCreateActor(entt::registry& reg, entt::entity e) {
     constexpr bool kComputeImmediately = false;
     if (_params.recordContactPoints) {
       Error ignore; // Some actors may not support this query. Just skip it.
-      auto query = RegisterQuery(reg, e, QueryType::ContactPoints, kComputeImmediately, ignore);
+      auto query = _scene.RegisterQuery(e, QueryType::ContactPoints, kComputeImmediately, ignore);
       _queries.emplace_back(e, query);
     }
     if (_params.recordNodeContactForces) {
       Error ignore; // Some actors may not support this query. Just skip it.
-      auto query = RegisterQuery(reg, e, QueryType::NodeContactForces, kComputeImmediately, ignore);
+      auto query =
+          _scene.RegisterQuery(e, QueryType::NodeContactForces, kComputeImmediately, ignore);
       _queries.emplace_back(e, query);
     }
     if (_params.recordSdfDistances) {
       Error ignore; // Some actors may not support this query. Just skip it.
-      auto query = RegisterQuery(reg, e, QueryType::SdfDistances, kComputeImmediately, ignore);
+      auto query = _scene.RegisterQuery(e, QueryType::SdfDistances, kComputeImmediately, ignore);
       _queries.emplace_back(e, query);
     }
   }

@@ -1774,7 +1774,7 @@ TEST_F(MochiRodSurfaceMeshes, QueryWithoutVisualMeshFails) {
   params.shape = shape;
   Actor* actor = CreateRodActor(_scene, params, ErrorAssert{});
 
-  actor->RegisterQuery(QueryType::VisualNodePositions, test::ExpectNotOK{});
+  EXPECT_FALSE(actor->RegisterQuery(QueryType::VisualNodePositions, test::ExpectNotOK{}).IsValid());
 }
 
 TEST_F(MochiRodSurfaceMeshes, UnskinnedVisualMeshIsIgnored) {

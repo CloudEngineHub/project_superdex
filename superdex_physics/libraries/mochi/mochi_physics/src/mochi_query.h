@@ -25,7 +25,6 @@
 #include <mochi_physics/mochi_physics.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cstddef>
 #include <unordered_map>
 #include <unordered_set>
@@ -35,17 +34,6 @@ namespace mochi {
 /**********************************************************************
   ECS Components
 */
-
-// Global to the mochi::Scene. Used to allocate QueryHandles.
-struct CQueryHandleAllocator : NoCopy {
-  // Combine the QueryType with a new ID to form a new QueryHandle
-  QueryHandle NewHandleThreadSafe(QueryType type);
-
-  // Next unique ID to return to the user as a QueryHandle.
-  // std::atomic is used so that AsyncScene can pre-allocate handles from another thread.
-  // std::unique_ptr is used so that the ECS component can be move constructed/assigned.
-  std::unique_ptr<std::atomic<uint32_t>> nextId = std::make_unique<std::atomic<uint32_t>>(0);
-};
 
 // Stores the QueryHandles currently registered with an actor
 struct CActiveQuerySet : NoCopy {
@@ -311,16 +299,7 @@ void SetErrorIfQueryNotSupported(
     QueryType type,
     Error& error);
 
-// Register a new query by QueryType
-QueryHandle RegisterQuery(
-    entt::registry& reg,
-    entt::entity e,
-    QueryType type,
-    bool computeImmediately,
-    Error& error);
-
 // Register a new query using a QueryHandle that was already allocated.
-// Used to support registration via AsyncScene.
 void RegisterQuery(
     entt::registry& reg,
     entt::entity e,
