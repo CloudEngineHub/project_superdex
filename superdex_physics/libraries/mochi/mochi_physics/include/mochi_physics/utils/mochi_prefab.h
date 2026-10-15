@@ -108,6 +108,7 @@ struct SoftActorPrefab : public SoftActorParams {
   Real3 renderModelScale = {1_r, 1_r, 1_r};
   Quaternion renderModelRotation;
   Real3 renderModelTranslation = {};
+  std::optional<DynamicArray<real>> nodeDisplacements;
 };
 
 struct ArticulatedJointPrefab : ArticulatedJointParams {
@@ -154,6 +155,7 @@ struct ArticulatedActorPrefab {
   DynamicArray<ArticulatedLinkPrefab> links;
   std::optional<ArticulatedSkinPrefab> skin;
   std::optional<DynamicArray<real>> jointVelocities;
+  std::optional<DynamicArray<real>> jointPose;
 
   bool operator==(ArticulatedActorPrefab const&) const = default;
 };

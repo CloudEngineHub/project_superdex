@@ -176,8 +176,10 @@ struct prefab::SoftActorPrefab(SoftActorParams) [remove_reflection_fields("world
 
   // @brief Scale [x, y, z] to bake into the shape file.
   //
-  // @note All components must be strictly positive and finite. Negative scale (mirroring) is not
-  // supported and rejected at @ref AddToScene.
+  // @note All components must be non-zero and finite. Negative components mirror the corresponding
+  // model-space axes, including @ref nodeDisplacements.
+  // @note When used in @ref SoftSkinnedActorPrefab::softParams, all components must be equal and
+  // strictly positive.
   // @note If @ref flowFile is set, @ref scale must be (1, 1, 1).
   // @note Non-uniform scale is supported only for shape data that supports arbitrary per-axis bake
   // scale. Unsupported scale values are rejected when the shape is loaded.
@@ -226,6 +228,20 @@ struct prefab::SoftActorPrefab(SoftActorParams) [remove_reflection_fields("world
   //
   // @note Ignored if @ref renderModelFile is empty.
   Real3 renderModelTranslation [units("m")];
+
+  // @brief Optional initial nodal displacements in model space, flattened as
+  // [x0, y0, z0, x1, y1, z1, ...].
+  //
+  // @details Values are expressed in the model frame of @ref shapeFile, the same frame as its node
+  // positions. The model transform baked into the shape (@ref scale, @ref shapeRotation, and the
+  // effective prefab scale) is applied to the displacements too. @ref shapeTranslation does not
+  // affect them. Displacements for a preset @ref SoftActorParams::shape are applied unchanged, like
+  // its geometry. Applied right after the actor is created, see @ref Actor::SetDisplacements.
+  //
+  // @note Ignored if unset or empty. Otherwise, must contain 3 finite values per simulation node.
+  // @note For nested soft actors in @ref SoftSkinnedActorPrefab::softParams, values are the soft
+  // displacements in the unposed (bind-pose) frame, before skinning is applied.
+  Optional<DynamicArray<real>> nodeDisplacements [units("m")];
 }
 
 // @brief Joint parameters for an articulated actor prefab.
@@ -377,6 +393,17 @@ struct prefab::ArticulatedActorPrefab [equality] {
   //
   // @note Units depend on joint type: [rad/s] for revolute and spherical, [m/s] for prismatic.
   Optional<DynamicArray<real>> jointVelocities;
+
+  // @brief Optional initial joint pose, one value per DoF in joint order.
+  //
+  // @details Units depend on joint type: [rad] for revolute, [m] for prismatic, and a rotation
+  // vector [rad] for spherical joints and the rotational part of free joints. The translational
+  // part of free joints is in [m]. Translational DoFs scale with the articulated effective scale
+  // (@ref scale times the effective prefab scale). Rotational DoFs are not scaled. Applied right
+  // after the actor is created, see @ref Actor::SetArticulatedPoseFromJoints.
+  //
+  // @note Ignored if unset or empty. Otherwise, must contain @ref Actor::GetNumDofs finite values.
+  Optional<DynamicArray<real>> jointPose;
 }
 
 // @brief Prefab parameters for a soft-skinned actor.
@@ -1067,6 +1094,8 @@ struct prefab::PrefabParams [no_reflection] {
   //   - Mesh geometry (link / actor shapes are loaded at the cumulative scale)
   //   - Joint and link translations, cycle joint anchors
   //   - Prismatic joint position limits (Real3, in meters)
+  //   - Soft actor @ref SoftActorPrefab::nodeDisplacements and translational
+  //     DoFs of @ref ArticulatedActorPrefab::jointPose
   //   - Constraint geometric target and limit distances [m], including rigid
   //     prismatic joint limits, world-space position targets, rigid actor-local
   //     pivot/joint positions in @ref RigidPivotPositionConstraintPrefab,

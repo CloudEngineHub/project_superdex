@@ -202,7 +202,8 @@
 ///
 /// @brief Scale [x, y, z] to bake into the shape file.
 ///
-/// @note All components must be strictly positive and finite. Negative scale (mirroring) is not supported and rejected at @ref mochi::prefab::AddToScene "AddToScene".
+/// @note All components must be non-zero and finite. Negative components mirror the corresponding model-space axes, including @ref mochi::prefab::SoftActorPrefab::nodeDisplacements "nodeDisplacements".
+/// @note When used in @ref mochi::prefab::SoftSkinnedActorPrefab::softParams "SoftSkinnedActorPrefab::softParams", all components must be equal and strictly positive.
 /// @note If @ref mochi::prefab::SoftActorPrefab::flowFile "flowFile" is set, @ref mochi::prefab::SoftActorPrefab::scale "scale" must be (1, 1, 1).
 /// @note Non-uniform scale is supported only for shape data that supports arbitrary per-axis bake scale. Unsupported scale values are rejected when the shape is loaded.
 ///
@@ -259,6 +260,16 @@
 /// @brief Translation [x, y, z] to apply to the render model.
 ///
 /// @note Ignored if @ref mochi::prefab::SoftActorPrefab::renderModelFile "renderModelFile" is empty.
+///
+
+/// @var mochi::prefab::SoftActorPrefab::nodeDisplacements
+///
+/// @brief Optional initial nodal displacements in model space, flattened as [x0, y0, z0, x1, y1, z1, ...].
+///
+/// @details Values are expressed in the model frame of @ref mochi::prefab::SoftActorPrefab::shapeFile "shapeFile", the same frame as its node positions. The model transform baked into the shape (@ref mochi::prefab::SoftActorPrefab::scale "scale", @ref mochi::prefab::SoftActorPrefab::shapeRotation "shapeRotation", and the effective prefab scale) is applied to the displacements too. @ref mochi::prefab::SoftActorPrefab::shapeTranslation "shapeTranslation" does not affect them. Displacements for a preset @ref mochi::SoftActorParams::shape "SoftActorParams::shape" are applied unchanged, like its geometry. Applied right after the actor is created, see @ref mochi::Actor::SetDisplacements "Actor::SetDisplacements".
+///
+/// @note Ignored if unset or empty. Otherwise, must contain 3 finite values per simulation node.
+/// @note For nested soft actors in @ref mochi::prefab::SoftSkinnedActorPrefab::softParams "SoftSkinnedActorPrefab::softParams", values are the soft displacements in the unposed (bind-pose) frame, before skinning is applied.
 ///
 
 /// @struct mochi::prefab::ArticulatedJointPrefab
@@ -437,6 +448,15 @@
 /// @brief Optional initial velocity per DoF.
 ///
 /// @note Units depend on joint type: [rad/s] for revolute and spherical, [m/s] for prismatic.
+///
+
+/// @var mochi::prefab::ArticulatedActorPrefab::jointPose
+///
+/// @brief Optional initial joint pose, one value per DoF in joint order.
+///
+/// @details Units depend on joint type: [rad] for revolute, [m] for prismatic, and a rotation vector [rad] for spherical joints and the rotational part of free joints. The translational part of free joints is in [m]. Translational DoFs scale with the articulated effective scale (@ref mochi::prefab::ArticulatedActorPrefab::scale "scale" times the effective prefab scale). Rotational DoFs are not scaled. Applied right after the actor is created, see @ref mochi::Actor::SetArticulatedPoseFromJoints "Actor::SetArticulatedPoseFromJoints".
+///
+/// @note Ignored if unset or empty. Otherwise, must contain @ref mochi::Actor::GetNumDofs "Actor::GetNumDofs" finite values.
 ///
 
 /// @struct mochi::prefab::SoftSkinnedActorPrefab
@@ -1132,6 +1152,7 @@
 /// - Mesh geometry (link / actor shapes are loaded at the cumulative scale)
 /// - Joint and link translations, cycle joint anchors
 /// - Prismatic joint position limits (Real3, in meters)
+/// - Soft actor @ref mochi::prefab::SoftActorPrefab::nodeDisplacements "SoftActorPrefab::nodeDisplacements" and translational DoFs of @ref mochi::prefab::ArticulatedActorPrefab::jointPose "ArticulatedActorPrefab::jointPose"
 /// - Constraint geometric target and limit distances [m], including rigid prismatic joint limits, world-space position targets, rigid actor-local pivot/joint positions in @ref mochi::prefab::RigidPivotPositionConstraintPrefab "RigidPivotPositionConstraintPrefab", @ref mochi::prefab::RigidPivotToRigidTargetConstraintPrefab "RigidPivotToRigidTargetConstraintPrefab", and @ref mochi::prefab::RigidSphericalJointConstraintPrefab "RigidSphericalJointConstraintPrefab"; the rigid-local attachment/search point in @ref mochi::prefab::DeformableNodeToRigidConstraintPrefab "DeformableNodeToRigidConstraintPrefab"; and translational single-DoF target/range values in @ref mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab "ArticulatedSingleDofTargetConstraintPrefab" and @ref mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab "ArticulatedSingleDofRangeConstraintPrefab". Actor-local constraint distances use the referenced actor's prefab metric scale, so standalone rigid/soft shape-bake scale fields are not applied again.
 /// - User-supplied inertia overrides on rigid and articulated link actors: center of mass scales componentwise by the signed effective scale, mass scales by the absolute effective volume scale, moment of inertia uses the corresponding diagonal inertia transform. For a purely uniform effective scale s, this reduces to:
 /// @code

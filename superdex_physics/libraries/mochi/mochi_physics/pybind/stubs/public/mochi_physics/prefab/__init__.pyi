@@ -985,9 +985,14 @@ class SoftActorPrefab(mochi_physics.SoftActorParams):
         """Scale [x, y, z] to bake into the shape file.
 
         Note:
-            All components must be strictly positive and finite. Negative scale
-            (mirroring) is not supported and rejected at
-            :func:`~superdex.physics.prefab.add_to_scene`.
+            All components must be non-zero and finite. Negative components mirror the
+            corresponding model-space axes, including
+            :attr:`~superdex.physics.prefab.SoftActorPrefab.node_displacements`.
+
+        Note:
+            When used in
+            :attr:`~superdex.physics.prefab.SoftSkinnedActorPrefab.soft_params`, all
+            components must be equal and strictly positive.
 
         Note:
             If :attr:`~superdex.physics.prefab.SoftActorPrefab.flow_file` is set,
@@ -1083,6 +1088,39 @@ class SoftActorPrefab(mochi_physics.SoftActorParams):
         """
     @render_model_translation.setter
     def render_model_translation(self, value: mochi_physics.Real3Like) -> None: ...
+    @property
+    def node_displacements(self) -> Optional[mochi_physics.DynamicArrayReal]:
+        """Optional initial nodal displacements in model space, flattened as [x0, y0,
+        z0,
+        x1, y1, z1, ...].
+
+        Values are expressed in the model frame of
+        :attr:`~superdex.physics.prefab.SoftActorPrefab.shape_file`, the same frame as
+        its node positions. The model transform baked into the shape
+        (:attr:`~superdex.physics.prefab.SoftActorPrefab.scale`,
+        :attr:`~superdex.physics.prefab.SoftActorPrefab.shape_rotation`, and the
+        effective prefab scale) is applied to the displacements too.
+        :attr:`~superdex.physics.prefab.SoftActorPrefab.shape_translation` does not
+        affect them. Displacements for a preset
+        :attr:`~superdex.physics.SoftActorParams.shape` are applied unchanged, like its
+        geometry. Applied right after the actor is created, see
+        :meth:`~superdex.physics.Actor.set_displacements`.
+
+        Note:
+            Ignored if unset or empty. Otherwise, must contain 3 finite values per
+            simulation node.
+
+        Note:
+            For nested soft actors in
+            :attr:`~superdex.physics.prefab.SoftSkinnedActorPrefab.soft_params`, values
+            are the soft displacements in the unposed (bind-pose) frame, before skinning
+            is applied.
+        """
+    @node_displacements.setter
+    def node_displacements(
+        self,
+        value: Optional[mochi_physics.ArrayLikeReal],
+    ) -> None: ...
     @overload
     def __init__(self) -> None: ...
     @overload
@@ -1115,6 +1153,7 @@ class SoftActorPrefab(mochi_physics.SoftActorParams):
         render_model_scale: mochi_physics.Real3Like = ...,
         render_model_rotation: mochi_physics.QuaternionLike = ...,
         render_model_translation: mochi_physics.Real3Like = ...,
+        node_displacements: Optional[mochi_physics.ArrayLikeReal] = ...,
     ) -> None: ...
 
 class ArticulatedJointPrefab(mochi_physics.ArticulatedJointParams):
@@ -1443,6 +1482,25 @@ class ArticulatedActorPrefab:
         self,
         value: Optional[mochi_physics.ArrayLikeReal],
     ) -> None: ...
+    @property
+    def joint_pose(self) -> Optional[mochi_physics.DynamicArrayReal]:
+        """Optional initial joint pose, one value per DoF in joint order.
+
+        Units depend on joint type: [rad] for revolute, [m] for prismatic, and a
+        rotation vector [rad] for spherical joints and the rotational part of free
+        joints. The translational part of free joints is in [m]. Translational DoFs
+        scale with the articulated effective scale
+        (:attr:`~superdex.physics.prefab.ArticulatedActorPrefab.scale` times the
+        effective prefab scale). Rotational DoFs are not scaled. Applied right after the
+        actor is created, see
+        :meth:`~superdex.physics.Actor.set_articulated_pose_from_joints`.
+
+        Note:
+            Ignored if unset or empty. Otherwise, must contain
+            :meth:`~superdex.physics.Actor.get_num_dofs` finite values.
+        """
+    @joint_pose.setter
+    def joint_pose(self, value: Optional[mochi_physics.ArrayLikeReal]) -> None: ...
     @overload
     def __init__(self) -> None: ...
     @overload
@@ -1458,6 +1516,7 @@ class ArticulatedActorPrefab:
         links: ArrayLikeArticulatedLinkPrefab = ...,
         skin: Optional[ArticulatedSkinPrefab] = ...,
         joint_velocities: Optional[mochi_physics.ArrayLikeReal] = ...,
+        joint_pose: Optional[mochi_physics.ArrayLikeReal] = ...,
     ) -> None: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
@@ -2798,6 +2857,9 @@ class PrefabParams:
     - Mesh geometry (link / actor shapes are loaded at the cumulative scale)
     - Joint and link translations, cycle joint anchors
     - Prismatic joint position limits (Real3, in meters)
+    - Soft actor :attr:`~superdex.physics.prefab.SoftActorPrefab.node_displacements`
+      and translational DoFs of
+      :attr:`~superdex.physics.prefab.ArticulatedActorPrefab.joint_pose`
     - Constraint geometric target and limit distances [m], including rigid prismatic
       joint limits, world-space position targets, rigid actor-local pivot/joint
       positions in

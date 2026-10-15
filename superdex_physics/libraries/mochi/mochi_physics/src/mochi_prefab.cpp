@@ -19,14 +19,19 @@
 #include "mochi_scene.h"
 
 #include <mochi_core/mochi_platform.h>
+#include <mochi_core/utils/array_utils.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/container_utils.h>
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/file_utils.h>
 #include <mochi_core/utils/math_utils.h>
+#include <mochi_core/utils/matrix_utils.h>
+#include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/path.h>
+#include <mochi_core/utils/quaternion_utils.h>
 #include <mochi_core/utils/span.h>
+#include <mochi_core/utils/vmatrix.h>
 #include <mochi_physics/mochi_physics_experimental.h>
 #include <mochi_physics/utils/mochi_prefab.h>
 
@@ -1184,6 +1189,74 @@ static void ApplyDiagonalScaleToInertia(
   }
 }
 
+[[nodiscard]] static bool HasValues(std::optional<DynamicArray<real>> const& values) {
+  return values.has_value() && !values->empty();
+}
+
+// Authored soft displacements live in the model frame of shapeFile. The shape was baked as
+// x' = R (bakeScale * x) + t, so map the displacements through the same linear part:
+// d' = R (bakeScale * d). A preset shape handle was not baked, so leave them unchanged.
+static void ApplySoftDisplacements(
+    Actor* actor,
+    SoftActorPrefab const& prefab,
+    real prefabScale,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  if (!HasValues(prefab.nodeDisplacements)) {
+    return;
+  }
+  auto const& displacements = *prefab.nodeDisplacements;
+  int const expectedSize = isize(actor->GetDisplacements(error));
+  MOCHI_ERROR_IF(
+      isize(displacements) != expectedSize,
+      error,
+      "SoftActorPrefab::nodeDisplacements must have 3 values per simulation node.");
+  MOCHI_ERROR_RETURN(error);
+
+  Quaternion const shapeRotation = Normalize(prefab.shapeRotation);
+  Real3 const bakeScale = prefab.scale * prefabScale;
+  if (prefab.shapeFile.empty() ||
+      (bakeScale == Real3{1_r, 1_r, 1_r} && shapeRotation == Quaternion{})) {
+    actor->SetDisplacements(displacements, error);
+  } else {
+    VMatrix3x3r const bakeMatT = Transpose3x3(
+        Dot3x3(ToVMatrix3x3(shapeRotation), VDiagonalMatrix<3>(ToSimd(bakeScale, 0_r))));
+    DynamicArray<real> bakedDisplacements;
+    bakedDisplacements.resize_noinit(displacements.size());
+    ArrayRotateVectors_MatT<true>(
+        Unflatten<Real3>(bakedDisplacements), Unflatten<Real3 const>(displacements), bakeMatT);
+    actor->SetDisplacements(bakedDisplacements, error);
+  }
+}
+
+// Translational DoFs (prismatic and free-joint translation) are distances and scale with the
+// articulated effective scale. Rotational DoFs are angles and are left unchanged.
+static void ApplyJointPose(
+    Actor* actor,
+    ArticulatedActorPrefab const& prefab,
+    real effectiveScale,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  if (!HasValues(prefab.jointPose)) {
+    return;
+  }
+  MOCHI_ERROR_IF(
+      isize(*prefab.jointPose) != actor->GetNumDofs(),
+      error,
+      "ArticulatedActorPrefab::jointPose must have one value per DoF.");
+  MOCHI_ERROR_RETURN(error);
+
+  DynamicArray<real> pose = *prefab.jointPose;
+  ArticulatedShapeInfo const shapeInfo = actor->GetArticulatedShapeInfo(error);
+  MOCHI_ERROR_RETURN(error);
+  for (ArticulatedDofInfo const& dofInfo : shapeInfo.dofInfo) {
+    for (int i = dofInfo.GetTransOffset(); i < dofInfo.GetRotOffset(); ++i) {
+      pose[i] *= effectiveScale;
+    }
+  }
+  actor->SetArticulatedPoseFromJoints(pose, error);
+}
+
 static void AddToSceneImpl(
     ScenePrefab const& prefab,
     Scene* scene,
@@ -1350,6 +1423,8 @@ static void AddToSceneImpl(
     MOCHI_ERROR_RETURN(error);
     onActorCreated(newActor, actorParams.name);
     real const effectiveScale = actor.scale * params.scale;
+    ApplyJointPose(newActor, actor, effectiveScale, error);
+    MOCHI_ERROR_RETURN(error);
     recordActorPrefabMetricScale(newActor->GetHandle(), effectiveScale);
     addNestedLinksActorsToMap(newActor, actorParams.name, effectiveScale);
   }
@@ -1386,12 +1461,19 @@ static void AddToSceneImpl(
 
   // Soft Actors:
   for (auto const& actor : prefab.actors.soft) {
-    MOCHI_VALIDATE_POSITIVE_SCALE(actor.scale, "SoftActorPrefab::scale", error);
+    MOCHI_ERROR_IF_NOT(
+        IsNonZeroScale(actor.scale),
+        error,
+        "SoftActorPrefab::scale must be non-zero and finite on all 3 axes.");
     MOCHI_VALIDATE_POSE(actor.rotation, actor.translation, "SoftActorPrefab", error);
     MOCHI_ERROR_IF(
         !actor.flowFile.empty() && !NearEqual(actor.scale, Real3{1_r, 1_r, 1_r}),
         error,
         "SoftActorPrefab::scale must be (1, 1, 1) when SoftActorPrefab::flowFile is set.");
+    MOCHI_ERROR_IF(
+        romParams != nullptr && HasValues(actor.nodeDisplacements),
+        error,
+        "SoftActorPrefab::nodeDisplacements is not supported with ROM.");
     MOCHI_ERROR_RETURN(error);
 
     TransformSRT prefabFromActor(1_r, Normalize(actor.rotation), actor.translation);
@@ -1413,6 +1495,8 @@ static void AddToSceneImpl(
     Actor* newActor = CreateSoftActor(scene, actorParams, experimentalParams, error);
     MOCHI_ERROR_RETURN(error);
     onActorCreated(newActor, actorParams.name);
+    ApplySoftDisplacements(newActor, actor, params.scale, error);
+    MOCHI_ERROR_RETURN(error);
     recordActorPrefabMetricScale(newActor->GetHandle(), params.scale);
   }
 
@@ -1429,6 +1513,10 @@ static void AddToSceneImpl(
           !soft.flowFile.empty() && !NearEqual(soft.scale, Real3{1_r, 1_r, 1_r}),
           error,
           "SoftSkinnedActorPrefab::softParams[].scale must be (1, 1, 1) when SoftSkinnedActorPrefab::softParams[].flowFile is set.");
+      MOCHI_ERROR_IF(
+          romParams != nullptr && HasValues(soft.nodeDisplacements),
+          error,
+          "SoftActorPrefab::nodeDisplacements is not supported with ROM.");
     }
     MOCHI_ERROR_RETURN(error);
 
@@ -1464,6 +1552,8 @@ static void AddToSceneImpl(
     auto const& actorName = actorParams.skeletonParams.name;
     onActorCreated(newActor, actorName);
     real const skeletonEffectiveScale = actor.skeletonParams.scale * params.scale;
+    ApplyJointPose(newActor, actor.skeletonParams, skeletonEffectiveScale, error);
+    MOCHI_ERROR_RETURN(error);
     recordActorPrefabMetricScale(newActor->GetHandle(), skeletonEffectiveScale);
     addNestedLinksActorsToMap(newActor, actorName, skeletonEffectiveScale);
     MOCHI_ERROR_RETURN(error);
@@ -1475,11 +1565,13 @@ static void AddToSceneImpl(
         "Expected one nested soft actor per SoftSkinnedActorParams::softParams entry.");
     for (int i = 0; i < numSoft; ++i) {
       recordActorPrefabMetricScale(softActors[i], params.scale);
+      Actor* softActor = scene->GetActor(softActors[i]);
+      MOCHI_ASSERT(softActor != nullptr, "GetNestedSoftActors should provide valid handles.");
+      ApplySoftDisplacements(softActor, actor.softParams[i], params.scale, error);
+      MOCHI_ERROR_RETURN(error);
 
       // Also keep track of named nested soft actors so constraints can reference them.
       if (!actorName.empty()) {
-        Actor const* softActor = scene->GetActor(softActors[i]);
-        MOCHI_ASSERT(softActor != nullptr, "GetNestedSoftActors should provide valid handles.");
         DynamicString const softName = GetNestedActorLocalName(softActor->GetName());
         MOCHI_ASSERT(!softName.empty(), "Nested soft local name must be non-empty.");
         RegisterActorName(outActorNames, CombineNames(actorName, softName), softActors[i]);
