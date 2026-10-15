@@ -326,7 +326,7 @@ SystemInfo GetSystemInfo(void (* /*system*/)(ArgsT...)) {
 // is treated as optional.
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<T const*> {
-  static T const* Get(entt::registry const& reg, entt::entity e) {
+  MOCHI_FORCE_INLINE static T const* Get(entt::registry const& reg, entt::entity e) {
     return reg.try_get<T const>(e);
   }
 };
@@ -352,7 +352,7 @@ struct ParamViewExcludeDependencies<T const*> : entt::type_list<> {};
 // is not optional
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<T const&> {
-  static T const& Get(entt::registry const& reg, entt::entity e) {
+  MOCHI_FORCE_INLINE static T const& Get(entt::registry const& reg, entt::entity e) {
     return reg.template get<T const>(e);
   }
 };
@@ -361,7 +361,7 @@ template <typename T, typename... IncludeT, typename... ExcludeT>
 struct SystemParamFetchSingleFromView<
     T const&,
     ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
-  static T const& Get(
+  MOCHI_FORCE_INLINE static T const& Get(
       ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> const& view,
       entt::entity e) {
     return view.template get<T const>(e);
@@ -390,7 +390,7 @@ struct ParamViewExcludeDependencies<T const&> : entt::type_list<> {};
 // is optional
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<T*> {
-  static T* Get(entt::registry& reg, entt::entity e) {
+  MOCHI_FORCE_INLINE static T* Get(entt::registry& reg, entt::entity e) {
     return reg.template try_get<T>(e);
   }
 };
@@ -417,14 +417,16 @@ struct ParamViewExcludeDependencies<T*> : entt::type_list<> {};
 // is not optional
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<T&> {
-  static T& Get(entt::registry& reg, entt::entity e) {
+  MOCHI_FORCE_INLINE static T& Get(entt::registry& reg, entt::entity e) {
     return reg.template get<T>(e);
   }
 };
 
 template <typename T, typename... IncludeT, typename... ExcludeT>
 struct SystemParamFetchSingleFromView<T&, ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
-  static T& Get(ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> const& view, entt::entity e) {
+  MOCHI_FORCE_INLINE static T& Get(
+      ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>> const& view,
+      entt::entity e) {
     return view.template get<T>(e);
   }
 };
@@ -452,7 +454,7 @@ struct ParamViewExcludeDependencies<T&> : entt::type_list<> {};
 // the entity has a tag of type T.
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<OptionalTag<T>> {
-  static OptionalTag<T> Get(entt::registry const& reg, entt::entity e) {
+  MOCHI_FORCE_INLINE static OptionalTag<T> Get(entt::registry const& reg, entt::entity e) {
     return OptionalTag<T>(reg.all_of<T>(e));
   }
 };
@@ -467,14 +469,14 @@ struct ParamDependencies<OptionalTag<T>> : entt::type_list<std::add_const_t<T>> 
 // For an Required, the access mode is read and an empty structure is returned
 template <typename... T>
 struct SystemParamFetchSingleFromRegistry<Included<T...>> {
-  static Included<T...> Get(entt::registry const& /*reg*/, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static Included<T...> Get(entt::registry const& /*reg*/, entt::entity /*e*/) {
     return Included<T...>{};
   }
 };
 
 template <typename ViewT, typename... T>
 struct SystemParamFetchSingleFromView<Included<T...>, ViewT> {
-  static Included<T...> Get(ViewT const& /*view*/, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static Included<T...> Get(ViewT const& /*view*/, entt::entity /*e*/) {
     return Included<T...>{};
   }
 };
@@ -493,7 +495,7 @@ struct ParamViewExcludeDependencies<Included<T...>> : entt::type_list<> {};
 // For an Excluded, the access mode is read and an empty structure is returned
 template <typename... T>
 struct SystemParamFetchSingleFromRegistry<Excluded<T...>> {
-  static Excluded<T...> Get(entt::registry const& /*reg*/, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static Excluded<T...> Get(entt::registry const& /*reg*/, entt::entity /*e*/) {
     return Excluded<T...>{};
   }
 };
@@ -514,7 +516,7 @@ struct ParamViewExcludeDependencies<Excluded<T...>> : entt::type_list<T...> {};
 template <>
 struct SystemParamFetchSingleFromRegistry<entt::registry&> {
   template <typename RegistryT>
-  static inline entt::registry& Get(RegistryT& reg, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static entt::registry& Get(RegistryT& reg, entt::entity /*e*/) {
     return reg;
   }
 };
@@ -544,7 +546,7 @@ struct ParamViewExcludeDependencies<entt::registry&> : entt::type_list<> {};
 // Same as above, except access is read-only.
 template <>
 struct SystemParamFetchSingleFromRegistry<entt::registry const&> {
-  static inline entt::registry const& Get(entt::registry& reg, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static entt::registry const& Get(entt::registry& reg, entt::entity /*e*/) {
     return reg;
   }
 };
@@ -575,7 +577,7 @@ struct ParamViewExcludeDependencies<entt::registry const&> : entt::type_list<> {
 // entity.
 template <>
 struct SystemParamFetchSingleFromRegistry<entt::entity> {
-  static inline entt::entity Get(entt::registry& /*reg*/, entt::entity e) {
+  MOCHI_FORCE_INLINE static entt::entity Get(entt::registry& /*reg*/, entt::entity e) {
     return e;
   }
 };
@@ -597,7 +599,7 @@ struct ParamGetType<entt::entity>
 // this access is read-only.
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<CtxGlobal<T const>> {
-  static inline CtxGlobal<T const> Get(entt::registry& reg, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static CtxGlobal<T const> Get(entt::registry& reg, entt::entity /*e*/) {
     return CtxGlobal<T const>(reg.ctx<T const>());
   }
 };
@@ -624,7 +626,9 @@ struct ParamViewExcludeDependencies<CtxGlobal<T const>> : entt::type_list<> {};
 // this access is read-only.
 template <typename T>
 struct SystemParamFetchSingleFromRegistry<OptionalCtxGlobal<T const>> {
-  static inline OptionalCtxGlobal<T const> Get(entt::registry& reg, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static OptionalCtxGlobal<T const> Get(
+      entt::registry& reg,
+      entt::entity /*e*/) {
     return OptionalCtxGlobal<T const>(reg.try_ctx<T const>());
   }
 };
@@ -1178,7 +1182,9 @@ constexpr bool IsNoWrite_v = IsNoWrite<AccessT...>::value;
 // System parameters and fetching for partial registries
 template <typename... AccessT>
 struct SystemParamFetchSingleFromRegistry<PartialRegistryRead<AccessT...>> {
-  static inline PartialRegistryRead<AccessT...> Get(entt::registry& reg, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static PartialRegistryRead<AccessT...> Get(
+      entt::registry& reg,
+      entt::entity /*e*/) {
     static_assert(
         ParamWildcardType<PartialRegistryRead<AccessT...>>::value == AccessWildcard::None,
         "Per-entity sytems are not allowed to use WildCardRead nor WildcardWrite");
@@ -1219,7 +1225,9 @@ struct ParamWildcardType<PartialRegistryRead<AccessT...>>
 
 template <typename... AccessT>
 struct SystemParamFetchSingleFromRegistry<PartialRegistryWrite<AccessT...>> {
-  static inline PartialRegistryWrite<AccessT...> Get(entt::registry& reg, entt::entity /*e*/) {
+  MOCHI_FORCE_INLINE static PartialRegistryWrite<AccessT...> Get(
+      entt::registry& reg,
+      entt::entity /*e*/) {
     static_assert(
         IsAccessConst_v<AccessT...>,
         "Per-entity systems are not allowed to write to components via PartialRegistry. Please add const. Example: PartialRegistry<ComponentName const>");
@@ -1264,7 +1272,7 @@ struct ParamWildcardType<PartialRegistryWrite<AccessT...>>
 template <typename... AccessT, typename... ExcludeT>
 struct SystemParamFetchSingleFromRegistry<
     entt::basic_view<entt::entity, entt::get_t<AccessT...>, entt::exclude_t<ExcludeT...>>> {
-  static inline entt::
+  MOCHI_FORCE_INLINE static entt::
       basic_view<entt::entity, entt::get_t<AccessT...>, entt::exclude_t<ExcludeT...>>
       Get(entt::registry& reg, entt::entity /*e*/) {
     static_assert(
@@ -1351,7 +1359,7 @@ struct ViewFromTypeLists<entt::type_list<IncludeT...>, entt::type_list<ExcludeT.
   static_assert(sizeof...(IncludeT) != 0, "A view must always include at least one type");
   using type = ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>;
 
-  static auto Get(entt::registry& reg) {
+  MOCHI_FORCE_INLINE static auto Get(entt::registry& reg) {
     // Excluded pools come from the mutable registry, which creates a missing one, so that a
     // component added during the invocation still excludes its entity.
     return type{FindPool<IncludeT>(reg)..., reg.storage<std::remove_const_t<ExcludeT>>()...};
@@ -1376,7 +1384,7 @@ struct InvokerUnwrap<std::reference_wrapper<T>> {
 // Converts a fetch call with a view and registry into a fetch call with only a registry
 template <typename T, typename ViewT>
 struct FetchWithViewWrapperRegistry {
-  static inline auto Get(entt::registry& reg, ViewT const& /*view*/, entt::entity e)
+  MOCHI_FORCE_INLINE static auto Get(entt::registry& reg, ViewT const& /*view*/, entt::entity e)
       -> decltype(SystemParamFetchSingleFromRegistry<T>::Get(reg, e)) {
     return SystemParamFetchSingleFromRegistry<T>::Get(reg, e);
   }
@@ -1385,7 +1393,7 @@ struct FetchWithViewWrapperRegistry {
 // Converts a fetch call with a view and registry into a fetch call with only a view
 template <typename T, typename ViewT>
 struct FetchWithViewWrapperView {
-  static inline auto Get(entt::registry& /*reg*/, ViewT const& view, entt::entity e)
+  MOCHI_FORCE_INLINE static auto Get(entt::registry& /*reg*/, ViewT const& view, entt::entity e)
       -> decltype(SystemParamFetchSingleFromView<T, ViewT>::Get(view, e)) {
     return SystemParamFetchSingleFromView<T, ViewT>::Get(view, e);
   }
@@ -1528,7 +1536,7 @@ struct InvokerImpl {
   };
 
   template <typename... LookupT>
-  static auto GetViewFromSystem(
+  MOCHI_FORCE_INLINE static auto GetViewFromSystem(
       void (* /*system*/)(typename InvokerUnwrap<ExternalT>::result..., LookupT...),
       entt::registry& reg) {
     // A view looks its pools up by type, so each required type may appear only once.
@@ -1578,7 +1586,7 @@ struct InvokerImpl {
 
   // Invokes the system as a single-entity system using a view
   template <typename ViewT, typename... LookupT>
-  inline void InvokeOnEntityInView(
+  MOCHI_FORCE_INLINE void InvokeOnEntityInView(
       void (*system)(typename InvokerUnwrap<ExternalT>::result..., LookupT...),
       entt::registry& reg,
       ViewT const& view,
@@ -1599,7 +1607,7 @@ struct InvokerImpl {
   // Invokes the system as a single-entity system.
   // Entity must have all expected types emplaced upon it or this will throw an exception.
   template <typename... LookupT>
-  inline void InvokeOnEntity(
+  MOCHI_FORCE_INLINE void InvokeOnEntity(
       void (*system)(typename InvokerUnwrap<ExternalT>::result..., LookupT...),
       entt::registry& reg,
       entt::entity entity) const {
@@ -1663,7 +1671,7 @@ struct ForEachInvokerImpl : InvokerImpl<PolicyList, ExternalT...> {
 */
 
 template <typename... Policies, typename SystemT, typename... ExternalT>
-inline void
+MOCHI_FORCE_INLINE void
 InvokeOnEntity(SystemT system, entt::registry& reg, entt::entity e, ExternalT... extParams) {
   auto invoker = InvokerImpl<entt::type_list<Policies...>, ExternalT...>{extParams...};
   MOCHI_ASSERT_VERBOSE(invoker.CanInvokeOnEntity(system, reg, e));
@@ -1678,7 +1686,7 @@ CanInvokeOnEntity(SystemT system, entt::registry& reg, entt::entity e, ExternalT
 }
 
 template <typename... Policies, typename SystemT, typename... ExternalT>
-inline bool
+MOCHI_FORCE_INLINE bool
 TryInvokeOnEntity(SystemT system, entt::registry& reg, entt::entity e, ExternalT... extParams) {
   using InvokerT = InvokerImpl<entt::type_list<Policies...>, ExternalT...>;
   if (auto const view = InvokerT::GetViewFromSystemIfContains(system, reg, e)) {
@@ -1690,7 +1698,7 @@ TryInvokeOnEntity(SystemT system, entt::registry& reg, entt::entity e, ExternalT
 }
 
 template <typename... Policies, typename SystemT, typename... ExternalT>
-inline bool TryScheduleInvokeOnEntity(
+MOCHI_FORCE_INLINE bool TryScheduleInvokeOnEntity(
     TaskSemaphore const& sem,
     std::string_view debugLabel,
     SystemT system,
@@ -1701,9 +1709,11 @@ inline bool TryScheduleInvokeOnEntity(
   // The task fetches through the registry: holding a view would make it outgrow std::function's
   // small buffer in some standard libraries, which costs an allocation per task.
   if (InvokerT::CanInvokeOnEntity(system, reg, e)) {
-    Schedule(sem, debugLabel, [system, &reg, e, invoker = InvokerT{extParams...}]() {
-      invoker.InvokeOnEntity(system, reg, e);
-    });
+    Schedule(
+        sem,
+        debugLabel,
+        [system, &reg, e, invoker = InvokerT{extParams...}]()
+            MOCHI_FORCE_INLINE_LAMBDA { invoker.InvokeOnEntity(system, reg, e); });
     return true;
   }
   return false;
@@ -1790,7 +1800,7 @@ inline void ScheduleInvokeForEachImpl(
     MOCHI_ASSERT_VERBOSE(reg.valid(e), "Invalid entity in entity set.");
     // The task fetches through the registry, as in TryScheduleInvokeOnEntity.
     if (invoker.CanInvokeOnEntity(system, reg, e)) {
-      Schedule(sem, debugLabel, [invoker, system, &reg, e]() {
+      Schedule(sem, debugLabel, [invoker, system, &reg, e]() MOCHI_FORCE_INLINE_LAMBDA {
         invoker.InvokeOnEntity(system, reg, e);
       });
     }
@@ -1800,7 +1810,7 @@ inline void ScheduleInvokeForEachImpl(
   for (auto e : entitySet) {
     MOCHI_ASSERT_VERBOSE(reg.valid(e), "Invalid entity in entity set.");
     if (view.contains(e)) {
-      Schedule(sem, debugLabel, [invoker, system, &reg, view, e]() {
+      Schedule(sem, debugLabel, [invoker, system, &reg, view, e]() MOCHI_FORCE_INLINE_LAMBDA {
         invoker.InvokeOnEntityInView(system, reg, view, e);
       });
     }
