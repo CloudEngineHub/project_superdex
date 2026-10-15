@@ -505,7 +505,7 @@ struct CPrevRigidVelocity : NoCopy {
   - The other entity in the contact pair (not the owner).
   - The ID of the colliding actor's contact sample partition.
   - A flag indicating sync (true) or async (false) contact.
-  - A flag indicating if both actors are rigid, to signal dedicated collision response functions.
+  - A flag indicating if the pair is assembled from contact sums.
 */
 struct JacData {
  private:
@@ -520,19 +520,21 @@ struct JacData {
   entt::entity otherEntity = {}; // The other entity in the contact pair (not the owner).
   int collidingPartitionId = 0; // ID of the colliding actor's contact sample partition.
   bool isSync = false;
-  bool bothRigid = false; // True if both colliding and collider actors are rigid.
+  // True if the pair is assembled from contact sums. If true, the Jacobians hold only the DoFs and
+  // JacAux (see DMapRigidStructure); their blocks are not written, so Jac(i) must not be read.
+  bool useContactSums = false;
 
   JacData(
       bool isSyncIn,
       ContactDetectionResult* queryIn,
-      bool bothRigidIn,
+      bool useContactSumsIn,
       entt::entity otherEntityIn,
       int collidingPartitionIdIn)
       : query(queryIn),
         otherEntity(otherEntityIn),
         collidingPartitionId(collidingPartitionIdIn),
         isSync(isSyncIn),
-        bothRigid(bothRigidIn) {}
+        useContactSums(useContactSumsIn) {}
 
   MOCHI_DECLARE_MOVE_ONLY(JacData); // Avoid copies for performance reasons.
 

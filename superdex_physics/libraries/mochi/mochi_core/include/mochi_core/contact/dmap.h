@@ -359,12 +359,14 @@ class DMapRTInput final : public DMapImpl {
 };
 
 /**************************************************************************************************
- * Differentiable map used in sync rigid contact. It does not store per-contact Jacobians, only the
- * DoFs and the optional shared Jacobian.
+ * Differentiable map that writes only the structure of a rigid Jacobian slice: the DoFs and the
+ * optional auxiliary Jacobian. It does not write the Jacobian blocks. Used by contact assembled
+ * from contact sums, which computes the rigid Jacobian terms itself (e.g. rigid actors, articulated
+ * links and skinning bones).
  */
-class DMapSyncRigid final : public DMapImpl {
+class DMapRigidStructure final : public DMapImpl {
  public:
-  DMapSyncRigid(
+  DMapRigidStructure(
       int slice,
       int offset,
       ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.

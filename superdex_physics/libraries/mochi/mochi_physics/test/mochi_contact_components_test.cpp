@@ -596,7 +596,7 @@ TEST(CActiveCollisions, RestoresAggregateStorageAfterPartitionZeroSwap) {
 static JacData MakeJacData(int otherEntity = 1) {
   return {/*isSync*/ true,
           nullptr,
-          /*bothRigid*/ false,
+          /*useContactSums*/ false,
           static_cast<entt::entity>(otherEntity),
           /*partitionId*/ 0};
 }

@@ -68,6 +68,24 @@ void GatherSkinningBones(
 
 } // namespace
 
+// Write only the structure of the contact Jacobian slices of the bones in 'boneIds', one slice per
+// bone, for assembly from contact sums.
+static void SetupRigidStructureJacobians(
+    Span<SkinningBoneJacobianData const> bones,
+    int dofOffset,
+    DynamicArray<int> const& boneIds,
+    Span<int const> sampleIndices,
+    Span<ContactJac> outJacobians) {
+  for (int slice = 0; slice < isize(boneIds); ++slice) {
+    auto const& bone = bones[boneIds[slice]];
+    DMapRigidStructure const structureMap(
+        slice, dofOffset, bone.linkFromArticulationJacobian, bone.articulatedDofs);
+    DMap<DMapRigidStructure> const dmap(&structureMap);
+    dmap.GetJac(sampleIndices, outJacobians);
+    outJacobians[slice].CompressIndices();
+  }
+}
+
 template <typename DiscretizationT>
 void articulated::compound::SetupCollidingJacobians(
     ecs::Included<TagArticulatedActor>,
@@ -104,8 +122,13 @@ void articulated::compound::SetupCollidingJacobians(
             jacData.SetZeroDofJacobian();
             return;
           }
-          DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
           auto jacs = jacData.PrepareJacs(isize(boneIds));
+          if (jacData.useContactSums) {
+            SetupRigidStructureJacobians(
+                bones, dofOffset.dofsOffset, boneIds, jacData.query->sampleIndices, jacs);
+            return;
+          }
+          DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
           DMapSkinning const skinningMap(
               0, skinningTransform, restPositions, bones, boneIds, dofOffset.dofsOffset);
           DMap<DQuad, DMapSkinning> const dmap(&dquad, &skinningMap);
@@ -229,6 +252,19 @@ void blended::SetupCollidingJacobians(
     int const softId = std::get<int>(descriptors[1]);
     if (boneIds.empty() && softId < 0) {
       jacData.SetZeroDofJacobian();
+      return;
+    }
+    if (jacData.useContactSums) {
+      // Only partitions without a soft actor are assembled from contact sums. Their nodes are not
+      // blended, so their positions before skinning are the rest positions, as for articulated
+      // skins.
+      MOCHI_ASSERT_VERBOSE(softId < 0, "Contact sums do not support blended soft slices.");
+      SetupRigidStructureJacobians(
+          bones,
+          dofOffset.dofsOffset,
+          boneIds,
+          jacData.query->sampleIndices,
+          jacData.PrepareJacs(isize(boneIds)));
       return;
     }
 

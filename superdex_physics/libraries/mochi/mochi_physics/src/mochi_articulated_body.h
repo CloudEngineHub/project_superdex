@@ -80,6 +80,28 @@ struct CArticulatedSkinningData : public NoCopy {
   DSkinningTransform skinningTransform;
 };
 
+/**
+ * Component storing the contact samples of an articulated skin as weighted homogeneous points in
+ * the local frames of their skinning bones. For each contact sample and each bone of the sample's
+ * partition, point = [rho; s] = sum_k N_k w_k [P x_k; 1], where k spans the nodes of the sample,
+ * N_k are the quadrature weights, w_k are the bone's skinning weights at the nodes, P is the
+ * bone's pre-transform, and x_k are the rest positions of the nodes. rho is the weighted lever arm
+ * about the link origin, and s the total weight.
+ *
+ * The points are stored in a compressed sparse representation: the points of sample i are
+ * Span(points).subspan(offsets[i], offsets[i + 1] - offsets[i]), one per bone of the sample's
+ * partition, in the order of the partition's bones. Partitions with a soft slice (blended actors)
+ * also get points, which ignore the soft displacement and are never read.
+ *
+ * With Q the collider-from-world rotation and R_j the link rotation, the contact Jacobian slice of
+ * bone j has the rigid form [s Q, -S(Q R_j rho) Q]. This allows fast assembly of skinned contact,
+ * mimicking rigid contact but with homogeneous points (see ComputeSkinnedContactSums).
+ */
+struct CContactSampleBonePoints : public NoCopy {
+  DynamicArray<Vec4r> points; // [rho; s] of each contact sample and bone of its partition.
+  DynamicArray<int> offsets; // Offset in 'points' of the points of each contact sample.
+};
+
 // Components registered to an articulated body actor
 template <TimeStep kRelTime>
 struct CArticulatedReducedPose : public ArticulatedPose, NoCopy {

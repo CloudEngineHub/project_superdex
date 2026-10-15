@@ -1436,6 +1436,137 @@ RigidContactSums ComputeRigidContactSums(
     bool assemDForce,
     Span<Real3> outForce = {});
 
+/**
+ * @brief Rigid-form Jacobian slices of the contact points of a skinned actor's partition, read by
+ * @ref ComputeSkinnedContactSums.
+ *
+ * @details Each slice a has the rigid form J_a = [s_a Q, -S(r_a) Q], with Q the collider-from-world
+ * rotation, and s_a and r_a expressed in the collider's local space. The slices are one per bone,
+ * in the order of @ref boneRotations, optionally followed by a rigid-collider slice:
+ * - Bone j: (rho_j, s_j) is read from @ref points, and r_j = M_j rho_j.
+ * - Rigid-collider slice: s = 1 and r = p - @ref rigidColliderOrigin, with p the contact point.
+ */
+struct SkinnedContactSlices {
+  /** @brief Offset in @ref points of the points of each sample, indexed by sample index. */
+  Span<int const> pointOffsets;
+  /** @brief Weighted homogeneous point (rho, s) of each sample in the frame of each bone, in the
+   * order of @ref boneRotations. */
+  Span<Vec4r const> points;
+  /** @brief Rotation M_j to the collider's local space from the frame of rho_j, for each bone. */
+  Span<VMatrix3x3r const> boneRotations;
+  /** @brief If set, there is a rigid-collider slice after the bone slices, and this is the
+   * reference point of its lever arms, in the collider's local space. */
+  std::optional<Vec4r> rigidColliderOrigin;
+
+  [[nodiscard]] int NumSlices() const {
+    return isize(boneRotations) + (rigidColliderOrigin ? 1 : 0);
+  }
+};
+
+/**
+ * @brief Sums of the collision response of contact points over the rigid-form Jacobian slices of
+ * @ref SkinnedContactSlices, from which the contact contribution of those slices to the energy,
+ * gradient and Hessian is assembled.
+ *
+ * @details With w the weight of a contact point, e, f and D its collision energy, force and force
+ * derivative, and S(r) the skew-symmetric matrix of r, all expressed in the collider's local space:
+ * - @ref energy = sum(w e)
+ * - @ref force [a] = sum(w s_a f)
+ * - @ref torque [a] = sum(S(r_a) w f)
+ * - @ref dForce [p] = sum(w s_a s_b D)
+ * - @ref skewBDForce [p] = sum(w s_a S(r_b) D)
+ * - @ref skewADForce [p] = sum(w s_b S(r_a) D)
+ * - @ref skewDForceSkew [p] = sum(S(r_a) w D S(r_b))
+ * where p = @ref PairIndex (a, b), for slices a <= b. For a single rigid-collider slice, these
+ * match @ref RigidContactSums.
+ *
+ * @note The arrays are allocated once at construction, from the given allocator, and never grow, so
+ * the allocator may be a FILO allocator. Arrays of quantities not requested are empty.
+ */
+struct SkinnedContactSums {
+  int const numSlices;
+  double energy = 0.0;
+  DynamicArray<Vec4r> force;
+  DynamicArray<Vec4r> torque;
+  DynamicArray<VMatrix3x3r> dForce;
+  DynamicArray<VMatrix3x3r> skewBDForce;
+  DynamicArray<VMatrix3x3r> skewADForce;
+  DynamicArray<VMatrix3x3r> skewDForceSkew;
+
+  // Zero-initialize the arrays of the requested quantities.
+  SkinnedContactSums(int numSlicesIn, bool assemForce, bool assemDForce, Allocator* allocator)
+      : numSlices(numSlicesIn),
+        force(allocator),
+        torque(allocator),
+        dForce(allocator),
+        skewBDForce(allocator),
+        skewADForce(allocator),
+        skewDForceSkew(allocator) {
+    if (assemForce) {
+      force.resize(numSlices, Vec4r{});
+      torque.resize(numSlices, Vec4r{});
+    }
+    if (assemDForce) {
+      int const numPairs = NumPairs(numSlices);
+      dForce.resize(numPairs, VMatrix3x3r{});
+      skewBDForce.resize(numPairs, VMatrix3x3r{});
+      skewADForce.resize(numPairs, VMatrix3x3r{});
+      skewDForceSkew.resize(numPairs, VMatrix3x3r{});
+    }
+  }
+
+  /** @brief Number of slice pairs a <= b. */
+  [[nodiscard]] static int NumPairs(int numSlices) {
+    return numSlices * (numSlices + 1) / 2;
+  }
+
+  /** @brief Index of the slice pair (a, b), with a <= b, in the pair arrays. */
+  [[nodiscard]] int PairIndex(int a, int b) const {
+    MOCHI_ASSERT_VERBOSE(0 <= a && a <= b && b < numSlices);
+    return a * numSlices - a * (a - 1) / 2 + (b - a);
+  }
+};
+
+/**
+ * @brief Compute the @ref SkinnedContactSums of a range of contact points, without storing their
+ * per-point collision response.
+ *
+ * @details Equivalent to summing the per-point response of @ref ComputeCollisionResponseRange
+ * at @ref GradTarget::Current multiplied by the slices, but faster. Other gradient targets and
+ * collider integration weights are not supported.
+ *
+ * @param[in] pointRange Range of contact points in @p contactQuery.
+ * @param[in] contactQuery Contact detection result.
+ * @param[in] params Contact parameters.
+ * @param[in] config Contact evaluation configuration.
+ * @param[in] dtStage Time step factor of the stage.
+ * @param[in] weights Weights of the contact samples, indexed by @ref
+ * ContactDetectionResult::sampleIndices.
+ * @param[in] slices Jacobian slices. Every sample in @p pointRange must have one point per bone.
+ * @param[in] assemEnergy Whether to compute @ref SkinnedContactSums::energy.
+ * @param[in] assemForce Whether to compute @ref SkinnedContactSums::force and @ref
+ * SkinnedContactSums::torque.
+ * @param[in] assemDForce Whether to compute the force derivative sums.
+ * @param[in] scratch FILO allocator for the returned sums and for temporary data.
+ * @param[out] outForce Optional collision forces of the contact points, as computed by @ref
+ * ComputeCollisionResponseRange. Indexed like the contact points; only @p pointRange is written.
+ * Requires @p assemForce.
+ * @return The sums, allocated from @p scratch.
+ */
+SkinnedContactSums ComputeSkinnedContactSums(
+    Interval<int> pointRange,
+    ContactDetectionResult const& contactQuery,
+    ContactParams const& params,
+    ContactEvalConfig const& config,
+    real dtStage,
+    Span<real const> weights,
+    SkinnedContactSlices const& slices,
+    bool assemEnergy,
+    bool assemForce,
+    bool assemDForce,
+    Allocator* scratch,
+    Span<Real3> outForce = {});
+
 /*************************************************************************************************/
 
 /*

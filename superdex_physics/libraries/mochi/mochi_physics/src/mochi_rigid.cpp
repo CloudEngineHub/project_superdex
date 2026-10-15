@@ -425,16 +425,16 @@ void rigid::SetupCollidingJacobiansImpl(
     Span<int const> dofsAux) {
   MOCHI_PROFILE_SCOPE();
 
-  // Create sync-rigid differentiable map, shared by all Jacobians
-  DMapSyncRigid dsyncRigid(0, dofOffset.dofsOffset, jacAux, dofsAux);
-  DMap<DMapSyncRigid> dmapSyncRigid(&dsyncRigid);
+  // Create rigid-structure differentiable map, shared by all Jacobians
+  DMapRigidStructure drigidStructure(0, dofOffset.dofsOffset, jacAux, dofsAux);
+  DMap<DMapRigidStructure> dmapRigidStructure(&drigidStructure);
 
   // Compute Jacobians
   for (auto& jac : outJacobians) {
     if (jac.isSync) {
       auto jacs = jac.PrepareJacs(1);
-      if (jac.bothRigid) {
-        dmapSyncRigid.GetJac(jac.query->sampleIndices, jacs);
+      if (jac.useContactSums) {
+        dmapRigidStructure.GetJac(jac.query->sampleIndices, jacs);
       } else {
         // Create regular differentiable map
         DMapRTInput dtransform(
@@ -467,14 +467,14 @@ void rigid::SetupColliderJacobiansImpl(
   DMapRTOutput dtransform(
       0, state, dofOffset.dofsOffset, rigidInertia.GetCenterOfMassLocal(), jacAux, dofsAux);
   DMap<DMapRTOutput> dmap(&dtransform);
-  DMapSyncRigid dsyncRigid(0, dofOffset.dofsOffset, jacAux, dofsAux);
-  DMap<DMapSyncRigid> dmapSyncRigid(&dsyncRigid);
+  DMapRigidStructure drigidStructure(0, dofOffset.dofsOffset, jacAux, dofsAux);
+  DMap<DMapRigidStructure> dmapRigidStructure(&drigidStructure);
 
   // Compute Jacobians
   for (auto& jac : outJacobians) {
     auto jacs = jac.PrepareJacs(1);
-    if (jac.bothRigid) {
-      dmapSyncRigid.GetJac(jac.query->sampleIndices, jacs);
+    if (jac.useContactSums) {
+      dmapRigidStructure.GetJac(jac.query->sampleIndices, jacs);
     } else {
       dtransform.SetData(jac.query);
       dmap.GetJac({}, jacs);

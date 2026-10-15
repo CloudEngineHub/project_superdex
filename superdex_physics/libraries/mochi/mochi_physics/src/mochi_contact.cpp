@@ -1714,6 +1714,29 @@ void mochi::FarSdfCollisionDetection(
   CollisionDetection</*kIsSync*/ true, TimeStep::Current, kAllowFarSdfQuery>(reg, e);
 }
 
+// Whether the contact between a colliding actor's partition and a collider is assembled from
+// contact sums, without per-contact Jacobian blocks: contact between rigid actors (including
+// articulated links), and contact of articulated skins with rigid or static colliders. For blended
+// skins, only partitions without a soft actor, whose slices are all skinning bones.
+static bool UseContactSums(
+    entt::registry const& reg,
+    entt::entity colliding,
+    entt::entity collider,
+    int collidingPartitionId) {
+  if (reg.all_of<TagRigidActor>(colliding)) {
+    return reg.all_of<TagRigidActor>(collider);
+  }
+  if (reg.all_of<TagArticulatedActor>(colliding) &&
+      reg.any_of<TagRigidActor, TagStaticActor>(collider)) {
+    auto const& descriptors =
+        reg.get<CContactPartitions const>(colliding)[collidingPartitionId].GetDofDescriptors();
+    bool const hasSoftSlice =
+        reg.all_of<TagBlendedActor>(colliding) && std::get<int>(descriptors[1]) >= 0;
+    return !hasSoftSlice && !std::get<DynamicArray<int>>(descriptors[0]).empty();
+  }
+  return false;
+}
+
 static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity const> actors) {
   MOCHI_PROFILE_SCOPE();
 
@@ -1757,34 +1780,33 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
 
     auto registerJacobians = [&](auto& activeColls, bool isSync) {
       for (auto& activeColl : activeColls) {
+        int const partitionId = activeColl.collisionResult.collidingPartitionId;
+
         // Register colliding Jacobian (owned by this entity e).
         bool wasPreviouslyActive = false;
         for (int i = 0; i < prevCollidingJacs; ++i) {
           auto& collJac = collidingJacs[i];
           if ((collJac.otherEntity == activeColl.colliderEntity) &&
-              (collJac.collidingPartitionId == activeColl.collisionResult.collidingPartitionId)) {
+              (collJac.collidingPartitionId == partitionId)) {
             wasPreviouslyActive = true;
             activeColl.collidingJacId = i;
             collJac.isSync = isSync;
             collJac.query = &activeColl.collisionResult;
             MOCHI_ASSERT_VERBOSE(
-                collJac.bothRigid ==
-                    (reg.all_of<TagRigidActor>(e) &&
-                     reg.all_of<TagRigidActor>(activeColl.colliderEntity)),
-                "Inconsistent 'bothRigid' flag.");
+                collJac.useContactSums ==
+                    UseContactSums(reg, e, activeColl.colliderEntity, partitionId),
+                "Inconsistent 'useContactSums' flag.");
             break;
           }
         }
         if (!wasPreviouslyActive) {
           activeColl.collidingJacId = isize(collidingJacs);
-          bool bothRigid =
-              reg.all_of<TagRigidActor>(e) && reg.all_of<TagRigidActor>(activeColl.colliderEntity);
           collidingJacs.emplace_back(
               isSync,
               &activeColl.collisionResult,
-              bothRigid,
+              UseContactSums(reg, e, activeColl.colliderEntity, partitionId),
               activeColl.colliderEntity,
-              activeColl.collisionResult.collidingPartitionId);
+              partitionId);
         }
         if (isSync) {
           // Register collider Jacobian (owned by the other entity).
@@ -1794,31 +1816,27 @@ static void RegisterContactJacobians(entt::registry& reg, Span<entt::entity cons
           wasPreviouslyActive = false;
           for (int i = 0; i < isize(colliderJacs); ++i) {
             auto& collJac = colliderJacs[i];
-            if ((collJac.otherEntity == e) &&
-                (collJac.collidingPartitionId == activeColl.collisionResult.collidingPartitionId)) {
+            if ((collJac.otherEntity == e) && (collJac.collidingPartitionId == partitionId)) {
               // Recycle this JacData
               wasPreviouslyActive = true;
               activeColl.colliderJacId = i;
               collJac.isSync = isSync;
               collJac.query = &activeColl.collisionResult;
               MOCHI_ASSERT_VERBOSE(
-                  collJac.bothRigid ==
-                      (reg.all_of<TagRigidActor>(e) &&
-                       reg.all_of<TagRigidActor>(activeColl.colliderEntity)),
-                  "Inconsistent 'bothRigid' flag.");
+                  collJac.useContactSums ==
+                      UseContactSums(reg, e, activeColl.colliderEntity, partitionId),
+                  "Inconsistent 'useContactSums' flag.");
               break;
             }
           }
           if (!wasPreviouslyActive) {
             activeColl.colliderJacId = isize(colliderJacs);
-            bool bothRigid = reg.all_of<TagRigidActor>(e) &&
-                reg.all_of<TagRigidActor>(activeColl.colliderEntity);
             colliderJacs.emplace_back(
                 isSync,
                 &activeColl.collisionResult,
-                bothRigid,
+                UseContactSums(reg, e, activeColl.colliderEntity, partitionId),
                 e,
-                activeColl.collisionResult.collidingPartitionId);
+                partitionId);
           }
         }
       }
@@ -2633,6 +2651,126 @@ static void AssembleSyncRigidContactSums(
     writer.AddDiag(0, aaBlock, /*contact*/ 0);
     writer.AddDiag(1, bbBlock, /*contact*/ 0);
     writer.AddOffDiag(0, 1, abBlock, /*contact*/ 0);
+  }
+}
+
+// Rigid-form slices of the bones of a skinned actor's partition, in the local space of the collider
+// of 'query', followed by a rigid-collider slice if 'rigidColliderOrigin' is set (see
+// SkinnedContactSlices). The bone rotations are stored in outBoneRotations.
+static SkinnedContactSlices GetSkinnedContactSlices(
+    entt::registry const& reg,
+    entt::entity skinned,
+    ContactDetectionResult const& query,
+    std::optional<Vec4r> rigidColliderOrigin,
+    DynamicArray<VMatrix3x3r>& outBoneRotations) {
+  auto const& bonePoints = reg.get<CContactSampleBonePoints const>(skinned);
+  auto const& partition = reg.get<CContactPartitions const>(skinned)[query.collidingPartitionId];
+  auto const& boneIds = std::get<DynamicArray<int>>(partition.GetDofDescriptors()[0]);
+  auto const& linkTransforms =
+      reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(skinned);
+  MOCHI_ASSERT_VERBOSE(query.jacColliderFromWorld.size() == 1, "Expected a rigid collider frame.");
+  VMatrix3x3r const& colliderFromWorld = query.jacColliderFromWorld[0];
+  outBoneRotations.reserve(isize(boneIds));
+  for (int boneId : boneIds) {
+    outBoneRotations.push_back(
+        Dot3x3(colliderFromWorld, ToVMatrix3x3(linkTransforms[boneId].GetRotation())));
+  }
+  return {
+      .pointOffsets = bonePoints.offsets,
+      .points = bonePoints.points,
+      .boneRotations = outBoneRotations,
+      .rigidColliderOrigin = rigidColliderOrigin};
+}
+
+// Contact assembly of the rigid-form slices of a skinned actor's partition, given their sums (see
+// SkinnedContactSums). 'jacs' holds the structure of the slices, in the order of the sums: the bone
+// slices, then the rigid-collider slice if 'hasRigidColliderSlice', with sign -1. With Q the
+// collider-from-world rotation and L_a = sign_a diag(Q, Q) JacAux_a:
+// - residual: -sum_a L_a^T [force_a; torque_a]
+// - dresidual: sum_ab L_a^T B_ab L_b, with B_ab = [[-dForce, -skewBDForce^T], [-skewADForce,
+//   skewDForceSkew]] of the pair (a, b), and B_ba = B_ab^T.
+// Like the generic assembly, Q is applied to the 6x6 blocks rather than to JacAux, and the
+// dresidual blocks are passed to a ContactDResWriter, which groups the slices for a single scatter
+// if there are 2+ bone slices, since the links of an articulation share DoFs.
+static void AssembleSkinnedContactSums(
+    SkinnedContactSums const& sums,
+    Span<ContactJac const*> jacs,
+    bool hasRigidColliderSlice,
+    VMatrix3x3r const& colliderFromWorld,
+    Allocator* filoAllocator,
+    double* outObj,
+    ColumnVectorView<real> outRes,
+    AnyMatrixView<real> outDRes) {
+  bool const assemRes = !outRes.empty();
+  bool const assemDRes = (GetNumValues(outDRes) > 0);
+  if (outObj) {
+    *outObj += sums.energy;
+  }
+  if (!assemRes && !assemDRes) {
+    return;
+  }
+  int const numSlices = sums.numSlices;
+  MOCHI_ASSERT_VERBOSE(isize(jacs) == numSlices, "Inconsistent contact Jacobian slices.");
+  for ([[maybe_unused]] auto const* jac : jacs) {
+    MOCHI_ASSERT_VERBOSE(jac->hasSharedDoFs && jac->nDoFsInternal == RigidSize::kDAll);
+  }
+  auto sign = [&](int a) { return (hasRigidColliderSlice && a == numSlices - 1) ? -1_r : 1_r; };
+
+  if (assemRes) {
+    MOCHI_PROFILE_SCOPE_N("Residual Assembly");
+    real* r = outRes.data();
+    for (int a = 0; a < numSlices; ++a) {
+      // JacAux_a^T sign_a diag(Q, Q)^T [-force_a; -torque_a]. A slice without JacAux (e.g. a free
+      // rigid actor) maps its 6 rigid DoFs directly.
+      real const s = -sign(a);
+      Vec4r const force = DotVecMat3x3(s * sums.force[a], colliderFromWorld);
+      Vec4r const torque = DotVecMat3x3(s * sums.torque[a], colliderFromWorld);
+      Span<int const> const inds = jacs[a]->Inds(0);
+      ContactJac::AuxView const aux = jacs[a]->JacAux();
+      if (!aux) {
+        for (int i = 0; i < 3; ++i) {
+          r[inds[i]] += force[i];
+          r[inds[3 + i]] += torque[i];
+        }
+        continue;
+      }
+      for (int k = 0; k < aux.Cols(); ++k) {
+        real value = 0_r;
+        for (int i = 0; i < 3; ++i) {
+          value += aux(i, k) * force[i] + aux(3 + i, k) * torque[i];
+        }
+        r[inds[k]] += value;
+      }
+    }
+  }
+
+  if (assemDRes) {
+    MOCHI_PROFILE_SCOPE_N("DResidual Assembly");
+    VMatrix3x3r const worldFromCollider = Transpose3x3(colliderFromWorld);
+    auto toWorld = [&](VMatrix3x3r const& m) {
+      return Dot3x3(worldFromCollider, Dot3x3(m, colliderFromWorld));
+    };
+    int const numBoneSlices = hasRigidColliderSlice ? numSlices - 1 : numSlices;
+    ContactDResWriter writer(outDRes, jacs, /*groupShared*/ numBoneSlices >= 2, filoAllocator);
+    for (int a = 0; a < numSlices; ++a) {
+      for (int b = a; b < numSlices; ++b) {
+        // D_ab = sign_a sign_b diag(Q, Q)^T B_ab diag(Q, Q)
+        int const p = sums.PairIndex(a, b);
+        real const s = sign(a) * sign(b);
+        RowMatrix<real, 6, 6> block;
+        block.Block<3, 3>(0, 0, 3, 3) = AsMatrixView(-s * toWorld(sums.dForce[p]));
+        block.Block<3, 3>(0, 3, 3, 3) =
+            AsMatrixView(-s * Transpose3x3(toWorld(sums.skewBDForce[p])));
+        block.Block<3, 3>(3, 0, 3, 3) = AsMatrixView(-s * toWorld(sums.skewADForce[p]));
+        block.Block<3, 3>(3, 3, 3, 3) = AsMatrixView(s * toWorld(sums.skewDForceSkew[p]));
+        if (a == b) {
+          writer.AddDiag(a, block, /*contact*/ 0);
+        } else {
+          writer.AddOffDiag(a, b, block, /*contact*/ 0);
+        }
+      }
+    }
+    writer.Finish();
   }
 }
 
@@ -3934,7 +4072,10 @@ static void AssembleAllSyncContactPairs(
       bool const storeForces = assemRes &&
           (reg.all_of<TagQueryActiveContacts>(entity0) ||
            reg.all_of<TagQueryActiveContacts>(entity1));
-      if (reg.all_of<TagRigidActor>(entity0) && reg.all_of<TagRigidActor>(entity1)) {
+      bool const useContactSums =
+          reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[pair.collision->collidingJacId]
+              .useContactSums;
+      if (useContactSums && reg.all_of<TagRigidActor>(entity0)) {
         // Between rigid actors, only sums of the per-point response are needed.
         Vec4r const comBLocal = (assemRes || assemDRes)
             ? reg.get<CRigidBodyInertia const>(entity1).GetCenterOfMassLocal()
@@ -3953,6 +4094,40 @@ static void AssembleAllSyncContactPairs(
             storeForces ? MakeSpan(response.force) : Span<Real3>{});
         AssembleSyncRigidContactSums<kGradTarget>(
             reg, entity0, entity1, sums, jacs, &taskLocalAlloc, taskObj, taskRes, taskDRes);
+      } else if (useContactSums) {
+        // A skinned actor against a rigid collider: sums over the bone slices and the
+        // rigid-collider slice, about the collider's center of mass.
+        MOCHI_ASSERT_VERBOSE(
+            kGradTarget == GradTarget::Current,
+            "Only contact between rigid actors supports differentiability.");
+        Vec4r const comBLocal = (assemRes || assemDRes)
+            ? reg.get<CRigidBodyInertia const>(entity1).GetCenterOfMassLocal()
+            : Vec4r{};
+        DynamicArray<VMatrix3x3r> boneRotations(&taskLocalAlloc);
+        SkinnedContactSlices const slices =
+            GetSkinnedContactSlices(reg, entity0, query, comBLocal, boneRotations);
+        SkinnedContactSums const sums = ComputeSkinnedContactSums(
+            pairWork.pointRange,
+            query,
+            contactParams,
+            configPair,
+            dtStage,
+            samples.weights,
+            slices,
+            assemObj,
+            assemRes,
+            assemDRes,
+            &taskLocalAlloc,
+            storeForces ? MakeSpan(response.force) : Span<Real3>{});
+        AssembleSkinnedContactSums(
+            sums,
+            jacs,
+            slices.rigidColliderOrigin.has_value(),
+            query.jacColliderFromWorld[0],
+            &taskLocalAlloc,
+            taskObj,
+            taskRes,
+            taskDRes);
       } else {
         MOCHI_ASSERT_VERBOSE(
             kGradTarget == GradTarget::Current,
@@ -4249,40 +4424,75 @@ void mochi::AssembleAsyncSkinnedContact(
     // Compute collision response
     auto const& query = coll.collisionResult;
     int const numPoints = isize(query.sampleIndices);
-    response.ResizeNoInit(
-        numPoints,
-        params.assemObj && collisionHasStateDofs,
-        evaluateRes,
-        params.assemDRes && collisionHasStateDofs);
+    bool const assemObj = params.assemObj && collisionHasStateDofs;
+    bool const assemDRes = params.assemDRes && collisionHasStateDofs;
     auto contactParams = GetContactPairParams(reg, e, coll.colliderEntity);
-    ComputeCollisionResponse<GradTarget::Current>(
-        query,
-        contactParams,
-        config,
-        intState.dtStage,
-        params.assemObj && collisionHasStateDofs,
-        evaluateRes,
-        params.assemDRes && collisionHasStateDofs,
-        response);
 
-    if (collisionHasStateDofs) {
-      // Get contact Jacobians
-      jacs.clear();
-      jacData.GetActiveJacs(jacs);
-
-      // Perform assembly.
-      auto& outContactResidual = outContactSnle.residuals[0].second;
-      auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
-      AssembleCollisionResponse(
+    if (jacData.useContactSums) {
+      // Sums over the bone slices, without per-point response.
+      response.ResizeNoInit(numPoints, false, evaluateRes, false);
+      DynamicArray<VMatrix3x3r> boneRotations(&filoAllocator);
+      SkinnedContactSlices const slices =
+          GetSkinnedContactSlices(reg, e, query, std::nullopt, boneRotations);
+      SkinnedContactSums const sums = ComputeSkinnedContactSums(
+          Interval<int>{0, numPoints},
           query,
-          response,
+          contactParams,
+          config,
+          intState.dtStage,
           samples.weights,
-          jacs,
-          isize(jacs), // All the Jacobians are of the colliding actor.
+          slices,
+          assemObj,
+          evaluateRes,
+          assemDRes,
           &filoAllocator,
-          params.assemObj ? &outContactSnle.objective : nullptr,
-          params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
-          params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{});
+          evaluateRes ? MakeSpan(response.force) : Span<Real3>{});
+      if (collisionHasStateDofs) {
+        jacs.clear();
+        jacData.GetActiveJacs(jacs);
+        auto& outContactResidual = outContactSnle.residuals[0].second;
+        auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
+        AssembleSkinnedContactSums(
+            sums,
+            jacs,
+            /*hasRigidColliderSlice*/ false,
+            query.jacColliderFromWorld[0],
+            &filoAllocator,
+            params.assemObj ? &outContactSnle.objective : nullptr,
+            params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
+            params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{});
+      }
+    } else {
+      response.ResizeNoInit(numPoints, assemObj, evaluateRes, assemDRes);
+      ComputeCollisionResponse<GradTarget::Current>(
+          query,
+          contactParams,
+          config,
+          intState.dtStage,
+          assemObj,
+          evaluateRes,
+          assemDRes,
+          response);
+
+      if (collisionHasStateDofs) {
+        // Get contact Jacobians
+        jacs.clear();
+        jacData.GetActiveJacs(jacs);
+
+        // Perform assembly.
+        auto& outContactResidual = outContactSnle.residuals[0].second;
+        auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
+        AssembleCollisionResponse(
+            query,
+            response,
+            samples.weights,
+            jacs,
+            isize(jacs), // All the Jacobians are of the colliding actor.
+            &filoAllocator,
+            params.assemObj ? &outContactSnle.objective : nullptr,
+            params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
+            params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{});
+      }
     }
 
     // Store the forces in case they are needed for a later contact point query
@@ -4452,6 +4662,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CSdfColliderPending>(reg);
   ecs::RegisterComponent<CSdfMapping<TimeStep::Current>>(reg);
   ecs::RegisterComponent<CSdfMapping<TimeStep::StageStart>>(reg);
+  ecs::RegisterComponent<CContactSampleBonePoints>(reg);
   ecs::RegisterComponent<CSphereCollider>(reg);
 
   // Global Context

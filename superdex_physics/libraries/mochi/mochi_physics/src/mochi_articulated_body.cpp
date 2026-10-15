@@ -1358,6 +1358,63 @@ int mochi::InitDiscretizationSkinMesh(
   }
 }
 
+namespace {
+
+// Initialize the bone points of all contact samples from the rest positions
+template <typename DiscretizationT>
+void InitContactSampleBonePoints(
+    DiscretizationT const& discretization,
+    CArticulatedSkinningData const& skinningData,
+    CContactPartitions const& contactPartitions,
+    CContactSampleBonePoints& outPoints) {
+  int const numSamples = discretization.GetNumQuadPoints();
+  outPoints.offsets.resize_noinit(numSamples + 1);
+  outPoints.offsets[0] = 0;
+  for (int sample = 0; sample < numSamples; ++sample) {
+    auto const& partition = contactPartitions[contactPartitions.SampleIdxToPartitionIdx(sample)];
+    int const numBones = isize(std::get<DynamicArray<int>>(partition.GetDofDescriptors()[0]));
+    outPoints.offsets[sample + 1] = outPoints.offsets[sample] + numBones;
+  }
+  outPoints.points.resize_noinit(outPoints.offsets.back());
+
+  auto const restPositions = Unflatten<Real3 const>(MakeConstSpan(skinningData.restCoords));
+  auto const& skinningTransform = skinningData.skinningTransform;
+  discretization.Visit([&](auto const& discretizationImpl) {
+    using ElementT = typename std::decay_t<decltype(discretizationImpl)>::ElementT;
+    Span<ElementT const> const femElements = discretizationImpl.femElements;
+    for (int sample = 0; sample < numSamples; ++sample) {
+      int const offset = outPoints.offsets[sample];
+      auto points =
+          MakeSpan(outPoints.points).subspan(offset, outPoints.offsets[sample + 1] - offset);
+      auto const& partition = contactPartitions[contactPartitions.SampleIdxToPartitionIdx(sample)];
+      auto const boneIds =
+          MakeConstSpan(std::get<DynamicArray<int>>(partition.GetDofDescriptors()[0]));
+      MOCHI_ASSERT_VERBOSE(points.size() == boneIds.size());
+      std::fill(points.begin(), points.end(), Vec4r{});
+      auto const nodes = GetNodeInfo(femElements, sample);
+      NdArray<real, ElementT::kNumNodes> const quadratureWeights =
+          GetWeightInfo(femElements, sample);
+      for (int k = 0; k < ElementT::kNumNodes; ++k) {
+        Vec4r const position = ToSimd(restPositions[nodes[k]]);
+        for (auto const& [boneId, weight] : skinningTransform.perVertexBones[nodes[k]]) {
+          // Bones without DoFs are not in the partition.
+          auto const bone = std::lower_bound(boneIds.begin(), boneIds.end(), boneId);
+          if (bone == boneIds.end() || *bone != boneId) {
+            continue;
+          }
+          // The lever arm about the link origin in the link frame, and 1 in the last lane, so that
+          // the last lane accumulates the weight.
+          Vec4r const leverArm =
+              skinningTransform.GetBonePreTransform(boneId).TransformPoint(position);
+          points[bone - boneIds.begin()] += (quadratureWeights[k] * weight) * ToSimdPoint(leverArm);
+        }
+      }
+    }
+  });
+}
+
+} // namespace
+
 void mochi::InitCollidingSkinMesh(
     entt::registry& reg,
     entt::entity e,
@@ -1377,6 +1434,19 @@ void mochi::InitCollidingSkinMesh(
   // Initialize contact partitions.
   auto const& contactPartitions = reg.emplace<CContactPartitions>(
       e, InitializeContactPartitions(reg, e, articulated, strategies));
+
+  // Initialize the bone points of the contact samples from the rest positions. Only articulated
+  // skins use contact sums.
+  if (reg.all_of<TagArticulatedActor>(e)) {
+    auto& bonePoints = reg.emplace<CContactSampleBonePoints>(e);
+    auto const& skinningData = reg.get<CArticulatedSkinningData const>(e);
+    if (auto const* boundary = reg.try_get<CFemBoundaryDiscretization const>(e)) {
+      InitContactSampleBonePoints(*boundary, skinningData, contactPartitions, bonePoints);
+    } else {
+      auto const& surface = reg.get<CFemSurfaceDiscretization const>(e);
+      InitContactSampleBonePoints(surface, skinningData, contactPartitions, bonePoints);
+    }
+  }
 
   // Other components for collision detection (as colliding object, not as collider).
   deformable::EmplaceContactComponents(reg, e, numCollidingSamples, isize(contactPartitions));
