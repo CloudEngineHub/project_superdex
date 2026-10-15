@@ -1333,31 +1333,41 @@ void mochi::InitRodActor(
     Error& error) {
   // Validate material parameters for actor creation
   // (Geometry validation is done in model::Validate)
-  MOCHI_ERROR_IF(params.material.axialStiffness <= 0_r, error, "Invalid axial stiffness");
+  MOCHI_ERROR_IF(
+      !IsFinite(params.material.axialStiffness) || params.material.axialStiffness <= 0_r,
+      error,
+      "Axial stiffness must be positive and finite.");
   // Deliberately allow zero torsional or flexural stiffnesses, to turn off torsion and/or bending
   // in cable-like rods.
-  MOCHI_ERROR_IF(params.material.torsionalStiffness < 0_r, error, "Invalid torsional stiffness");
-  for (auto const& flexuralStiffnessComponent : params.material.flexuralStiffness) {
-    MOCHI_ERROR_IF(flexuralStiffnessComponent < 0_r, error, "Invalid flexural stiffness");
-  }
-  MOCHI_ERROR_IF(params.material.linearDensity <= 0_r, error, "Invalid linear density");
-  // Exact zero is well-posed if there is at least one BC on twisting DoFs.
   MOCHI_ERROR_IF(
-      params.material.linearRotationalInertia < 0_r, error, "Invalid rotational inertia");
-  MOCHI_ERROR_IF(
-      params.material.linearRotationalInertia == 0_r && params.material.torsionalStiffness == 0_r,
+      !IsFinite(params.material.torsionalStiffness) || params.material.torsionalStiffness < 0_r,
       error,
-      "Rotational inertia and torsional stiffness cannot both be zero.");
+      "Torsional stiffness must be non-negative and finite.");
+  for (auto const& flexuralStiffnessComponent : params.material.flexuralStiffness) {
+    MOCHI_ERROR_IF(
+        !IsFinite(flexuralStiffnessComponent) || flexuralStiffnessComponent < 0_r,
+        error,
+        "Flexural stiffness components must be non-negative and finite.");
+  }
+  MOCHI_ERROR_IF(
+      !IsFinite(params.material.linearDensity) || params.material.linearDensity <= 0_r,
+      error,
+      "Linear density must be positive and finite.");
+  MOCHI_ERROR_IF(
+      !IsFinite(params.material.linearRotationalInertia) ||
+          params.material.linearRotationalInertia <= 0_r,
+      error,
+      "Linear rotational inertia must be positive and finite.");
   MOCHI_ERROR_IF(
       !IsFinite(params.material.massDampingCoefficient) ||
           params.material.massDampingCoefficient < 0_r,
       error,
-      "Invalid mass damping coefficient");
+      "Mass damping coefficient must be non-negative and finite.");
   MOCHI_ERROR_IF(
       !IsFinite(params.material.stiffnessDampingCoefficient) ||
           params.material.stiffnessDampingCoefficient < 0_r,
       error,
-      "Invalid stiffness damping coefficient");
+      "Stiffness damping coefficient must be non-negative and finite.");
   ValidateContactParams(params.contact, error);
   MOCHI_ERROR_RETURN(error);
 

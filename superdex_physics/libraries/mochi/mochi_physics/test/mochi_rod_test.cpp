@@ -138,8 +138,6 @@ class MochiRodActorStraightRodScene : public test::MochiSceneTestBase,
     params.worldFromLocal = _worldFromLocal;
     params.shape = shape;
     params.material.linearDensity = 1_r;
-    // Rotational inertia about the rod's axis must be nonzero for the problem to remain well-posed
-    // with no constraints on the twisting DoFs.
     params.material.linearRotationalInertia = 1_r;
     params.material.axialStiffness = 1e3_r;
     params.material.torsionalStiffness = 1e1_r;
@@ -930,7 +928,7 @@ class MochiRodRotationalInertiaTest : public test::MochiSceneTestBase {
 
     RodActorParams params;
     params.shape = shape;
-    // Use default material parameters, just ensure nonzero rotational inertia.
+    // Use default material parameters, except for a unit rotational inertia.
     params.material.linearRotationalInertia = 1_r;
 
     _actor = CreateRodActor(_scene, params, ErrorAssert{});
@@ -3365,9 +3363,9 @@ class MochiRodDampingTest : public test::MochiSceneTestBase {
 
 } // namespace
 
-// CreateRodActor rejects non-finite / negative damping coefficients and accepts a small positive
-// pair.
-TEST_F(MochiRodDampingTest, ValidationRejectsInvalidDampingCoefficients) {
+// CreateRodActor rejects non-finite or out-of-range material parameters and accepts a small
+// positive damping pair.
+TEST_F(MochiRodDampingTest, ValidationRejectsInvalidMaterialParams) {
   auto const rejected = [&](auto mutate) {
     RodMaterialParams m = BaseMaterial();
     mutate(m);
@@ -3381,11 +3379,19 @@ TEST_F(MochiRodDampingTest, ValidationRejectsInvalidDampingCoefficients) {
     test::ExpectNotOK error;
     EXPECT_EQ(nullptr, CreateRodActor(_scene, params, error));
   };
-  real const kNan = std::numeric_limits<real>::quiet_NaN();
-  rejected([](RodMaterialParams& m) { m.massDampingCoefficient = -1_r; });
-  rejected([&](RodMaterialParams& m) { m.massDampingCoefficient = kNan; });
-  rejected([](RodMaterialParams& m) { m.stiffnessDampingCoefficient = -1_r; });
-  rejected([&](RodMaterialParams& m) { m.stiffnessDampingCoefficient = kNan; });
+  constexpr real kNan = std::numeric_limits<real>::quiet_NaN();
+  for (real const bad : {0_r, -1_r, kNan, kInf}) {
+    rejected([&](RodMaterialParams& m) { m.linearDensity = bad; });
+    rejected([&](RodMaterialParams& m) { m.linearRotationalInertia = bad; });
+    rejected([&](RodMaterialParams& m) { m.axialStiffness = bad; });
+  }
+  for (real const bad : {-1_r, kNan, kInf}) {
+    rejected([&](RodMaterialParams& m) { m.torsionalStiffness = bad; });
+    rejected([&](RodMaterialParams& m) { m.flexuralStiffness[0] = bad; });
+    rejected([&](RodMaterialParams& m) { m.flexuralStiffness[1] = bad; });
+    rejected([&](RodMaterialParams& m) { m.massDampingCoefficient = bad; });
+    rejected([&](RodMaterialParams& m) { m.stiffnessDampingCoefficient = bad; });
+  }
 
   // A valid small positive pair succeeds.
   RodMaterialParams valid = BaseMaterial();

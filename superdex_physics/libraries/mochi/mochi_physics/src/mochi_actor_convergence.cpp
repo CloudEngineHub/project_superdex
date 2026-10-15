@@ -78,9 +78,7 @@
 // - Improve the formulation for twist DoF weights of rod actors. Consider treating each rod element
 //   as a rigid body in 3D space, computing its full inertia tensor (diagonal in element-adapted
 //   frame), and using the maximum characteristic torque from that. This would provide a purely
-//   inertial twist weight that is always positive (even for straight rods with negligible
-//   rotational inertia), eliminating the curvature-based branch and the dimensionally-inconsistent
-//   w=1 fallback.
+//   inertial twist weight, eliminating the curvature-based branch.
 // - Introduce stiffness-based weights for quasi-static simulation, defining characteristic forces
 //   from elastic and geometric properties.
 
@@ -300,8 +298,7 @@ GetRodActorResidualWeights(entt::registry const& reg, entt::entity actor, real a
       "Inconsistent number of nodes and elements for rod actor.");
   MOCHI_ASSERT_VERBOSE(material.linearDensity > 0_r, "Linear density must be positive.");
   MOCHI_ASSERT_VERBOSE(
-      material.linearRotationalInertia > 0_r || material.torsionalStiffness > 0_r,
-      "Rotational inertia and/or torsional stiffness must be positive.");
+      material.linearRotationalInertia > 0_r, "Rotational inertia must be positive.");
 
   // --- Curvature-based twist weights ---
 
@@ -330,14 +327,9 @@ GetRodActorResidualWeights(entt::registry const& reg, entt::entity actor, real a
 
   real const totalMass = rod::GetActorMass(reg, actor);
   real const forceScaling = (totalMass > 0_r) ? (1_r / (Sqr(aRef) * totalMass)) : 0_r;
-  real rotScaling = 0_r;
-  if (material.linearRotationalInertia > 0_r) {
-    real const gyrRadius = Sqrt(material.linearRotationalInertia / material.linearDensity);
-    real const totalRotInertia = HSum(MakeConstSpan(elementRotationalInertias.values));
-    if (totalRotInertia > 0_r) {
-      rotScaling = 1_r / (Sqr(aRef / gyrRadius) * totalRotInertia);
-    }
-  }
+  real const gyrRadius = Sqrt(material.linearRotationalInertia / material.linearDensity);
+  real const totalRotInertia = HSum(MakeConstSpan(elementRotationalInertias.values));
+  real const rotScaling = 1_r / (Sqr(aRef / gyrRadius) * totalRotInertia);
 
   // --- Assemble weights ---
   ColumnVector<real> weights(numDofs);
@@ -373,20 +365,13 @@ GetRodActorResidualWeights(entt::registry const& reg, entt::entity actor, real a
     real const curvatureCouplingWeight = (forceScaling > 0_r && elemMass > 0_r)
         ? (forceScaling * Sqr(effectiveCurvature) / elemMass)
         : 0_r;
-    real const rotInertiaWeight =
-        (rotScaling > 0_r && elementRotationalInertias.values[nodeIdx] > 0_r)
-        ? (rotScaling / elementRotationalInertias.values[nodeIdx])
-        : 0_r;
+    real const rotInertiaWeight = rotScaling / elementRotationalInertias.values[nodeIdx];
     MOCHI_ASSERT_VERBOSE(
-        curvatureCouplingWeight >= 0_r && rotInertiaWeight >= 0_r,
-        "Twist weight components must be non-negative.");
+        curvatureCouplingWeight >= 0_r && rotInertiaWeight > 0_r && IsFinite(rotInertiaWeight),
+        "Curvature twist weight must be non-negative and inertia twist weight must be positive and "
+        "finite.");
 
-    // Note: When both criteria give zero (e.g. straight rod with negligible rotational inertia
-    // under pure torsion), falls back to w=1. This is dimensionally inconsistent but conservative
-    // — the twist residual is not downweighted. See the TODO at the top of this file for a
-    // unified inertia-based formulation that would avoid this.
-    real const twistWeight = Max(curvatureCouplingWeight, rotInertiaWeight);
-    weights(baseDof + 3) = (twistWeight > 0_r) ? twistWeight : 1_r;
+    weights(baseDof + 3) = Max(curvatureCouplingWeight, rotInertiaWeight);
   }
 
   return weights;

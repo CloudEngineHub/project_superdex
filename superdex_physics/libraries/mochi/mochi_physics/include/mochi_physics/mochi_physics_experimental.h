@@ -585,9 +585,7 @@ struct RodMaterialParams {
   real linearDensity = 1e-1_r; // [kg/m]
   // Rotational inertia about the rod's axis, per unit undeformed length. For a rod made of a
   // homogeneous material, the value would be the 3D density (per unit volume) times the cross
-  // section's polar area moment of inertia. NOTE: This must be positive if there are no Dirichlet
-  // boundary conditions or other constraints on torsional degrees of freedom and/or if the
-  // torsional stiffness is zero.
+  // section's polar area moment of inertia. This must be positive.
   real linearRotationalInertia = 1e-6_r; // [kg m^2 / m] = [kg m]
   // Axial stiffness of a rod. This would be Young's modulus times cross-section area if the rod was
   // made of a homogeneous elastic material. This must be positive.
@@ -595,9 +593,7 @@ struct RodMaterialParams {
   // Torsional stiffness of a rod. For rods made of homogenous elastic material, this would be the
   // shear modulus times a "torsion constant" that is the polar area moment of inertia for circular
   // cross sections, and depends on solving for a Prandtl stress function in the general case (with
-  // values for common shapes available in engineering handbooks). NOTE: If rotational inertia is
-  // zero (which may be well posed when some twisting DoFs are constrained), this must be positive
-  // to transmit the effects of constrained twisting DoFs to the rest of the rod.
+  // values for common shapes available in engineering handbooks). This must be non-negative.
   real torsionalStiffness = 5e-4_r; // [N m^2]
   // The first value is flexural stiffness about the material frame axes explicitly provided, and
   // the second value is flexural stiffness about the perpendicular axis. For a beam made of
