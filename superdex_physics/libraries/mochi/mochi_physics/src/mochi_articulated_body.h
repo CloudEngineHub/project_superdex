@@ -539,7 +539,8 @@ void AssembleDampingForces(
 
 /**
  * System to assemble the objective, residual, and dresidual of forces from transmissions attached
- * to the articulated body.
+ * to the articulated body. For GradTarget::Current and GradTarget::Previous only. Link-dependent
+ * residual terms are added to the full residual, to be projected by ProjectFullResidual.
  */
 void AssembleTransmissionForces(
     AssemblyParams const& params,

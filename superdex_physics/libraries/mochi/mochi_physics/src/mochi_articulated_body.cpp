@@ -1988,6 +1988,10 @@ void articulated::compound::AssembleTransmissionForces(
     CTimeIntegratorState const& intState,
     CTransmissions const& transmissions,
     CActorSnle& outCompoundSnle) {
+  MOCHI_ASSERT_VERBOSE(
+      params.gradTarget == GradTarget::Current || params.gradTarget == GradTarget::Previous,
+      "Unexpected grad target");
+  // Link-dependent terms go to the full residual, which ProjectFullResidual projects.
   for (auto const& transmission : transmissions.transmissions) {
     transmission->AddObjResDRes(
         MakeConstSpan(currLinkTxs),
@@ -1999,6 +2003,7 @@ void articulated::compound::AssembleTransmissionForces(
         params,
         outCompoundSnle.objective,
         outCompoundSnle.reducedResidual,
+        outCompoundSnle.fullResidual,
         std::get<Matrix<real>>(outCompoundSnle.reducedDResidual));
   }
 }
@@ -2736,7 +2741,10 @@ void articulated::compound::EntityAssemble(
         outCompoundSnle);
   }
 
-  if (!transmissions.transmissions.empty()) {
+  // Add transmission forces. They depend on the current and stage-start displacements, but not on
+  // differentiable input.
+  if (!transmissions.transmissions.empty() &&
+      IsAssemblyNeeded(StateDependency::FirstOrder, false /*inputDependency*/, gradTarget)) {
     AssembleTransmissionForces(
         params,
         currLinkTxs,

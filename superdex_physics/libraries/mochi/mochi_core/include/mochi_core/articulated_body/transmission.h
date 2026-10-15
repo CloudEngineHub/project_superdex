@@ -345,7 +345,16 @@ class Transmission {
   // `currentLinkTransforms` / `stageStartLinkTransforms` are per-link world-from-CoM transforms at
   // the corresponding poses. The body Jacobian (d(link transforms)/d(reduced DoFs), Lie/angular
   // convention, with 6 rows per link as laid out by mochi::articulated::Jacobian) is at the current
-  // pose. LinearTransmission ignores the link transforms and bodyJacobian.
+  // pose, and is only used for the dresidual. LinearTransmission ignores the link transforms and
+  // bodyJacobian.
+  //
+  // Residual terms on joint coordinates are added to `outResidual`, the reduced residual. Residual
+  // terms that depend on link poses are added to `outLinkResidual` as link-space residuals: 6
+  // values per link, a world force at the link's CoM and a world torque about it. They are
+  // evaluated on the link transforms of `params.gradTarget` (stage-start for GradTarget::Previous,
+  // current otherwise). If the residual is assembled, `outLinkResidual` must hold 6 values per
+  // link, except for transmissions without link-dependent terms (LinearTransmission), which ignore
+  // it.
   virtual void AddObjResDRes(
       Span<TransformRT const> currentLinkTransforms,
       Span<TransformRT const> stageStartLinkTransforms,
@@ -356,6 +365,7 @@ class Transmission {
       AssemblyParams const& params,
       double& outObjective,
       Span<real> outResidual,
+      Span<real> outLinkResidual,
       Matrix<real>& outDResidual) const = 0;
 
  protected:
@@ -397,6 +407,7 @@ class LinearTransmission : public Transmission {
       AssemblyParams const& params,
       double& outObjective,
       Span<real> outResidual,
+      Span<real> outLinkResidual,
       Matrix<real>& outDResidual) const override;
 
   // Per-term precomputed data: the source joint index, the pose offset (where the joint's scalar
@@ -470,6 +481,7 @@ class SpatialTendon : public Transmission {
       AssemblyParams const& params,
       double& outObjective,
       Span<real> outResidual,
+      Span<real> outLinkResidual,
       Matrix<real>& outDResidual) const override;
 
   // Non-owning view of the ordered routing elements, valid for this tendon's lifetime.
@@ -490,6 +502,11 @@ class SpatialTendon : public Transmission {
  protected:
   DynamicArray<RoutingElement> _routingElements; // Ordered routing elements
   DynamicArray<LinearJointOffsets> _linearJointOffsets;
+  // Links with waypoints, sorted and unique. Only these have a nonzero link-space gradient.
+  DynamicArray<int> _waypointLinks;
+  // Index in _waypointLinks of the link of each Waypoint element (in the same order as the Waypoint
+  // entries of _routingElements).
+  DynamicArray<int> _waypointSlots;
   real _restLength = 0_r; // Combined routed length + linear-joint sum at the rest pose [m]
 };
 
