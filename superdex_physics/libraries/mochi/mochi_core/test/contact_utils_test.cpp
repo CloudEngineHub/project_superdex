@@ -30,6 +30,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <random>
 #include <string>
 #include <type_traits>
@@ -1452,20 +1453,22 @@ TEST(ContactJac, CoalesceColumnsByCachedMappingWithNoContacts) {
 }
 
 TEST(ContactJac, Move) {
-  int const nDoFsState = 8;
+  constexpr int kNDoFsState = 8;
   int const nContacts = 10;
-  RowMatrix<real, RigidSize::kDAll> const jacAux(RigidSize::kDAll, nDoFsState);
+  RowMatrix<real, RigidSize::kDAll> const jacAux(RigidSize::kDAll, kNDoFsState);
+  std::array<int, kNDoFsState> dofsAux{};
+  std::iota(dofsAux.begin(), dofsAux.end(), 0);
+  int const kInternalDofOffset = 12;
   for (bool sharedDoFs : {true, false}) {
     for (bool sharedJacs : {true, false}) {
       // Auxiliary Jacobians require shared DoFs.
-      int const nDoFsInternal = sharedDoFs ? RigidSize::kDAll : nDoFsState;
+      int const nDoFsInternal = sharedDoFs ? RigidSize::kDAll : kNDoFsState;
+      int const internalDofOffset = sharedDoFs ? kInternalDofOffset : kSentinelIndex;
       ContactJac jac0;
-      jac0.Resize(
-          sharedDoFs,
-          sharedJacs,
-          nDoFsState,
-          nContacts,
-          sharedDoFs ? ContactJac::AuxView(jacAux) : ContactJac::AuxView());
+      jac0.Resize(sharedDoFs, sharedJacs, nDoFsInternal, nContacts);
+      if (sharedDoFs) {
+        jac0.SetJacAux(jacAux, 0, dofsAux, internalDofOffset);
+      }
       auto const* jacsData = jac0.Jac(0).data();
       auto const* indsData = jac0.Inds(0).data();
 
@@ -1477,8 +1480,9 @@ TEST(ContactJac, Move) {
         EXPECT_EQ(sharedDoFs, jac.hasSharedDoFs);
         EXPECT_EQ(sharedJacs, jac.hasSharedJacs);
         EXPECT_EQ(nDoFsInternal, jac.nDoFsInternal);
-        EXPECT_EQ(nDoFsState, jac.nDoFsState);
+        EXPECT_EQ(kNDoFsState, jac.nDoFsState);
         EXPECT_EQ(nContacts, jac.nContacts);
+        EXPECT_EQ(internalDofOffset, jac.internalDofOffset);
         EXPECT_TRUE(jac.groupsInitialized);
         EXPECT_EQ(jacsData, jac.Jac(0).data()); // Data must be moved
         EXPECT_EQ(indsData, jac.Inds(0).data()); // Data must be moved
@@ -1496,4 +1500,31 @@ TEST(ContactJac, Move) {
       runChecks(jac2);
     }
   }
+}
+
+TEST(ContactJac, SetJacAux) {
+  constexpr int kNumContacts = 3;
+  constexpr int kDofOffset = 10;
+  constexpr int kInternalDofOffset = 12;
+  std::array<int, 8> const dofsAux{0, 1, 2, 5, 6, 7, 8, 9};
+  RowMatrix<real, RigidSize::kDAll> const jacAux(RigidSize::kDAll, isize(dofsAux));
+  ContactJac jac;
+  jac.Resize(true, false, RigidSize::kDAll, kNumContacts);
+  auto const* const jacsData = jac.Jac(0).data();
+
+  jac.SetJacAux(jacAux, kDofOffset, dofsAux, kInternalDofOffset);
+
+  std::array<int, 8> const expectedInds{10, 11, 12, 15, 16, 17, 18, 19};
+  EXPECT_SPAN_EQ(MakeConstSpan(expectedInds), jac.Inds(0));
+  EXPECT_EQ(RigidSize::kDAll, jac.nDoFsInternal);
+  EXPECT_EQ(isize(dofsAux), jac.nDoFsState);
+  EXPECT_EQ(kInternalDofOffset, jac.internalDofOffset);
+  EXPECT_EQ(jacAux.data(), jac.JacAux().data());
+  EXPECT_EQ(jacsData, jac.Jac(0).data()); // The rigid Jacobian blocks are kept
+
+  // Resizing removes the auxiliary Jacobian.
+  jac.Resize(true, false, RigidSize::kDAll, kNumContacts);
+  EXPECT_TRUE(jac.JacAux().empty());
+  EXPECT_EQ(kSentinelIndex, jac.internalDofOffset);
+  EXPECT_EQ(RigidSize::kDAll, jac.nDoFsState);
 }

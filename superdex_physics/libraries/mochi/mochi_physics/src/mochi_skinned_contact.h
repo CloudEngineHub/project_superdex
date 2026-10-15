@@ -35,7 +35,7 @@ template <typename DiscretizationT>
 void SetupCollidingJacobians(
     ecs::Included<TagArticulatedActor>,
     ecs::Excluded<TagBlendedActor>,
-    ecs::PartialRegistry<CArticulatedRigidJacobian const> reg,
+    ecs::PartialRegistry<CArticulatedRigidJacobian const, CDofOffset const> reg,
     DiscretizationT const& discretization,
     CDofOffset const& dofOffset,
     CGroupMembers const& groupMembers,

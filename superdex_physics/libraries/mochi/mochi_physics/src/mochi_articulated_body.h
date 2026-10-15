@@ -854,6 +854,7 @@ MOCHI_FORCE_INLINE void SetupCollidingJacobians(
     CRootTransform const& transform,
     ecs::PartialRegistry<CDofOffset const> reg,
     CArticulatedEntity const& entArticulated,
+    CDofOffset const& linkDofOffset,
     CArticulatedRigidJacobian const& jacobianBody,
     CContactSamples<TimeStep::Current> const& samples, // Not templatized, they are constant
     CCollJacs<CollRole::Colliding>& outJacobians) {
@@ -866,7 +867,8 @@ MOCHI_FORCE_INLINE void SetupCollidingJacobians(
       samples,
       outJacobians,
       jacobianBody.value,
-      jacobianBody.dofs);
+      jacobianBody.dofs,
+      linkDofOffset.dofsOffset);
 }
 
 // Compute the contact Jacobians as collider actor
@@ -876,6 +878,7 @@ MOCHI_FORCE_INLINE void SetupColliderJacobians(
     CRigidState<kTimeStep> const& state,
     ecs::PartialRegistry<CDofOffset const> reg,
     CArticulatedEntity const& entArticulated,
+    CDofOffset const& linkDofOffset,
     CArticulatedRigidJacobian const& jacobianBody,
     CRigidBodyInertia const& rigidInertia,
     CCollJacs<CollRole::Collider>& outJacobians) {
@@ -885,7 +888,8 @@ MOCHI_FORCE_INLINE void SetupColliderJacobians(
       rigidInertia,
       outJacobians,
       jacobianBody.value,
-      jacobianBody.dofs);
+      jacobianBody.dofs,
+      linkDofOffset.dofsOffset);
 }
 
 /*

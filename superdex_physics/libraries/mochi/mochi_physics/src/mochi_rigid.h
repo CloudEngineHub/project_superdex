@@ -25,6 +25,7 @@
 #include "mochi_snle.h"
 
 #include <mochi_core/integration/integration_utils.h>
+#include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/rigid_body_utils.h>
 
 #include <memory>
@@ -246,7 +247,8 @@ void SetupCollidingJacobiansImpl(
     CContactSamples<TimeStep::Current> const& samples,
     CCollJacs<CollRole::Colliding>& outJacobians,
     ContactJac::AuxView jacAux = {},
-    Span<int const> dofsAux = {});
+    Span<int const> dofsAux = {},
+    int internalDofOffset = kSentinelIndex);
 
 template <TimeStep kTimeStep>
 MOCHI_FORCE_INLINE void SetupCollidingJacobians(
@@ -274,7 +276,8 @@ void SetupColliderJacobiansImpl(
     CRigidBodyInertia const& rigidInertia,
     CCollJacs<CollRole::Collider>& outJacobians,
     ContactJac::AuxView jacAux = {},
-    Span<int const> dofsAux = {});
+    Span<int const> dofsAux = {},
+    int internalDofOffset = kSentinelIndex);
 
 template <TimeStep kTimeStep>
 MOCHI_FORCE_INLINE void SetupColliderJacobians(

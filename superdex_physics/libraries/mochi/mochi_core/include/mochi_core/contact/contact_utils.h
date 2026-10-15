@@ -29,6 +29,7 @@
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/utils/activations.h>
 #include <mochi_core/utils/batch_types.h>
+#include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/decomposition_utils.h>
 #include <mochi_core/utils/differentiability.h>
 #include <mochi_core/utils/dynamic_array.h>
@@ -121,7 +122,8 @@ and dpi/dz = dpi/dx. The Jacobians are packed in a single matrix [dp0/dz, dp1/dz
 *
 If present, dz/dx is the 6 x nDoFsState Jacobian of a rigid transform z wrt the state DoFs x (e.g.,
 the transform of an articulated link wrt the articulation DoFs). It requires shared DoFs, and
-nDoFsInternal is 6. Otherwise, nDoFsInternal equals nDoFsState.
+nDoFsInternal is 6. Otherwise, nDoFsInternal equals nDoFsState. Resize() always produces a Jacobian
+without dz/dx, and SetJacAux() then re-expresses a rigid Jacobian dpi/dz wrt x.
 *
 DoF indices can be accessed in two ways:
 - Inds(i) returns all affected DoF indices of the i-th contact (always nDoFsState entries).
@@ -196,6 +198,8 @@ struct ContactJac {
   bool hasSharedJacs = false; // if all contacts of the actor share the same Jacobian.
   int nDoFsState = 0; // nnzs per row of dpi/dx
   int nDoFsInternal = 0; // nnzs per row of dpi/dz
+  // Offset of z in the full DoFs that dz/dx maps to. Set iff there is an auxiliary Jacobian.
+  int internalDofOffset = kSentinelIndex;
   int nContacts = 0;
 
   ContactJac() = default;
@@ -217,6 +221,7 @@ struct ContactJac {
     hasSharedJacs = other.hasSharedJacs;
     nDoFsState = other.nDoFsState;
     nDoFsInternal = other.nDoFsInternal;
+    internalDofOffset = other.internalDofOffset;
     nContacts = other.nContacts;
     return *this;
   }
@@ -258,18 +263,16 @@ struct ContactJac {
     return _jacAux;
   }
 
-  /// @brief Initialize the sizes of the internal data structures (except for the index groups).
-  ///
-  /// @param[in] nDoFs State DoFs per contact (nDoFsState).
-  /// @param[in] jacAux Optional auxiliary Jacobian, of size 6 x nDoFs. Requires shared DoFs.
-  void Resize(bool sharedDoFs, bool sharedJacs, int nDoFs, int _nContacts, AuxView jacAux = {}) {
-    MOCHI_ASSERT_VERBOSE(jacAux.empty() || (sharedDoFs && jacAux.Cols() == nDoFs));
+  /// @brief Initialize the sizes of the internal data structures (except for the index groups),
+  /// without auxiliary Jacobian.
+  void Resize(bool sharedDoFs, bool sharedJacs, int nDoFs, int nContactsIn) {
     hasSharedDoFs = sharedDoFs;
     hasSharedJacs = sharedJacs;
-    nDoFsInternal = jacAux.empty() ? nDoFs : RigidSize::kDAll;
+    nDoFsInternal = nDoFs;
     nDoFsState = nDoFs;
-    nContacts = _nContacts;
-    _jacAux.Reset(jacAux);
+    internalDofOffset = kSentinelIndex;
+    nContacts = nContactsIn;
+    _jacAux.Reset(AuxView{});
     // jac has only 1 block if jacs are shared by all contacts
     _data.jac.resize_noinit(3 * (hasSharedJacs ? 1 : nContacts) * nDoFsInternal);
     _jac.Reset(_data.jac.data(), 3, (hasSharedJacs ? 1 : nContacts) * nDoFsInternal);
@@ -277,6 +280,38 @@ struct ContactJac {
     _data.inds.resize_noinit((hasSharedDoFs ? 1 : nContacts) * nDoFsState);
     _inds.Reset(_data.inds.data(), hasSharedDoFs ? 1 : nContacts, nDoFsState);
     groupsInitialized = false;
+  }
+
+  /// @brief Re-express the Jacobian of a rigid transform z wrt the state DoFs x through the
+  /// auxiliary Jacobian dz/dx. The Jacobian blocks dpi/dz are kept, and the DoF indices are
+  /// replaced.
+  ///
+  /// @param[in] jacAux Auxiliary Jacobian dz/dx, of size 6 x isize(dofsAux). The owner must outlive
+  /// this Jacobian.
+  /// @param[in] dofOffset Offset added to all entries of dofsAux.
+  /// @param[in] dofsAux DoF indices of x, relative to dofOffset.
+  /// @param[in] internalDofOffsetIn Offset of z in the full DoFs that jacAux maps to.
+  ///
+  /// @pre Resized with shared DoFs and 6 DoFs, and index groups not initialized.
+  void SetJacAux(AuxView jacAux, int dofOffset, Span<int const> dofsAux, int internalDofOffsetIn) {
+    MOCHI_ASSERT_VERBOSE(hasSharedDoFs && _jacAux.empty(), "Expected a rigid Jacobian.");
+    MOCHI_ASSERT_VERBOSE(
+        nDoFsInternal == RigidSize::kDAll && nDoFsState == RigidSize::kDAll,
+        "Expected a rigid Jacobian.");
+    MOCHI_ASSERT_VERBOSE(!groupsInitialized, "Index groups must not be initialized.");
+    MOCHI_ASSERT_VERBOSE(!jacAux.empty() && jacAux.Cols() == isize(dofsAux));
+    MOCHI_ASSERT_VERBOSE(internalDofOffsetIn != kSentinelIndex);
+    nDoFsState = isize(dofsAux);
+    internalDofOffset = internalDofOffsetIn;
+    _jacAux.Reset(jacAux);
+    // Clear first, so that growing the capacity does not copy the overwritten rigid DoF indices.
+    _data.inds.clear();
+    _data.inds.resize_noinit(nDoFsState);
+    _inds.Reset(_data.inds.data(), 1, nDoFsState);
+    Span<int> const inds = Inds(0);
+    for (int i = 0; i < nDoFsState; ++i) {
+      inds[i] = dofOffset + dofsAux[i];
+    }
   }
 
   /// @brief Set to zero all the Jacobian blocks.

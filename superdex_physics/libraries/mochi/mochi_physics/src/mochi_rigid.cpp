@@ -422,35 +422,39 @@ void rigid::SetupCollidingJacobiansImpl(
     CContactSamples<TimeStep::Current> const& samples,
     CCollJacs<CollRole::Colliding>& outJacobians,
     ContactJac::AuxView jacAux,
-    Span<int const> dofsAux) {
+    Span<int const> dofsAux,
+    int internalDofOffset) {
   MOCHI_PROFILE_SCOPE();
 
   // Create rigid-structure differentiable map, shared by all Jacobians
-  DMapRigidStructure drigidStructure(0, dofOffset.dofsOffset, jacAux, dofsAux);
+  DMapRigidStructure drigidStructure(0, dofOffset.dofsOffset);
   DMap<DMapRigidStructure> dmapRigidStructure(&drigidStructure);
 
   // Compute Jacobians
   for (auto& jac : outJacobians) {
-    if (jac.isSync) {
-      auto jacs = jac.PrepareJacs(1);
-      if (jac.useContactSums) {
-        dmapRigidStructure.GetJac(jac.query->sampleIndices, jacs);
-      } else {
-        // Create regular differentiable map
-        DMapRTInput dtransform(
-            0,
-            state,
-            transform,
-            dofOffset.dofsOffset,
-            samples.positions,
-            jac.query->jacColliderFromWorld,
-            jacAux,
-            dofsAux);
-        DMap<DMapRTInput> dmap(&dtransform);
-        dmap.GetJac(jac.query->sampleIndices, jacs);
-      }
-      jacs[0].CompressIndices();
+    // Pairs without contacts keep their invalidated, inactive slices.
+    if (!jac.isSync || jac.query->sampleIndices.empty()) {
+      continue;
     }
+    auto jacs = jac.PrepareJacs(1);
+    if (jac.useContactSums) {
+      dmapRigidStructure.GetJac(jac.query->sampleIndices, jacs);
+    } else {
+      // Create regular differentiable map
+      DMapRTInput dtransform(
+          0,
+          state,
+          transform,
+          dofOffset.dofsOffset,
+          samples.positions,
+          jac.query->jacColliderFromWorld);
+      DMap<DMapRTInput> dmap(&dtransform);
+      dmap.GetJac(jac.query->sampleIndices, jacs);
+    }
+    if (jacAux) {
+      jacs[0].SetJacAux(jacAux, dofOffset.dofsOffset, dofsAux, internalDofOffset);
+    }
+    jacs[0].CompressIndices();
   }
 }
 
@@ -460,14 +464,14 @@ void rigid::SetupColliderJacobiansImpl(
     CRigidBodyInertia const& rigidInertia,
     CCollJacs<CollRole::Collider>& outJacobians,
     ContactJac::AuxView jacAux,
-    Span<int const> dofsAux) {
+    Span<int const> dofsAux,
+    int internalDofOffset) {
   MOCHI_PROFILE_SCOPE();
 
   // Create differentiable maps
-  DMapRTOutput dtransform(
-      0, state, dofOffset.dofsOffset, rigidInertia.GetCenterOfMassLocal(), jacAux, dofsAux);
+  DMapRTOutput dtransform(0, state, dofOffset.dofsOffset, rigidInertia.GetCenterOfMassLocal());
   DMap<DMapRTOutput> dmap(&dtransform);
-  DMapRigidStructure drigidStructure(0, dofOffset.dofsOffset, jacAux, dofsAux);
+  DMapRigidStructure drigidStructure(0, dofOffset.dofsOffset);
   DMap<DMapRigidStructure> dmapRigidStructure(&drigidStructure);
 
   // Compute Jacobians
@@ -478,6 +482,9 @@ void rigid::SetupColliderJacobiansImpl(
     } else {
       dtransform.SetData(jac.query);
       dmap.GetJac({}, jacs);
+    }
+    if (jacAux) {
+      jacs[0].SetJacAux(jacAux, dofOffset.dofsOffset, dofsAux, internalDofOffset);
     }
     jacs[0].CompressIndices();
   }

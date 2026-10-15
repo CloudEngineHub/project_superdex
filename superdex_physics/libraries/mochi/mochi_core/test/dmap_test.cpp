@@ -475,6 +475,8 @@ class DMapTest : public testing::Test {
   ColumnVector<real, kArticulatedSize> const kArticulatedState{CreateVectorState(kArticulatedSize)};
   std::vector<int> const kArticulatedDofs{CreateArticulatedDofs(kArticulatedSize)};
   std::array<int, RigidSize::kDAll> const kBone0Dofs{0, 1, 2, 3, 4, 5};
+  // Offsets of the bone DoFs in the articulation DoFs that the bone Jacobians map to.
+  std::array<int, kBones> const kBoneInternalDofOffsets{6, 18};
   std::array<RowMatrix<real, RigidSize::kDAll>, kBones> const kBoneJacobians{
       CreateBoneJacobians(CreateArticulatedJacobian(kArticulatedState))};
   SkinningData const kSkinning{CreateSkinning(isize(kPoints))};
@@ -514,22 +516,55 @@ class DMapTest : public testing::Test {
       MakeSingletonConstSpan(kToRigidCollider),
       MakeConstSpan(kToSoftCollider)};
 
-  // Jacobian data of all bones of a skinning transform, indexed by bone id.
-  std::array<SkinningBoneJacobianData, kBones> CreateSkinningBones(
+  // Frames of all bones of a skinning transform, indexed by bone id.
+  std::array<SkinningBoneFrame, kBones> CreateSkinningBones(
       DSkinningTransform const& skinningTransform) const {
     auto const skeletonState = ArticulatedToSkeleton(kArticulatedState);
-    auto makeBoneData = [&](int boneId, Span<int const> dofs) {
+    auto makeBoneData = [&](int boneId) {
       TransformRT const worldFromReference =
           skeletonState[boneId] * skinningTransform.GetBonePreTransform(boneId);
-      return SkinningBoneJacobianData{
+      return SkinningBoneFrame{
           ToVMatrix3x3Transpose(worldFromReference.GetRotation()),
-          worldFromReference.VGetTranslation() - skeletonState[boneId].VGetTranslation(),
-          kBoneJacobians[boneId],
-          dofs};
+          worldFromReference.VGetTranslation() - skeletonState[boneId].VGetTranslation()};
     };
-    return {
-        makeBoneData(0, MakeConstSpan(kBone0Dofs)),
-        makeBoneData(1, MakeConstSpan(kArticulatedDofs))};
+    return {makeBoneData(0), makeBoneData(1)};
+  }
+
+  // Express the rigid slices of the bones in 'activeBoneIds', starting at 'firstSlice', wrt the
+  // articulated DoFs, as contact setup does.
+  void SetBoneJacAux(Span<ContactJac> jacs, int firstSlice, Span<int const> activeBoneIds) const {
+    for (int slice = 0; slice < isize(activeBoneIds); ++slice) {
+      int const boneId = activeBoneIds[slice];
+      Span<int const> const dofs =
+          boneId == 0 ? MakeConstSpan(kBone0Dofs) : MakeConstSpan(kArticulatedDofs);
+      jacs[firstSlice + slice].SetJacAux(
+          kBoneJacobians[boneId], 0, dofs, kBoneInternalDofOffsets[boneId]);
+    }
+  }
+
+  // Map that evaluates a map with rigid slices of skinning bones or articulated links, and then
+  // sets the auxiliary Jacobians of the slices of the bones in 'boneIds'.
+  template <typename D>
+  struct BoneJacAuxMap {
+    DMapTest const& test;
+    D const& dmap;
+    int firstSlice = {};
+    Span<int const> boneIds;
+
+    void GetJac(Span<int const> inds, Span<ContactJac> jacs, ContactJac& scratch) const {
+      dmap.GetJac(inds, jacs, scratch);
+      test.SetBoneJacAux(jacs, firstSlice, boneIds);
+    }
+  };
+
+  template <typename D>
+  BoneJacAuxMap<D> WithBoneJacAux(D const& dmap, int firstSlice, Span<int const> boneIds) const {
+    return {*this, dmap, firstSlice, boneIds};
+  }
+
+  template <typename D>
+  BoneJacAuxMap<D> WithBoneJacAux(D const& dmap, int firstSlice) const {
+    return WithBoneJacAux(dmap, firstSlice, kActiveBoneIds);
   }
 
   // Main function for finite-difference consistency testing. Jacobian slice 'slice' differentiates
@@ -668,6 +703,59 @@ TEST_F(DMapTest, RigidColliding) {
   }
 }
 
+// Articulated links, with each bone of the test articulation as a link. The rigid slice of the link
+// is expressed wrt the articulated DoFs through its auxiliary Jacobian.
+TEST_F(DMapTest, LinkCollider) {
+  auto const skeletonState = ArticulatedToSkeleton(kArticulatedState);
+  for (int boneId = 0; boneId < kBones; ++boneId) {
+    auto addEpsAndMap = [this, boneId](int i, real eps, Span<Real3 const> points, Span<Real3> out) {
+      ColumnVector<real, kArticulatedSize> state = kArticulatedState;
+      AddEpsArticulated(i, eps, state);
+      std::vector<Real3> afterLink(points.size());
+      ApplyRigid(ArticulatedToSkeleton(state)[boneId], points, afterLink);
+      SelectOutput(afterLink, kInds, out, true);
+    };
+
+    TransformRT const& linkState = skeletonState[boneId];
+    VMatrix3x3r const toLinkCollider = CreateToRigidCollider(linkState);
+    auto detectionResultAfterLink = CreateDetectionResultAfterRigid(kPoints, kInds);
+    DMapRTOutput dtransform(0, linkState, {}, 0);
+    DMap<DMapRTOutput> dmap(&dtransform);
+    dtransform.SetData(&detectionResultAfterLink);
+    std::vector<int> inds(detectionResultAfterLink.posColliding.size());
+    std::iota(inds.begin(), inds.end(), 0);
+    std::array<int, 1> const linkIds{boneId};
+    TestConsistency<1>(
+        WithBoneJacAux(dmap, 0, linkIds),
+        {kArticulatedSize},
+        inds,
+        {addEpsAndMap},
+        MakeSingletonConstSpan(toLinkCollider));
+  }
+}
+
+TEST_F(DMapTest, LinkColliding) {
+  auto const skeletonState = ArticulatedToSkeleton(kArticulatedState);
+  for (int boneId = 0; boneId < kBones; ++boneId) {
+    auto addEpsAndMap = [this, boneId](int i, real eps, Span<Real3 const> points, Span<Real3> out) {
+      ColumnVector<real, kArticulatedSize> state = kArticulatedState;
+      AddEpsArticulated(i, eps, state);
+      std::vector<Real3> afterLink(points.size());
+      ApplyRigid(ArticulatedToSkeleton(state)[boneId], points, afterLink);
+      SelectOutput(afterLink, kInds, out);
+    };
+
+    TransformRT const& linkState = skeletonState[boneId];
+    std::array<int, 1> const linkIds{boneId};
+    for (auto toCollider : kToCollider) {
+      DMapRTInput dtransform(0, linkState, linkState, 0, kPoints, toCollider);
+      DMap<DMapRTInput> dmap(&dtransform);
+      TestConsistency<1>(
+          WithBoneJacAux(dmap, 0, linkIds), {kArticulatedSize}, kInds, {addEpsAndMap}, toCollider);
+    }
+  }
+}
+
 TEST_F(DMapTest, Rom) {
   auto addEpsAndMap = [this](int i, real eps, Span<Real3 const> points, Span<Real3> out) {
     ColumnVector<real> state = kRomState;
@@ -780,9 +868,10 @@ TEST_F(DMapTest, QuadratureSkinning) {
     DQuad dquad(kFemElements, toCollider);
     DMap<DQuad, DMapSkinning> dmap(&dquad, &dskinning);
     TestConsistencyByState<kBones, 1>(
-        dmap, {0, 0}, {kArticulatedSize}, kInds, {addEpsAndMap}, toCollider);
+        WithBoneJacAux(dmap, 0), {0, 0}, {kArticulatedSize}, kInds, {addEpsAndMap}, toCollider);
 
-    // An omitted bone leaves the slices of the other bones unchanged. DoF indices are offset.
+    // An omitted bone leaves the slices of the other bones unchanged. The slices are wrt the rigid
+    // bone transforms, and their DoF indices are offset.
     constexpr int kDofOffset = 11;
     std::array<int, 1> const bone1Only{1};
     DMapSkinning bone1OnlyMapImpl(0, skinningTransform, kPoints, bones, bone1Only, kDofOffset);
@@ -792,8 +881,9 @@ TEST_F(DMapTest, QuadratureSkinning) {
     bone1OnlyMap.GetJac(kInds, bone1OnlySlice, scratch);
     std::array<ContactJac, kBones> allSlices;
     dmap.GetJac(kInds, allSlices, scratch);
-    std::array<int, kArticulatedSize> const expectedBone1Dofs{11, 12, 13, 14, 15, 16, 17};
+    std::array<int, RigidSize::kDAll> const expectedBone1Dofs{11, 12, 13, 14, 15, 16};
     EXPECT_SPAN_EQ(bone1OnlySlice[0].Inds(0), MakeConstSpan(expectedBone1Dofs));
+    EXPECT_TRUE(bone1OnlySlice[0].JacAux().empty());
     for (int contact = 0; contact < kInds.size(); ++contact) {
       EXPECT_TRUE(
           test::NearEqualMatrices(bone1OnlySlice[0].Jac(contact), allSlices[0].Jac(contact)));
@@ -833,7 +923,7 @@ TEST_F(DMapTest, QuadratureSkinningRom) {
     DQuad dquad(kFemElements, toCollider);
     DMap<DQuad, DMapSkinning, DMapRom> dmap(&dquad, &dskinning, &drom);
     TestConsistencyByState<1 + kBones, 2>(
-        dmap,
+        WithBoneJacAux(dmap, 1),
         {0, 1, 1},
         {kRomSize, kArticulatedSize},
         kInds,
@@ -946,7 +1036,7 @@ TEST_F(DMapTest, QuadratureSkinningSoft) {
     DQuad dquad(kFemElements, toCollider);
     DMap<DQuad, DMapSkinning, DMapSoft> dmap(&dquad, &dskinning, &dsoft);
     TestConsistencyByState<1 + kBones, 2>(
-        dmap,
+        WithBoneJacAux(dmap, 1),
         {0, 1, 1},
         {kSoftSize, kArticulatedSize},
         kInds,
@@ -1028,7 +1118,7 @@ TEST_F(DMapTest, QuadratureSkinningBlendingSoft) {
     DQuad dquad(kFemElements, toCollider);
     DMap<DQuad, DMapSkinning, DMapBlending, DMapSoft> dmap(&dquad, &dskinning, &dblending, &dsoft);
     TestConsistencyByState<1 + kBones, 2>(
-        dmap,
+        WithBoneJacAux(dmap, 1),
         {0, 1, 1},
         {kSoftSize, kArticulatedSize},
         kInds,
@@ -1076,7 +1166,7 @@ TEST_F(DMapTest, QuadratureSkinningBlendingRom) {
     DQuad dquad(kFemElements, toCollider);
     DMap<DQuad, DMapSkinning, DMapBlending, DMapRom> dmap(&dquad, &dskinning, &dblending, &drom);
     TestConsistencyByState<1 + kBones, 2>(
-        dmap,
+        WithBoneJacAux(dmap, 1),
         {0, 1, 1},
         {kRomSize, kArticulatedSize},
         kInds,

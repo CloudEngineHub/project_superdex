@@ -91,7 +91,6 @@ class DMapImpl {
   // Given a set of output points defined by indices 'indsY', propagate the Jacobian of input points
   // 'jacX', resulting in 'outJacY'. The implementation may use the result of index remapping
   // 'remap'. The default implementation does nothing, for maps that don't take input points 'x'.
-  // Implementations that may receive an auxiliary Jacobian in 'jacX' must forward it to 'outJacY'.
   virtual void PropagateJacobianSlice(
       Remapping const& /* remap */,
       Span<int const> /* indsY */,
@@ -164,8 +163,6 @@ class DMap<Impl1, Impl2, Impls...> {
       if (outJacY.nContacts > 0) {
         std::swap(outJacY, scratch);
         _g->PropagateJacobianSlice(remap, indsY, scratch, outJacY);
-        MOCHI_ASSERT_VERBOSE(
-            !scratch.JacAux() || outJacY.JacAux(), "Auxiliary Jacobian not forwarded");
       }
     }
 
@@ -194,8 +191,7 @@ class DMapRTConst final : public DMapImpl {
     MOCHI_ASSERT(remap.indsX.size() == indsY.size(), "Sizes of indices don't match");
 
     // Initialize the output Jacobian
-    outJacY.Resize(
-        jacX.hasSharedDoFs, jacX.hasSharedJacs, jacX.nDoFsState, isize(indsY), jacX.JacAux());
+    outJacY.Resize(jacX.hasSharedDoFs, jacX.hasSharedJacs, jacX.nDoFsState, isize(indsY));
 
     // Propagate partial derivatives wrt input. Consider the case where all jacX are the same.
     auto rodrig3x3 = Rodrigues(_transform.GetRotation().VToRotationVector());
@@ -217,28 +213,14 @@ class DMapRTConst final : public DMapImpl {
 /**************************************************************************************************
  * Differentiable map for a rigid transform for which the output points are known. It is initialized
  * with the state slice, the state, the DoF offset, and the local position of the center of mass.
- * Optionally, it receives an extra Jacobian and relative DoF indices. The method SetData() must be
- * called before computing the Jacobian, to pass the output points (expressed wrt the root
- * transform). This class is used for collider rigid and articulated-rigid actors, and it maps
- * world-space query points to the rigid collider's local frame.
+ * The method SetData() must be called before computing the Jacobian, to pass the output points
+ * (expressed wrt the root transform). This class is used for collider rigid and articulated-rigid
+ * actors, and it maps world-space query points to the rigid collider's local frame.
  */
 class DMapRTOutput final : public DMapImpl {
  public:
-  DMapRTOutput(
-      int slice,
-      TransformRT const& state,
-      int offset,
-      Vec4r com,
-      ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
-      Span<int const> dofsAux = {})
-      : _slice(slice),
-        _state(state),
-        _offset(offset),
-        _com(com),
-        _jacAux(jacAuxPersistentView),
-        _dofsAux(dofsAux) {
-    MOCHI_ASSERT(_jacAux.empty() == _dofsAux.empty(), "Inconsistent optional arguments");
-  }
+  DMapRTOutput(int slice, TransformRT const& state, int offset, Vec4r com)
+      : _slice(slice), _state(state), _offset(offset), _com(com) {}
 
   void SetData(ContactDetectionResult const* query) {
     _query = query;
@@ -249,8 +231,7 @@ class DMapRTOutput final : public DMapImpl {
     MOCHI_ASSERT(outJacsY.size() > _slice, "Insufficient Jacobian slices");
     auto& outJacY = outJacsY[_slice];
 
-    int stateSize = _dofsAux.empty() ? RigidSize::kDAll : isize(_dofsAux);
-    outJacY.Resize(true, false, stateSize, isize(_query->posColliding), _jacAux);
+    outJacY.Resize(true, false, RigidSize::kDAll, isize(_query->posColliding));
 
     // Compute partial derivatives wrt state
     VMatrix3x3r rotT = ToVMatrix3x3Transpose(_state.GetRotation());
@@ -263,13 +244,7 @@ class DMapRTOutput final : public DMapImpl {
     }
 
     // Set DoF indices
-    if (_dofsAux.empty()) {
-      std::iota(outJacY.Inds(0).begin(), outJacY.Inds(0).end(), _offset);
-    } else {
-      for (int i = 0; i < _dofsAux.size(); ++i) {
-        outJacY.Inds(0)[i] = _offset + _dofsAux[i];
-      }
-    }
+    std::iota(outJacY.Inds(0).begin(), outJacY.Inds(0).end(), _offset);
   }
 
  private:
@@ -277,8 +252,6 @@ class DMapRTOutput final : public DMapImpl {
   TransformRT const& _state; // Ref to the state
   int const _offset; // Offset for the DoFs
   Vec4r const _com; // Local position of the center of mass
-  ContactJac::AuxView _jacAux{}; // Jacobian of rigid state wrt actual state (optional)
-  Span<int const> _dofsAux{}; // DoF indices of actual state (optional)
   ContactDetectionResult const* _query =
       nullptr; // Contact detection result including contact points
 };
@@ -286,10 +259,9 @@ class DMapRTOutput final : public DMapImpl {
 /**************************************************************************************************
  * Differentiable map for a rigid transform for which the input points are known. It is initialized
  * with the state slice, the state, the root transform, the DoF offset, the input set, and Jacobians
- * mapping world positions to the collider's local frame. Optionally, it receives an extra Jacobian
- * and relative DoF indices. For convenience, the input is expressed wrt the root transform, which
- * is not the same as the state. A translation is applied to remap the input wrt the state. This
- * class is used for colliding rigid and articulated-rigid actors.
+ * mapping world positions to the collider's local frame. For convenience, the input is expressed
+ * wrt the root transform, which is not the same as the state. A translation is applied to remap the
+ * input wrt the state. This class is used for colliding rigid and articulated-rigid actors.
  */
 class DMapRTInput final : public DMapImpl {
  public:
@@ -299,19 +271,13 @@ class DMapRTInput final : public DMapImpl {
       TransformRT const& transform,
       int offset,
       Span<Real3 const> input,
-      Span<VMatrix3x3r const> toColliderJacs,
-      ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
-      Span<int const> dofsAux = {})
+      Span<VMatrix3x3r const> toColliderJacs)
       : _slice(slice),
         _state(state),
         _transform(transform),
         _offset(offset),
         _input(input),
-        _toColliderJacs(toColliderJacs),
-        _jacAux(jacAuxPersistentView),
-        _dofsAux(dofsAux) {
-    MOCHI_ASSERT(_jacAux.empty() == _dofsAux.empty(), "Inconsistent optional arguments");
-  }
+        _toColliderJacs(toColliderJacs) {}
 
   void WriteJacobianSlice(Span<int const> indsY, Span<ContactJac> outJacsY) const override {
     MOCHI_ASSERT(outJacsY.size() > _slice, "Insufficient Jacobian slices");
@@ -323,8 +289,7 @@ class DMapRTInput final : public DMapImpl {
     }
     auto& outJacY = outJacsY[_slice];
 
-    int stateSize = _dofsAux.empty() ? RigidSize::kDAll : isize(_dofsAux);
-    outJacY.Resize(true, false, stateSize, isize(indsY), _jacAux);
+    outJacY.Resize(true, false, RigidSize::kDAll, isize(indsY));
 
     // Compute partial derivatives wrt state
     auto rotT = ToVMatrix3x3Transpose(_transform.GetRotation());
@@ -338,13 +303,7 @@ class DMapRTInput final : public DMapImpl {
     }
 
     // Set DoF indices
-    if (_dofsAux.empty()) {
-      std::iota(outJacY.Inds(0).begin(), outJacY.Inds(0).end(), _offset);
-    } else {
-      for (int i = 0; i < _dofsAux.size(); ++i) {
-        outJacY.Inds(0)[i] = _offset + _dofsAux[i];
-      }
-    }
+    std::iota(outJacY.Inds(0).begin(), outJacY.Inds(0).end(), _offset);
   }
 
  private:
@@ -354,49 +313,30 @@ class DMapRTInput final : public DMapImpl {
   int const _offset;
   Span<Real3 const> _input{};
   Span<VMatrix3x3r const> _toColliderJacs;
-  ContactJac::AuxView _jacAux{};
-  Span<int const> _dofsAux{};
 };
 
 /**************************************************************************************************
- * Differentiable map that writes only the structure of a rigid Jacobian slice: the DoFs and the
- * optional auxiliary Jacobian. It does not write the Jacobian blocks. Used by contact assembled
- * from contact sums, which computes the rigid Jacobian terms itself (e.g. rigid actors, articulated
- * links and skinning bones).
+ * Differentiable map that writes only the structure of a rigid Jacobian slice: the DoFs. It does
+ * not write the Jacobian blocks. Used by contact assembled from contact sums, which computes the
+ * rigid Jacobian terms itself (e.g. rigid actors, articulated links and skinning bones).
  */
 class DMapRigidStructure final : public DMapImpl {
  public:
-  DMapRigidStructure(
-      int slice,
-      int offset,
-      ContactJac::AuxView jacAuxPersistentView = {}, // The owner must outlive the Jacobians.
-      Span<int const> dofsAux = {})
-      : _slice(slice), _offset(offset), _jacAux(jacAuxPersistentView), _dofsAux(dofsAux) {
-    MOCHI_ASSERT(_jacAux.empty() == _dofsAux.empty(), "Inconsistent optional arguments");
-  }
+  DMapRigidStructure(int slice, int offset) : _slice(slice), _offset(offset) {}
 
   void WriteJacobianSlice(Span<int const> indsY, Span<ContactJac> outJacsY) const override {
     MOCHI_ASSERT(outJacsY.size() > _slice, "Insufficient Jacobian slices");
     auto& outJacY = outJacsY[_slice];
 
-    int stateSize = _dofsAux.empty() ? RigidSize::kDAll : isize(_dofsAux);
-    outJacY.Resize(true, true, stateSize, isize(indsY), _jacAux);
+    outJacY.Resize(true, true, RigidSize::kDAll, isize(indsY));
 
     // Set DoF indices
-    if (_dofsAux.empty()) {
-      std::iota(outJacY.Inds(0).begin(), outJacY.Inds(0).end(), _offset);
-    } else {
-      for (int i = 0; i < _dofsAux.size(); ++i) {
-        outJacY.Inds(0)[i] = _offset + _dofsAux[i];
-      }
-    }
+    std::iota(outJacY.Inds(0).begin(), outJacY.Inds(0).end(), _offset);
   }
 
  private:
   int const _slice; // State slice
   int const _offset; // Offset for the DoFs
-  ContactJac::AuxView _jacAux{}; // Jacobian of rigid state wrt actual state (optional)
-  Span<int const> _dofsAux{}; // DoF indices of actual state (optional)
 };
 
 /**************************************************************************************************
@@ -501,8 +441,7 @@ class DMapQuad final : public DMapImpl {
 
     // Initialize the output Jacobian
     int nDoFMultiplier = jacX.hasSharedDoFs ? 1 : ElementT::kNumNodes;
-    outJacY.Resize(
-        jacX.hasSharedDoFs, false, nDoFMultiplier * jacX.nDoFsState, isize(indsY), jacX.JacAux());
+    outJacY.Resize(jacX.hasSharedDoFs, false, nDoFMultiplier * jacX.nDoFsState, isize(indsY));
 
     // Propagate partial derivatives wrt input. If the DoFs are shared, add the weighted input of
     // all ElementT::kNumNodes points, and transform the sum only once. If the DoFs are not shared,
@@ -564,19 +503,18 @@ class DMapQuad final : public DMapImpl {
   Span<VMatrix3x3r const> _toColliderJacs;
 };
 
-// Skinning Jacobian data of one bone.
-struct SkinningBoneJacobianData {
+// Reference frame of one skinning bone relative to its link origin, with world orientation.
+struct SkinningBoneFrame {
   VMatrix3x3r worldFromReferenceRotationTranspose{};
   Vec4r linkOriginToReferenceOrigin{};
-  ContactJac::AuxView linkFromArticulationJacobian{}; // The owner must outlive the Jacobians.
-  Span<int const> articulatedDofs{};
 };
 
 /**************************************************************************************************
  * Differentiable map for linear blend skinning. It writes one rigid Jacobian slice for each bone in
  * 'activeBoneIds', in that order, starting at 'firstSlice', and propagates input Jacobians through
  * the skinning transformation. 'positions' are the node positions before skinning. 'bones' holds
- * the data of all bones, indexed by bone id.
+ * the data of all bones, indexed by bone id. The rigid slices are wrt the bone (link) transforms,
+ * with DoF indices starting at 'offset'.
  */
 class DMapSkinning final : public DMapImpl {
  public:
@@ -584,7 +522,7 @@ class DMapSkinning final : public DMapImpl {
       int firstSlice,
       DSkinningTransform const& skinningTransform,
       Span<Real3 const> positions,
-      Span<SkinningBoneJacobianData const> bones,
+      Span<SkinningBoneFrame const> bones,
       Span<int const> activeBoneIds,
       int offset)
       : _firstSlice(firstSlice),
@@ -615,20 +553,10 @@ class DMapSkinning final : public DMapImpl {
       MOCHI_ASSERT_VERBOSE(boneToSlice[boneId] == -1, "Duplicate active bone");
       boneToSlice[boneId] = slice;
 
-      auto const& bone = _bones[boneId];
-      MOCHI_ASSERT_VERBOSE(
-          bone.linkFromArticulationJacobian, "Active bones need a nonempty link Jacobian");
       auto& jac = outJacsY[_firstSlice + slice];
-      jac.Resize(
-          true,
-          false,
-          isize(bone.articulatedDofs),
-          isize(indsY),
-          bone.linkFromArticulationJacobian);
+      jac.Resize(true, false, RigidSize::kDAll, isize(indsY));
       jac.SetZero();
-      for (int dof = 0; dof < bone.articulatedDofs.size(); ++dof) {
-        jac.Inds(0)[dof] = _offset + bone.articulatedDofs[dof];
-      }
+      std::iota(jac.Inds(0).begin(), jac.Inds(0).end(), _offset);
     }
 
     for (int contact = 0; contact < indsY.size(); ++contact) {
@@ -658,7 +586,7 @@ class DMapSkinning final : public DMapImpl {
       ContactJac& outJacY) const override {
     MOCHI_ASSERT(remap.indsX.size() == indsY.size(), "Sizes of indices don't match");
 
-    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY), jacX.JacAux());
+    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY));
 
     for (int i = 0; i < outJacY.nContacts; i++) {
       VMatrix3x3r weightedRotationTranspose{};
@@ -678,7 +606,7 @@ class DMapSkinning final : public DMapImpl {
   int const _firstSlice;
   DSkinningTransform const& _skinningTransform;
   Span<Real3 const> _positions;
-  Span<SkinningBoneJacobianData const> _bones;
+  Span<SkinningBoneFrame const> _bones;
   Span<int const> _activeBoneIds;
   int const _offset;
 };
@@ -831,7 +759,7 @@ class DMapBlending final : public DMapImpl {
     MOCHI_ASSERT(indsX.size() == indsY.size(), "Sizes of indices don't match");
 
     // Initialize the output Jacobian
-    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY), jacX.JacAux());
+    outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY));
 
     // Propagate partial derivatives wrt input, considering if the point is blended or not.
     for (int i = 0, j = 0; i < outJacY.nContacts; i++) {

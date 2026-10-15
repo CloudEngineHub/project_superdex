@@ -602,8 +602,14 @@ static JacData MakeJacData(int otherEntity = 1) {
 }
 
 static void PopulateJac(ContactJac& jac, int dofIndex, ContactJac::AuxView jacAux = {}) {
-  jac.Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1, jacAux);
-  jac.Inds(0)[0] = dofIndex;
+  if (jacAux.empty()) {
+    jac.Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, 1, 1);
+    jac.Inds(0)[0] = dofIndex;
+  } else {
+    jac.Resize(/*sharedDoFs*/ true, /*sharedJacs*/ true, RigidSize::kDAll, 1);
+    std::array<int, 1> const dofs{dofIndex};
+    jac.SetJacAux(jacAux, 0, dofs, /*internalDofOffset*/ 0);
+  }
   jac.CompressIndices();
 }
 
@@ -624,6 +630,7 @@ TEST(JacData, ZeroDofJacobian) {
     EXPECT_EQ(jacs[0].nContacts, 3);
     EXPECT_EQ(jacs[0].nDoFsState, 0);
     EXPECT_TRUE(jacs[0].JacAux().empty());
+    EXPECT_EQ(jacs[0].internalDofOffset, kSentinelIndex);
     EXPECT_FALSE(jacData.HasSolverDoFs());
   };
 

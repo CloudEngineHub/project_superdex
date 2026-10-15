@@ -33,36 +33,51 @@ using namespace mochi::dmap;
 
 namespace {
 
-// Stack size to gather the skinning Jacobian data of all bones. Larger skeletons use the heap.
+// Stack size to gather the frames of all bones. Larger skeletons use the heap.
 constexpr int kMaxStackBones = 64;
 constexpr size_t kSkinningBonesStackSize =
-    kMaxStackBones * sizeof(SkinningBoneJacobianData) + alignof(SkinningBoneJacobianData);
+    kMaxStackBones * sizeof(SkinningBoneFrame) + alignof(SkinningBoneFrame);
 
-// Gather the skinning Jacobian data of all bones, indexed by bone id.
+// Gather the frames of all bones, indexed by bone id.
 void GatherSkinningBones(
-    ecs::PartialRegistry<CArticulatedRigidJacobian const> reg,
-    CGroupMembers const& groupMembers,
     CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
     DSkinningTransform const& skinningTransform,
-    DynamicArray<SkinningBoneJacobianData>& outBones) {
+    DynamicArray<SkinningBoneFrame>& outBones) {
   int const numBones = skinningTransform.GetBoneCount();
-  MOCHI_ASSERT_VERBOSE(isize(groupMembers.actors) == numBones);
   MOCHI_ASSERT_VERBOSE(isize(linkTransforms) == numBones);
   outBones.reserve(numBones);
   for (int boneId = 0; boneId < numBones; ++boneId) {
-    auto const& linkJacobian =
-        reg.get<CArticulatedRigidJacobian const>(groupMembers.actors[boneId]);
     // Bone pre-transform rotated by the link: its translation is the offset from the link origin to
     // the reference origin, without subtracting world positions.
     TransformRT const rotatedPreTransform = TransformRT{linkTransforms[boneId].GetRotation()} *
         skinningTransform.GetBonePreTransform(boneId);
     outBones.emplace_back(
-        SkinningBoneJacobianData{
+        SkinningBoneFrame{
             .worldFromReferenceRotationTranspose =
                 ToVMatrix3x3Transpose(rotatedPreTransform.GetRotation()),
-            .linkOriginToReferenceOrigin = rotatedPreTransform.VGetTranslation(),
-            .linkFromArticulationJacobian = linkJacobian.value,
-            .articulatedDofs = linkJacobian.dofs});
+            .linkOriginToReferenceOrigin = rotatedPreTransform.VGetTranslation()});
+  }
+}
+
+// Express the rigid Jacobian slices of the bones in 'boneIds', one slice per bone from slice 0, wrt
+// the articulation DoFs through the Jacobians of their links. Then compress the indices of all
+// slices.
+void FinishJacobians(
+    ecs::PartialRegistry<CArticulatedRigidJacobian const, CDofOffset const> reg,
+    CGroupMembers const& groupMembers,
+    int articulatedDofOffset,
+    Span<int const> boneIds,
+    Span<ContactJac> jacs) {
+  MOCHI_ASSERT_VERBOSE(isize(boneIds) <= isize(jacs));
+  for (int slice = 0; slice < isize(boneIds); ++slice) {
+    entt::entity const link = groupMembers.actors[boneIds[slice]];
+    auto const& linkJacobian = reg.get<CArticulatedRigidJacobian const>(link);
+    int const internalDofOffset = reg.get<CDofOffset const>(link).dofsOffset;
+    jacs[slice].SetJacAux(
+        linkJacobian.value, articulatedDofOffset, linkJacobian.dofs, internalDofOffset);
+  }
+  for (auto& jac : jacs) {
+    jac.CompressIndices();
   }
 }
 
@@ -71,18 +86,14 @@ void GatherSkinningBones(
 // Write only the structure of the contact Jacobian slices of the bones in 'boneIds', one slice per
 // bone, for assembly from contact sums.
 static void SetupRigidStructureJacobians(
-    Span<SkinningBoneJacobianData const> bones,
     int dofOffset,
-    DynamicArray<int> const& boneIds,
+    Span<int const> boneIds,
     Span<int const> sampleIndices,
     Span<ContactJac> outJacobians) {
   for (int slice = 0; slice < isize(boneIds); ++slice) {
-    auto const& bone = bones[boneIds[slice]];
-    DMapRigidStructure const structureMap(
-        slice, dofOffset, bone.linkFromArticulationJacobian, bone.articulatedDofs);
+    DMapRigidStructure const structureMap(slice, dofOffset);
     DMap<DMapRigidStructure> const dmap(&structureMap);
     dmap.GetJac(sampleIndices, outJacobians);
-    outJacobians[slice].CompressIndices();
   }
 }
 
@@ -90,7 +101,7 @@ template <typename DiscretizationT>
 void articulated::compound::SetupCollidingJacobians(
     ecs::Included<TagArticulatedActor>,
     ecs::Excluded<TagBlendedActor>,
-    ecs::PartialRegistry<CArticulatedRigidJacobian const> reg,
+    ecs::PartialRegistry<CArticulatedRigidJacobian const, CDofOffset const> reg,
     DiscretizationT const& discretization,
     CDofOffset const& dofOffset,
     CGroupMembers const& groupMembers,
@@ -106,8 +117,8 @@ void articulated::compound::SetupCollidingJacobians(
 
   auto const& skinningTransform = skinningData.skinningTransform;
   MOCHI_FILO_STACK_ALLOCATOR(bonesAllocator, kSkinningBonesStackSize);
-  DynamicArray<SkinningBoneJacobianData> bones(&bonesAllocator);
-  GatherSkinningBones(reg, groupMembers, linkTransforms, skinningTransform, bones);
+  DynamicArray<SkinningBoneFrame> bones(&bonesAllocator);
+  GatherSkinningBones(linkTransforms, skinningTransform, bones);
   auto const restPositions = Unflatten<Real3 const>(MakeConstSpan(skinningData.restCoords));
 
   discretization.Visit([&](auto const& discretizationImpl) {
@@ -125,17 +136,15 @@ void articulated::compound::SetupCollidingJacobians(
           auto jacs = jacData.PrepareJacs(isize(boneIds));
           if (jacData.useContactSums) {
             SetupRigidStructureJacobians(
-                bones, dofOffset.dofsOffset, boneIds, jacData.query->sampleIndices, jacs);
-            return;
+                dofOffset.dofsOffset, boneIds, jacData.query->sampleIndices, jacs);
+          } else {
+            DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
+            DMapSkinning const skinningMap(
+                0, skinningTransform, restPositions, bones, boneIds, dofOffset.dofsOffset);
+            DMap<DQuad, DMapSkinning> const dmap(&dquad, &skinningMap);
+            dmap.GetJac(jacData.query->sampleIndices, jacs, jacData.JacScratch());
           }
-          DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
-          DMapSkinning const skinningMap(
-              0, skinningTransform, restPositions, bones, boneIds, dofOffset.dofsOffset);
-          DMap<DQuad, DMapSkinning> const dmap(&dquad, &skinningMap);
-          dmap.GetJac(jacData.query->sampleIndices, jacs, jacData.JacScratch());
-          for (auto& jac : jacs) {
-            jac.CompressIndices();
-          }
+          FinishJacobians(reg, groupMembers, dofOffset.dofsOffset, boneIds, jacs);
         });
   });
 }
@@ -144,7 +153,7 @@ void articulated::compound::SetupCollidingJacobians(
   template void articulated::compound::SetupCollidingJacobians<DISCRETIZATION_TYPE>(   \
       ecs::Included<TagArticulatedActor>,                                              \
       ecs::Excluded<TagBlendedActor>,                                                  \
-      ecs::PartialRegistry<CArticulatedRigidJacobian const>,                           \
+      ecs::PartialRegistry<CArticulatedRigidJacobian const, CDofOffset const>,         \
       DISCRETIZATION_TYPE const&,                                                      \
       CDofOffset const&,                                                               \
       CGroupMembers const&,                                                            \
@@ -185,8 +194,8 @@ void skinned::SetupCollidingJacobians(
   auto const& groupMembers = reg.get<CGroupMembers const>(articulated);
   auto const& skinningTransform = skinningInfo.skinningTransform;
   MOCHI_FILO_STACK_ALLOCATOR(bonesAllocator, kSkinningBonesStackSize);
-  DynamicArray<SkinningBoneJacobianData> bones(&bonesAllocator);
-  GatherSkinningBones(reg, groupMembers, linkTransforms, skinningTransform, bones);
+  DynamicArray<SkinningBoneFrame> bones(&bonesAllocator);
+  GatherSkinningBones(linkTransforms, skinningTransform, bones);
   auto const nodePositions = Unflatten<Real3 const>(MakeConstSpan(positions.value));
 
   // Compute Jacobians
@@ -210,9 +219,7 @@ void skinned::SetupCollidingJacobians(
         DMap<DQuad, DMapSkinning, DMapSoft> const dmap(&dquad, &skinningMap, &dsoft);
         dmap.GetJac(jacData.query->sampleIndices, jacs, jacData.JacScratch());
       }
-      for (auto& jac : jacs) {
-        jac.CompressIndices();
-      }
+      FinishJacobians(reg, groupMembers, articulatedDofOffset, boneIds, jacs);
     });
   });
 }
@@ -240,8 +247,8 @@ void blended::SetupCollidingJacobians(
 
   auto const& skinningTransform = skinningInfo.skinningTransform;
   MOCHI_FILO_STACK_ALLOCATOR(bonesAllocator, kSkinningBonesStackSize);
-  DynamicArray<SkinningBoneJacobianData> bones(&bonesAllocator);
-  GatherSkinningBones(reg, groupMembers, linkTransforms, skinningTransform, bones);
+  DynamicArray<SkinningBoneFrame> bones(&bonesAllocator);
+  GatherSkinningBones(linkTransforms, skinningTransform, bones);
   auto const targetPositions = Unflatten<Real3 const>(MakeConstSpan(positions.value));
 
   // Compute Jacobians
@@ -259,12 +266,10 @@ void blended::SetupCollidingJacobians(
       // blended, so their positions before skinning are the rest positions, as for articulated
       // skins.
       MOCHI_ASSERT_VERBOSE(softId < 0, "Contact sums do not support blended soft slices.");
+      auto jacs = jacData.PrepareJacs(isize(boneIds));
       SetupRigidStructureJacobians(
-          bones,
-          dofOffset.dofsOffset,
-          boneIds,
-          jacData.query->sampleIndices,
-          jacData.PrepareJacs(isize(boneIds)));
+          dofOffset.dofsOffset, boneIds, jacData.query->sampleIndices, jacs);
+      FinishJacobians(reg, groupMembers, dofOffset.dofsOffset, boneIds, jacs);
       return;
     }
 
@@ -296,9 +301,7 @@ void blended::SetupCollidingJacobians(
           dmap.GetJac(jacData.query->sampleIndices, jacs, jacData.JacScratch());
         }
       }
-      for (auto& jac : jacs) {
-        jac.CompressIndices();
-      }
+      FinishJacobians(reg, groupMembers, dofOffset.dofsOffset, boneIds, jacs);
     });
   });
 }

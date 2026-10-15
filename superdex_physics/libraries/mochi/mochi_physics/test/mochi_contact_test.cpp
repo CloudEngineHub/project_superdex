@@ -648,14 +648,20 @@ TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
   // indices, so they are assembled in the same batch, and point 2 in another batch.
   auto initJac = [&](ContactJac& jac,
                      std::vector<std::vector<int>> const& inds,
-                     ContactJac::AuxView jacAux = {}) {
+                     ContactJac::AuxView jacAux = {},
+                     int internalDofOffset = kSentinelIndex) {
     bool const sharedDoFs = isize(inds) == 1;
-    jac.Resize(sharedDoFs, /*sharedJacs*/ false, isize(inds[0]), kNumContacts, jacAux);
+    int const nDoFs = jacAux.empty() ? isize(inds[0]) : RigidSize::kDAll;
+    jac.Resize(sharedDoFs, /*sharedJacs*/ false, nDoFs, kNumContacts);
     for (int s = 0; s < kNumContacts; ++s) {
       jac.Jac(s).SetRandom(++seed, -1_r, 1_r);
     }
-    for (int row = 0; row < isize(inds); ++row) {
-      std::copy(inds[row].begin(), inds[row].end(), jac.Inds(row).begin());
+    if (jacAux.empty()) {
+      for (int row = 0; row < isize(inds); ++row) {
+        std::copy(inds[row].begin(), inds[row].end(), jac.Inds(row).begin());
+      }
+    } else {
+      jac.SetJacAux(jacAux, 0, inds[0], internalDofOffset);
     }
     jac.CompressIndices();
   };
@@ -669,8 +675,8 @@ TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
   RowMatrix<real, RigidSize::kDAll> jacAux2(RigidSize::kDAll, 8);
   jacAux1.SetRandom(++seed, -1_r, 1_r);
   jacAux2.SetRandom(++seed, -1_r, 1_r);
-  initJac(slices[1], {{0, 1, 2}}, jacAux1);
-  initJac(slices[2], {{2, 3, 4, 5, 6, 7, 8, 9}}, jacAux2);
+  initJac(slices[1], {{0, 1, 2}}, jacAux1, /*internalDofOffset*/ 0);
+  initJac(slices[2], {{2, 3, 4, 5, 6, 7, 8, 9}}, jacAux2, /*internalDofOffset*/ RigidSize::kDAll);
   // Shared DoFs without auxiliary Jacobian
   initJac(slices[3], {{10, 11, 12}});
   // Per-point DoFs
