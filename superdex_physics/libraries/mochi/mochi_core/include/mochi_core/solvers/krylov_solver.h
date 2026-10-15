@@ -108,8 +108,8 @@ struct LinearSolverStatus {
   int numIterDone = 0;
   // Norm of the residual at the end of the solve. Only populated with iterative solvers.
   double residualNorm = {};
-  // Relative norm of the residual at the end vs. at the beginning of the solve. Only populated with
-  // iterative solvers.
+  // Norm of the residual at the end of the solve, relative to the same norm of the right-hand side.
+  // Only populated with iterative solvers.
   double relativeResidualNorm = {};
   // Convergence status after the solve.
   LinearSolverConvergenceStatus convergence = LinearSolverConvergenceStatus::None;

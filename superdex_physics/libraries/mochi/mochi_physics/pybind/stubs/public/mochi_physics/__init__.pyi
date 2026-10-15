@@ -1776,10 +1776,11 @@ class LinearSolverConvergenceNorm:
         <superdex.physics.LinearSolverType>` and :class:`ASYNC_CG
         <superdex.physics.LinearSolverType>`. :class:`GMRES
         <superdex.physics.LinearSolverType>`, :class:`CUDA_GMRES
-        <superdex.physics.LinearSolverType>`, :class:`MINRES
         <superdex.physics.LinearSolverType>`, and :class:`AUGMENTED_CG
         <superdex.physics.LinearSolverType>` always use the L2-norm of the residual
-        regardless of this setting. Direct solvers do not have stop criteria.
+        regardless of this setting. :class:`MINRES
+        <superdex.physics.LinearSolverType>` always uses the preconditioner-induced
+        norm of the residual. Direct solvers do not have stop criteria.
     """
     RESIDUAL_L2: LinearSolverConvergenceNorm
     """L2-norm of the residual: ``‖r‖₂``."""
@@ -4047,8 +4048,8 @@ class LinearSolverParams:
         Applies only to iterative solvers.
     """
     rel_tol: float
-    """Relative residual norm tolerance for convergence, relative to the initial
-    residual.
+    """Relative residual norm tolerance for convergence, relative to the same norm of
+    the right-hand side.
 
     Note:
         Applies only to iterative solvers.
@@ -4064,8 +4065,8 @@ class LinearSolverParams:
         iteration.
     """
     rel_div_tol: float
-    """Relative residual norm tolerance for divergence, relative to the initial
-    residual.
+    """Relative residual norm tolerance for divergence, relative to the same norm of
+    the right-hand side.
 
     Note:
         Applies only to iterative solvers.
