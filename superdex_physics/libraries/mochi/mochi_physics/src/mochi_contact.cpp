@@ -1977,6 +1977,36 @@ static void InitColliderJacobians(
   }
 }
 
+// Whether the residual of a contact Jacobian slice is assembled in link space. This is the case for
+// slices with an internal DoF offset (articulated links and skinning bones), whose residual is
+// projected to joint space after assembly. Other slices assemble into the solver-space residual.
+static bool HasLinkResidual(ContactJac const& jac) {
+  return jac.internalDofOffset != kSentinelIndex;
+}
+
+// Link residual slot of slice 'a' of a contact pair. 'linkRes' holds 6 values per slice, and only
+// the slots of the slices with link residuals are written.
+template <typename T>
+static ColumnVectorView<T, RigidSize::kDAll> LinkResidualSlot(ColumnVectorView<T> linkRes, int a) {
+  return linkRes.template Slice<RigidSize::kDAll>(RigidSize::kDAll * a, RigidSize::kDAll);
+}
+
+// Adds the link residual slots of the slices in 'jacs' that have them to the link-space residual of
+// their articulation, at their internal DoF offsets.
+static void AddLinkResiduals(
+    Span<ContactJac const*> jacs,
+    ColumnVectorView<real const> linkRes,
+    ArticulatedLinkResidual* linkResidual) {
+  MOCHI_ASSERT_VERBOSE(linkRes.Rows() == RigidSize::kDAll * isize(jacs));
+  for (int a = 0; a < isize(jacs); ++a) {
+    if (!HasLinkResidual(*jacs[a])) {
+      continue;
+    }
+    MOCHI_ASSERT_VERBOSE(linkResidual, "Expected a link-space residual destination.");
+    linkResidual->AddLinkResidual(jacs[a]->internalDofOffset, LinkResidualSlot(linkRes, a));
+  }
+}
+
 namespace {
 class ContactResAssembler {
  public:
@@ -2000,10 +2030,18 @@ class ContactResAssembler {
     }
   }
 
-  // Deferred assemble
-  void DeferredAssemble(ColumnVectorView<real> outRes) {
-    if (_jac.hasSharedDoFs) {
-      AssembleTerm(0, _jac.JacAux() ? _jac.JacAux().Transpose() * _resTerm : _resTerm, outRes);
+  // Deferred assemble. If the slice, with index 'a' in its contact pair, has a link residual, it is
+  // written to its slot in linkRes.
+  void DeferredAssemble(ColumnVectorView<real> outRes, ColumnVectorView<real> linkRes, int a) {
+    MOCHI_ASSERT_VERBOSE(
+        _jac.hasSharedDoFs || !HasLinkResidual(_jac), "Link residuals require shared DoFs.");
+    if (!_jac.hasSharedDoFs) {
+      return;
+    }
+    if (HasLinkResidual(_jac)) {
+      LinkResidualSlot(linkRes, a) = _resTerm.Slice<RigidSize::kDAll>(0, RigidSize::kDAll);
+    } else {
+      AssembleTerm(0, _resTerm, outRes);
     }
   }
 
@@ -2501,6 +2539,26 @@ class ContactDResAssembler {
 
 } // namespace
 
+// Writes the residual of contact Jacobian slice 'a', with 6 rigid internal DoFs, to its link
+// residual slot, or adds it to the solver-space residual if it has none.
+static void AddRigidSliceResidual(
+    Span<ContactJac const*> jacs,
+    int a,
+    ColumnVector<real, RigidSize::kDAll> const& res,
+    ColumnVectorView<real> outRes,
+    ColumnVectorView<real> linkRes) {
+  ContactJac const& jac = *jacs[a];
+  MOCHI_ASSERT_VERBOSE(jac.hasSharedDoFs && jac.nDoFsInternal == RigidSize::kDAll);
+  if (HasLinkResidual(jac)) {
+    LinkResidualSlot(linkRes, a) = res;
+    return;
+  }
+  MOCHI_ASSERT_VERBOSE(
+      jac.IndGroups(0).size() == 1 && jac.IndGroups(0)[0].count == RigidSize::kDAll,
+      "A rigid slice without link residual must map to 6 consecutive DoFs.");
+  outRes.Slice<RigidSize::kDAll>(jac.IndGroups(0)[0].dst, RigidSize::kDAll) += res;
+}
+
 // Sync contact assembly between a pair of rigid actors (including articulated rigid), given the
 // RigidContactSums of their contact points about the collider's center of mass. Faster than the
 // generic assembly since (1) it operates with compile-time size matrices, and (2) it skips the
@@ -2508,7 +2566,7 @@ class ContactDResAssembler {
 // NOTES:
 // - Only supported for sync contact. Async contact is assembled through rigid::EntityAssemble.
 // - The 1st contact Jacobian must be the colliding Jacobian, and the 2nd must be the collider
-//   Jacobian.
+//   Jacobian. Those with link residuals write them to their slots in linkRes.
 template <GradTarget kGradTarget>
 static void AssembleSyncRigidContactSums(
     ContactAssemblyReg reg,
@@ -2519,9 +2577,10 @@ static void AssembleSyncRigidContactSums(
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
+    ColumnVectorView<real> linkRes,
     AnyMatrixView<real> outDRes) {
   bool const assemObj = (outObj != nullptr);
-  bool const assemRes = !outRes.empty();
+  bool const assemRes = !outRes.empty() || !linkRes.empty();
   bool const assemDRes = (GetNumValues(outDRes) > 0);
 
   if (assemObj) {
@@ -2565,8 +2624,6 @@ static void AssembleSyncRigidContactSums(
   // Rot jacT A: rotB * sk(pB' - comB') - sk(comA - comB) * rotB
   // Rot jacT B: - rotB * sk(pB' - comB')
   // clang-format on
-  auto const& jacA = *jacs[0];
-  auto const& jacB = *jacs[1];
   Vec4r comA = reg.template get<CRigidState<kTimeStep> const>(colliding).value.VGetTranslation();
   auto const& stateB = reg.template get<CRigidState<kTimeStep> const>(collider).value;
   auto [rotB, rotBT] = ToVMatrix3x3_WithTranspose(stateB.GetRotation());
@@ -2585,27 +2642,8 @@ static void AssembleSyncRigidContactSums(
     Store<3>(resA.data() + 3, skPRes - Cross3(comA - comB, res));
     Store(resB.data(), -res);
     Store<3>(resB.data() + 3, -skPRes);
-
-    // The contact Jacobians store articulated Jacobians in the case of articulated links, but are
-    // not used for rigid actors.
-    if (jacA.JacAux()) {
-      ColumnVector<real> auxResA(jacA.JacAux().Transpose() * resA, filoAllocator);
-      auto const& inds = jacA.IndGroups(0);
-      for (int i = 0; i < isize(inds); ++i) {
-        outRes.Slice(inds[i].dst, inds[i].count) += auxResA.Slice(inds[i].src, inds[i].count);
-      }
-    } else {
-      outRes.Slice<6>(jacA.IndGroups(0)[0].dst, 6) += resA;
-    }
-    if (jacB.JacAux()) {
-      ColumnVector<real> auxResB(jacB.JacAux().Transpose() * resB, filoAllocator);
-      auto const& inds = jacB.IndGroups(0);
-      for (int i = 0; i < isize(inds); ++i) {
-        outRes.Slice(inds[i].dst, inds[i].count) += auxResB.Slice(inds[i].src, inds[i].count);
-      }
-    } else {
-      outRes.Slice<6>(jacB.IndGroups(0)[0].dst, 6) += resB;
-    }
+    AddRigidSliceResidual(jacs, 0, resA, outRes, linkRes);
+    AddRigidSliceResidual(jacs, 1, resB, outRes, linkRes);
   }
 
   if (assemDRes) {
@@ -2685,10 +2723,11 @@ static SkinnedContactSlices GetSkinnedContactSlices(
 // Contact assembly of the rigid-form slices of a skinned actor's partition, given their sums (see
 // SkinnedContactSums). 'jacs' holds the structure of the slices, in the order of the sums: the bone
 // slices, then the rigid-collider slice if 'hasRigidColliderSlice', with sign -1. With Q the
-// collider-from-world rotation and L_a = sign_a diag(Q, Q) JacAux_a:
-// - residual: -sum_a L_a^T [force_a; torque_a]
-// - dresidual: sum_ab L_a^T B_ab L_b, with B_ab = [[-dForce, -skewBDForce^T], [-skewADForce,
-//   skewDForceSkew]] of the pair (a, b), and B_ba = B_ab^T.
+// collider-from-world rotation:
+// - residual of slice a: -sign_a diag(Q, Q)^T [force_a; torque_a]. Slices with link residuals write
+//   it to their slots in linkRes, and others add it to their 6 rigid DoFs.
+// - dresidual: sum_ab L_a^T B_ab L_b, with L_a = sign_a diag(Q, Q) JacAux_a, B_ab = [[-dForce,
+//   -skewBDForce^T], [-skewADForce, skewDForceSkew]] of the pair (a, b), and B_ba = B_ab^T.
 // Like the generic assembly, Q is applied to the 6x6 blocks rather than to JacAux, and the
 // dresidual blocks are passed to a ContactDResWriter, which groups the slices for a single scatter
 // if there are 2+ bone slices, since the links of an articulation share DoFs.
@@ -2700,8 +2739,9 @@ static void AssembleSkinnedContactSums(
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
+    ColumnVectorView<real> linkRes,
     AnyMatrixView<real> outDRes) {
-  bool const assemRes = !outRes.empty();
+  bool const assemRes = !outRes.empty() || !linkRes.empty();
   bool const assemDRes = (GetNumValues(outDRes) > 0);
   if (outObj) {
     *outObj += sums.energy;
@@ -2718,29 +2758,13 @@ static void AssembleSkinnedContactSums(
 
   if (assemRes) {
     MOCHI_PROFILE_SCOPE_N("Residual Assembly");
-    real* r = outRes.data();
     for (int a = 0; a < numSlices; ++a) {
-      // JacAux_a^T sign_a diag(Q, Q)^T [-force_a; -torque_a]. A slice without JacAux (e.g. a free
-      // rigid actor) maps its 6 rigid DoFs directly.
+      // -sign_a diag(Q, Q)^T [force_a; torque_a]
       real const s = -sign(a);
-      Vec4r const force = DotVecMat3x3(s * sums.force[a], colliderFromWorld);
-      Vec4r const torque = DotVecMat3x3(s * sums.torque[a], colliderFromWorld);
-      Span<int const> const inds = jacs[a]->Inds(0);
-      ContactJac::AuxView const aux = jacs[a]->JacAux();
-      if (!aux) {
-        for (int i = 0; i < 3; ++i) {
-          r[inds[i]] += force[i];
-          r[inds[3 + i]] += torque[i];
-        }
-        continue;
-      }
-      for (int k = 0; k < aux.Cols(); ++k) {
-        real value = 0_r;
-        for (int i = 0; i < 3; ++i) {
-          value += aux(i, k) * force[i] + aux(3 + i, k) * torque[i];
-        }
-        r[inds[k]] += value;
-      }
+      ColumnVector<real, RigidSize::kDAll> res;
+      Store(res.data(), DotVecMat3x3(s * sums.force[a], colliderFromWorld));
+      Store<3>(res.data() + 3, DotVecMat3x3(s * sums.torque[a], colliderFromWorld));
+      AddRigidSliceResidual(jacs, a, res, outRes, linkRes);
     }
   }
 
@@ -2784,6 +2808,7 @@ static void AssembleCollisionResponseRange(
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
+    ColumnVectorView<real> linkRes, // 6 values per slice, for those with link residuals
     AnyMatrixView<real> outDRes) {
   MOCHI_PROFILE_SCOPE();
   MOCHI_ASSERT_VERBOSE(pointRange.Valid());
@@ -2795,11 +2820,11 @@ static void AssembleCollisionResponseRange(
   }
 
   bool assemObj = (outObj != nullptr);
-  bool assemRes = !outRes.empty();
+  bool assemRes = !outRes.empty() || !linkRes.empty();
   bool assemDRes = (GetNumValues(outDRes) > 0);
 
   if (assemRes || assemDRes) {
-    for (auto const& jac : jacs) {
+    for (auto const* jac : jacs) {
       MOCHI_ASSERT(jac, "Contact Jacobian must exist");
       MOCHI_ASSERT(jac->groupsInitialized, "Index groups not initialized");
     }
@@ -2817,7 +2842,7 @@ static void AssembleCollisionResponseRange(
   if (assemRes) {
     DynamicArray<ContactResAssembler> resAssemblers(filoAllocator);
     resAssemblers.reserve(jacs.size());
-    for (auto const& jac : jacs) {
+    for (auto const* jac : jacs) {
       resAssemblers.emplace_back(*jac, filoAllocator);
     }
     {
@@ -2833,8 +2858,8 @@ static void AssembleCollisionResponseRange(
     }
     {
       MOCHI_PROFILE_SCOPE_N("Residual Deferred Assembly");
-      for (auto& resAssembler : resAssemblers) {
-        resAssembler.DeferredAssemble(outRes);
+      for (int a = 0; a < isize(resAssemblers); ++a) {
+        resAssemblers[a].DeferredAssemble(outRes, linkRes, a);
       }
     }
   }
@@ -2939,8 +2964,9 @@ void mochi::AssembleCollisionResponse(
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
-    AnyMatrixView<real> outDRes) {
-  int numContactPoints = isize(contactQuery.sampleIndices);
+    AnyMatrixView<real> outDRes,
+    ColumnVectorView<real> outLinkRes) {
+  int const numContactPoints = isize(contactQuery.sampleIndices);
   AssembleCollisionResponseRange(
       Interval<int>{0, numContactPoints}, // full range
       contactQuery,
@@ -2951,6 +2977,7 @@ void mochi::AssembleCollisionResponse(
       filoAllocator,
       outObj,
       outRes,
+      outLinkRes,
       outDRes);
 }
 
@@ -3794,20 +3821,41 @@ template Graph<int, int> mochi::MakeContactGraph<1, /*kIsSync*/ true>(
     entt::registry const& reg,
     Span<entt::entity const> actors);
 
+// Sync link-space contact residual of the articulation that owns the link residuals of 'actor' (the
+// articulation of a link or a nested soft actor, or the actor itself), or null if none.
+static CArticulatedSyncContactLinkResidual* TryGetSyncContactLinkResidual(
+    entt::registry const& reg,
+    ecs::PartialRegistry<CArticulatedSyncContactLinkResidual> regOut,
+    entt::entity actor) {
+  entt::entity articulation = entt::null;
+  if (auto const* articulatedEntity = reg.try_get<CArticulatedEntity const>(actor)) {
+    articulation = articulatedEntity->entity;
+  } else if (auto const* composition = reg.try_get<CSkinnedComposition const>(actor)) {
+    articulation = composition->articulated;
+  } else if (reg.all_of<TagArticulatedActor>(actor)) {
+    articulation = actor;
+  }
+  return articulation == entt::null
+      ? nullptr
+      : regOut.try_get<CArticulatedSyncContactLinkResidual>(articulation);
+}
+
 template <GradTarget kGradTarget>
 static void AssembleAllSyncContactPairs(
     entt::registry const& reg,
-    ecs::PartialRegistry<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>> regActiveColls,
+    ecs::PartialRegistry<
+        CActiveCollisions</*kIsSync*/ true, TimeStep::Current>,
+        CArticulatedSyncContactLinkResidual> regOut,
     Span<entt::entity const> actors,
     Allocator* filoAllocator,
     double* outObj,
-    ColumnVectorView<real> outRes,
+    bool assemRes,
+    ColumnVectorView<real> outRes, // Empty if no slice assembles into it
     AnyMatrixView<real> outDRes,
     bool psdDRes,
     bool useFittedHessian) {
   MOCHI_PROFILE_SCOPE();
   bool const assemObj = (outObj != nullptr);
-  bool const assemRes = !outRes.empty();
   bool const assemDRes = (GetNumValues(outDRes) > 0);
   bool const needJacs = assemRes || assemDRes;
 
@@ -3841,8 +3889,7 @@ static void AssembleAllSyncContactPairs(
   int numJacs = 0;
   for (auto entity0 : actors) {
     if (auto const* activeCollisions =
-            regActiveColls.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(
-                entity0)) {
+            regOut.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(entity0)) {
       numContactPairs += isize(*activeCollisions);
       if (needJacs) {
         auto const& collidingJacs = reg.get<CCollJacs<CollRole::Colliding> const>(entity0);
@@ -3865,19 +3912,18 @@ static void AssembleAllSyncContactPairs(
     allJacs.reserve(numJacs);
   }
 
-  // Enumerate the contacting pairs and their ContactJacs
+  // Enumerate the contacting pairs and their ContactJacs.
   DynamicArray<ContactPair> allPairs(filoAllocator);
   allPairs.reserve(numContactPairs);
   for (auto entity0 : actors) {
     if (auto* activeCollisions =
-            regActiveColls.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(
-                entity0)) {
+            regOut.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(entity0)) {
       for (auto& coll : *activeCollisions) {
+        entt::entity const entity1 = coll.colliderEntity;
         int firstJac = isize(allJacs);
         int numCollidingJacs = 0;
         if (needJacs) {
           // For each contact pair, colliding Jacobian(s) must go before collider Jacobian(s).
-          entt::entity entity1 = coll.colliderEntity;
           reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId].GetActiveJacs(
               allJacs);
           numCollidingJacs = isize(allJacs) - firstJac;
@@ -3941,6 +3987,7 @@ static void AssembleAllSyncContactPairs(
         : contactPair(contactPair_), pointRange(pointRange_) {}
     ContactPair* contactPair = nullptr;
     Interval<int> pointRange;
+    int linkResOffset = 0; // Offset of the link residuals of the pair in linkResiduals
     DynamicArray<Real3> outForce; // May be used for contact queries
   };
 
@@ -3982,6 +4029,20 @@ static void AssembleAllSyncContactPairs(
     }
   }
 
+  // Link residuals of all the work, with a contiguous range for each PairWork, with 6 values per
+  // slice of its pair. A pair may be split between tasks, but each PairWork belongs to one task, so
+  // the ranges are written concurrently.
+  int linkResSize = 0;
+  if (assemRes) {
+    for (auto& task : taskWork) {
+      for (auto& pairWork : task.pairWork) {
+        pairWork.linkResOffset = linkResSize;
+        linkResSize += RigidSize::kDAll * pairWork.contactPair->jacRange.size();
+      }
+    }
+  }
+  ColumnVector<real> linkResiduals(linkResSize, filoAllocator);
+
   // Do part of the work
   auto doTask = [&](int iTask) {
     auto& myTask = taskWork[iTask];
@@ -3997,7 +4058,7 @@ static void AssembleAllSyncContactPairs(
       if (assemObj) {
         taskObj = &myTask.objective;
       }
-      if (assemRes) {
+      if (!outRes.empty()) {
         myTask.resValues.Reset(outRes.size());
         taskRes.Reset(AsView(myTask.resValues));
         taskRes.SetZero();
@@ -4071,6 +4132,9 @@ static void AssembleAllSyncContactPairs(
       auto jacs = (pair.jacRange.size() > 0)
           ? Span{&allJacs[pair.jacRange.Min()], pair.jacRange.size()}
           : Span<ContactJac const*>{};
+      ColumnVectorView<real> const linkRes(
+          linkResiduals.data() + pairWork.linkResOffset,
+          assemRes ? RigidSize::kDAll * isize(jacs) : 0);
       bool const storeForces = assemRes &&
           (reg.all_of<TagQueryActiveContacts>(entity0) ||
            reg.all_of<TagQueryActiveContacts>(entity1));
@@ -4095,7 +4159,16 @@ static void AssembleAllSyncContactPairs(
             assemDRes,
             storeForces ? MakeSpan(response.force) : Span<Real3>{});
         AssembleSyncRigidContactSums<kGradTarget>(
-            reg, entity0, entity1, sums, jacs, &taskLocalAlloc, taskObj, taskRes, taskDRes);
+            reg,
+            entity0,
+            entity1,
+            sums,
+            jacs,
+            &taskLocalAlloc,
+            taskObj,
+            taskRes,
+            linkRes,
+            taskDRes);
       } else if (useContactSums) {
         // A skinned actor against a rigid collider: sums over the bone slices and the
         // rigid-collider slice, about the collider's center of mass.
@@ -4129,6 +4202,7 @@ static void AssembleAllSyncContactPairs(
             &taskLocalAlloc,
             taskObj,
             taskRes,
+            linkRes,
             taskDRes);
       } else {
         MOCHI_ASSERT_VERBOSE(
@@ -4154,6 +4228,7 @@ static void AssembleAllSyncContactPairs(
             &taskLocalAlloc,
             taskObj,
             taskRes,
+            linkRes,
             taskDRes);
       }
 
@@ -4180,11 +4255,40 @@ static void AssembleAllSyncContactPairs(
       if (assemObj) {
         *outObj += taskWork[i].objective;
       }
-      if (assemRes) {
+      if (!outRes.empty()) {
         outRes += taskWork[i].resValues;
       }
       if (assemDRes) {
         AsView(GetValues(outDRes)) += taskWork[i].dresValues;
+      }
+    }
+  }
+
+  // Gather the link residuals into the link-space residuals of their articulations, in a fixed
+  // order. Each is zeroed on its first gathered link residual, since it is inactive until then.
+  if (assemRes) {
+    for (auto const& task : taskWork) {
+      for (auto const& pairWork : task.pairWork) {
+        auto const& pair = *pairWork.contactPair;
+        Span<ContactJac const*> const jacs{
+            allJacs.data() + pair.jacRange.Min(), pair.jacRange.size()};
+        if (std::none_of(
+                jacs.begin(), jacs.end(), [](auto const* jac) { return HasLinkResidual(*jac); })) {
+          continue;
+        }
+        // The slices of the colliding actor go first, then those of the collider.
+        int const numColliding = pair.numCollidingJacs;
+        int const numCollider = isize(jacs) - numColliding;
+        real* const linkRes = linkResiduals.data() + pairWork.linkResOffset;
+        AddLinkResiduals(
+            jacs.subspan(0, numColliding),
+            ColumnVectorView<real>(linkRes, RigidSize::kDAll * numColliding),
+            TryGetSyncContactLinkResidual(reg, regOut, pair.entity0));
+        AddLinkResiduals(
+            jacs.subspan(numColliding),
+            ColumnVectorView<real>(
+                linkRes + RigidSize::kDAll * numColliding, RigidSize::kDAll * numCollider),
+            TryGetSyncContactLinkResidual(reg, regOut, pair.collision->colliderEntity));
       }
     }
   }
@@ -4232,6 +4336,16 @@ static bool ActorsHaveContact(entt::registry const& reg, Span<entt::entity const
   return false;
 }
 
+// Whether some contact Jacobian slice of 'actors' may assemble into the solver-space residual,
+// i.e., some actor is neither an articulated link nor a non-blended articulated actor (whose slices
+// all have link residuals). A blended actor may have soft slices.
+static bool NeedResidual(entt::registry const& reg, Span<entt::entity const> actors) {
+  return std::any_of(actors.begin(), actors.end(), [&](entt::entity e) {
+    return !reg.any_of<TagArticulatedLinkActor, TagArticulatedActor>(e) ||
+        reg.all_of<TagBlendedActor>(e);
+  });
+}
+
 void mochi::AssembleIslandSyncContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,
@@ -4257,15 +4371,19 @@ void mochi::AssembleIslandSyncContact(
     return;
   }
 
-  outContactSnle.residuals.resize(1);
   outContactSnle.dresiduals.resize(1);
-  auto& outContactResidual = outContactSnle.residuals[0].second;
   auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
 
+  ColumnVectorView<real> outContactResidual; // Empty if not assembled or no actor assembles into it
   if (params.assemRes) {
-    // Make sure the contact residual is the right size
-    // TODO: A sparse vector would be more efficient.
-    outContactResidual.Resize(islandDofInfo.dofsSize);
+    if (NeedResidual(reg, actors)) {
+      // TODO: A sparse vector would be more efficient.
+      outContactSnle.residuals.resize(1);
+      outContactSnle.residuals[0].second.Resize(islandDofInfo.dofsSize);
+      outContactResidual.Reset(outContactSnle.residuals[0].second);
+    } else {
+      outContactSnle.residuals.clear();
+    }
   }
 
   if (params.assemDRes) {
@@ -4305,7 +4423,8 @@ void mochi::AssembleIslandSyncContact(
       actors,
       &filoAllocator,
       params.assemObj ? &outContactSnle.objective : nullptr,
-      params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
+      params.assemRes,
+      outContactResidual,
       params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{},
       params.psdDRes,
       params.fittedSaturationHessian.contactFriction);
@@ -4325,7 +4444,8 @@ void mochi::AssembleAsyncSkinnedContact(
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
     CCollJacs<CollRole::Colliding> const& collJacs,
-    CSkinnedContactSnle& outContactSnle) {
+    CSkinnedContactSnle& outContactSnle,
+    CArticulatedAsyncContactLinkResidual* outLinkResidual) {
   MOCHI_PROFILE_SCOPE();
 
   MOCHI_ASSERT_VERBOSE(params.gradTarget == GradTarget::Current, "Unexpected grad target");
@@ -4346,22 +4466,27 @@ void mochi::AssembleAsyncSkinnedContact(
   }
 
   // Set up the output SNLE if needed
+  ColumnVectorView<real> outContactResidual; // Empty if not assembled or no slice assembles into it
   if (hasContactWithDofs) {
-    outContactSnle.residuals.resize(1);
     outContactSnle.dresiduals.resize(1);
-    auto& outContactResidual = outContactSnle.residuals[0].second;
     auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
 
+    // The island-sized residual is registered only if some slice may assemble into it, rather than
+    // into a link-space residual.
     if (params.assemRes) {
-      // TODO: Skinned contact should assemble directly into this entity's reduced CActorSnle, or
-      // to another residual/dresidual of the same size. For now, it produces an
-      // interactionResidual and interactionMatrix for the island's SNLE problem, so they need to
-      // be the size of the island.
-      auto const& islandDofInfo = reg.get<CIslandDofInfo>(islandMember.island);
+      if (NeedResidual(reg, MakeSingletonConstSpan(e))) {
+        // TODO: Skinned contact should assemble directly into this entity's reduced CActorSnle, or
+        // to another residual/dresidual of the same size. For now, it produces an
+        // interactionResidual and interactionMatrix for the island's SNLE problem, so they need to
+        // be the size of the island.
+        auto const& islandDofInfo = reg.get<CIslandDofInfo>(islandMember.island);
 
-      // Resize the contact residual if necessary
-      if (outContactResidual.size() != islandDofInfo.dofsSize) {
-        outContactResidual.Reset(islandDofInfo.dofsSize);
+        // Resize the contact residual if necessary
+        outContactSnle.residuals.resize(1);
+        outContactSnle.residuals[0].second.Resize(islandDofInfo.dofsSize);
+        outContactResidual.Reset(AsView(outContactSnle.residuals[0].second));
+      } else {
+        outContactSnle.residuals.clear();
       }
     }
 
@@ -4430,6 +4555,16 @@ void mochi::AssembleAsyncSkinnedContact(
     bool const assemDRes = params.assemDRes && collisionHasStateDofs;
     auto contactParams = GetContactPairParams(reg, e, coll.colliderEntity);
 
+    // Contact Jacobians, which are assembled only if the collision has state DoFs, and link
+    // residual slots for them, which are added to the link-space residual of the articulation after
+    // the assembly of the collision.
+    jacs.clear();
+    if (collisionHasStateDofs) {
+      jacData.GetActiveJacs(jacs);
+    }
+    ColumnVector<real> linkResiduals(
+        params.assemRes ? RigidSize::kDAll * isize(jacs) : 0, &filoAllocator);
+
     if (jacData.useContactSums) {
       // Sums over the bone slices, without per-point response.
       response.ResizeNoInit(numPoints, false, evaluateRes, false);
@@ -4450,9 +4585,6 @@ void mochi::AssembleAsyncSkinnedContact(
           &filoAllocator,
           evaluateRes ? MakeSpan(response.force) : Span<Real3>{});
       if (collisionHasStateDofs) {
-        jacs.clear();
-        jacData.GetActiveJacs(jacs);
-        auto& outContactResidual = outContactSnle.residuals[0].second;
         auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
         AssembleSkinnedContactSums(
             sums,
@@ -4461,7 +4593,8 @@ void mochi::AssembleAsyncSkinnedContact(
             query.jacColliderFromWorld[0],
             &filoAllocator,
             params.assemObj ? &outContactSnle.objective : nullptr,
-            params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
+            outContactResidual,
+            AsView(linkResiduals),
             params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{});
       }
     } else {
@@ -4477,14 +4610,9 @@ void mochi::AssembleAsyncSkinnedContact(
           response);
 
       if (collisionHasStateDofs) {
-        // Get contact Jacobians
-        jacs.clear();
-        jacData.GetActiveJacs(jacs);
-
-        // Perform assembly.
-        auto& outContactResidual = outContactSnle.residuals[0].second;
         auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
-        AssembleCollisionResponse(
+        AssembleCollisionResponseRange(
+            Interval<int>{0, numPoints}, // full range
             query,
             response,
             samples.weights,
@@ -4492,9 +4620,15 @@ void mochi::AssembleAsyncSkinnedContact(
             isize(jacs), // All the Jacobians are of the colliding actor.
             &filoAllocator,
             params.assemObj ? &outContactSnle.objective : nullptr,
-            params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},
+            outContactResidual,
+            AsView(linkResiduals),
             params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{});
       }
+    }
+
+    // Add the link residuals to the link-space residual of the articulation.
+    if (params.assemRes) {
+      AddLinkResiduals(jacs, AsConstView(linkResiduals), outLinkResidual);
     }
 
     // Store the forces in case they are needed for a later contact point query

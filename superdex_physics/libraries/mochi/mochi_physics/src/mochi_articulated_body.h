@@ -40,6 +40,7 @@
 namespace mochi {
 
 // Forwards
+struct CBlendedComposition;
 struct CDofOffset;
 struct CGroupMembers;
 struct CIslandMemberInfo;
@@ -219,6 +220,39 @@ struct CArticulatedRigidJacobian : public NoCopy {
 
 struct CTransmissions : public NoCopy {
   DynamicArray<std::unique_ptr<Transmission>> transmissions;
+};
+
+/**
+  Link-space (full-DoF) residual of an articulated actor, projected to its reduced DoFs after
+  assembly. The residual is valid only if isActive. Producers accumulate into it through
+  AddLinkResidual(), and its consumer, articulated::compound::ProjectFullResidual, reads it if
+  active and then deactivates it.
+*/
+struct ArticulatedLinkResidual : NoCopy {
+  explicit ArticulatedLinkResidual(int fullDofs) : residual(fullDofs) {}
+
+  // Adds the residual of a link at its offset in the full DoFs, zeroing the residual on the first
+  // write after deactivation.
+  void AddLinkResidual(int linkDofOffset, ColumnVectorView<real const, RigidSize::kDAll> linkRes) {
+    if (!isActive) {
+      residual.SetZero();
+      isActive = true;
+    }
+    residual.Slice<RigidSize::kDAll>(linkDofOffset, RigidSize::kDAll) += linkRes;
+  }
+
+  ColumnVector<real> residual;
+  bool isActive = false;
+};
+
+// On an articulated actor. Written by sync contact.
+struct CArticulatedSyncContactLinkResidual : ArticulatedLinkResidual {
+  using ArticulatedLinkResidual::ArticulatedLinkResidual;
+};
+
+// On a skinned contact entity. Written by its async contact.
+struct CArticulatedAsyncContactLinkResidual : ArticulatedLinkResidual {
+  using ArticulatedLinkResidual::ArticulatedLinkResidual;
 };
 
 // Emplace data to process a skinned mesh.
@@ -690,6 +724,25 @@ void EntityAssemble(
     CArticulatedJointVels<TimeStep::StageStart> const& stageStartJointVels,
     CActorDerivedStateInfo const* derivedStateInfo,
     CActorDiffInputInfo const* diffInputInfo,
+    CActorSnle& outCompoundSnle);
+
+// Adds the active link-space contact residuals of the articulated actor (sync, and async of the
+// actor and its nested soft actors) to its full residual, projects it to the reduced DoFs, and adds
+// it to the reduced residual. For state grad targets only. Must run after contact and articulated
+// assembly. As their only consumer, it deactivates the link-space residuals, whether projected or
+// not.
+void ProjectFullResidual(
+    AssemblyParams const& params,
+    ecs::RequiredTag<TagArticulatedActor>,
+    entt::registry& reg,
+    CArticulatedBodyShape const& bodyShape,
+    CArticulatedParents const& parents,
+    CArticulatedLinkTransforms<TimeStep::Current> const& currLinkTxs,
+    CArticulatedLinkTransforms<TimeStep::StageStart> const& stageStartLinkTxs,
+    CArticulatedJacobian const& jacobian,
+    CBlendedComposition const* blendedComposition,
+    CArticulatedAsyncContactLinkResidual* asyncContactLinkResidual,
+    CArticulatedSyncContactLinkResidual& syncContactLinkResidual,
     CActorSnle& outCompoundSnle);
 
 /*

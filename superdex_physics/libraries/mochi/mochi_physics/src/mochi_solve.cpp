@@ -706,9 +706,10 @@ void mochi::solver::AssembleIslandPipeline(
   startOtherAssemblySemaphore.Wait();
 
   // Assemble sync contact within the island. Contact is first-order; assemble only if needed.
+  TaskSemaphore contactSemaphore;
   if (IsAssemblyNeeded(StateDependency::FirstOrder, true /*inputDependency*/, params.gradTarget)) {
     ecs::TryScheduleInvokeOnEntity<ecs::policy::AllowFullRegistryAccess>(
-        masterSemaphore,
+        contactSemaphore,
         "AssembleIslandSyncContact",
         &AssembleIslandSyncContact,
         reg,
@@ -738,7 +739,7 @@ void mochi::solver::AssembleIslandPipeline(
       descendants.rodActors};
   for (auto actors : skinnedActors) {
     ecs::ScheduleInvokeForEach<ecs::policy::AllowFullRegistryAccess>(
-        masterSemaphore,
+        contactSemaphore,
         "AssembleAsyncSkinnedContact",
         AssembleAsyncSkinnedContact,
         reg,
@@ -755,7 +756,8 @@ void mochi::solver::AssembleIslandPipeline(
 
   // Wait for constraint assembly to finish (but don't wait for anything else). Then, schedule a
   // task for each articulated compound. They will read the full DoF values assembled from their
-  // rigid bodies and constraints (already assembled by this point).
+  // rigid bodies and constraints (already assembled by this point). Once contact assembly is also
+  // complete, each task projects the full residual of its compound, including link-space contact.
   constraintSemaphore.Wait();
   for (auto e : descendants.compoundActors) {
     if (reg.all_of<TagArticulatedActor, CActorSnle>(e)) {
@@ -764,7 +766,12 @@ void mochi::solver::AssembleIslandPipeline(
           masterSemaphore, "articulated::compound::EntityAssemble", [&, e, artCompletionSem]() {
             ecs::InvokeOnEntity<ecs::policy::AllowReadWriteSameComponent>(
                 articulated::compound::EntityAssemble, reg, e, std::cref(params));
+            // The reduced dresidual is final, which is all that consumers of artCompletionSem read.
+            // The reduced residual is completed by ProjectFullResidual.
             artCompletionSem.Done();
+            contactSemaphore.Wait();
+            ecs::InvokeOnEntity<ecs::policy::AllowFullRegistryAccess>(
+                articulated::compound::ProjectFullResidual, reg, e, std::cref(params));
           });
     }
   }
@@ -783,6 +790,7 @@ void mochi::solver::AssembleIslandPipeline(
 
   // Wait for all of the above tasks
   masterSemaphore.Wait();
+  contactSemaphore.Wait();
 
   // Update convergence weights. Must run after per-actor assembly (dependencies updated) and
   // before GatherSnleDataFromActors (weights consumed).

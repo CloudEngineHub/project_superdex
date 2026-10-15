@@ -60,6 +60,7 @@
 namespace mochi {
 
 // Forwards
+struct CArticulatedAsyncContactLinkResidual;
 struct CGroupMemberInfo;
 struct CIslandContactSnle;
 struct CIslandDescendants;
@@ -975,7 +976,11 @@ void UpdateQueryActorContactForces(
     ecs::OptionalTag<TagRigidActor> hasRigidActorTag,
     CQueryActorContactForces& outQueryActorForces);
 
-// Assemble collision response into DoFs
+// Assemble collision response into DoFs. The residuals of Jacobian slices with internal DoF offsets
+// (articulated links and skinning bones) are written to outLinkRes instead of outRes, and must be
+// projected to joint space later. outLinkRes holds 6 values per slice in jacs, at 6 * a for slice
+// a, but only those of the slices with internal DoF offsets are written. outRes may be empty if no
+// slice assembles into it.
 void AssembleCollisionResponse(
     ContactDetectionResult const& contactQuery,
     CollisionResponseResult const& collisionResponse,
@@ -985,11 +990,15 @@ void AssembleCollisionResponse(
     Allocator* filoAllocator, // Will be used in first-in-last-out order
     double* outObj,
     ColumnVectorView<real> outRes,
-    AnyMatrixView<real> outDRes);
+    AnyMatrixView<real> outDRes,
+    ColumnVectorView<real> outLinkRes);
 
 // Assemble sync contact for all pairs of colliding actors within the island.
 // Results are written to CIslandContactSnle and possibly to the sync
-// CActiveCollisions<TimeStep::Current>.
+// CActiveCollisions<TimeStep::Current>. Link residuals are written to
+// CArticulatedSyncContactLinkResidual instead, and are projected later by
+// articulated::compound::ProjectFullResidual. The island residual is not registered if all the
+// island actors are articulated links or non-blended articulated actors.
 void AssembleIslandSyncContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,
@@ -1023,7 +1032,10 @@ void SetupContactSkinCollidingJacobians(
 // Assemble async contact for a single colliding actor whose contact samples are tied to its DoFs
 // through skinning/embedding (i.e. it carries CSkinnedContactSnle). Currently used for articulated
 // actors with skinned contact meshes, nested soft actors configured as colliding actors, and
-// deformable actors that use contact-skin contact. Results are written to CSkinnedContactSnle.
+// deformable actors that use contact-skin contact. Results are written to CSkinnedContactSnle,
+// except for link residuals, which are written to CArticulatedAsyncContactLinkResidual and are
+// projected later by articulated::compound::ProjectFullResidual. The island-sized residual is not
+// registered for non-blended articulated actors, whose slices all have link residuals.
 void AssembleAsyncSkinnedContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,
@@ -1039,7 +1051,8 @@ void AssembleAsyncSkinnedContact(
     CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
     CCollJacs<CollRole::Colliding> const& collJacs,
-    CSkinnedContactSnle& outContactSnle);
+    CSkinnedContactSnle& outContactSnle,
+    CArticulatedAsyncContactLinkResidual* outLinkResidual);
 
 Aabb ExpandConservativeBoundsWithContactPadding(
     Aabb bounds,

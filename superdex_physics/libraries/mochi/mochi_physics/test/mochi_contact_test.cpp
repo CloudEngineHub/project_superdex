@@ -636,10 +636,11 @@ TEST(MochiContact, MakeContactGraphWithFiveContactJacobians) {
   EXPECT_SPAN_EQ(graph.GetTargets(), MakeConstSpan(expectedTargets));
 }
 
-// Assemble the contact dresidual of slices with shared DoFs (with and without auxiliary Jacobians,
-// and with overlapping DoFs) and slices with per-point DoFs, and compare it to the sum over points
-// of the products of their full Jacobians.
-TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
+// Assemble the contact residual and dresidual of slices with shared DoFs (with and without
+// auxiliary Jacobians, and with overlapping DoFs) and slices with per-point DoFs, and compare them
+// to the sums over points of the products of their full Jacobians. The residuals of the slices with
+// auxiliary Jacobians are written to link residual slots, and are projected before the comparison.
+TEST(MochiContact, AssembleResAndDResWithSharedAndPerPointSlices) {
   constexpr int kNumDofs = 32;
   constexpr int kNumContacts = 3;
   unsigned int seed = 7;
@@ -690,6 +691,11 @@ TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
   CollisionResponseResult response;
   response.energy.resize(kNumContacts, 0.0);
   response.force.resize(kNumContacts, Real3{});
+  for (auto& force : response.force) {
+    ColumnVector<real, 3> randomForce;
+    randomForce.SetRandom(++seed, -1_r, 1_r);
+    force = Real3{randomForce[0], randomForce[1], randomForce[2]};
+  }
   response.dforce.resize(kNumContacts);
   for (auto& dforce : response.dforce) {
     // Symmetric, since off-diagonal blocks are assembled as transposes of each other.
@@ -726,6 +732,10 @@ TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
     }
     SparseMatrix<real> dres{MakeSparsityGraph(std::move(pattern), kNumDofs)};
     dres.SetConstant(1_r);
+    auto res = ColumnVector<real>::Zero(kNumDofs);
+    // The slots start with stale values, which must be overwritten.
+    ColumnVector<real> linkRes(RigidSize::kDAll * isize(jacs));
+    linkRes.SetConstant(100_r);
     MOCHI_FILO_STACK_ALLOCATOR(allocator, 64 * 1024);
     AssembleCollisionResponse(
         query,
@@ -735,9 +745,26 @@ TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
         isize(collidingSlices),
         &allocator,
         nullptr,
-        ColumnVectorView<real>{},
-        AsView(dres));
+        AsView(res),
+        AsView(dres),
+        AsView(linkRes));
 
+    // Project the link residuals of the slices with auxiliary Jacobians, from their slots, to their
+    // state DoFs.
+    for (int a = 0; a < isize(jacs); ++a) {
+      ContactJac const& jac = *jacs[a];
+      if (!jac.JacAux()) {
+        continue;
+      }
+      ColumnVector<real> const stateRes =
+          jac.JacAux().Transpose() * linkRes.MiddleRows(RigidSize::kDAll * a, RigidSize::kDAll);
+      Span<int const> inds = jac.Inds(0);
+      for (int c = 0; c < isize(inds); ++c) {
+        res[inds[c]] += stateRes[c];
+      }
+    }
+
+    auto expectedRes = ColumnVector<real>::Zero(kNumDofs);
     for (int s = 0; s < kNumContacts; ++s) {
       auto jacFull = Matrix<real>::Zero(3, kNumDofs);
       for (auto const* jac : jacs) {
@@ -750,8 +777,11 @@ TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
       }
       Matrix<real, 3, 3> const dresContact{-weights[s] * AsMatrixView(response.dforce[s])};
       expected += jacFull.Transpose() * Matrix<real>{dresContact * jacFull};
+      Real3 const resContact = -weights[s] * response.force[s];
+      expectedRes += jacFull.Transpose() * ColumnVectorView<real const, 3>(&resContact[0]);
     }
     constexpr real kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-12_r : 1e-5_r;
+    EXPECT_TRUE(NearEqualMatrices(res, expectedRes, kTol * expectedRes.Norm()));
     EXPECT_TRUE(NearEqualMatrices(dres, expected, kTol * expected.Norm()));
   };
   // Grouped Jacobians with shared DoFs, which are both first and second in pairs with per-point
@@ -2694,6 +2724,8 @@ class MochiArticulatedArticulatedContact : public MochiContactTestBase {
   entt::entity _artB = entt::null;
   ColumnVector<real> _posA;
   ColumnVector<real> _posB;
+  ColumnVector<real> _posAOld;
+  ColumnVector<real> _posBOld;
 
  public:
   MochiArticulatedArticulatedContact() {
@@ -2795,10 +2827,21 @@ class MochiArticulatedArticulatedContact : public MochiContactTestBase {
     auto& posB = reg.get<CArticulatedReducedPose<TimeStep::Current>>(_artB).value;
     posB.BottomRows<RigidSize::kRot>(RigidSize::kRot) =
         AsColumnVectorView(Quaternion::FromRotationVector(-tinyRot).data);
-    UpdateFullState(_artA, _colliding);
-    UpdateFullState(_artB, _collider);
+    UpdateFullState(_artA);
+    UpdateFullState(_artB);
     _posA = posA.Duplicate();
     _posB = posB.Duplicate();
+
+    // The stage-start poses differ from the current ones, so that the links have velocity, and the
+    // Jacobians of GradTarget::Current and GradTarget::Previous differ.
+    constexpr std::array<real, 9> kStageStartDelta = {
+        0.02_r, -0.01_r, 0.01_r, 0.03_r, -0.02_r, 0.01_r, -0.02_r, 0.03_r, 0.02_r};
+    _posAOld = _posA.Duplicate();
+    _posBOld = _posB.Duplicate();
+    for (int i = 0; i < isize(kStageStartDelta); ++i) {
+      AddToPose(_artA, i, kStageStartDelta[i], _posAOld);
+      AddToPose(_artB, i, -kStageStartDelta[i], _posBOld);
+    }
 
     // Update islands manually since this test does not step the scene.
     // This assigns DOF offsets, among other things.
@@ -2825,40 +2868,91 @@ class MochiArticulatedArticulatedContact : public MochiContactTestBase {
     auto& reg = GetRegistry();
     reg.get<CArticulatedReducedPose<TimeStep::Current>>(_artA).value = _posA;
     reg.get<CArticulatedReducedPose<TimeStep::Current>>(_artB).value = _posB;
-    UpdateFullState(_artA, _colliding);
-    UpdateFullState(_artB, _collider);
+    UpdateFullState(_artA);
+    UpdateFullState(_artB);
+    reg.get<CArticulatedReducedPose<TimeStep::StageStart>>(_artA).value = _posAOld;
+    reg.get<CArticulatedReducedPose<TimeStep::StageStart>>(_artB).value = _posBOld;
+    UpdateStageStartState(_artA);
+    UpdateStageStartState(_artB);
   }
 
   void AddToState(int globalDof, real eps) override {
     auto [art, localDof] = GetEntityAndLocalDofFromGlobalDof(globalDof);
-    auto body = (art == _artA) ? _colliding : _collider;
-    auto& posReduced = GetRegistry().get<CArticulatedReducedPose<TimeStep::Current>>(art).value;
-    ColumnVector<real> delta(GetRegistry().get<CArticulatedProps const>(art).reducedDofsDim);
-    delta.SetZero();
-    delta[localDof] = eps;
-    auto const* joints = GetRegistry().get<CArticulatedBodyShape const>(art).shape->GetJointsData();
-    auto const& poseInfo = GetRegistry().get<CArticulatedJointPoseInfo const>(art);
-    articulated::AddLieDeltaToReducedPose(
-        joints->jointTypes, joints->dofInfo, poseInfo, posReduced, delta, posReduced);
-    UpdateFullState(art, body);
+    AddToPose(
+        art,
+        localDof,
+        eps,
+        GetRegistry().get<CArticulatedReducedPose<TimeStep::Current>>(art).value);
+    UpdateFullState(art);
   }
 
-  void UpdateFullState(entt::entity art, entt::entity body) {
+  void AddToOldState(int globalDof, real eps) override {
+    auto [art, localDof] = GetEntityAndLocalDofFromGlobalDof(globalDof);
+    AddToPose(
+        art,
+        localDof,
+        eps,
+        GetRegistry().get<CArticulatedReducedPose<TimeStep::StageStart>>(art).value);
+    UpdateStageStartState(art);
+  }
+
+  void AddToPose(entt::entity art, int localDof, real eps, ColumnVector<real>& pose) {
+    auto const& reg = GetRegistry();
+    ColumnVector<real> delta(reg.get<CArticulatedProps const>(art).reducedDofsDim);
+    delta.SetZero();
+    delta[localDof] = eps;
+    auto const* joints = reg.get<CArticulatedBodyShape const>(art).shape->GetJointsData();
+    auto const& poseInfo = reg.get<CArticulatedJointPoseInfo const>(art);
+    articulated::AddLieDeltaToReducedPose(
+        joints->jointTypes, joints->dofInfo, poseInfo, pose, delta, pose);
+  }
+
+  // Updates the stage-start transforms of the articulated actor, and the stage-start states of all
+  // its links, from its stage-start pose, as articulated::compound::PreStagePipeline does.
+  void UpdateStageStartState(entt::entity art) {
+    auto& reg = GetRegistry();
+    auto const* joints = reg.get<CArticulatedBodyShape const>(art).shape->GetJointsData();
+    ColumnVector<real> fullPose(reg.get<CArticulatedFullPose const>(art).value.Rows());
+    articulated::ComputeFullPose(
+        joints->jointTypes,
+        joints->jointAxes,
+        reg.get<CArticulatedJointPoseInfo const>(art),
+        reg.get<CArticulatedParents const>(art),
+        reg.get<CArticulatedRestTransforms const>(art),
+        reg.get<CRootTransform const>(art).worldFromLocal,
+        reg.get<CArticulatedReducedPose<TimeStep::StageStart> const>(art).value,
+        reg.get<CArticulatedJointTransforms<TimeStep::StageStart>>(art),
+        reg.get<CArticulatedLinkTransforms<TimeStep::StageStart>>(art),
+        fullPose);
+    for (entt::entity const link : reg.get<CGroupMembers const>(art).actors) {
+      int const offset = reg.get<CDofOffset const>(link).poseOffset;
+      auto& rigidState = reg.get<CRigidState<TimeStep::StageStart>>(link);
+      mochi::rigid::EntitySetSolution(
+          AsConstView(fullPose).MiddleRows(offset, RigidSize::kAll),
+          ecs::Included<TagRigidActor>{},
+          {},
+          rigidState);
+      SetStageStartTransformFromState(link, rigidState.value);
+    }
+  }
+
+  // Updates the full pose of the articulated actor, and the current states of all its links, from
+  // its current pose, as UpdateDerivedStateFromPose does.
+  void UpdateFullState(entt::entity art) {
     auto& reg = GetRegistry();
     UpdateArticulatedFullPose(reg, art);
 
     auto const& posFull = reg.get<CArticulatedFullPose const>(art).value;
-    auto const& offset = reg.get<CDofOffset const>(body).poseOffset;
-    auto& rigidState = reg.get<CRigidState<TimeStep::Current>>(body);
-    mochi::rigid::EntitySetSolution(
-        posFull.MiddleRows(offset, RigidSize::kAll),
-        ecs::Included<TagRigidActor>{},
-        {},
-        rigidState);
-    auto const& rigidInertia = reg.get<CRigidBodyInertia const>(body);
-    auto& rootTransform = reg.get<CRootTransform>(body);
-    mochi::rigid::RigidStateToRootTransform(
-        rigidInertia.GetCenterOfMassLocal(), rigidState.value, rootTransform.worldFromLocal);
+    for (entt::entity const link : reg.get<CGroupMembers const>(art).actors) {
+      int const offset = reg.get<CDofOffset const>(link).poseOffset;
+      auto& rigidState = reg.get<CRigidState<TimeStep::Current>>(link);
+      mochi::rigid::EntitySetSolution(
+          posFull.MiddleRows(offset, RigidSize::kAll),
+          ecs::Included<TagRigidActor>{},
+          {},
+          rigidState);
+      SetTransformFromState(link, rigidState.value);
+    }
   }
 
   void CopyToPreviousState(entt::entity body) {
@@ -2874,18 +2968,83 @@ TEST_P(MochiArticulatedArticulatedContact, ContactAssembly) {
   RunTest();
 }
 
+// The residual matches the FD of the objective to round-off where it is its true gradient: without
+// friction and damping, or with GradTarget::Current and explicit normals. Otherwise, friction and
+// damping make the residual differ from that gradient, more so for larger stage velocities.
+constexpr real kResExactTol = 2e-3_r;
+constexpr real kResApproxTol = 5e-2_r;
+// The dresidual of friction and damping discards some of their nonlinearities.
+constexpr real kDResSmallTol = 1e-2_r;
+constexpr real kDResLargeTol = 5e-2_r;
+
 INSTANTIATE_TEST_SUITE_P(
     FrictionVariations,
     MochiArticulatedArticulatedContact,
     ::testing::Values(
-        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 2e-3_r, 1e-2_r},
-        TestParams{"Viscous", GradTarget::Current, 0_r, 10_r, 0_r, false, 4e-3_r, 1e-2_r},
-        TestParams{"Coulomb", GradTarget::Current, 0.5_r, 0_r, 0_r, false, 2e-3_r, 1e-2_r},
-        TestParams{"Damping", GradTarget::Current, 0_r, 0_r, 10_r, false, 4e-3_r, 1e-2_r},
-        TestParams{"NoFrictionExplicit", GradTarget::Current, 0_r, 0_r, 0_r, true, 2e-3_r, 1e-2_r},
-        TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 10_r, 0_r, true, 2e-3_r, 1e-2_r},
-        TestParams{"CoulombExplicit", GradTarget::Current, 0.5_r, 0_r, 0_r, true, 2e-3_r, 1e-2_r},
-        TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 10_r, true, 2e-3_r, 1e-2_r}),
+        TestParams{.name = "NoFriction", .resTol = kResExactTol, .dresTol = kDResSmallTol},
+        TestParams{
+            .name = "Viscous",
+            .viscousCoefficient = 10_r,
+            .resTol = kResApproxTol,
+            .dresTol = kDResLargeTol},
+        TestParams{
+            .name = "Coulomb",
+            .coulombCoefficient = 0.5_r,
+            .resTol = kResApproxTol,
+            .dresTol = kDResLargeTol},
+        TestParams{
+            .name = "Damping",
+            .dampingCoefficient = 10_r,
+            .resTol = kResApproxTol,
+            .dresTol = kDResLargeTol},
+        TestParams{
+            .name = "NoFrictionExplicit",
+            .explicitNormals = true,
+            .resTol = kResExactTol,
+            .dresTol = kDResSmallTol},
+        TestParams{
+            .name = "ViscousExplicit",
+            .viscousCoefficient = 10_r,
+            .explicitNormals = true,
+            .resTol = kResExactTol,
+            .dresTol = kDResLargeTol},
+        TestParams{
+            .name = "CoulombExplicit",
+            .coulombCoefficient = 0.5_r,
+            .explicitNormals = true,
+            .resTol = kResExactTol,
+            .dresTol = kDResLargeTol},
+        TestParams{
+            .name = "DampingExplicit",
+            .dampingCoefficient = 10_r,
+            .explicitNormals = true,
+            .resTol = kResExactTol,
+            .dresTol = kDResLargeTol},
+        // The residual of GradTarget::Previous is projected with the stage-start Jacobian. The
+        // dresidual is not tested.
+        TestParams{
+            .name = "NoFrictionPrevious",
+            .gradTarget = GradTarget::Previous,
+            .explicitNormals = true,
+            .resTol = kResExactTol},
+        TestParams{
+            .name = "ViscousPrevious",
+            .gradTarget = GradTarget::Previous,
+            .viscousCoefficient = 10_r,
+            .explicitNormals = true,
+            .resTol = kResApproxTol},
+        TestParams{
+            .name = "CoulombPrevious",
+            .gradTarget = GradTarget::Previous,
+            .coulombCoefficient = 0.5_r,
+            .explicitNormals = true,
+            .resTol = kResApproxTol},
+        TestParams{
+            .name = "DampingPrevious",
+            .gradTarget = GradTarget::Previous,
+            .dampingCoefficient = 10_r,
+            .explicitNormals = true,
+            .resTol = kResApproxTol}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 class SkinnedContactPairCapacityTest : public test::MochiSceneTestBase {

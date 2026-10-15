@@ -34,6 +34,7 @@
 #include "mochi_simulation.h"
 #include "mochi_soft_skinned.h"
 
+#include <mochi_core/articulated_body/articulated_body_hessian.h>
 #include <mochi_core/contact/contact_partition.h>
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/geometry/model_utils.h>
@@ -1427,6 +1428,8 @@ void mochi::InitCollidingSkinMesh(
 
   // Needed for skinned contact assembly.
   reg.emplace<CSkinnedContactSnle>(e);
+  reg.emplace<CArticulatedAsyncContactLinkResidual>(
+      e, static_cast<int>(reg.get<CArticulatedProps const>(articulated).fullDofsDim));
   reg.emplace<TagSkinnedContact>(e);
 
   reg.emplace_or_replace<CBoundingVolume>(e, shape.GetBoundingVolume(ErrorAssert{}));
@@ -1686,8 +1689,9 @@ void mochi::articulated::compound::InitArticulatedBodyActor(
   // solve. Skip the SNLE machinery entirely instead of running it as a chain of no-ops on a 0x0
   // problem.
   if (reducedDofsDim != 0) {
-    // Storage for assembly of the compound's SNLE problem.
+    // Storage for assembly of the compound's SNLE problem, and for its link-space contact residual.
     reg.emplace<CActorSnle>(e, Matrix<real>::Zero(reducedDofsDim, reducedDofsDim), fullDofsDim);
+    reg.emplace<CArticulatedSyncContactLinkResidual>(e, fullDofsDim);
 
     // Non-linear solver convergence weights (lazily initialized).
     reg.emplace<CActorConvergenceWeights>(e);
@@ -2639,8 +2643,9 @@ void articulated::compound::EntityAssemble(
       MOCHI_ASSERT_VERBOSE(
           gradTarget == GradTarget::Current || gradTarget == GradTarget::Previous,
           "Unexpected grad target");
+      // The full residual is projected by ProjectFullResidual, together with contact.
       outCompoundSnle.reducedResidual.Resize(props.reducedDofsDim);
-      outCompoundSnle.reducedResidual = jacobian.value.Transpose() * outCompoundSnle.fullResidual;
+      outCompoundSnle.reducedResidual.SetZero();
     }
   }
 
@@ -2743,6 +2748,69 @@ void articulated::compound::EntityAssemble(
         transmissions,
         outCompoundSnle);
   }
+}
+
+void articulated::compound::ProjectFullResidual(
+    AssemblyParams const& params,
+    ecs::RequiredTag<TagArticulatedActor>,
+    entt::registry& reg,
+    CArticulatedBodyShape const& bodyShape,
+    CArticulatedParents const& parents,
+    CArticulatedLinkTransforms<TimeStep::Current> const& currLinkTxs,
+    CArticulatedLinkTransforms<TimeStep::StageStart> const& stageStartLinkTxs,
+    CArticulatedJacobian const& jacobian,
+    CBlendedComposition const* blendedComposition,
+    CArticulatedAsyncContactLinkResidual* asyncContactLinkResidual,
+    CArticulatedSyncContactLinkResidual& syncContactLinkResidual,
+    CActorSnle& outCompoundSnle) {
+  MOCHI_PROFILE_SCOPE();
+  bool const project = params.assemRes &&
+      (params.gradTarget == GradTarget::Current || params.gradTarget == GradTarget::Previous);
+  auto& fullResidual = outCompoundSnle.fullResidual;
+
+  // Consumes a link-space residual: adds it to the full residual if it is projected, and
+  // deactivates it, so that the next assembly accumulates it from zero. Inactive residuals may hold
+  // stale values.
+  auto consume = [&](ArticulatedLinkResidual& linkResidual) {
+    if (!linkResidual.isActive) {
+      return;
+    }
+    MOCHI_ASSERT_VERBOSE(
+        project || !params.assemRes, "Link-space residuals require a state grad target.");
+    if (project) {
+      MOCHI_ASSERT_VERBOSE(linkResidual.residual.Rows() == fullResidual.Rows());
+      fullResidual += linkResidual.residual;
+    }
+    linkResidual.isActive = false;
+  };
+  consume(syncContactLinkResidual);
+  if (asyncContactLinkResidual) {
+    consume(*asyncContactLinkResidual);
+  }
+  if (blendedComposition) {
+    for (entt::entity const soft : blendedComposition->soft) {
+      if (auto* softContact = reg.try_get<CArticulatedAsyncContactLinkResidual>(soft)) {
+        consume(*softContact);
+      }
+    }
+  }
+  if (!project) {
+    return;
+  }
+
+  // Project the full residual, with the link-space residuals, all at once. The Jacobian of each
+  // grad target is evaluated on the link transforms of its time step (see
+  // UpdateJacobiansSubpipeline), which the linear-time contraction must use too.
+  Span<TransformRT const> const linkTransforms = params.gradTarget == GradTarget::Previous
+      ? MakeConstSpan(stageStartLinkTxs)
+      : MakeConstSpan(currLinkTxs);
+  articulated::JacobianTransposeContract(
+      bodyShape.shape->GetJointsData()->dofInfo,
+      parents,
+      linkTransforms,
+      fullResidual.GetConstSpan(),
+      jacobian.value,
+      AsView(outCompoundSnle.reducedResidual));
 }
 
 void articulated::compound::EntityPreFirstStage(
@@ -3453,6 +3521,8 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CArticulatedRigidJacobian>(reg);
   ecs::RegisterComponent<CArticulatedSkinExportParams>(reg);
   ecs::RegisterComponent<CArticulatedSkinningData>(reg);
+  ecs::RegisterComponent<CArticulatedAsyncContactLinkResidual>(reg);
+  ecs::RegisterComponent<CArticulatedSyncContactLinkResidual>(reg);
   ecs::RegisterComponent<CBoneHandles>(reg);
   ecs::RegisterComponent<CIntegrationArticulatedReducedPose>(reg);
   ecs::RegisterComponent<CIntegrationArticulatedJointVels>(reg);

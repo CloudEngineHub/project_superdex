@@ -270,7 +270,8 @@ void JacobianTransposeContract(
     RowMatrixView<real const> jacobian,
     ColumnVectorView<real> outReducedGradient) {
   int const numLinks = isize(parents);
-  MOCHI_ASSERT_VERBOSE(isize(dofInfo) == numLinks, "dofInfo must have one entry per link");
+  MOCHI_ASSERT_VERBOSE(
+      isize(dofInfo) >= numLinks, "dofInfo must have one entry per link, then cycle joints");
   MOCHI_ASSERT_VERBOSE(
       isize(linkTransforms) == numLinks, "linkTransforms must have one entry per link");
   MOCHI_ASSERT_VERBOSE(
