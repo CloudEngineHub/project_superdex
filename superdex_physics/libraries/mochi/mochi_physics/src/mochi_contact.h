@@ -978,6 +978,7 @@ void AssembleCollisionResponse(
     CollisionResponseResult const& collisionResponse,
     Span<real const> intWeights,
     Span<ContactJac const*> jacs,
+    int numCollidingJacs, // The colliding Jacobians go first in jacs.
     Allocator* filoAllocator, // Will be used in first-in-last-out order
     double* outObj,
     ColumnVectorView<real> outRes,

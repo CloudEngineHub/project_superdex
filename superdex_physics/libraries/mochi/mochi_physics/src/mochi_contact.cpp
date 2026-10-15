@@ -46,6 +46,7 @@
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/profile.h>
 #include <mochi_core/utils/sparsity_utils.h>
+#include <mochi_core/utils/spmat_utils.h>
 
 #include <algorithm>
 #include <array>
@@ -2047,9 +2048,8 @@ class ContactDResTransformer {
 };
 
 // View of a block with compile-time rows and cols, each of which may be krylov::kDynamic.
-template <int kRows, int kCols>
-MOCHI_FORCE_INLINE RowMatrixView<real const, kRows, kCols> AsFixedSize(
-    RowMatrixView<real const> block) {
+template <int kRows, int kCols, typename Scalar>
+MOCHI_FORCE_INLINE RowMatrixView<Scalar, kRows, kCols> AsFixedSize(RowMatrixView<Scalar> block) {
   if constexpr (kRows != krylov::kDynamic) {
     MOCHI_ASSERT_VERBOSE(block.Rows() == kRows, "Inconsistent number of rows.");
   }
@@ -2059,111 +2059,363 @@ MOCHI_FORCE_INLINE RowMatrixView<real const, kRows, kCols> AsFixedSize(
   return {block.Data(), block.Rows(), block.Cols(), block.LeadDim()};
 }
 
-class ContactDResDiagAssembler {
+// Accumulates the dresidual blocks among the contact Jacobians with shared DoFs into a dense block
+// over the union of their state DoFs, which the ContactDResWriter assembles with a single sparse
+// scatter instead of one per pair of Jacobians. The union block is dense in the dresidual, since
+// every pair of these Jacobians couples all their DoFs.
+class SharedDResAccumulator {
  public:
-  // Constructor
-  ContactDResDiagAssembler(
-      ContactJac const& jac,
-      ContactDResTransformer const& dresJ,
-      Allocator* allocator)
-      : _jac(jac),
-        _dresJ(dresJ),
-        _shared(jac.hasSharedDoFs),
-        _dresTerm(jac.nDoFsInternal, jac.nDoFsInternal, allocator),
-        _allocator(allocator) {
-    if (_shared) {
-      _dresTerm.SetZero();
+  SharedDResAccumulator(Span<ContactJac const*> jacs, Allocator* allocator)
+      : _dofs(CollectSharedDoFs(jacs, allocator)),
+        _groups(CreateIndexGroups(MakeConstSpan(_dofs), /*forceTriplets*/ false, allocator)),
+        _unionOffsets(allocator),
+        _unionIndices(allocator) {
+    _unionOffsets.resize_noinit(jacs.size() + 1);
+    int numIndices = 0;
+    for (int i = 0; i < isize(jacs); ++i) {
+      _unionOffsets[i] = numIndices;
+      if (jacs[i]->hasSharedDoFs) {
+        numIndices += jacs[i]->nDoFsState;
+      }
     }
+    _unionOffsets[jacs.size()] = numIndices;
+    _unionIndices.resize_noinit(numIndices);
+    for (int i = 0; i < isize(jacs); ++i) {
+      if (jacs[i]->hasSharedDoFs) {
+        int* indices = _unionIndices.data() + _unionOffsets[i];
+        for (int dof : jacs[i]->Inds(0)) {
+          *indices++ =
+              static_cast<int>(std::lower_bound(_dofs.begin(), _dofs.end(), dof) - _dofs.begin());
+        }
+      }
+    }
+    _dres.Reset(isize(_dofs), isize(_dofs), allocator);
+    _dres.SetZero();
   }
 
-  // Compute and possibly assemble
-  void ComputeTerm(Span<int const> contactIndices, AnyMatrixView<real>& outDRes) {
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-    MOCHI_ASSERT_VERBOSE(!contactIndices.empty(), "Empty contact indices.");
-    MOCHI_ASSERT_VERBOSE(contactIndices.size() <= kMaxBatchSize, "More indices than legal.");
-    for (int i = 1; i < isize(contactIndices); ++i) {
-      MOCHI_ASSERT_VERBOSE(
-          _jac.Inds(contactIndices[i]) == _jac.Inds(contactIndices[0]), "Inconsistent indices.");
-    }
-#endif
-    // Products are computed in row-major times row-major format
-    if (_shared) {
-      // Compute and add for deferred assembly
-      for (int i = 0; i < isize(contactIndices); ++i) {
-        _dresTerm += _jac.Jac(contactIndices[i]).Transpose() * _dresJ.Get(i);
-      }
-    } else {
-      // Compute and assemble
-      int cIndex0 = contactIndices[0];
-      _dresTerm = _jac.Jac(cIndex0).Transpose() * _dresJ.Get(0);
-      for (int i = 1; i < isize(contactIndices); ++i) {
-        _dresTerm += _jac.Jac(contactIndices[i]).Transpose() * _dresJ.Get(i);
-      }
-      MatAddSubBlocks(outDRes, _jac.IndGroups(cIndex0), _jac.IndGroups(cIndex0), _dresTerm);
-    }
-  }
-
-  // Deferred assemble
-  void DeferredAssemble(AnyMatrixView<real>& outDRes) {
-    if (_shared) {
-      if (_jac.JacAux()) {
-        // These products may not be optimally efficient, but they should not happen as often as
-        // those in ComputeTerm().
-        Matrix<real, krylov::kDynamic, RigidSize::kDAll> temp{
-            _jac.JacAux().Transpose() * AsFixedSize<RigidSize::kDAll, RigidSize::kDAll>(_dresTerm),
-            _allocator};
-        Matrix<real> dres{temp * _jac.JacAux(), _allocator};
-        MatAddSubBlocks(outDRes, _jac.IndGroups(0), _jac.IndGroups(0), dres.Transpose());
-      } else {
-        MatAddSubBlocks(outDRes, _jac.IndGroups(0), _jac.IndGroups(0), _dresTerm);
+  // Add the block between the state DoFs of the shared Jacobians rowJac and colJac and, if
+  // kAddTranspose, its transpose between colJac and rowJac.
+  template <bool kAddTranspose>
+  void Add(int rowJac, int colJac, RowMatrixView<real const> block) {
+    Span<int const> rows = UnionIndices(rowJac);
+    Span<int const> cols = UnionIndices(colJac);
+    MOCHI_ASSERT_VERBOSE(block.Rows() == isize(rows) && block.Cols() == isize(cols));
+    for (int r = 0; r < isize(rows); ++r) {
+      for (int c = 0; c < isize(cols); ++c) {
+        real const value = block(r, c);
+        _dres(rows[r], cols[c]) += value;
+        if constexpr (kAddTranspose) {
+          _dres(cols[c], rows[r]) += value;
+        }
       }
     }
   }
 
- protected:
-  // Actor contact jacobian
-  ContactJac const& _jac;
+  // Block between DoFs() and themselves.
+  RowMatrixView<real const> Block() const {
+    return _dres;
+  }
 
-  // dresidual transformer
-  ContactDResTransformer const& _dresJ;
+  // Sorted union of the state DoFs of the shared Jacobians.
+  Span<int const> DoFs() const {
+    return MakeConstSpan(_dofs);
+  }
 
-  // Shared DoFs
-  bool _shared;
+  // Index groups of DoFs(), with sources indexing DoFs().
+  Span<IndexGroup const> Groups() const {
+    return MakeConstSpan(_groups);
+  }
 
-  // Local result holder
-  RowMatrix<real> _dresTerm;
+  // Index in DoFs() of each state DoF of the shared Jacobian jacIndex. Empty for Jacobians with
+  // per-point DoFs.
+  Span<int const> UnionIndices(int jacIndex) const {
+    return {
+        _unionIndices.data() + _unionOffsets[jacIndex],
+        _unionIndices.data() + _unionOffsets[jacIndex + 1]};
+  }
 
-  // Allocator for temporary data
-  Allocator* _allocator = nullptr;
+ private:
+  static DynamicArray<int> CollectSharedDoFs(Span<ContactJac const*> jacs, Allocator* allocator) {
+    int numDoFs = 0;
+    for (auto const* jac : jacs) {
+      if (jac->hasSharedDoFs) {
+        numDoFs += jac->nDoFsState;
+      }
+    }
+    DynamicArray<int> dofs(allocator);
+    dofs.reserve(numDoFs);
+    for (auto const* jac : jacs) {
+      if (jac->hasSharedDoFs) {
+        for (int dof : jac->Inds(0)) {
+          dofs.push_back(dof);
+        }
+      }
+    }
+    std::sort(dofs.begin(), dofs.end());
+    dofs.erase(std::unique(dofs.begin(), dofs.end()), dofs.end());
+    return dofs;
+  }
+
+  // Members are declared in allocation order to satisfy the FILO allocator.
+  DynamicArray<int> _dofs;
+  IndexGroups _groups;
+  // Offset of each Jacobian in _unionIndices, followed by the total size.
+  DynamicArray<int> _unionOffsets;
+  // Concatenated UnionIndices() of the Jacobians.
+  DynamicArray<int> _unionIndices;
+  RowMatrix<real> _dres;
 };
 
-class ContactDResOffAssembler {
+// Gathers the dresidual blocks of a batch of contact points between a contact Jacobian with
+// per-point DoFs and the Jacobians in a SharedDResAccumulator, which the ContactDResWriter
+// assembles with two sparse scatters per batch, instead of two per shared Jacobian.
+class NonSharedDResStrip {
  public:
-  // Constructor. If only one of the actor contact Jacobians has shared DoFs, make it actor B
-  ContactDResOffAssembler(
+  NonSharedDResStrip(
+      ContactJac const& jac,
+      int jacIndex,
+      SharedDResAccumulator const& shared,
+      Allocator* allocator)
+      : _jacIndex(jacIndex), _shared(shared) {
+    MOCHI_ASSERT_VERBOSE(!jac.hasSharedDoFs && !jac.JacAux());
+    _dres.Reset(isize(shared.DoFs()), jac.nDoFsState, allocator);
+    _dres.SetZero();
+  }
+
+  // Index of the contact Jacobian in the pair.
+  int JacIndex() const {
+    return _jacIndex;
+  }
+
+  // Add the block between the state DoFs of the shared Jacobian sharedJac and the batch DoFs.
+  void AddShared(int sharedJac, RowMatrixView<real const> block) {
+    Span<int const> rows = _shared.UnionIndices(sharedJac);
+    MOCHI_ASSERT_VERBOSE(block.Rows() == isize(rows) && block.Cols() == _dres.Cols());
+    for (int r = 0; r < isize(rows); ++r) {
+      _dres.Row(rows[r]) += block.Row(r);
+    }
+  }
+
+  // Block between the shared DoFs (rows) and the batch DoFs (cols).
+  RowMatrixView<real const> Block() const {
+    return _dres;
+  }
+
+  // Reset the block for the next batch.
+  void Clear() {
+    _dres.SetZero();
+  }
+
+ private:
+  int _jacIndex;
+  SharedDResAccumulator const& _shared;
+  RowMatrix<real> _dres;
+};
+
+// Assembles the dresidual blocks of a contact pair, given between the internal DoFs of its contact
+// Jacobians. It maps them to state DoFs with the auxiliary Jacobians, if any. With groupShared, the
+// blocks of all Jacobians with shared DoFs, which typically overlap (e.g. the bones of a skinned
+// actor), are accumulated for a single scatter, and the blocks of each batch between each Jacobian
+// with per-point DoFs and those are gathered in a strip. Other blocks are assembled directly.
+class ContactDResWriter {
+ public:
+  ContactDResWriter(
+      AnyMatrixView<real>& outDRes,
+      Span<ContactJac const*> jacs,
+      bool groupShared,
+      Allocator* allocator)
+      : _outDRes(outDRes), _jacs(jacs), _allocator(allocator), _strips(allocator) {
+    if (groupShared) {
+      _shared.emplace(jacs, allocator);
+      // Each actor has at most one Jacobian with per-point DoFs.
+      _strips.reserve(2);
+      for (int i = 0; i < isize(jacs); ++i) {
+        if (!jacs[i]->hasSharedDoFs) {
+          MOCHI_ASSERT_VERBOSE(isize(_strips) < 2, "At most 2 Jacobians with per-point DoFs.");
+          _strips.emplace_back(*jacs[i], i, _shared.value(), allocator);
+        }
+      }
+    }
+  }
+
+  // Strips reference the accumulator, so the writer must not be copied or moved.
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(ContactDResWriter);
+
+  // Assemble the blocks gathered during a batch of contact points that share the DoFs of
+  // firstContact.
+  void EndBatch(int firstContact) {
+    for (auto& strip : _strips) {
+      ContactJac const& jac = *_jacs[strip.JacIndex()];
+#if MOCHI_ASSERT_VERBOSE_ENABLED
+      for (int dof : jac.Inds(firstContact)) {
+        MOCHI_ASSERT_VERBOSE(
+            !std::binary_search(_shared->DoFs().begin(), _shared->DoFs().end(), dof),
+            "Per-point DoFs must be disjoint from shared DoFs.");
+      }
+#endif
+      WriteOffDiag(_shared->Groups(), jac.IndGroups(firstContact), strip.Block());
+      strip.Clear();
+    }
+  }
+
+  // Assemble the blocks accumulated over all the contact points.
+  void Finish() {
+    if (_shared) {
+      MatAddSubBlocks(_outDRes, _shared->Groups(), _shared->Groups(), _shared->Block());
+    }
+  }
+
+  // Add the diagonal block of Jacobian i, between its internal DoFs. The block must be symmetric.
+  // contact selects the DoFs of per-point Jacobians.
+  void AddDiag(int i, RowMatrixView<real const> block, int contact) {
+    ContactJac const& jac = *_jacs[i];
+    if (!jac.JacAux()) {
+      AddDiagState(i, block, contact);
+      return;
+    }
+    // These products may not be optimally efficient, but they should not happen as often as the
+    // products of the assemblers.
+    Matrix<real, krylov::kDynamic, RigidSize::kDAll> const temp(
+        jac.JacAux().Transpose() * AsFixedSize<RigidSize::kDAll, RigidSize::kDAll>(block),
+        _allocator);
+    Matrix<real> const dres(temp * jac.JacAux(), _allocator);
+    AddDiagState(i, dres.Transpose(), contact);
+  }
+
+  // Add the block between the internal DoFs of Jacobians a (rows) and b (cols), and its transpose
+  // between b and a. If only one of them has shared DoFs, it must be a. contact selects the DoFs of
+  // per-point Jacobians.
+  void AddOffDiag(int a, int b, RowMatrixView<real const> blockAB, int contact) {
+    ContactJac const& jacA = *_jacs[a];
+    ContactJac const& jacB = *_jacs[b];
+    MOCHI_ASSERT_VERBOSE(jacA.hasSharedDoFs || !jacB.hasSharedDoFs);
+    if (jacA.JacAux() || jacB.JacAux()) {
+      AddOffDiagState(a, b, ToStateDoFs(jacA, jacB, blockAB), contact);
+      return;
+    }
+    AddOffDiagState(a, b, blockAB, contact);
+  }
+
+ private:
+  // Add the diagonal block of Jacobian i, between its state DoFs.
+  void AddDiagState(int i, RowMatrixView<real const> block, int contact) {
+    if (_shared && _jacs[i]->hasSharedDoFs) {
+      _shared->Add</*kAddTranspose*/ false>(i, i, block);
+    } else {
+      Span<IndexGroup const> groups = _jacs[i]->IndGroups(contact);
+      MatAddSubBlocks(_outDRes, groups, groups, block);
+    }
+  }
+
+  // Add the block between the state DoFs of Jacobians a (rows) and b (cols), and its transpose
+  // between b and a.
+  void AddOffDiagState(int a, int b, RowMatrixView<real const> blockAB, int contact) {
+    if (_shared && _jacs[a]->hasSharedDoFs) {
+      if (_jacs[b]->hasSharedDoFs) {
+        _shared->Add</*kAddTranspose*/ true>(a, b, blockAB);
+      } else {
+        StripOf(b).AddShared(a, blockAB);
+      }
+    } else {
+      WriteOffDiag(_jacs[a]->IndGroups(contact), _jacs[b]->IndGroups(contact), blockAB);
+    }
+  }
+
+  // Add a block between the DoFs in groupsA (rows) and groupsB (cols), and its transpose.
+  void WriteOffDiag(
+      Span<IndexGroup const> groupsA,
+      Span<IndexGroup const> groupsB,
+      RowMatrixView<real const> blockAB) {
+    RowMatrix<real> const blockBA(blockAB.Transpose(), _allocator);
+    MatAddSubBlocks(_outDRes, groupsB, groupsA, blockBA);
+    MatAddSubBlocks(_outDRes, groupsA, groupsB, blockAB);
+  }
+
+  // Map a block between the internal DoFs of Jacobians a (rows) and b (cols), at least one of which
+  // has an auxiliary Jacobian, to their state DoFs.
+  RowMatrix<real>
+  ToStateDoFs(ContactJac const& jacA, ContactJac const& jacB, RowMatrixView<real const> blockAB) {
+    MOCHI_ASSERT_VERBOSE(jacA.JacAux() || jacB.JacAux());
+    RowMatrix<real> stateAB(
+        jacA.JacAux() ? jacA.nDoFsState : blockAB.Rows(),
+        jacB.JacAux() ? jacB.nDoFsState : blockAB.Cols(),
+        _allocator);
+    RowMatrixView<real> result = stateAB;
+    // The internal DoFs of a Jacobian with an auxiliary Jacobian are its 6 rigid DoFs. If the other
+    // Jacobian also has 6 internal DoFs (e.g. a rigid actor), the products are fixed-size.
+    if (!jacB.JacAux()) {
+      if (jacB.nDoFsInternal == RigidSize::kDAll) {
+        auto fixedResult = AsFixedSize<krylov::kDynamic, RigidSize::kDAll>(result);
+        fixedResult =
+            jacA.JacAux().Transpose() * AsFixedSize<RigidSize::kDAll, RigidSize::kDAll>(blockAB);
+      } else {
+        result =
+            jacA.JacAux().Transpose() * AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(blockAB);
+      }
+    } else if (!jacA.JacAux()) {
+      if (jacA.nDoFsInternal == RigidSize::kDAll) {
+        auto fixedResult = AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(result);
+        fixedResult = AsFixedSize<RigidSize::kDAll, RigidSize::kDAll>(blockAB) * jacB.JacAux();
+      } else {
+        result = AsFixedSize<krylov::kDynamic, RigidSize::kDAll>(blockAB) * jacB.JacAux();
+      }
+    } else {
+      RowMatrix<real, krylov::kDynamic, RigidSize::kDAll> const temp(
+          jacA.JacAux().Transpose() * AsFixedSize<RigidSize::kDAll, RigidSize::kDAll>(blockAB),
+          _allocator);
+      result = temp * jacB.JacAux();
+    }
+    return stateAB;
+  }
+
+  // Strip of Jacobian i, which has per-point DoFs.
+  NonSharedDResStrip& StripOf(int i) {
+    MOCHI_ASSERT_VERBOSE(!_strips.empty());
+    NonSharedDResStrip& strip = _strips[0].JacIndex() == i ? _strips[0] : _strips.back();
+    MOCHI_ASSERT_VERBOSE(strip.JacIndex() == i);
+    return strip;
+  }
+
+  AnyMatrixView<real>& _outDRes;
+  Span<ContactJac const*> _jacs;
+  Allocator* _allocator;
+  // Members below are declared in allocation order to satisfy the FILO allocator.
+  // Accumulator of the Jacobians with shared DoFs, and strips of the Jacobians with per-point DoFs,
+  // if grouping.
+  std::optional<SharedDResAccumulator> _shared;
+  DynamicArray<NonSharedDResStrip> _strips;
+};
+
+// Computes the dresidual block between the internal DoFs of contact Jacobians B (rows) and A
+// (cols), for batches of contact points, and passes it to a ContactDResWriter. With A == B, it
+// computes the diagonal block. If both Jacobians have shared DoFs, the block is accumulated over
+// all the batches and passed in DeferredAssemble(). Otherwise, it is passed after each batch.
+class ContactDResAssembler {
+ public:
+  // If only one of the Jacobians has shared DoFs, it is made B.
+  ContactDResAssembler(
       ContactJac const& jacA,
       ContactJac const& jacB,
+      int jacIndexA,
+      int jacIndexB,
       ContactDResTransformer const& dresJa,
       ContactDResTransformer const& dresJb,
       Allocator* allocator)
       : _switch(jacA.hasSharedDoFs && !jacB.hasSharedDoFs),
         _jacA(_switch ? jacB : jacA),
         _jacB(_switch ? jacA : jacB),
+        _jacIndexA(_switch ? jacIndexB : jacIndexA),
+        _jacIndexB(_switch ? jacIndexA : jacIndexB),
         _dresJa(_switch ? dresJb : dresJa),
-        _dresJb(_switch ? dresJa : dresJb),
-        _sharedA(_jacA.hasSharedDoFs),
-        _sharedB(_jacB.hasSharedDoFs),
-        _dresab(_jacA.nDoFsInternal, _jacB.nDoFsInternal, allocator),
-        _dresabFull(_jacA.nDoFsState, _jacB.nDoFsState, allocator),
-        _dresbaFull(_jacB.nDoFsState, _jacA.nDoFsState, allocator),
-        _allocator(allocator) {
-    if (_sharedA && _sharedB) {
-      _dresab.SetZero();
+        _accumulate(jacA.hasSharedDoFs && jacB.hasSharedDoFs),
+        _dresba(_jacB.nDoFsInternal, _jacA.nDoFsInternal, allocator) {
+    if (_accumulate) {
+      _dresba.SetZero();
     }
   }
 
   // Compute and possibly assemble
-  void ComputeTerm(Span<int const> contactIndices, AnyMatrixView<real>& outDRes) {
+  void ComputeTerm(Span<int const> contactIndices, ContactDResWriter& writer) {
 #if MOCHI_ASSERT_VERBOSE_ENABLED
     MOCHI_ASSERT_VERBOSE(!contactIndices.empty(), "Empty contact indices.");
     MOCHI_ASSERT_VERBOSE(contactIndices.size() <= kMaxBatchSize, "More indices than legal.");
@@ -2175,59 +2427,38 @@ class ContactDResOffAssembler {
     }
 #endif
     // Products are computed in row-major times row-major format
-    if (_sharedA && _sharedB) {
+    if (_accumulate) {
       // Compute and add for deferred assembly
       for (int i = 0; i < isize(contactIndices); ++i) {
-        _dresab += _jacA.Jac(contactIndices[i]).Transpose() * _dresJb.Get(i);
+        _dresba += _jacB.Jac(contactIndices[i]).Transpose() * _dresJa.Get(i);
       }
     } else {
-      // Compute and assemble. Possibly multiply by auxiliary Jacobian
+      // Compute and assemble
       int cIndex0 = contactIndices[0];
-      if (_jacB.JacAux()) {
-        _dresab = _jacA.Jac(cIndex0).Transpose() * _dresJb.Get(0);
-        for (int i = 1; i < isize(contactIndices); ++i) {
-          _dresab += _jacA.Jac(contactIndices[i]).Transpose() * _dresJb.Get(i);
-        }
-        _dresbaFull.Transpose() =
-            AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(_dresab.Transpose()).Transpose() *
-            _jacB.JacAux();
-      } else {
-        _dresbaFull = _jacB.Jac(cIndex0).Transpose() * _dresJa.Get(0);
-        for (int i = 1; i < isize(contactIndices); ++i) {
-          _dresbaFull += _jacB.Jac(contactIndices[i]).Transpose() * _dresJa.Get(i);
-        }
+      _dresba = _jacB.Jac(cIndex0).Transpose() * _dresJa.Get(0);
+      for (int i = 1; i < isize(contactIndices); ++i) {
+        _dresba += _jacB.Jac(contactIndices[i]).Transpose() * _dresJa.Get(i);
       }
-      _dresabFull = _dresbaFull.Transpose();
-      MatAddSubBlocks(outDRes, _jacA.IndGroups(cIndex0), _jacB.IndGroups(cIndex0), _dresabFull);
-      MatAddSubBlocks(outDRes, _jacB.IndGroups(cIndex0), _jacA.IndGroups(cIndex0), _dresbaFull);
+      Write(writer, cIndex0);
     }
   }
 
   // Deferred assemble
-  void DeferredAssemble(AnyMatrixView<real>& outDRes) {
-    if (_sharedA && _sharedB) {
-      // Possibly multiply by auxiliary Jacobians before assembly. These products may not be
-      // optimally efficient, but they should not happen as often as those in ComputeTerm()
-      RowMatrixView<real> dresbaView(_dresab.Transpose());
-      std::optional<RowMatrix<real>> dresbaAux;
-      if (_jacB.JacAux()) {
-        dresbaAux.emplace(RowMatrix<real>(_jacB.nDoFsState, _jacA.nDoFsInternal, _allocator));
-        dresbaAux->Transpose() =
-            AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(dresbaView).Transpose() *
-            _jacB.JacAux();
-        dresbaView.Reset(dresbaAux.value());
-      }
-      if (_jacA.JacAux()) {
-        _dresbaFull = dresbaView * _jacA.JacAux();
-        dresbaView.Reset(_dresbaFull);
-      }
-      _dresabFull = dresbaView.Transpose();
-      MatAddSubBlocks(outDRes, _jacA.IndGroups(0), _jacB.IndGroups(0), _dresabFull);
-      MatAddSubBlocks(outDRes, _jacB.IndGroups(0), _jacA.IndGroups(0), dresbaView);
+  void DeferredAssemble(ContactDResWriter& writer) {
+    if (_accumulate) {
+      Write(writer, 0);
     }
   }
 
- protected:
+ private:
+  void Write(ContactDResWriter& writer, int contact) {
+    if (_jacIndexA == _jacIndexB) {
+      writer.AddDiag(_jacIndexA, _dresba, contact);
+    } else {
+      writer.AddOffDiag(_jacIndexB, _jacIndexA, _dresba, contact);
+    }
+  }
+
   // bool to switch objects internally. If only one of the actor contact Jacobians has shared DoFs,
   // then it's actor B
   bool _switch;
@@ -2236,21 +2467,18 @@ class ContactDResOffAssembler {
   ContactJac const& _jacA;
   ContactJac const& _jacB;
 
-  // dresidual transformers
+  // Indices of the contact Jacobians in the pair
+  int _jacIndexA;
+  int _jacIndexB;
+
+  // dresidual transformer of A
   ContactDResTransformer const& _dresJa;
-  ContactDResTransformer const& _dresJb;
 
-  // Shared DoFs
-  bool _sharedA;
-  bool _sharedB;
+  // Whether both Jacobians have shared DoFs, and the block is accumulated over all the batches
+  bool _accumulate;
 
-  // Local result holders
-  Matrix<real> _dresab;
-  RowMatrix<real> _dresabFull;
-  RowMatrix<real> _dresbaFull;
-
-  // Allocator for temporary data
-  Allocator* _allocator = nullptr;
+  // Local result holder, between the internal DoFs of B (rows) and A (cols)
+  RowMatrix<real> _dresba;
 };
 
 } // namespace
@@ -2326,8 +2554,8 @@ static void AssembleSyncRigidContactSums(
   auto [rotB, rotBT] = ToVMatrix3x3_WithTranspose(stateB.GetRotation());
   Vec4r comB = stateB.VGetTranslation();
 
-  // NOTE: Memory used from filoAllocator for N DoFs is:
-  //       (N + 5 * N * N) * sizeof(real)
+  // NOTE: Memory used from filoAllocator for up to N DoFs per actor is at most
+  //       2 * max(N, 6)^2 * sizeof(real), for the temporaries of the ContactDResWriter.
 
   if (assemRes) {
     MOCHI_PROFILE_SCOPE_N("Residual Assembly");
@@ -2400,59 +2628,11 @@ static void AssembleSyncRigidContactSums(
     abBlock.Block<3, 3>(3, 0, 3, 3) = AsMatrixView(-skPDres - skComDresNeg);
     abBlock.Block<3, 3>(3, 3, 3, 3) = AsMatrixView(skPDresSkP - skComDresSkP);
 
-    RowMatrixView<real> aaBlockView(aaBlock);
-    RowMatrixView<real> bbBlockView(bbBlock);
-    RowMatrixView<real> abBlockView(abBlock);
-
-    // The 6x6 blocks are mapped to the DoFs with the auxiliary Jacobians J_A and J_B (6 x n,
-    // row-major), multiplying the 6x6 block first, which requires fewer FLOPs if n > 6:
-    // - AA and BB diagonal blocks: (J^T * block) * J. J^T * block is n x 6 col-major, and the
-    //   result n x n col-major.
-    // - AB off-diagonal block: J_A^T * (block * J_B), computed as its transpose
-    //   (block * J_B)^T * J_A. block * J_B is 6 x n_B row-major, and the result n_A x n_B row-major
-    //   (n_B x n_A col-major).
-    // With these storage directions, all the products vectorize along their output.
-    std::optional<RowMatrix<real>> bbBlockAux; // Declared in same order as potentially allocated.
-    std::optional<RowMatrix<real>> abBlockAux1;
-    std::optional<RowMatrix<real>> aaBlockAux;
-    std::optional<RowMatrix<real>> abBlockAux2;
-    if (jacB.JacAux()) {
-      // BB diagonal block.
-      auto const auxJacB = jacB.JacAux();
-      bbBlockAux.emplace(RowMatrix<real>(jacB.nDoFsState, jacB.nDoFsState, filoAllocator));
-      bbBlockAux->Transpose() =
-          Matrix<real, krylov::kDynamic, 6>(auxJacB.Transpose() * bbBlock, filoAllocator) * auxJacB;
-      bbBlockView.Reset(bbBlockAux.value());
-
-      // AB off-diagonal block.
-      abBlockAux1.emplace(RowMatrix<real>(6, jacB.nDoFsState, filoAllocator));
-      abBlockAux1 = abBlock * auxJacB;
-      abBlockView.Reset(abBlockAux1.value());
-    }
-
-    if (jacA.JacAux()) {
-      // AA diagonal block.
-      auto const auxJacA = jacA.JacAux();
-      aaBlockAux.emplace(RowMatrix<real>(jacA.nDoFsState, jacA.nDoFsState, filoAllocator));
-      aaBlockAux->Transpose() =
-          Matrix<real, krylov::kDynamic, 6>(auxJacA.Transpose() * aaBlock, filoAllocator) * auxJacA;
-      aaBlockView.Reset(aaBlockAux.value());
-
-      // AB off-diagonal block.
-      abBlockAux2.emplace(RowMatrix<real>(jacA.nDoFsState, abBlockView.Cols(), filoAllocator));
-      abBlockAux2->Transpose() =
-          AsFixedSize<RigidSize::kDAll, krylov::kDynamic>(abBlockView).Transpose() * auxJacA;
-      abBlockView.Reset(abBlockAux2.value());
-    }
-
-    MatAddSubBlocks(outDRes, jacA.IndGroups(0), jacA.IndGroups(0), aaBlockView);
-    MatAddSubBlocks(outDRes, jacB.IndGroups(0), jacB.IndGroups(0), bbBlockView);
-    MatAddSubBlocks(outDRes, jacA.IndGroups(0), jacB.IndGroups(0), abBlockView);
-    MatAddSubBlocks(
-        outDRes,
-        jacB.IndGroups(0),
-        jacA.IndGroups(0),
-        RowMatrix<real>(abBlockView.Transpose(), filoAllocator));
+    // The writer maps the 6x6 blocks to state DoFs with the auxiliary Jacobians, if any.
+    ContactDResWriter writer(outDRes, jacs, /*groupShared*/ false, filoAllocator);
+    writer.AddDiag(0, aaBlock, /*contact*/ 0);
+    writer.AddDiag(1, bbBlock, /*contact*/ 0);
+    writer.AddOffDiag(0, 1, abBlock, /*contact*/ 0);
   }
 }
 
@@ -2462,6 +2642,7 @@ static void AssembleCollisionResponseRange(
     CollisionResponseResult const& collisionResponse,
     Span<real const> intWeights,
     Span<ContactJac const*> jacs,
+    int numCollidingJacs, // The colliding Jacobians go first in jacs.
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
@@ -2522,18 +2703,24 @@ static void AssembleCollisionResponseRange(
 
   // Assemble dresidual
   if (assemDRes) {
+    // Constructed first to be destroyed last, as required by the FILO allocator. The Jacobians with
+    // shared DoFs are grouped if the colliding actor has 2+ of them.
+    auto const isShared = [](ContactJac const* jac) { return jac->hasSharedDoFs; };
+    MOCHI_ASSERT_VERBOSE(numCollidingJacs >= 0 && numCollidingJacs <= isize(jacs));
+    bool const groupShared =
+        std::count_if(jacs.begin(), jacs.begin() + numCollidingJacs, isShared) >= 2;
+    ContactDResWriter writer(outDRes, jacs, groupShared, filoAllocator);
+
+    // One assembler for each pair of contact Jacobians, including each Jacobian with itself.
     DynamicArray<ContactDResTransformer> dresTransformers(filoAllocator);
-    DynamicArray<ContactDResDiagAssembler> dresAssemblersii(filoAllocator);
-    DynamicArray<ContactDResOffAssembler> dresAssemblersij(filoAllocator);
+    DynamicArray<ContactDResAssembler> dresAssemblers(filoAllocator);
     dresTransformers.reserve(jacs.size());
-    dresAssemblersii.reserve(jacs.size());
-    dresAssemblersij.reserve(!jacs.empty() ? jacs.size() * (jacs.size() - 1) / 2 : 0);
+    dresAssemblers.reserve(jacs.size() * (jacs.size() + 1) / 2);
     for (int i = 0; i < isize(jacs); i++) {
       dresTransformers.emplace_back(*jacs[i], filoAllocator);
-      dresAssemblersii.emplace_back(*jacs[i], dresTransformers[i], filoAllocator);
-      for (int j = 0; j < i; j++) {
-        dresAssemblersij.emplace_back(
-            *jacs[i], *jacs[j], dresTransformers[i], dresTransformers[j], filoAllocator);
+      for (int j = 0; j <= i; j++) {
+        dresAssemblers.emplace_back(
+            *jacs[i], *jacs[j], i, j, dresTransformers[i], dresTransformers[j], filoAllocator);
       }
     }
     {
@@ -2579,32 +2766,27 @@ static void AssembleCollisionResponseRange(
           for (auto& dresTransformer : dresTransformers) {
             dresTransformer.ComputeTerm(contactIndicesInBatch, collDResInBatch);
           }
-          for (auto& dresAssemblerii : dresAssemblersii) {
-            dresAssemblerii.ComputeTerm(contactIndicesInBatch, outDRes);
+          for (auto& dresAssembler : dresAssemblers) {
+            dresAssembler.ComputeTerm(contactIndicesInBatch, writer);
           }
-          for (auto& dresAssemblerij : dresAssemblersij) {
-            dresAssemblerij.ComputeTerm(contactIndicesInBatch, outDRes);
-          }
+          writer.EndBatch(contactIndicesInBatch[0]);
         }
         sBatchBegin = sCandidate;
       }
     }
     {
       MOCHI_PROFILE_SCOPE_N("Deferred assembly");
-      for (auto& dresAssemblerii : dresAssemblersii) {
-        dresAssemblerii.DeferredAssemble(outDRes);
+      for (auto& dresAssembler : dresAssemblers) {
+        dresAssembler.DeferredAssemble(writer);
       }
-      for (auto& dresAssemblerij : dresAssemblersij) {
-        dresAssemblerij.DeferredAssemble(outDRes);
-      }
+      writer.Finish();
     }
 
     // Destroy in reverse order to satisfy FILO allocator
     for (int i = isize(jacs) - 1; i >= 0; --i) {
-      for (int j = i - 1; j >= 0; --j) {
-        dresAssemblersij.pop_back();
+      for (int j = i; j >= 0; --j) {
+        dresAssemblers.pop_back();
       }
-      dresAssemblersii.pop_back();
       dresTransformers.pop_back();
     }
   }
@@ -2615,6 +2797,7 @@ void mochi::AssembleCollisionResponse(
     CollisionResponseResult const& collisionResponse,
     Span<real const> intWeights,
     Span<ContactJac const*> jacs,
+    int numCollidingJacs,
     Allocator* filoAllocator,
     double* outObj,
     ColumnVectorView<real> outRes,
@@ -2626,6 +2809,7 @@ void mochi::AssembleCollisionResponse(
       collisionResponse,
       intWeights,
       jacs,
+      numCollidingJacs,
       filoAllocator,
       outObj,
       outRes,
@@ -3507,6 +3691,7 @@ static void AssembleAllSyncContactPairs(
     entt::entity entity0 = {};
     ActiveCollision* collision = nullptr;
     Interval<int> jacRange;
+    int numCollidingJacs = 0;
     double costPerPoint = 0;
   };
 
@@ -3549,11 +3734,13 @@ static void AssembleAllSyncContactPairs(
                 entity0)) {
       for (auto& coll : *activeCollisions) {
         int firstJac = isize(allJacs);
+        int numCollidingJacs = 0;
         if (needJacs) {
           // For each contact pair, colliding Jacobian(s) must go before collider Jacobian(s).
           entt::entity entity1 = coll.colliderEntity;
           reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId].GetActiveJacs(
               allJacs);
+          numCollidingJacs = isize(allJacs) - firstJac;
           reg.get<CCollJacs<CollRole::Collider> const>(entity1)[coll.colliderJacId].GetActiveJacs(
               allJacs);
         }
@@ -3561,6 +3748,7 @@ static void AssembleAllSyncContactPairs(
         pair.entity0 = entity0;
         pair.collision = &coll;
         pair.jacRange = {firstJac, isize(allJacs)};
+        pair.numCollidingJacs = numCollidingJacs;
         allPairs.emplace_back(pair);
       }
     }
@@ -3785,6 +3973,7 @@ static void AssembleAllSyncContactPairs(
             response,
             samples.weights,
             jacs,
+            pair.numCollidingJacs,
             &taskLocalAlloc,
             taskObj,
             taskRes,
@@ -4089,6 +4278,7 @@ void mochi::AssembleAsyncSkinnedContact(
           response,
           samples.weights,
           jacs,
+          isize(jacs), // All the Jacobians are of the colliding actor.
           &filoAllocator,
           params.assemObj ? &outContactSnle.objective : nullptr,
           params.assemRes ? AsView(outContactResidual) : ColumnVectorView<real>{},

@@ -497,6 +497,141 @@ TEST(MochiContact, MakeContactGraphWithFiveContactJacobians) {
   EXPECT_SPAN_EQ(graph.GetTargets(), MakeConstSpan(expectedTargets));
 }
 
+// Assemble the contact dresidual of slices with shared DoFs (with and without auxiliary Jacobians,
+// and with overlapping DoFs) and slices with per-point DoFs, and compare it to the sum over points
+// of the products of their full Jacobians.
+TEST(MochiContact, AssembleDResWithSharedAndPerPointSlices) {
+  constexpr int kNumDofs = 32;
+  constexpr int kNumContacts = 3;
+  unsigned int seed = 7;
+
+  // DoF indices are given per point, or in a single row for shared DoFs. Points 0 and 1 share all
+  // indices, so they are assembled in the same batch, and point 2 in another batch.
+  auto initJac = [&](ContactJac& jac,
+                     std::vector<std::vector<int>> const& inds,
+                     ContactJac::AuxView jacAux = {}) {
+    bool const sharedDoFs = isize(inds) == 1;
+    jac.Resize(sharedDoFs, /*sharedJacs*/ false, isize(inds[0]), kNumContacts, jacAux);
+    for (int s = 0; s < kNumContacts; ++s) {
+      jac.Jac(s).SetRandom(++seed, -1_r, 1_r);
+    }
+    for (int row = 0; row < isize(inds); ++row) {
+      std::copy(inds[row].begin(), inds[row].end(), jac.Inds(row).begin());
+    }
+    jac.CompressIndices();
+  };
+  std::array<ContactJac, 6> slices;
+  // Per-point DoFs
+  initJac(
+      slices[0], {{19, 20, 21, 25, 26, 27}, {19, 20, 21, 25, 26, 27}, {22, 23, 24, 19, 20, 21}});
+  // Shared DoFs with auxiliary Jacobians, with fewer and more state DoFs than internal DoFs,
+  // overlapping in DoF 2
+  RowMatrix<real, RigidSize::kDAll> jacAux1(RigidSize::kDAll, 3);
+  RowMatrix<real, RigidSize::kDAll> jacAux2(RigidSize::kDAll, 8);
+  jacAux1.SetRandom(++seed, -1_r, 1_r);
+  jacAux2.SetRandom(++seed, -1_r, 1_r);
+  initJac(slices[1], {{0, 1, 2}}, jacAux1);
+  initJac(slices[2], {{2, 3, 4, 5, 6, 7, 8, 9}}, jacAux2);
+  // Shared DoFs without auxiliary Jacobian
+  initJac(slices[3], {{10, 11, 12}});
+  // Per-point DoFs
+  initJac(slices[4], {{28, 29, 30}, {28, 29, 30}, {29, 30, 31}});
+  // Shared rigid DoFs without auxiliary Jacobian
+  initJac(slices[5], {{13, 14, 15, 16, 17, 18}});
+
+  ContactDetectionResult query;
+  query.sampleIndices = {0, 1, 2};
+  std::array<real, kNumContacts> const weights{0.5_r, 1_r, 2_r};
+  CollisionResponseResult response;
+  response.energy.resize(kNumContacts, 0.0);
+  response.force.resize(kNumContacts, Real3{});
+  response.dforce.resize(kNumContacts);
+  for (auto& dforce : response.dforce) {
+    // Symmetric, since off-diagonal blocks are assembled as transposes of each other.
+    Matrix<real, 3, 3> mat;
+    mat.SetRandom(++seed, -1_r, 1_r);
+    AsMatrixView(dforce) = mat + mat.Transpose();
+  }
+
+  auto runTest = [&](std::vector<int> const& collidingSlices,
+                     std::vector<int> const& colliderSlices = {}) {
+    DynamicArray<ContactJac const*> jacs;
+    for (int i : collidingSlices) {
+      jacs.push_back(&slices[i]);
+    }
+    for (int i : colliderSlices) {
+      jacs.push_back(&slices[i]);
+    }
+
+    // The sparsity only couples the DoFs of each point, so that writes outside it are caught. The
+    // dresidual starts at 1 within it, so that overwriting instead of accumulating is caught.
+    std::vector<std::vector<int>> pattern(kNumDofs);
+    auto expected = Matrix<real>::Zero(kNumDofs, kNumDofs);
+    for (int s = 0; s < kNumContacts; ++s) {
+      for (auto const* jacRow : jacs) {
+        for (int row : jacRow->Inds(s)) {
+          for (auto const* jacCol : jacs) {
+            for (int col : jacCol->Inds(s)) {
+              pattern[row].push_back(col);
+              expected(row, col) = 1_r;
+            }
+          }
+        }
+      }
+    }
+    SparseMatrix<real> dres{MakeSparsityGraph(std::move(pattern), kNumDofs)};
+    dres.SetConstant(1_r);
+    MOCHI_FILO_STACK_ALLOCATOR(allocator, 64 * 1024);
+    AssembleCollisionResponse(
+        query,
+        response,
+        MakeConstSpan(weights),
+        MakeSpan(jacs),
+        isize(collidingSlices),
+        &allocator,
+        nullptr,
+        ColumnVectorView<real>{},
+        AsView(dres));
+
+    for (int s = 0; s < kNumContacts; ++s) {
+      auto jacFull = Matrix<real>::Zero(3, kNumDofs);
+      for (auto const* jac : jacs) {
+        Matrix<real> const jacState =
+            jac->JacAux() ? Matrix<real>{jac->Jac(s) * jac->JacAux()} : Matrix<real>{jac->Jac(s)};
+        Span<int const> inds = jac->Inds(s);
+        for (int c = 0; c < isize(inds); ++c) {
+          jacFull.Col(inds[c]) += jacState.Col(c);
+        }
+      }
+      Matrix<real, 3, 3> const dresContact{-weights[s] * AsMatrixView(response.dforce[s])};
+      expected += jacFull.Transpose() * Matrix<real>{dresContact * jacFull};
+    }
+    constexpr real kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-12_r : 1e-5_r;
+    EXPECT_TRUE(NearEqualMatrices(dres, expected, kTol * expected.Norm()));
+  };
+  // Grouped Jacobians with shared DoFs, which are both first and second in pairs with per-point
+  // Jacobians
+  runTest({0, 1, 2, 3}, {4});
+  runTest({0, 1, 2, 3});
+  // Two Jacobians with shared DoFs, the minimum for grouping
+  runTest({0, 1, 3});
+  // No Jacobian with per-point DoFs
+  runTest({1, 2, 3});
+  // Jacobians with auxiliary Jacobians after shared Jacobians without them
+  runTest({3, 5, 1, 2});
+  // The shared Jacobian of the collider is grouped with those of the colliding actor
+  runTest({0, 1, 2}, {5});
+  // Fewer than two shared Jacobians in the colliding actor, so none are grouped
+  runTest({3}, {5, 1, 2});
+  runTest({0, 1}, {2, 4});
+  // A single Jacobian with shared DoFs
+  runTest({1, 0});
+  runTest({4, 2});
+  runTest({2});
+  // No Jacobian with shared DoFs
+  runTest({0, 4});
+}
+
 // Base class to implement contact tests between a colliding actor and a collider actor. The tests
 // create a Mochi scene with both actors, compute objective, residual and dresidual at the initial
 // state, and validate the residual and dresidual through finite differences.
