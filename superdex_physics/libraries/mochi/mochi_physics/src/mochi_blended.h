@@ -86,29 +86,6 @@ void UpdateBlendingVelocity(
  */
 void UpdateDerivedStatePipeline(entt::registry& reg, Span<entt::entity const> entities);
 
-/*
- * Pipeline to update Jacobians for contact. Must be called after
- * skinned::UpdateJacobiansPipeline()
- */
-void UpdateJacobiansPipeline(entt::registry& reg, Span<entt::entity const> entities);
-
-/*
- * System to compute contact Jacobians as colliding actor. It is called after the collision
- * detection pipeline, within each nonlinear solver iteration.
- */
-template <typename DiscretizationT>
-void SetupCollidingJacobians(
-    ecs::Included<TagBlendedActor>,
-    ecs::PartialRegistry<CDofOffset const, rom::CRomJacobian const> reg,
-    CBlendedComposition const& composition,
-    CDofOffset const& dofOffset,
-    DiscretizationT const& discretization,
-    CBlendingData const& blendingData,
-    CContactPartitions const& contactPartitions,
-    CArticulatedSkinningData const& skinningInfo,
-    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
-    CCollJacs<CollRole::Colliding>& outJacobians);
-
 void InitializeOnce(entt::registry& reg);
 
 } // namespace blended

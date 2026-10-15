@@ -545,9 +545,12 @@ class DMapTest : public testing::Test {
       std::array<AddEpsFunc const, kNumStates> const& addEpsAndMap,
       Span<VMatrix3x3r const> toCollider,
       real tol = kTol) {
-    // Evaluate the Jacobian
+    // Evaluate the Jacobian twice, so that the tested evaluation recycles slices and scratch as in
+    // contact assembly.
     std::array<ContactJac, kNumSlices> jacs;
-    dmap.GetJac(inds, jacs);
+    ContactJac scratch;
+    dmap.GetJac(inds, jacs, scratch);
+    dmap.GetJac(inds, jacs, scratch);
 
     // Test per state
     for (int state = 0; state < kNumStates; state++) {
@@ -785,9 +788,10 @@ TEST_F(DMapTest, QuadratureSkinning) {
     DMapSkinning bone1OnlyMapImpl(0, skinningTransform, kPoints, bones, bone1Only, kDofOffset);
     DMap<DQuad, DMapSkinning> bone1OnlyMap(&dquad, &bone1OnlyMapImpl);
     std::array<ContactJac, 1> bone1OnlySlice;
-    bone1OnlyMap.GetJac(kInds, bone1OnlySlice);
+    ContactJac scratch;
+    bone1OnlyMap.GetJac(kInds, bone1OnlySlice, scratch);
     std::array<ContactJac, kBones> allSlices;
-    dmap.GetJac(kInds, allSlices);
+    dmap.GetJac(kInds, allSlices, scratch);
     std::array<int, kArticulatedSize> const expectedBone1Dofs{11, 12, 13, 14, 15, 16, 17};
     EXPECT_SPAN_EQ(bone1OnlySlice[0].Inds(0), MakeConstSpan(expectedBone1Dofs));
     for (int contact = 0; contact < kInds.size(); ++contact) {

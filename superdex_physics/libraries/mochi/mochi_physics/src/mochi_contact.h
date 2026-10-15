@@ -498,6 +498,8 @@ struct CPrevRigidVelocity : NoCopy {
   implicit (sync) contact for all actors, and for async contact for some actors (i.e., articulated
   bodies with a skinned surface). The size of the array is defined by the number of different state
   slices (typically the number of different actors) that may define a contact point.
+  - A scratch Jacobian, recycled with the contact Jacobians, with which differentiable maps exchange
+  buffers.
   - A pointer to the result of the contact detection query. Null while the Jacobian awaits
   re-registration; Jacobians that remain null after registration are no longer in contact.
   - The other entity in the contact pair (not the owner).
@@ -510,6 +512,7 @@ struct JacData {
   // The slice count is established by the owning actor on first use and remains fixed for the
   // lifetime of this JacData.
   DynamicArray<ContactJac> _jacs;
+  ContactJac _jacScratch;
 
  public:
   // Members are ordered by decreasing alignment to minimize padding.
@@ -546,6 +549,12 @@ struct JacData {
 
   [[nodiscard]] Span<ContactJac const> GetJacs() const {
     return _jacs;
+  }
+
+  // Scratch for DMap::GetJac(). Its contents are meaningless, but its buffers are part of the
+  // recycled storage of the contact Jacobians.
+  ContactJac& JacScratch() {
+    return _jacScratch;
   }
 
   template <class FnT>

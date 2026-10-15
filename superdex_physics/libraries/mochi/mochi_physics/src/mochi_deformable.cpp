@@ -424,7 +424,7 @@ void deformable::SetupCollidingJacobians(
           DMap<DQuad, DMapRTConst, DMapDeformable<kNumFields>> dmap(&dquad, &dtransform, &dsoft);
 
           auto jacs = jac->PrepareJacs(1);
-          dmap.GetJac(jac->query->sampleIndices, jacs);
+          dmap.GetJac(jac->query->sampleIndices, jacs, jac->JacScratch());
           jacs[0].CompressIndices();
         });
   });

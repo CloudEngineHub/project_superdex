@@ -89,7 +89,11 @@ void mochi::rom::SetupCollidingJacobians(
             useTransform ? DMapThis{DWithTransform(&dquad, &dtransform.value(), &drom)}
                          : DMapThis{DNoTransform(&dquad, &drom)});
         auto jacs = jac.PrepareJacs(1);
-        std::visit([&](auto const& dmap) { dmap.GetJac(jac.query->sampleIndices, jacs); }, dmap);
+        std::visit(
+            [&](auto const& dmap) {
+              dmap.GetJac(jac.query->sampleIndices, jacs, jac.JacScratch());
+            },
+            dmap);
         jacs[0].CompressIndices();
       }
     }

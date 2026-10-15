@@ -35,10 +35,10 @@
 #include "mochi_soft_skinned.h"
 
 #include <mochi_core/contact/contact_partition.h>
-#include <mochi_core/contact/dmap.h>
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/geometry/model_utils.h>
 #include <mochi_core/linear_algebra/matrix.h>
+#include <mochi_core/memory/filo_allocator.h>
 #include <mochi_core/utils/log.h>
 #include <mochi_core/utils/rigid_body_assembly.h>
 #include <mochi_core/utils/single_dof_assembly.h>
@@ -58,7 +58,6 @@
 
 using namespace mochi;
 using namespace mochi::articulated;
-using namespace mochi::dmap;
 
 static constexpr real kDResRegularizationCoefficient = 1e-6_r;
 
@@ -1163,12 +1162,12 @@ Span<real const> articulated::compound::GetPoseControllerForce(
   return query->force;
 }
 
-static ArticulatedSkinningData CreateArticulatedSkinningData(
+static void EmplaceArticulatedSkinningData(
     entt::registry& reg,
+    entt::entity entity,
     entt::entity articulated,
     Span<Real3 const> restCoords,
-    SkinningData const& skinningData,
-    int numReducedDofs) {
+    SkinningData const& skinningData) {
   MOCHI_PROFILE_SCOPE();
 
   // Fetch root-link-from-bone-CoM transforms while the rigid actors are in their reference pose.
@@ -1186,19 +1185,15 @@ static ArticulatedSkinningData CreateArticulatedSkinningData(
     preTransforms.emplace_back(Invert(rootLinkFromBoneCenterOfMass));
   }
 
-  // Create and return skinning data component
-  DSkinningTransform skinningTransform(
+  // Emplace skinning data component
+  auto& outSkinningData = reg.emplace<CArticulatedSkinningData>(entity);
+  outSkinningData.restCoords = AsConstView(Flatten(restCoords));
+  outSkinningData.skinningData = skinningData;
+  outSkinningData.skinningTransform = DSkinningTransform(
       skinningData.indices,
       skinningData.weights,
       skinningData.weightsPerNode,
       std::move(preTransforms));
-  auto jacobianDBones = skinningTransform.CreateDBones();
-  return ArticulatedSkinningData{
-      .restCoords = AsConstView(Flatten(restCoords)),
-      .skinningData = skinningData,
-      .skinningTransform = std::move(skinningTransform),
-      .jacobianDBones = std::move(jacobianDBones),
-      .jacobianDJoints = CreateJacobianStorage(3 * isize(restCoords), numReducedDofs)};
 }
 
 void mochi::InitSkinnedMesh(
@@ -1283,10 +1278,7 @@ void mochi::InitSkinnedMesh(
   // Emplace skinning data component. Some data is fetched from the articulated entity, some data
   // from this entity (possibly different).
   auto const restCoords = mesh->GetNodeCoordinates();
-  int numReducedDofs = reg.get<CArticulatedProps const>(articulated).reducedDofsDim;
-  reg.emplace<CArticulatedSkinningData>(
-      entity,
-      CreateArticulatedSkinningData(reg, articulated, restCoords, *skinningData, numReducedDofs));
+  EmplaceArticulatedSkinningData(reg, entity, articulated, restCoords, *skinningData);
 
   reg.emplace<CVelocitySlice<real, TimeStep::Current, DisplacementLayer::Skinned>>(
       entity, kSpaceDim3 * mesh->GetNumNodes());
@@ -1437,7 +1429,7 @@ static void InitSkinMesh(
       reg, e, *shape, params.boundarySubsampling, params.boundaryElementType, error);
   MOCHI_ERROR_RETURN(error);
 
-  auto strategy = ContactPartitionStrategy::SkinningDofGroups;
+  auto strategy = ContactPartitionStrategy::SharedBones;
   InitCollidingSkinMesh(
       reg, e, e, *shape, MakeSingletonConstSpan(strategy), params.contact, numCollidingSamples);
 }
@@ -1749,7 +1741,6 @@ void articulated::compound::UpdateJacobiansStatePipeline(
   MOCHI_PROFILE_SCOPE();
   ecs::ParallelInvokeForEach(
       "Evaluate articulated Jacobian on state", &UpdateJacobianState<kTimeStep>, reg, entities);
-  ecs::InvokeForEach(&ResolveSkinningJacobianDJoints, reg, entities);
 }
 
 #define MOCHI_SPECIALIZE_UPDATE_JACOBIANS_STATE_PIPELINE(kTimeStep)             \
@@ -1817,114 +1808,6 @@ void articulated::compound::UpdateJacobiansInputPipeline(
 MOCHI_SPECIALIZE_UPDATE_JACOBIANS_INPUT_PIPELINE(TimeStep::Current);
 MOCHI_SPECIALIZE_UPDATE_JACOBIANS_INPUT_PIPELINE(TimeStep::Previous);
 #undef MOCHI_SPECIALIZE_UPDATE_JACOBIANS_INPUT_PIPELINE
-
-void articulated::compound::ResolveSkinningJacobianDBones(
-    Span<TransformRT const> linkTransforms,
-    ColumnVectorView<real const> unposedCoords,
-    ArticulatedSkinningData& skinningData,
-    CActiveUniqueNodes const* activeNodes) {
-  MOCHI_PROFILE_SCOPE();
-  // Compute Jacobian DBones
-  Span<int const> activeNodesSpan = activeNodes ? activeNodes->ViewIds() : Span<int const>{};
-  skinningData.skinningTransform.DTransformDBones(
-      linkTransforms, unposedCoords, skinningData.jacobianDBones, activeNodesSpan);
-}
-
-void articulated::compound::ResolveSkinningJacobianDJoints(
-    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
-    CArticulatedJacobian const& articulatedJacobian,
-    CActiveUniqueNodes const* activeNodes,
-    CArticulatedSkinningData& skinningData) {
-  MOCHI_PROFILE_SCOPE();
-
-  // Compute Jacobian DBones. Then Jacobian DJoints by chain rule with Jacobian DBones/DJoints
-  ResolveSkinningJacobianDBones(linkTransforms, skinningData.restCoords, skinningData, activeNodes);
-  static_assert(
-      krylov::details::MatTraits<decltype(skinningData.jacobianDJoints)>::kMajorDir ==
-      krylov::Direction::RowMajor); // Enforced for performance reasons.
-  static_assert(
-      krylov::details::MatTraits<decltype(articulatedJacobian.value)>::kMajorDir ==
-      krylov::Direction::RowMajor); // Enforced for performance reasons.
-
-  if (activeNodes) {
-    // TODO: If the % of nodes that are active is large, it may be more efficient to compute the
-    // full product like in the "else" branch.
-    // TODO(@pabfer): Introduce SparseMatrix::ApplyToSubset to encapsulate this logic inside the
-    // class.
-    constexpr long long kMinFlopsPerTask = 100000; // ~20 μs @ 5 GFLOP/s
-    auto const numTotalVertices = skinningData.jacobianDBones.Rows() / kSpaceDim3;
-    auto const minVerticesPerTask = static_cast<int>(
-        (kMinFlopsPerTask * numTotalVertices) /
-        (2 * skinningData.jacobianDBones.NumNonZeros() * articulatedJacobian.value.Cols()));
-    ParallelForEach(
-        "DJoints Skinning Jacobian Product",
-        activeNodes->ViewIds(),
-        Max(1, minVerticesPerTask),
-        [&](int vertexId) {
-          skinningData.jacobianDBones.ApplyToRange(
-              articulatedJacobian.value,
-              skinningData.jacobianDJoints,
-              vertexId * kSpaceDim3,
-              vertexId * kSpaceDim3 + kSpaceDim3);
-        });
-  } else {
-    skinningData.jacobianDJoints = skinningData.jacobianDBones * articulatedJacobian.value;
-  }
-}
-
-template <typename DiscretizationT>
-void articulated::compound::SetupCollidingJacobians(
-    ecs::Included<TagArticulatedActor>,
-    ecs::Excluded<TagBlendedActor>,
-    DiscretizationT const& discretization,
-    CDofOffset const& dofOffset,
-    CArticulatedSkinningData const& skinningData,
-    CContactPartitions const& contactPartitions,
-    CCollJacs<CollRole::Colliding>& outJacobians) {
-  MOCHI_PROFILE_SCOPE();
-
-  discretization.Visit([&](auto const& discretizationImpl) {
-    using ElementT = typename std::decay_t<decltype(discretizationImpl)>::ElementT;
-    using DQuad = DMapQuad<ElementT>;
-    // Process all Jacobians in parallel
-    ParallelForEach(
-        "SetupCollidingJacobiansArticulatedCompound", outJacobians, 1, [&](JacData& jac) {
-          if (jac.query->sampleIndices.empty()) {
-            return;
-          }
-
-          // Create differentiable map
-          auto const& dofsVariant =
-              contactPartitions[jac.query->collidingPartitionId].GetDofDescriptors()[0];
-          auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(dofsVariant));
-          if (dofs.empty()) {
-            jac.SetZeroDofJacobian();
-            return;
-          }
-          DMapSkinNoInput dskinning(0, skinningData.jacobianDJoints, dofs, dofOffset.dofsOffset);
-          DQuad dquad(discretizationImpl.femElements, jac.query->jacColliderFromWorld);
-          DMap<DQuad, DMapSkinNoInput> dmap(&dquad, &dskinning);
-
-          // Compute Jacobian
-          auto jacs = jac.PrepareJacs(1);
-          dmap.GetJac(jac.query->sampleIndices, jacs);
-          jacs[0].CompressIndices();
-        });
-  });
-}
-
-#define MOCHI_ARTICULATED_COMPOUND_SETUP_COLLIDING_JACOBIANS_INST(DISCRETIZATION_TYPE) \
-  template void articulated::compound::SetupCollidingJacobians<DISCRETIZATION_TYPE>(   \
-      ecs::Included<TagArticulatedActor>,                                              \
-      ecs::Excluded<TagBlendedActor>,                                                  \
-      DISCRETIZATION_TYPE const&,                                                      \
-      CDofOffset const&,                                                               \
-      CArticulatedSkinningData const&,                                                 \
-      CContactPartitions const&,                                                       \
-      CCollJacs<CollRole::Colliding>&);
-MOCHI_ARTICULATED_COMPOUND_SETUP_COLLIDING_JACOBIANS_INST(CFemBoundaryDiscretization);
-MOCHI_ARTICULATED_COMPOUND_SETUP_COLLIDING_JACOBIANS_INST(CFemSurfaceDiscretization);
-#undef MOCHI_ARTICULATED_COMPOUND_SETUP_COLLIDING_JACOBIANS_INST
 
 static void AssembleJointForces(
     AssemblyParams const& params,

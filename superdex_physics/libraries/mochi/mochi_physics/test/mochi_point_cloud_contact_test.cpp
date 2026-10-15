@@ -87,7 +87,8 @@ CIslandContactSnle& AssembleIslandContactResiduals(
   auto& contactSnle = reg.get<CIslandContactSnle>(islandEntity);
 
   TaskSemaphore updateJacobianSem;
-  solver::UpdateJacobiansSubpipeline(updateJacobianSem, reg, gradTarget, descendants);
+  solver::UpdateJacobiansSubpipeline(
+      updateJacobianSem, updateJacobianSem, reg, gradTarget, descendants);
   CollisionDetectionPipeline<TimeStep::Current>(reg, descendants);
   ContactJacobiansPipeline(reg, gradTarget, descendants, updateJacobianSem);
 

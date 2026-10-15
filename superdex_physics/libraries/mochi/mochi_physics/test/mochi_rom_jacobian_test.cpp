@@ -115,8 +115,9 @@ TEST_F(SoftRomJacobianMatch, SoftRomJacobianMatch) {
     // Get contact Jacobians
     ContactJac jacSoft;
     ContactJac jacRom;
-    dmapSoft.GetJac(collResult.sampleIndices, Span(&jacSoft, 1));
-    dmapRom.GetJac(collResult.sampleIndices, Span(&jacRom, 1));
+    ContactJac scratch;
+    dmapSoft.GetJac(collResult.sampleIndices, Span(&jacSoft, 1), scratch);
+    dmapRom.GetJac(collResult.sampleIndices, Span(&jacRom, 1), scratch);
 
     // Jacobians of the ROM actor should be of size numDofs.
     EXPECT_EQ(jacRom.nDoFsState, numDofs);

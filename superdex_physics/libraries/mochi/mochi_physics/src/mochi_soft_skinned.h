@@ -57,6 +57,12 @@ struct CSoftSkinnedJacobianDynamic : public VariantJacobian {
       : VariantJacobian(isBlockDiag, numRows, numCols) {}
 };
 
+// Jacobians of the skinned mesh wrt bone parameters and wrt articulated DoFs.
+struct CSoftSkinnedJacobianArticulated : public NoCopy {
+  SparseMatrix<real> dBones;
+  RowMatrix<real> dJoints;
+};
+
 // Reusable memory used during skinned::EntityAssembleBody
 struct CSoftSkinnedAssemblyScratchMemory {
   RowMatrix<real> A_Jsoft; // Only needed for ROMs. Will be resized on the fly.
@@ -96,7 +102,7 @@ void EntityAssembleBody(
     CActiveVolumeElements const* activeVolElems,
     CSkinnedComposition const& composition,
     CTimeIntegratorState const& intState,
-    CArticulatedSkinningData const& skinningData,
+    CSoftSkinnedJacobianArticulated const& jacobianArticulated,
     CSoftSkinnedJacobianDynamic const& jacobianSoft,
     CDisplacementSlice<real, TimeStep::Current, DisplacementLayer::Skinned> const& currDispl,
     CDisplacementSlice<real, TimeStep::StageStart, DisplacementLayer::Skinned> const&
@@ -208,25 +214,10 @@ void UpdateSkinningVelocity(
 void UpdateDerivedStatePipeline(entt::registry& reg, Span<entt::entity const> entities);
 
 /*
- * Pipeline to update Jacobians for contact and assembly. Must be called after
+ * Pipeline to update Jacobians for assembly. Must be called after
  * articulated::compound::UpdateJacobiansPipeline()
  */
 void UpdateJacobiansPipeline(entt::registry& reg, Span<entt::entity const> entities);
-
-/*
- * System to compute contact Jacobians as colliding actor. It is called after the collision
- * detection pipeline, within each nonlinear solver iteration.
- */
-void SetupCollidingJacobians(
-    ecs::Included<TagNestedSoftActor>,
-    ecs::PartialRegistry<CDofOffset const, CArticulatedLinkTransforms<TimeStep::Current> const> reg,
-    CSkinnedComposition const& composition,
-    CDofOffset const& dofOffset,
-    CContactPartitions const& contactPartitions,
-    CFemBoundaryDiscretization const& discretization,
-    CArticulatedSkinningData const& skinningInfo,
-    rom::CRomJacobian const* romJacobian,
-    CCollJacs<CollRole::Colliding>& outJacobians);
 
 // Call once on startup
 void InitializeOnce(entt::registry& reg);

@@ -31,6 +31,7 @@
 #include "mochi_scene_recorder.h"
 #include "mochi_shell.h"
 #include "mochi_simulation.h"
+#include "mochi_skinned_contact.h"
 #include "mochi_soft.h"
 #include "mochi_soft_rom_systems.h"
 #include "mochi_soft_skinned.h"
@@ -228,7 +229,7 @@ void mochi::SetupContactSkinCollidingJacobians(
       auto jacs = jac.PrepareJacs(1);
       {
         MOCHI_PROFILE_SCOPE_N("GetJac");
-        dmap.GetJac(jac.query->sampleIndices, jacs);
+        dmap.GetJac(jac.query->sampleIndices, jacs, jac.JacScratch());
       }
       {
         MOCHI_PROFILE_SCOPE_N("CoalesceColumnsByCachedMapping");

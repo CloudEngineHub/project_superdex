@@ -39,27 +39,6 @@ static std::array<T, kNumSamples> InitializeSamples(
   return result;
 }
 
-static std::array<IndexGroups, kNumSamples> InitializeIndexGroups() {
-  // Define some index groups. IndexGroup::src is irrelevant, partitions are defined based on
-  // IndexGroup::dst and IndexGroup::count. To create different index groups, all we need to do is
-  // vary e.g. IndexGroup::dst.
-  IndexGroup indA{0, 0, 4};
-  IndexGroup indB{0, 1, 4};
-  IndexGroup indC{0, 2, 4};
-  IndexGroup indD{0, 3, 4};
-
-  // Define some combinations of index groups. These will define the number of partitions.
-  std::array<IndexGroups, kNumPartitions> groups{
-      IndexGroups{{indA}},
-      IndexGroups{{indA, indB}},
-      IndexGroups{{indB}},
-      IndexGroups{{indC, indD, indA}}};
-
-  // Define index groups for a set of samples
-  std::array<int, kNumSamples> samples{{0, 1, 0, 2, 3, 1, 3, 0, 1, 0}};
-  return InitializeSamples(groups, samples);
-}
-
 static std::array<int, kNumSamples> InitializeIds() {
   // Define some ids.
   std::array<int, kNumPartitions> ids{{-1, 0, 1, 2}};
@@ -102,14 +81,6 @@ static void TestPartitions(Span<ContactPartition const> partitions) {
   EXPECT_TRUE(all.GetSubsetSize() == all.GetFullSetSize());
 }
 
-TEST(ContactPartition, IndexGroups) {
-  auto samples = InitializeIndexGroups();
-  auto partitions = CreateContactPartitions<IndexGroupsDescriptor>(samples);
-
-  EXPECT_EQ(partitions.size(), 4);
-  TestPartitions(partitions);
-}
-
 TEST(ContactPartition, Ids) {
   auto samples = InitializeIds();
   auto partitions = CreateContactPartitions<IdDescriptor>(samples);
@@ -130,16 +101,6 @@ TEST(ContactPartition, BoneIds) {
 }
 
 TEST(ContactPartition, Combined) {
-  auto partitionsA = CreateContactPartitions<IndexGroupsDescriptor>(InitializeIndexGroups());
-  auto partitionsB = CreateContactPartitions<IdDescriptor>(InitializeIds());
-  auto partitions = CombinePartitions(partitionsA, partitionsB);
-
-  EXPECT_GE(partitions.size(), 4);
-  EXPECT_LE(partitions.size(), kNumSamples);
-  TestPartitions(partitions);
-}
-
-TEST(ContactPartition, CombinedBoneIds) {
   auto partitionsA = CreateContactPartitions<BoneIdsDescriptor>(InitializeBoneIds());
   auto partitionsB = CreateContactPartitions<IdDescriptor>(InitializeIds());
   auto partitions = CombinePartitions(partitionsA, partitionsB);

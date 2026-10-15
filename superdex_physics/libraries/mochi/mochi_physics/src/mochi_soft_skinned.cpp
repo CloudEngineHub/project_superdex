@@ -24,7 +24,7 @@
 #include "mochi_rom_jacobian.h"
 #include "mochi_soft_rom_components.h"
 
-#include <mochi_core/contact/dmap.h>
+#include <mochi_core/memory/filo_allocator.h>
 #include <mochi_core/rom/rom_hyper_reduction.h>
 #include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/container_utils.h>
@@ -37,12 +37,10 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 using namespace mochi;
 using namespace mochi::skinned;
-using namespace mochi::dmap;
 
 static constexpr int kSoftIdx = CSkinnedInteractionSnle::kSoftIdx;
 static constexpr int kArticulatedIdx = CSkinnedInteractionSnle::kArticulatedIdx;
@@ -68,7 +66,7 @@ void skinned::EntityAssembleBody(
     CActiveVolumeElements const* activeVolElems,
     CSkinnedComposition const& composition,
     CTimeIntegratorState const& intState,
-    CArticulatedSkinningData const& skinningData,
+    CSoftSkinnedJacobianArticulated const& jacobianArticulated,
     CSoftSkinnedJacobianDynamic const& jacobianSoft,
     CDisplacementSlice<real, TimeStep::Current, DisplacementLayer::Skinned> const& currDispl,
     CDisplacementSlice<real, TimeStep::StageStart, DisplacementLayer::Skinned> const&
@@ -86,9 +84,9 @@ void skinned::EntityAssembleBody(
   bool const hasPosedStress = hasStressTag && skinnedEnergy.stress;
   bool const hasUnposedInertia = hasInertiaTag && !skinnedEnergy.inertia;
   bool const hasUnposedStress = hasStressTag && !skinnedEnergy.stress;
-  if (!hasPosedGravity && !hasPosedInertia && !hasPosedStress) {
-    return;
-  }
+  MOCHI_ASSERT_VERBOSE(
+      hasPosedGravity || hasPosedInertia || hasPosedStress,
+      "Nested soft actor body assembly requires posed energy terms.");
 
   MOCHI_ASSERT(!hasPosedInertia || stageStartVel, "Expected stage-start velocity.");
   MOCHI_ASSERT(!isRom || romProjectionStrategy, "Missing ROM projection strategy.");
@@ -122,7 +120,7 @@ void skinned::EntityAssembleBody(
   auto softOffset = dofOffset.dofsOffset;
   auto articulated = composition.articulated;
   auto artOffset = reg.get<CDofOffset const>(articulated).dofsOffset;
-  auto const& Jart = skinningData.jacobianDJoints;
+  auto const& Jart = jacobianArticulated.dJoints;
 
   if (params.assemObj) {
     outInteractionSnle.objective = outSoftSkinnedSnle.objective;
@@ -254,7 +252,7 @@ InitSoftSkinnedMesh(entt::registry& reg, entt::entity e, bool useContact, Error&
   int const numCollidingSamples = reg.get<CFemBoundaryDiscretization const>(e).GetNumQuadPoints();
 
   // Initialize components for colliding-actor role.
-  auto strategy = ContactPartitionStrategy::SkinningDofGroups;
+  auto strategy = ContactPartitionStrategy::SharedBones;
   auto const& contactParams = reg.get<CContactParams>(e);
   InitCollidingSkinMesh(
       reg,
@@ -347,6 +345,11 @@ InitEnergyTerms(entt::registry& reg, entt::entity e, SoftSkinnedActorParams cons
       dresSoftArtView);
 
   // Emplace Jacobians for the soft actor mesh.
+  auto& jacobianArticulated = reg.emplace<CSoftSkinnedJacobianArticulated>(e);
+  jacobianArticulated.dBones =
+      reg.get<CArticulatedSkinningData const>(e).skinningTransform.CreateDBones();
+  jacobianArticulated.dJoints = mochi::articulated::CreateJacobianStorage(
+      3 * numNodes, reg.get<CArticulatedProps const>(articulated).reducedDofsDim);
   auto& softJacobianRest = reg.emplace<CSoftSkinnedJacobianRest>(e);
   softJacobianRest.value = CreateSkinningJacobianRest(numNodes);
   auto const* romJacobian = reg.try_get<rom::CRomJacobian const>(e);
@@ -359,8 +362,7 @@ InitEnergyTerms(entt::registry& reg, entt::entity e, SoftSkinnedActorParams cons
   // Emplace scratch memory for the soft actor assembly.
   auto& scratchMemory = reg.emplace<CSoftSkinnedAssemblyScratchMemory>(e);
   auto const& softSnleDResBsp = std::get<BlockSparseMatrix<real, 3>>(softSnle.fullDResidual);
-  auto const& jacobianArt = reg.get<CArticulatedSkinningData const>(e).jacobianDJoints;
-  scratchMemory.A_Jart.Resize(softSnleDResBsp.Rows(), jacobianArt.Cols());
+  scratchMemory.A_Jart.Resize(softSnleDResBsp.Rows(), jacobianArticulated.dJoints.Cols());
   if (!softJacobianDynamic.IsBlockDiagonal()) {
     // A_Jsoft is only needed for ROMs.
     scratchMemory.A_Jsoft.Resize(softSnleDResBsp.Rows(), softJacobianDynamic.Cols());
@@ -631,22 +633,24 @@ static void ResolveJacobianDJoints(
     CSkinnedComposition const& composition,
     CNodePositions const& positions,
     CActiveUniqueNodes const* activeNodes,
-    CArticulatedSkinningData& outSkinningData) {
+    CArticulatedSkinningData const& skinningData,
+    CSoftSkinnedJacobianArticulated& outJacobian) {
   // Compute Jacobian DBones
   auto const& linkTransforms =
       reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(composition.articulated);
-  articulated::compound::ResolveSkinningJacobianDBones(
-      linkTransforms, positions.value, outSkinningData, activeNodes);
+  Span<int const> activeNodesSpan = activeNodes ? activeNodes->ViewIds() : Span<int const>{};
+  skinningData.skinningTransform.DTransformDBones(
+      linkTransforms, positions.value, outJacobian.dBones, activeNodesSpan);
 
   // Compute Jacobian DJoints by chain rule with Jacobian DBones/DJoints
   auto const& articulatedJacobian = reg.get<CArticulatedJacobian const>(composition.articulated);
   static_assert(
-      krylov::details::MatTraits<decltype(outSkinningData.jacobianDJoints)>::kMajorDir ==
+      krylov::details::MatTraits<decltype(outJacobian.dJoints)>::kMajorDir ==
       krylov::Direction::RowMajor); // Enforced for performance reasons.
   static_assert(
       krylov::details::MatTraits<decltype(articulatedJacobian.value)>::kMajorDir ==
       krylov::Direction::RowMajor); // Enforced for performance reasons.
-  outSkinningData.jacobianDJoints = outSkinningData.jacobianDBones * articulatedJacobian.value;
+  outJacobian.dJoints = outJacobian.dBones * articulatedJacobian.value;
 }
 
 /*
@@ -808,87 +812,11 @@ void skinned::UpdateJacobiansPipeline(entt::registry& reg, Span<entt::entity con
       "Compute soft skinned Jacobian wrt soft", &ResolveJacobianDSoft, reg, entities);
 }
 
-void skinned::SetupCollidingJacobians(
-    ecs::Included<TagNestedSoftActor>,
-    ecs::PartialRegistry<CDofOffset const, CArticulatedLinkTransforms<TimeStep::Current> const> reg,
-    CSkinnedComposition const& composition,
-    CDofOffset const& dofOffset,
-    CContactPartitions const& contactPartitions,
-    CFemBoundaryDiscretization const& discretization,
-    CArticulatedSkinningData const& skinningInfo,
-    rom::CRomJacobian const* romJacobian,
-    CCollJacs<CollRole::Colliding>& outJacobians) {
-  MOCHI_PROFILE_SCOPE();
-
-  if (std::ranges::all_of(
-          outJacobians, [](JacData const& jac) { return jac.query->sampleIndices.empty(); })) {
-    return;
-  }
-
-  // Prepare articulated-actor data, shared by all partitions
-  auto articulated = composition.articulated;
-  auto const& articulatedDofOffset = reg.get<CDofOffset const>(articulated).dofsOffset;
-  auto const& linkTransforms =
-      reg.get<CArticulatedLinkTransforms<TimeStep::Current> const>(articulated);
-  // Prepare bone rotations
-  MOCHI_ASSERT_VERBOSE(linkTransforms.size() == skinningInfo.skinningTransform.GetBoneCount());
-  MOCHI_FILO_STACK_ALLOCATOR(rotationAllocator, details::kBoneJacobiansStackSize);
-  DynamicArray<VMatrix3x3r> rotations(&rotationAllocator);
-  details::ComputeBoneJacobians</*kTranspose*/ false>(
-      skinningInfo.skinningTransform, linkTransforms, rotations);
-
-  // Prepare dmap that depends on the soft actor, shared by all partitions.
-  std::optional<DMapSoft> dsoft;
-  std::optional<DMapRom> drom;
-  auto const softDofOffset = dofOffset.dofsOffset;
-  if (romJacobian) {
-    drom.emplace(0, romJacobian->value, softDofOffset);
-  } else {
-    dsoft.emplace(0, softDofOffset);
-  }
-
-  // Compute Jacobians
-  ParallelForEach("SetupCollidingJacobianSoftSkinned", outJacobians, 1, [&](JacData& jacData) {
-    if (jacData.query->sampleIndices.empty()) {
-      return;
-    }
-
-    discretization.Visit([&](auto const& discretizationImpl) {
-      using DiscretizationT = std::decay_t<decltype(discretizationImpl)>;
-      using DQuad = DMapQuad<typename DiscretizationT::ElementT>;
-      using DSoft = DMap<DQuad, DMapSkinInput, DMapSoft>;
-      using DRom = DMap<DQuad, DMapSkinInput, DMapRom>;
-      using DMapThis = std::variant<DSoft, DRom>;
-      auto const& skinningJacobian = skinningInfo.jacobianDJoints;
-      auto const& skinningData = skinningInfo.skinningData;
-
-      // Prepare the skinning dmap, specific to the partition
-      auto const& dofsVariant =
-          contactPartitions[jacData.query->collidingPartitionId].GetDofDescriptors()[0];
-      auto dofs = MakeConstSpan(std::get<DynamicArray<int>>(dofsVariant));
-      DMapSkinInput dskinning(
-          1, skinningJacobian, dofs, articulatedDofOffset, skinningData, rotations);
-
-      // Prepare the quadrature dmap
-      DQuad dquad(discretizationImpl.femElements, jacData.query->jacColliderFromWorld);
-
-      // Create per-partition differentiable map
-      DMapThis dmap = drom ? DMapThis{DRom(&dquad, &dskinning, &drom.value())}
-                           : DMapThis{DSoft(&dquad, &dskinning, &dsoft.value())};
-
-      // Compute Jacobian
-      auto jacs = jacData.PrepareJacs(2);
-      std::visit([&](auto const& dmap) { dmap.GetJac(jacData.query->sampleIndices, jacs); }, dmap);
-      jacs[0].CompressIndices();
-      jacs[1].CompressIndices();
-    });
-  });
-}
-
 void skinned::InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CSkinnedComposition>(reg);
   ecs::RegisterComponent<CNodePositions>(reg);
   ecs::RegisterComponent<CSoftSkinnedAssemblyScratchMemory>(reg);
+  ecs::RegisterComponent<CSoftSkinnedJacobianArticulated>(reg);
   ecs::RegisterComponent<CSoftSkinnedJacobianDynamic>(reg);
   ecs::RegisterComponent<CSoftSkinnedJacobianRest>(reg);
   ecs::RegisterComponent<CSoftAttachmentLinks>(reg);

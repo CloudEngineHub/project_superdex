@@ -22,7 +22,6 @@
 
 #include <mochi_core/utils/array_utils.h>
 
-#include <algorithm>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -95,48 +94,6 @@ CreateSharedBoneIds(entt::registry const& reg, entt::entity entity, entt::entity
   return boneIdsPerSample;
 }
 
-static std::vector<IndexGroups>
-CreateSkinningDofGroups(entt::registry const& reg, entt::entity entity, entt::entity articulated) {
-  // Fetch components of the articulated actor: bone actors, articulated DoFs
-  auto const& boneActors = reg.get<CGroupMembers const>(articulated).actors;
-  int numArticulatedDofs = reg.get<CArticulatedProps const>(articulated).reducedDofsDim;
-
-  // Prepare a vector of joint dofs per bone
-  std::vector<Span<int const>> jointDofs;
-  jointDofs.reserve(boneActors.size());
-  for (auto bone : boneActors) {
-    jointDofs.emplace_back(reg.get<CArticulatedRigidJacobian const>(bone).dofs);
-  }
-
-  auto boneIdsPerSample = CreateSharedBoneIds(reg, entity, articulated);
-
-  // Traverse all the collision samples and compute their DoF index groups.
-  static int constexpr kMaxIndexGroups = 4;
-  std::vector<IndexGroups> indexGroups;
-  indexGroups.reserve(boneIdsPerSample.size());
-  for (auto const& boneIds : boneIdsPerSample) {
-    // Collect joint DoFs for the bones
-    std::vector<int> dofs;
-    for (int boneId : boneIds) {
-      auto const& jointDofsBone = jointDofs[boneId];
-      dofs.insert(dofs.end(), jointDofsBone.begin(), jointDofsBone.end());
-    }
-    std::sort(dofs.begin(), dofs.end());
-    dofs.erase(std::unique(dofs.begin(), dofs.end()), dofs.end());
-
-    // Convert to index groups
-    IndexGroups sampleDoFs = CreateIndexGroups(dofs, false);
-    if (sampleDoFs.size() > kMaxIndexGroups) {
-      // Use all DoFs if the number of index groups is too large
-      sampleDoFs.clear();
-      sampleDoFs.push_back({0, 0, numArticulatedDofs});
-    }
-    indexGroups.emplace_back(std::move(sampleDoFs));
-  }
-
-  return indexGroups;
-}
-
 static std::vector<int> CreateSoftActorIds(entt::registry const& reg, entt::entity entity) {
   // Fetch blending of the entity that will be partitioned.
   auto const& blending = reg.get<CBlendingData const>(entity);
@@ -172,10 +129,6 @@ static std::vector<ContactPartition> CreatePartitionsFromStrategy(
     entt::entity articulated,
     ContactPartitionStrategy strategy) {
   switch (strategy) {
-    case ContactPartitionStrategy::SkinningDofGroups: {
-      auto dofGroups = CreateSkinningDofGroups(reg, entity, articulated);
-      return CreateContactPartitions<IndexGroupsDescriptor>(dofGroups);
-    }
     case ContactPartitionStrategy::SoftActorId: {
       auto ids = CreateSoftActorIds(reg, entity);
       return CreateContactPartitions<IdDescriptor>(ids);

@@ -73,12 +73,11 @@ struct CArticulatedFullPoseRef : public VectorComponentRef {
   using VectorComponentRef::VectorComponentRef;
 };
 
-struct ArticulatedSkinningData {
+// Component to store skinning data
+struct CArticulatedSkinningData : public NoCopy {
   ColumnVector<real> restCoords;
   SkinningData skinningData;
   DSkinningTransform skinningTransform;
-  SparseMatrix<real> jacobianDBones;
-  RowMatrix<real> jacobianDJoints;
 };
 
 // Components registered to an articulated body actor
@@ -141,8 +140,6 @@ MOCHI_DEFINE_INTEGRATION_COMPONENT(CIntegrationArticulatedReducedPose, Articulat
 
 /// @brief Component for time integration of articulated joint velocities.
 MOCHI_DEFINE_INTEGRATION_COMPONENT(CIntegrationArticulatedJointVels, ArticulatedJointVelocities);
-
-struct CArticulatedSkinningData : public ArticulatedSkinningData, NoCopy {};
 
 struct CArticulatedRestTransforms : public articulated::RestTransformArray, NoCopy {};
 
@@ -458,30 +455,6 @@ void ResolveAllNodeSkinningDisplacementsPipeline(
     entt::registry& reg,
     Span<entt::entity const> entities);
 
-/*
- * Function to update the Jacobian of some skinned data w.r.t. the bone dofs (if one exists).
- * It is called from the method computing the Jacobian w.r.t. to the joint dofs.
- * Note that in this case template does not require time step type or mesh type since Jacobian is
- * always computed for the current step and stored internally in the skinning data structure.
- */
-void ResolveSkinningJacobianDBones(
-    Span<TransformRT const> linkTransforms,
-    ColumnVectorView<real const> unposedCoords,
-    ArticulatedSkinningData& skinningData,
-    CActiveUniqueNodes const* activeNodes = nullptr);
-
-/*
- * System to update the Jacobian of some skinned data w.r.t. the joint dofs (if one exists).
- * It is called within each nonlinear solver iteration.
- * Note that in this case template does not require time step type or mesh type since Jacobian is
- * always computed for the current step and stored internally in the skinning data structure.
- */
-void ResolveSkinningJacobianDJoints(
-    CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
-    CArticulatedJacobian const& articulatedJacobian,
-    CActiveUniqueNodes const* activeNodes,
-    CArticulatedSkinningData& skinningData);
-
 // Compute world-space skinning velocity on demand. Use finite-step rotation velocities.
 inline void UpdateSkinningVelocity(
     CArticulatedLinkTransforms<TimeStep::Current> const& linkTransforms,
@@ -491,20 +464,6 @@ inline void UpdateSkinningVelocity(
   skinningData.skinningTransform.DTransformDBones</*kTangentVel*/ false>(
       linkTransforms, skinningData.restCoords, linkVels, outVelocity.value);
 }
-
-/*
- * System to compute contact Jacobians as colliding actor. It is called after the collision
- * detection pipeline, within each nonlinear solver iteration.
- */
-template <typename DiscretizationT>
-void SetupCollidingJacobians(
-    ecs::Included<TagArticulatedActor>,
-    ecs::Excluded<TagBlendedActor>,
-    DiscretizationT const& discretization,
-    CDofOffset const& dofOffset,
-    CArticulatedSkinningData const& skinningData,
-    CContactPartitions const& contactPartitions,
-    CCollJacs<CollRole::Colliding>& outJacobians);
 
 /**
  * System to assemble the objective, residual and dresidual of the damping forces acting on joints

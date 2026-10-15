@@ -38,6 +38,7 @@
 #include <iterator>
 #include <numeric>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -105,6 +106,9 @@ class DMapImpl {
  * governing slice 'qi'. Jacobians are split according to state slices. This class takes the
  * implementation of 'g', 'h' and all subsequent differentiable maps as variadic template arguments.
  * All those differentiable maps must be derived from DMapImpl.
+ *
+ * GetJac() takes a scratch Jacobian that exchanges buffers with the output slices. To avoid
+ * reallocating buffers on every call, the scratch must be recycled together with the slices.
  */
 
 // Forward declaration
@@ -124,6 +128,11 @@ class DMap<Impl> {
     _g->WriteJacobianSlice(indsY, outJacsY);
   }
 
+  // A single map propagates no Jacobians, so it does not use the scratch.
+  void GetJac(Span<int const> indsY, Span<ContactJac> outJacsY, ContactJac& /* scratch */) const {
+    GetJac(indsY, outJacsY);
+  }
+
  private:
   Impl const* _g = nullptr;
 };
@@ -137,27 +146,31 @@ class DMap<Impl1, Impl2, Impls...> {
   template <typename... Args>
   DMap(Impl1 const* g, Args... h) : _g(g), _h(h...) {}
 
-  void GetJac(Span<int const> indsY, Span<ContactJac> outJacsY) const {
-    // Write dg/dq, the Jacobian of this slice.
-    _g->WriteJacobianSlice(indsY, outJacsY);
-
+  void GetJac(Span<int const> indsY, Span<ContactJac> outJacsY, ContactJac& scratch) const {
     // Obtain output indices for h() by remapping indsY
     DMapImpl::Remapping remap;
     _g->RemapIndices(indsY, remap);
 
-    // Get dh/dq
-    MOCHI_FILO_STACK_ALLOCATOR(tempAlloc, sizeof(ContactJac) * 128); // Probably more than enough
-    DynamicArray<ContactJac> dhdq(outJacsY.size(), &tempAlloc);
-    _h.GetJac(remap.indsX, dhdq);
+    // Write dh/dq into the output slices, whose buffers keep their capacity across calls. Recycled
+    // slices keep a stale nContacts, so reset it to identify the slices written by h().
+    for (auto& jac : outJacsY) {
+      jac.nContacts = 0;
+    }
+    _h.GetJac(remap.indsX, outJacsY, scratch);
 
-    // Propagate each slice of dh/dq
-    for (int slice = 0; slice < dhdq.size(); slice++) {
-      if (dhdq[slice].nContacts > 0) {
-        _g->PropagateJacobianSlice(remap, indsY, dhdq[slice], outJacsY[slice]);
+    // Propagate each slice of dh/dq, swapped into the scratch, back into the slice. The consumed
+    // dh/dq is left in the scratch, so no buffer is freed and all keep their capacity.
+    for (auto& outJacY : outJacsY) {
+      if (outJacY.nContacts > 0) {
+        std::swap(outJacY, scratch);
+        _g->PropagateJacobianSlice(remap, indsY, scratch, outJacY);
         MOCHI_ASSERT_VERBOSE(
-            !dhdq[slice].JacAux() || outJacsY[slice].JacAux(), "Auxiliary Jacobian not forwarded");
+            !scratch.JacAux() || outJacY.JacAux(), "Auxiliary Jacobian not forwarded");
       }
     }
+
+    // Write dg/dq, the Jacobian of this slice. Slices of g() and h() are disjoint.
+    _g->WriteJacobianSlice(indsY, outJacsY);
   }
 
  private:
@@ -490,9 +503,9 @@ class DMapQuad final : public DMapImpl {
         jacX.hasSharedDoFs, false, nDoFMultiplier * jacX.nDoFsState, isize(indsY), jacX.JacAux());
 
     // Propagate partial derivatives wrt input. If the DoFs are shared, add the weighted input of
-    // all ElementT::kNumNodes points. If the DoFs are not shared, write the weighted input of
-    // each point to different columns. If both the incoming Jacobians and toColliderJacs are
-    // shared, compute their product only once.
+    // all ElementT::kNumNodes points, and transform the sum only once. If the DoFs are not shared,
+    // write the weighted input of each point to different columns. If both the incoming Jacobians
+    // and toColliderJacs are shared, compute their product only once.
     int dstDelta = outJacY.hasSharedDoFs ? 0 : jacX.nDoFsInternal;
     if (_toColliderJacs.size() == 1 && jacX.hasSharedJacs) {
       Matrix<real, 3> jacProduct = AsMatrixView(_toColliderJacs[0]) * jacX.Jac(0);
@@ -502,6 +515,18 @@ class DMapQuad final : public DMapImpl {
         for (int k = 0, dst = 0; k < ElementT::kNumNodes; k++, dst += dstDelta) {
           outJacY.Jac(i).MiddleCols(dst, jacX.nDoFsInternal) += weights[k] * jacProduct;
         }
+      }
+    } else if (outJacY.hasSharedDoFs) {
+      Matrix<real, 3> weightedJacX(3, jacX.nDoFsInternal);
+      for (int i = 0, j = 0, l = 0, dl = (_toColliderJacs.size() == 1 ? 0 : 1);
+           i < outJacY.nContacts;
+           i++, l += dl) {
+        NdArray<real, ElementT::kNumNodes> const weights = GetWeightInfo(_femElements, indsY[i]);
+        weightedJacX = weights[0] * jacX.Jac(indsX[j++]);
+        for (int k = 1; k < ElementT::kNumNodes; k++, j++) {
+          weightedJacX += weights[k] * jacX.Jac(indsX[j]);
+        }
+        outJacY.Jac(i) = AsMatrixView(_toColliderJacs[l]) * weightedJacX;
       }
     } else {
       outJacY.SetZero();
@@ -536,104 +561,6 @@ class DMapQuad final : public DMapImpl {
   Span<ElementT const> _femElements{};
   Span<VMatrix3x3r const> _toColliderJacs;
 };
-
-/**************************************************************************************************
- * Differentiable map for a skinning transformation. It is templatized whether it can take an input
- * or not (i.e. recursive or non-recursive). It is initialized with the state slice, the skinning
- * Jacobian, the articulated DoFs of the state slice and the DoF offset (plus the skinning data and
- * the bone rotations if it has an input). This class is used for articulated bodies and skinned
- * soft actors. Deprecated: use @ref DMapSkinning.
- */
-template <bool InputT>
-class DMapSkinningDeprecated final : public DMapImpl {
- public:
-  // Constructor if it has no input
-  template <bool InputQ = InputT, typename = std::enable_if_t<!InputQ>>
-  DMapSkinningDeprecated(int slice, RowMatrixView<real const> jac, Span<int const> dofs, int offset)
-      : _slice(slice), _jac(jac), _dofs(dofs), _offset(offset) {}
-
-  // Constructor if it has an input
-  template <bool InputQ = InputT, typename = std::enable_if_t<InputQ>>
-  DMapSkinningDeprecated(
-      int slice,
-      RowMatrixView<real const> jac,
-      Span<int const> dofs,
-      int offset,
-      SkinningData const& skinning,
-      Span<VMatrix3x3r const> boneRotations)
-      : _slice(slice),
-        _jac(jac),
-        _dofs(dofs),
-        _offset(offset),
-        _skinning(skinning),
-        _boneRotations(boneRotations) {}
-
-  void WriteJacobianSlice(Span<int const> indsY, Span<ContactJac> outJacsY) const override {
-    MOCHI_ASSERT(outJacsY.size() > _slice, "Insufficient Jacobian slices");
-    if (indsY.empty()) {
-      return;
-    }
-    auto& outJacY = outJacsY[_slice];
-
-    outJacY.Resize(true, false, isize(_dofs), isize(indsY));
-
-    // Compute derivatives
-    for (int i = 0; i < outJacY.nContacts; i++) {
-      auto jacRows = _jac.template MiddleRows<3>(3 * indsY[i], 3);
-      for (int j = 0; j < _dofs.size(); j++) {
-        outJacY.Jac(i).Col(j) = jacRows.Col(_dofs[j]);
-      }
-    }
-
-    // Set DoF indices
-    auto outInds = outJacY.Inds(0);
-    for (int i = 0; i < outInds.size(); i++) {
-      outInds[i] = _dofs[i] + _offset;
-    }
-  }
-
-  void PropagateJacobianSlice(
-      Remapping const& remap,
-      Span<int const> indsY,
-      ContactJac const& jacX,
-      ContactJac& outJacY) const override {
-    // Needed only if it takes an input
-    if constexpr (InputT) {
-      MOCHI_ASSERT(remap.indsX.size() == indsY.size(), "Sizes of indices don't match");
-
-      // Initialize the output Jacobian
-      outJacY.Resize(jacX.hasSharedDoFs, false, jacX.nDoFsState, isize(indsY), jacX.JacAux());
-
-      // Propagate partial derivatives wrt input
-      for (int i = 0; i < outJacY.nContacts; i++) {
-        VMatrix3x3r weightedRotations{};
-        for (int j = 0, k = _skinning.weightsPerNode * indsY[i]; j < _skinning.weightsPerNode;
-             j++, k++) {
-          weightedRotations += _skinning.weights[k] * _boneRotations[_skinning.indices[k]];
-        }
-        auto weightedRotationsMat = AsMatrixView(weightedRotations);
-        outJacY.Jac(i) = weightedRotationsMat * jacX.Jac(i);
-      }
-
-      // Set DoF indices. Consider the case where all DoFs are the same.
-      for (int i = 0; i < (outJacY.hasSharedDoFs ? 1 : outJacY.nContacts); i++) {
-        std::copy(jacX.Inds(i).begin(), jacX.Inds(i).end(), outJacY.Inds(i).begin());
-      }
-    }
-  }
-
- private:
-  struct Nothing {};
-  int const _slice;
-  RowMatrixView<real const> _jac;
-  Span<int const> _dofs{};
-  int const _offset;
-  std::conditional_t<InputT, SkinningData const&, Nothing> _skinning;
-  std::conditional_t<InputT, Span<VMatrix3x3r const>, Nothing> _boneRotations{};
-};
-
-using DMapSkinNoInput = DMapSkinningDeprecated<false>;
-using DMapSkinInput = DMapSkinningDeprecated<true>;
 
 // Skinning Jacobian data of one bone.
 struct SkinningBoneJacobianData {

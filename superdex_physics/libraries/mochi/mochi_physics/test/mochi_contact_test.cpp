@@ -57,6 +57,147 @@
 using namespace mochi;
 using namespace mochi::experimental;
 using namespace mochi::test;
+namespace {
+// Bone 0 is static. Nodes with y > 0.5 have no weight on bone 2, so the samples of the cube face
+// y = 1 depend on bone 1 only, and the samples of other faces depend on bones 1 and 2.
+SkinningData MakeThreeBoneSkinning(Span<Real3 const> coordinates) {
+  int const numNodes = isize(coordinates);
+  SkinningData skinning;
+  skinning.weightsPerNode = 3;
+  skinning.indices.reserve(3 * numNodes);
+  skinning.weights.reserve(3 * numNodes);
+  for (int node = 0; node < numNodes; ++node) {
+    skinning.indices.push_back(0);
+    skinning.indices.push_back(1);
+    skinning.indices.push_back(2);
+    skinning.weights.push_back(0.2_r);
+    real const weight1 = coordinates[node][1] > 0.5_r ? 0.8_r : (node % 2 == 0 ? 0.3_r : 0.5_r);
+    skinning.weights.push_back(weight1);
+    skinning.weights.push_back(0.8_r - weight1);
+  }
+  return skinning;
+}
+// If blendedSoftName is non-empty, every node is blended with the soft actor of that name.
+ShapeHandle CreateThreeBoneShape(
+    Context* context,
+    DynamicArray<int> constrainedNodes = {},
+    DynamicString const& blendedSoftName = {}) {
+  auto&& [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube();
+  auto mesh = std::make_shared<TetrahedralMesh const>(coordinates, connectivity);
+  int const numNodes = mesh->GetNumNodes();
+  auto skinning =
+      std::make_shared<SkinningData const>(MakeThreeBoneSkinning(MakeConstSpan(coordinates)));
+
+  std::shared_ptr<ConstrainedNodesData const> constrainedNodesData;
+  if (!constrainedNodes.empty()) {
+    constrainedNodesData =
+        std::make_shared<ConstrainedNodesData const>(std::move(constrainedNodes));
+  }
+
+  std::shared_ptr<BlendingDataMap> blending;
+  if (!blendedSoftName.empty()) {
+    BlendingDataTargetMesh target;
+    target.indices.resize(numNodes);
+    target.weights.resize(numNodes, 0.4_r);
+    for (int node = 0; node < numNodes; ++node) {
+      target.indices[node] = node;
+    }
+    blending = std::make_shared<BlendingDataMap>();
+    blending->perSourceShapeData.emplace(blendedSoftName, std::move(target));
+  }
+
+  auto shape =
+      std::make_shared<TetrahedralMeshShape>(mesh, skinning, constrainedNodesData, blending);
+  return assert_cast<ContextImpl*>(context)->RegisterShape(shape, test::ExpectOK{});
+}
+
+ShapeHandle CreateThreeBoneTetRomShape(Context* context) {
+  auto&& [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube();
+  ModelData model;
+  model.mesh.emplace();
+  model.mesh->nodesPerElement = 4;
+  model.mesh->coordinates = Flatten(MakeSpan(coordinates));
+  model.mesh->connectivity = Flatten(MakeSpan(connectivity));
+  model.mesh->skinning = MakeThreeBoneSkinning(MakeConstSpan(coordinates));
+  model.constrainedNodes = DynamicArray<int>{0};
+
+  DynamicArray<real> basis(model.mesh->coordinates.size(), 0_r);
+  for (int node = 1; node < model.mesh->GetNumNodes(); ++node) {
+    basis[3 * node] = 1_r;
+  }
+  return experimental::CreateModelShapeWithLinearRom(
+      context, model, "contact_test", MakeConstSpan(basis), test::ExpectOK{});
+}
+
+void UpdateArticulatedFullPose(entt::registry& reg, entt::entity entity) {
+  auto const* joints = reg.get<CArticulatedBodyShape const>(entity).shape->GetJointsData();
+  auto const& poseInfo = reg.get<CArticulatedJointPoseInfo const>(entity);
+  auto const& parents = reg.get<CArticulatedParents const>(entity);
+  auto const& restTransforms = reg.get<CArticulatedRestTransforms const>(entity);
+  auto const& reducedPose = reg.get<CArticulatedReducedPose<TimeStep::Current>>(entity).value;
+  auto const& worldFromRoot = reg.get<CRootTransform const>(entity).worldFromLocal;
+  auto& jointTransforms = reg.get<CArticulatedJointTransforms<TimeStep::Current>>(entity);
+  auto& linkTransforms = reg.get<CArticulatedLinkTransforms<TimeStep::Current>>(entity);
+  auto& fullDofs = reg.get<CArticulatedFullPose>(entity).value;
+  articulated::ComputeFullPose(
+      joints->jointTypes,
+      joints->jointAxes,
+      poseInfo,
+      parents,
+      restTransforms,
+      worldFromRoot,
+      reducedPose,
+      jointTransforms,
+      linkTransforms,
+      fullDofs);
+}
+
+void AddToArticulatedPose(entt::registry& reg, entt::entity entity, int localDof, real eps) {
+  auto& reducedPose = reg.get<CArticulatedReducedPose<TimeStep::Current>>(entity).value;
+  ColumnVector<real> delta(reg.get<CArticulatedProps const>(entity).reducedDofsDim);
+  delta.SetZero();
+  delta[localDof] = eps;
+  auto const* joints = reg.get<CArticulatedBodyShape const>(entity).shape->GetJointsData();
+  auto const& poseInfo = reg.get<CArticulatedJointPoseInfo const>(entity);
+  articulated::AddLieDeltaToReducedPose(
+      joints->jointTypes, joints->dofInfo, poseInfo, reducedPose, delta, reducedPose);
+  UpdateArticulatedFullPose(reg, entity);
+}
+
+ArticulatedActorParams MakeThreeBoneSkeletonParams(Context* context) {
+  ArticulatedActorParams params;
+  params.joints = {
+      {.name = "joint_0", .type = ArticulatedJointType::Hard},
+      {.name = "joint_1",
+       .type = ArticulatedJointType::Spherical,
+       .parentLinkFromJoint = TransformRT{Real3{1_r, 0_r, 0_r}}},
+      {.name = "joint_2",
+       .type = ArticulatedJointType::Spherical,
+       .parentLinkFromJoint = TransformRT{Real3{0_r, 1_r, 0_r}}}};
+  ShapeHandle const linkShape = test::CreateUnitCubeTetMeshShape(context);
+  params.links = {
+      {.name = "link_0",
+       .parentLink = -1,
+       .shape = linkShape,
+       .colliderType = ColliderType::None,
+       .hasGravity = false,
+       .density = 1e-10_r},
+      {.name = "link_1",
+       .parentLink = 0,
+       .shape = linkShape,
+       .colliderType = ColliderType::None,
+       .hasGravity = false,
+       .density = 1e-10_r},
+      {.name = "link_2",
+       .parentLink = 1,
+       .shape = linkShape,
+       .colliderType = ColliderType::None,
+       .hasGravity = false,
+       .density = 1e-10_r}};
+  return params;
+}
+
+} // namespace
 
 // Test collision response on multiple contacts by comparing analytical force and dforce to
 // finite-difference approximations, and rigid contact sums to sums of the per-point response.
@@ -325,7 +466,7 @@ TEST(MochiContact, MakeContactGraphWithFiveContactJacobians) {
   auto& activeCollisions =
       reg.emplace<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(colliding, 1);
   activeCollisions.SetUp(MakeSingletonConstSpan(collider));
-  auto& collision = activeCollisions.back();
+  auto& collision = activeCollisions.front();
   collision.collisionResult.sampleIndices.push_back(0);
 
   auto& collidingJacs = reg.emplace<CCollJacs<CollRole::Colliding>>(colliding);
@@ -1037,6 +1178,285 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"ViscousPrevious", GradTarget::Previous, 0_r, 1_r, 0_r, true, 2e-3_r, {}},
         TestParams{"CoulombPrevious", GradTarget::Previous, 0.5_r, 0_r, 0_r, true, 1e-3_r, {}},
         TestParams{"DampingPrevious", GradTarget::Previous, 0_r, 0_r, 1_r, true, 4e-3_r, {}}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class MochiSkinnedArticulatedStaticContact : public MochiContactTestBase {
+  ColumnVector<real> _pose;
+
+  void UpdateFullState() {
+    UpdateArticulatedFullPose(GetRegistry(), _colliding);
+  }
+
+ public:
+  MochiSkinnedArticulatedStaticContact() {
+    _numDofsA = 6;
+    _numDofsB = 0;
+    _numDofs = _numDofsA;
+  }
+
+  void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
+      override {
+    ArticulatedActorParams params = MakeThreeBoneSkeletonParams(_mochiContext);
+    ArticulatedSkinParams skinParams;
+    skinParams.shape = CreateThreeBoneShape(_mochiContext);
+    skinParams.layer = "Colliding";
+    skinParams.contact.coulombFrictionCoefficient = coulombCoefficient;
+    skinParams.contact.viscousFrictionCoefficient = viscousCoefficient;
+    skinParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
+    params.skin = std::move(skinParams);
+    Actor* const articulatedActor = _scene->CreateArticulatedActor(params, test::ExpectOK{});
+
+    TransformRT const colliderTransform{
+        Quaternion::FromRotationVector(Real3{0.1_r, -0.1_r, 0.2_r}), Real3{0.6_r, 0.6_r, 0.6_r}};
+    Actor* const collider = InitStaticCube(
+        1_r, colliderTransform, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+    InitActors(articulatedActor, collider);
+
+    auto& pose = GetRegistry().get<CArticulatedReducedPose<TimeStep::Current>>(_colliding).value;
+    UpdateFullState();
+    _pose = pose.Duplicate();
+    island::PreStep(GetRegistry());
+  }
+
+  void InitState() override {
+    GetRegistry().get<CArticulatedReducedPose<TimeStep::Current>>(_colliding).value = _pose;
+    UpdateFullState();
+  }
+
+  void AddToState(int globalDof, real eps) override {
+    auto [entity, localDof] = GetEntityAndLocalDofFromGlobalDof(globalDof);
+    MOCHI_ASSERT_VERBOSE(entity == _colliding);
+    AddToArticulatedPose(GetRegistry(), _colliding, localDof, eps);
+  }
+};
+
+TEST_P(MochiSkinnedArticulatedStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiSkinnedArticulatedStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 2e-3_r, 2.6e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class MochiSoftSkinnedStaticContact : public MochiContactTestBase {
+ protected:
+  static constexpr int kSkeletonDofs = 6;
+  static constexpr int kFomSoftDofs = 24;
+  static constexpr int kRomSoftDofs = 1;
+
+  enum class Mode { Fom, Rom, BlendedFom, BlendedRom };
+
+  entt::entity _articulated = entt::null;
+  ColumnVector<real> _pose;
+  ColumnVector<real> _softState;
+  Mode _mode;
+
+ public:
+  explicit MochiSoftSkinnedStaticContact(Mode mode = Mode::Fom) : _mode(mode) {
+    int const softDofs = UsesRom() ? kRomSoftDofs : kFomSoftDofs;
+    _numDofsA = UsesBlendedSurface() ? kSkeletonDofs : softDofs;
+    _numDofsB = 0;
+    _numDofs = kSkeletonDofs + softDofs;
+  }
+
+  void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
+      override {
+    SoftSkinnedActorParams params;
+    TransformRT const worldFromRoot = UsesBlendedSurface()
+        ? TransformRT{Quaternion::FromRotationVector(Real3{0.2_r, -0.3_r, 0.1_r}), Real3{0.4_r, -0.2_r, 0.3_r}}
+        : TransformRT::Identity();
+    params.skeletonParams = MakeThreeBoneSkeletonParams(_mochiContext);
+    params.skeletonParams.worldFromRoot = worldFromRoot;
+    if (UsesBlendedSurface()) {
+      ArticulatedSkinParams skinParams;
+      skinParams.shape = CreateThreeBoneShape(_mochiContext, {}, "soft");
+      skinParams.layer = "Colliding";
+      skinParams.contact.coulombFrictionCoefficient = coulombCoefficient;
+      skinParams.contact.viscousFrictionCoefficient = viscousCoefficient;
+      skinParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
+      params.skeletonParams.skin = std::move(skinParams);
+    }
+
+    SoftActorParams softParams;
+    softParams.name = "soft";
+    softParams.shape = UsesRom() ? CreateThreeBoneTetRomShape(_mochiContext)
+                                 : CreateThreeBoneShape(_mochiContext, DynamicArray<int>{0});
+    softParams.layer = UsesBlendedSurface() ? "" : "Colliding";
+    softParams.hasGravity = false;
+    softParams.hasInertia = false;
+    softParams.hasStress = true;
+    softParams.material.neoHookean.youngsModulus = 1e-10_r;
+    softParams.contact.coulombFrictionCoefficient = coulombCoefficient;
+    softParams.contact.viscousFrictionCoefficient = viscousCoefficient;
+    softParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
+    params.softParams.push_back(std::move(softParams));
+
+    Actor* articulatedActor = nullptr;
+    if (UsesRom()) {
+      ExperimentalSoftSkinnedActorParams experimentalParams;
+      ExperimentalSoftActorParams softExperimentalParams;
+      softExperimentalParams.rom.emplace();
+      softExperimentalParams.rom->source = "contact_test";
+      experimentalParams.softParams.push_back(std::move(softExperimentalParams));
+      articulatedActor = experimental::CreateSoftSkinnedActor(
+          _scene, params, experimentalParams, test::ExpectOK{});
+    } else {
+      articulatedActor = _scene->CreateSoftSkinnedActor(params, test::ExpectOK{});
+    }
+    _articulated = GetEntity(articulatedActor->GetHandle());
+    auto const& softHandles = articulatedActor->GetNestedSoftActors(test::ExpectOK{});
+    ASSERT_EQ(1, isize(softHandles));
+    Actor* const softActor = _scene->GetActor(softHandles[0]);
+    ASSERT_NE(nullptr, softActor);
+    _soft = GetEntity(softActor->GetHandle());
+
+    TransformRT const colliderTransformLocal{
+        Quaternion::FromRotationVector(Real3{0.1_r, -0.1_r, 0.2_r}), Real3{0.6_r, 0.6_r, 0.6_r}};
+    Actor* const collider = InitStaticCube(
+        1_r,
+        worldFromRoot * colliderTransformLocal,
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient);
+    InitActors(UsesBlendedSurface() ? articulatedActor : softActor, collider);
+
+    auto& reg = GetRegistry();
+    _pose = reg.get<CArticulatedReducedPose<TimeStep::Current>>(_articulated).value.Duplicate();
+    if (UsesBlendedSurface()) {
+      if (UsesRom()) {
+        reg.get<CRomModeAmplitudes>(_soft).value[0] = 0.1_r;
+        UpdateRomState();
+      } else {
+        auto& displacement = reg.get<CDisplacementSlice<real, TimeStep::Current>>(_soft).value;
+        for (int node = 1; node < kFomSoftDofs / 3; ++node) {
+          displacement[3 * node] = 0.1_r;
+        }
+      }
+    }
+    _softState = UsesRom()
+        ? reg.get<CRomModeAmplitudes const>(_soft).value.Duplicate()
+        : reg.get<CDisplacementSlice<real, TimeStep::Current> const>(_soft).value.Duplicate();
+  }
+
+  std::pair<entt::entity, int> GetEntityAndLocalDofFromGlobalDof(int globalDof) override {
+    auto const& reg = GetRegistry();
+    int const articulatedOffset = reg.get<CDofOffset const>(_articulated).dofsOffset;
+    if (globalDof >= articulatedOffset && globalDof < articulatedOffset + kSkeletonDofs) {
+      return {_articulated, globalDof - articulatedOffset};
+    }
+    int const softOffset = reg.get<CDofOffset const>(_soft).dofsOffset;
+    EXPECT_GE(globalDof, softOffset);
+    int const softDofs = UsesRom() ? kRomSoftDofs : kFomSoftDofs;
+    EXPECT_LT(globalDof, softOffset + softDofs);
+    return {_soft, globalDof - softOffset};
+  }
+
+  void InitState() override {
+    auto& reg = GetRegistry();
+    reg.get<CArticulatedReducedPose<TimeStep::Current>>(_articulated).value = _pose;
+    if (UsesRom()) {
+      reg.get<CRomModeAmplitudes>(_soft).value = _softState;
+      UpdateRomState();
+    } else {
+      reg.get<CDisplacementSlice<real, TimeStep::Current>>(_soft).value = _softState;
+    }
+    UpdateArticulatedFullPose(reg, _articulated);
+  }
+
+  void AddToState(int globalDof, real eps) override {
+    auto const [entity, localDof] = GetEntityAndLocalDofFromGlobalDof(globalDof);
+    auto& reg = GetRegistry();
+    if (entity == _soft) {
+      if (UsesRom()) {
+        reg.get<CRomModeAmplitudes>(_soft).value[localDof] += eps;
+        UpdateRomState();
+      } else {
+        reg.get<CDisplacementSlice<real, TimeStep::Current>>(_soft).value[localDof] += eps;
+      }
+      return;
+    }
+    AddToArticulatedPose(reg, _articulated, localDof, eps);
+  }
+
+ private:
+  bool UsesRom() const {
+    return _mode == Mode::Rom || _mode == Mode::BlendedRom;
+  }
+
+  bool UsesBlendedSurface() const {
+    return _mode == Mode::BlendedFom || _mode == Mode::BlendedRom;
+  }
+
+  void UpdateRomState() {
+    auto& reg = GetRegistry();
+    ecs::TryInvokeOnEntity(
+        &rom::linear::ResolveDisplacementAndJacobian</*kForceUseAllNodes = */ true>, reg, _soft);
+    ecs::TryInvokeOnEntity(&rom::UpdateCurrentRomVelocity, reg, _soft);
+  }
+
+  entt::entity _soft = entt::null;
+};
+
+TEST_P(MochiSoftSkinnedStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiSoftSkinnedStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class MochiRomSoftSkinnedStaticContact : public MochiSoftSkinnedStaticContact {
+ public:
+  MochiRomSoftSkinnedStaticContact() : MochiSoftSkinnedStaticContact(Mode::Rom) {}
+};
+
+TEST_IF_P(MOCHI_ENABLE_ROM_ACTORS, MochiRomSoftSkinnedStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiRomSoftSkinnedStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class MochiBlendedStaticContact : public MochiSoftSkinnedStaticContact {
+ public:
+  MochiBlendedStaticContact() : MochiSoftSkinnedStaticContact(Mode::BlendedFom) {}
+};
+
+TEST_P(MochiBlendedStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiBlendedStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class MochiRomBlendedStaticContact : public MochiSoftSkinnedStaticContact {
+ public:
+  MochiRomBlendedStaticContact() : MochiSoftSkinnedStaticContact(Mode::BlendedRom) {}
+};
+
+TEST_IF_P(MOCHI_ENABLE_ROM_ACTORS, MochiRomBlendedStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiRomBlendedStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 class MochiSoftStaticContact : public MochiContactTestBase {
@@ -1756,27 +2176,7 @@ class MochiArticulatedArticulatedContact : public MochiContactTestBase {
 
   void UpdateFullState(entt::entity art, entt::entity body) {
     auto& reg = GetRegistry();
-
-    auto const* joints = reg.get<CArticulatedBodyShape const>(art).shape->GetJointsData();
-    auto const& poseInfo = reg.get<CArticulatedJointPoseInfo const>(art);
-    auto const& parents = reg.get<CArticulatedParents const>(art);
-    auto const& restTransforms = reg.get<CArticulatedRestTransforms const>(art);
-    auto const& reducedPose = reg.get<CArticulatedReducedPose<TimeStep::Current>>(art).value;
-    auto const& worldFromRoot = reg.get<CRootTransform const>(art).worldFromLocal;
-    auto& jointTransforms = reg.get<CArticulatedJointTransforms<TimeStep::Current>>(art);
-    auto& linkTransforms = reg.get<CArticulatedLinkTransforms<TimeStep::Current>>(art);
-    auto& fullDofs = reg.get<CArticulatedFullPose>(art).value;
-    ComputeFullPose(
-        joints->jointTypes,
-        joints->jointAxes,
-        poseInfo,
-        parents,
-        restTransforms,
-        worldFromRoot,
-        reducedPose,
-        jointTransforms,
-        linkTransforms,
-        fullDofs);
+    UpdateArticulatedFullPose(reg, art);
 
     auto const& posFull = reg.get<CArticulatedFullPose const>(art).value;
     auto const& offset = reg.get<CDofOffset const>(body).poseOffset;
@@ -2119,9 +2519,9 @@ class ZeroDofSkinContact : public test::MochiSceneTestBase {
     for (int partitionId = 0; partitionId < isize(partitions); ++partitionId) {
       auto const& descriptors = partitions[partitionId].GetDofDescriptors();
       ASSERT_EQ(1, isize(descriptors));
-      auto const& dofs = std::get<DynamicArray<int>>(descriptors[0]);
-      hasEmpty |= dofs.empty();
-      hasNonempty |= !dofs.empty();
+      auto const& boneIds = std::get<DynamicArray<int>>(descriptors[0]);
+      hasEmpty |= boneIds.empty();
+      hasNonempty |= !boneIds.empty();
     }
     EXPECT_TRUE(hasEmpty);
     EXPECT_TRUE(hasNonempty);
@@ -2292,9 +2692,9 @@ TEST_F(ZeroDofSkinContact, MixedPartitionsPreserveAsyncSolverContactAndQueries) 
     if (result.Empty()) {
       continue;
     }
-    auto const& dofs =
+    auto const& boneIds =
         std::get<DynamicArray<int>>(partitions[result.collidingPartitionId].GetDofDescriptors()[0]);
-    if (dofs.empty()) {
+    if (boneIds.empty()) {
       EXPECT_EQ(result.sampleIndices.size(), result.forcePerUnitArea.size());
       for (Real3 const& force : result.forcePerUnitArea) {
         maxZeroDofForce = Max(maxZeroDofForce, Norm(force));

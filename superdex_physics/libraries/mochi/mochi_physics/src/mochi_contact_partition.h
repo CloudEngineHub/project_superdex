@@ -25,7 +25,7 @@
 namespace mochi {
 
 // Strategies for the creation of contact partitions
-enum class ContactPartitionStrategy { SkinningDofGroups, SoftActorId, SharedBones };
+enum class ContactPartitionStrategy { SoftActorId, SharedBones };
 
 // Creation of contact partitions from a collection of strategies
 std::vector<ContactPartition> InitializeContactPartitions(

@@ -255,7 +255,8 @@ static void UpdateDerivedStateSubpipeline(
 }
 
 void solver::UpdateJacobiansSubpipeline(
-    TaskSemaphore& sem,
+    TaskSemaphore& actorJacobianSem,
+    TaskSemaphore& softSkinnedJacobianSem,
     entt::registry& reg,
     GradTarget gradTarget,
     CIslandDescendants const& descendants) {
@@ -269,46 +270,53 @@ void solver::UpdateJacobiansSubpipeline(
   MOCHI_PROFILE_SCOPE();
 
   // Schedule a task if any of these actor types are in the island.
-  Schedule(sem, "UpdateJacobiansPipeline", [&reg, &descendants, gradTarget]() {
-    // Update Jacobians for articulated compounds, according to the gradient target.
-    auto updateArticulatedJacobiansFn =
-        articulated::compound::UpdateJacobiansStatePipeline<TimeStep::Current>;
-    if (gradTarget == GradTarget::Previous) {
-      updateArticulatedJacobiansFn =
-          articulated::compound::UpdateJacobiansStatePipeline<TimeStep::StageStart>;
-    } else if (gradTarget == GradTarget::CurrentInput) {
-      updateArticulatedJacobiansFn =
-          articulated::compound::UpdateJacobiansInputPipeline<TimeStep::Current>;
-    } else if (gradTarget == GradTarget::PreviousInput) {
-      updateArticulatedJacobiansFn =
-          articulated::compound::UpdateJacobiansInputPipeline<TimeStep::Previous>;
-    } else {
-      MOCHI_ASSERT_VERBOSE(gradTarget == GradTarget::Current, "Unexpected gradient target");
-    }
-    updateArticulatedJacobiansFn(reg, descendants.compoundActors);
-    {
-      MOCHI_PROFILE_SCOPE_N("InvokeForEach articulated::rigid::EntityUpdateJacobian");
-      // Update Jacobians for rigid actors in articulated compounds.
-      // This must be called after the update of Jacobians of articulated compounds.
-      ecs::InvokeForEach(
-          &articulated::rigid::EntityUpdateJacobian, reg, descendants.articulatedLinkActors);
-    }
+  Schedule(
+      actorJacobianSem,
+      "UpdateJacobiansPipeline",
+      [&reg, &descendants, &softSkinnedJacobianSem, gradTarget]() {
+        // Update Jacobians for articulated compounds, according to the gradient target.
+        auto updateArticulatedJacobiansFn =
+            articulated::compound::UpdateJacobiansStatePipeline<TimeStep::Current>;
+        if (gradTarget == GradTarget::Previous) {
+          updateArticulatedJacobiansFn =
+              articulated::compound::UpdateJacobiansStatePipeline<TimeStep::StageStart>;
+        } else if (gradTarget == GradTarget::CurrentInput) {
+          updateArticulatedJacobiansFn =
+              articulated::compound::UpdateJacobiansInputPipeline<TimeStep::Current>;
+        } else if (gradTarget == GradTarget::PreviousInput) {
+          updateArticulatedJacobiansFn =
+              articulated::compound::UpdateJacobiansInputPipeline<TimeStep::Previous>;
+        } else {
+          MOCHI_ASSERT_VERBOSE(gradTarget == GradTarget::Current, "Unexpected gradient target");
+        }
+        updateArticulatedJacobiansFn(reg, descendants.compoundActors);
+        {
+          MOCHI_PROFILE_SCOPE_N("InvokeForEach articulated::rigid::EntityUpdateJacobian");
+          // Update Jacobians for rigid actors in articulated compounds.
+          // This must be called after the update of Jacobians of articulated compounds.
+          ecs::InvokeForEach(
+              &articulated::rigid::EntityUpdateJacobian, reg, descendants.articulatedLinkActors);
+        }
 
-    // The remaining terms are only needed for GradTarget::Current, as they're not supported with
-    // differentiability
-    if (gradTarget == GradTarget::Current) {
-      // Update Jacobians for nested soft actors.
-      // This must be called after the update of Jacobians of articulated
-      skinned::UpdateJacobiansPipeline(reg, descendants.nestedSoftActors);
-      // Update Jacobians for blended actors.
-      // This must be called after the update of Jacobians of nested soft actors.
-      blended::UpdateJacobiansPipeline(reg, descendants.blendedActors);
-      // Update skinning Jacobians for rod contact skins.
-      ecs::InvokeForEach(&rod::ResolveContactSkinningJacobian, reg, descendants.rodActors);
-      // @TODO: ROMs use Jacobians also for velocity computations, so we can't move their Jacobian
-      // computation here yet.
-    }
-  });
+        // The remaining terms are only needed for GradTarget::Current, as they're not supported
+        // with differentiability
+        if (gradTarget == GradTarget::Current) {
+          // Update Jacobians for nested soft actors, which needs the Jacobians of articulated
+          // compounds. They are only used by skinned::EntityAssembleBody, not by contact, so they
+          // are signaled separately to take them out of the critical path of
+          // ContactJacobiansPipeline.
+          if (!descendants.nestedSoftActors.empty()) {
+            Schedule(
+                softSkinnedJacobianSem, "skinned::UpdateJacobiansPipeline", [&reg, &descendants]() {
+                  skinned::UpdateJacobiansPipeline(reg, descendants.nestedSoftActors);
+                });
+          }
+          // Update skinning Jacobians for rod contact skins.
+          ecs::InvokeForEach(&rod::ResolveContactSkinningJacobian, reg, descendants.rodActors);
+          // @TODO: ROMs use Jacobians also for velocity computations, so we can't move their
+          // Jacobian computation here yet.
+        }
+      });
 }
 
 void solver::UpdateDerivedStateBeforeAssembly(
@@ -324,11 +332,14 @@ void solver::UpdateDerivedStateBeforeAssembly(
     UpdateDerivedStateSubpipeline(reg, descendants);
   }
 
-  // Jacobians are needed for first-order or input terms.
-  TaskSemaphore updateJacobianSem;
+  // Jacobians are needed for first-order or input terms. The Jacobians of soft skinned actors are a
+  // special case, waited for separately, because they are not needed by contact.
+  TaskSemaphore actorJacobianSem;
+  TaskSemaphore softSkinnedJacobianSem;
   if (IsAssemblyNeeded(StateDependency::FirstOrder, true /*inputDependency*/, gradTarget)) {
     // Start update of Jacobians. Can run in parallel with most of CollisionDetectionPipeline().
-    solver::UpdateJacobiansSubpipeline(updateJacobianSem, reg, gradTarget, descendants);
+    solver::UpdateJacobiansSubpipeline(
+        actorJacobianSem, softSkinnedJacobianSem, reg, gradTarget, descendants);
   }
 
   // Collision detection is needed only for first-order terms.
@@ -336,12 +347,13 @@ void solver::UpdateDerivedStateBeforeAssembly(
     // Perform collision detection.
     CollisionDetectionPipeline<TimeStep::Current>(reg, descendants);
 
-    // Set up contact Jacobians. Also calls updateJacobianSem.Wait().
-    ContactJacobiansPipeline(reg, gradTarget, descendants, updateJacobianSem);
-  } else {
-    // Wait for any tasks scheduled by UpdateJacobiansSubpipeline.
-    updateJacobianSem.Wait();
+    // Set up contact Jacobians. Also calls actorJacobianSem.Wait().
+    ContactJacobiansPipeline(reg, gradTarget, descendants, actorJacobianSem);
   }
+
+  // Wait for any Jacobians not waited for yet, before the assembly.
+  actorJacobianSem.Wait();
+  softSkinnedJacobianSem.Wait();
 }
 
 static void ApplyBoundaryConditionsToProblem(
