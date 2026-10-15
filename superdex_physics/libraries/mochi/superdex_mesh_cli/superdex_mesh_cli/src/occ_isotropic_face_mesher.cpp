@@ -860,7 +860,7 @@ void IsotropicFaceMesher::Mesh(
     }
   }
 
-  Standard_Integer const numTriangles = static_cast<Standard_Integer>(validTriangles.size());
+  auto const numTriangles = static_cast<Standard_Integer>(validTriangles.size());
   if (numTriangles == 0) {
     // All slivers - degenerate face (e.g. hairline boolean artifact). Fall back.
     FallBack(dFace, parameters, range);
@@ -868,7 +868,7 @@ void IsotropicFaceMesher::Mesh(
   }
 
   Handle(Poly_Triangulation) triangulation = new Poly_Triangulation();
-  Standard_Integer const numNodes = static_cast<Standard_Integer>(nodes3d.size());
+  auto const numNodes = static_cast<Standard_Integer>(nodes3d.size());
   triangulation->ResizeNodes(numNodes, false);
   triangulation->AddUVNodes();
   triangulation->ResizeTriangles(numTriangles, false);
