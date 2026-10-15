@@ -741,7 +741,7 @@ static std::tuple<Scene*, Actor*> CreateScenePoseController(
 
   real offsetX = 0_r;
   auto* agent = AddNChainBody(
-      mochiContext, scene, "Articulated Agent", 90_r * kDegreesPerRadian, 0_r, true, offsetX);
+      mochiContext, scene, "Articulated Agent", -90_r * kRadiansPerDegree, 0_r, true, offsetX);
   AddPoseController(agent);
 
   return {scene, agent};

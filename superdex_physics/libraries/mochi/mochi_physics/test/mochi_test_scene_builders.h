@@ -728,9 +728,9 @@ inline std::tuple<Scene*, Actor*> CreateSceneActorTypes(
   AddShellDuck(scene, &offsetX);
   AddRod(scene, &offsetX);
   AddNChainBody(
-      mochiContext, scene, "Articulated Chain", 45_r * kDegreesPerRadian, 0.5_r, false, offsetX);
+      mochiContext, scene, "Articulated Chain", 45_r * kRadiansPerDegree, 0.5_r, false, offsetX);
   auto* agent = AddNChainBody(
-      mochiContext, scene, "Articulated Agent", 90_r * kDegreesPerRadian, 0_r, true, offsetX);
+      mochiContext, scene, "Articulated Agent", -90_r * kRadiansPerDegree, 0_r, true, offsetX);
   AddPoseController(agent);
   AddSoftAllegro(mochiContext, scene);
   // TODO: Add a ROM actor to the scene.
