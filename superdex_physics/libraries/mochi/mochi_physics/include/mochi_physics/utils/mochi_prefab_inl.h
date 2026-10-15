@@ -31,4 +31,22 @@ AddToScene(std::string_view prefabPath, std::string_view rootPath, Scene* scene,
   return AddToScene(prefabPath, rootPath, scene, PrefabParams{}, error);
 }
 
+// Convenience overloads of @ref ExportScene and @ref ExportActor that use default
+// @ref ExportParams. Declared in mochi_prefab.h.
+inline void ExportScene(
+    Scene const* scene,
+    std::string_view exportName,
+    std::string_view outputDir,
+    Error& error) {
+  ExportScene(scene, exportName, outputDir, ExportParams{}, error);
+}
+
+inline void ExportActor(
+    Actor const* actor,
+    std::string_view exportName,
+    std::string_view outputDir,
+    Error& error) {
+  ExportActor(actor, exportName, outputDir, ExportParams{}, error);
+}
+
 } // namespace mochi::prefab

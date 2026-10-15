@@ -487,7 +487,7 @@ static std::optional<ContactFilter> ExportContactFilter(
   // Directly iterate over disabled entity pairs
   for (auto const& [entityA, entityB] : contactTable.entitiesWithNoContact) {
     // Look up actor names — skip entries referencing actors not in the export
-    // (e.g. actors excluded via ExportSceneExcluding).
+    // (e.g. actors excluded via ExportParams::excludeActors).
     auto itA = exportedActorNames.find(entityA);
     auto itB = exportedActorNames.find(entityB);
     if (itA == exportedActorNames.end() || itB == exportedActorNames.end()) {
@@ -1050,30 +1050,23 @@ void prefab::ExportScene(
     Scene const* scene,
     std::string_view exportName,
     std::string_view outputDir,
-    Error& error) {
-  ExportSceneExcluding(scene, exportName, outputDir, {}, error);
-}
-
-void prefab::ExportSceneExcluding(
-    Scene const* scene,
-    std::string_view exportName,
-    std::string_view outputDir,
-    Span<ActorHandle const> excludeActors,
+    ExportParams const& params,
     Error& error) {
   MOCHI_ERROR_IF(scene == nullptr, error, "Scene must not be null.");
   MOCHI_ERROR_RETURN(error);
 
   // Build exclusion set for O(1) lookup.
-  std::unordered_set<ActorHandle> excludeSet(excludeActors.begin(), excludeActors.end());
+  std::unordered_set<ActorHandle> excludeSet(
+      params.excludeActors.begin(), params.excludeActors.end());
 
   // Nested link/soft actors are exported through their top-level parent, so a nested handle cannot
   // be excluded on its own.
-  for (auto handle : excludeActors) {
+  for (auto handle : params.excludeActors) {
     Actor const* actor = scene->GetActor(handle);
     MOCHI_ERROR_IF(
         actor != nullptr && (actor->IsNestedLinkActor() || actor->IsNestedSoftActor()),
         error,
-        "ExportSceneExcluding does not support nested actor handles. Pass the top-level "
+        "ExportParams::excludeActors does not support nested actor handles. Pass the top-level "
         "articulated or soft-skinned actor handle instead.");
     MOCHI_ERROR_RETURN(error);
   }
@@ -1302,6 +1295,7 @@ void prefab::ExportActor(
     Actor const* actor,
     std::string_view exportName,
     std::string_view outputDir,
+    [[maybe_unused]] ExportParams const& params,
     Error& error) {
   MOCHI_ERROR_IF(actor == nullptr, error, "Actor must not be null");
   MOCHI_ERROR_RETURN(error);

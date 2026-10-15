@@ -297,6 +297,9 @@ static_assert(std::is_same_v<decltype(&mochi::prefab::AddToSceneResult::constrai
 static_assert(std::is_same_v<decltype(static_cast<mochi::DynamicArray<mochi::Actor*> (mochi::prefab::AddToSceneResult::*)(mochi::ActorType) const>(&mochi::prefab::AddToSceneResult::Filter)), mochi::DynamicArray<mochi::Actor*> (mochi::prefab::AddToSceneResult::*)(mochi::ActorType) const>, "\n  ERROR: Function mochi::prefab::AddToSceneResult::Filter is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 static_assert(std::is_same_v<decltype(static_cast<mochi::DynamicArray<mochi::Constraint*> (mochi::prefab::AddToSceneResult::*)(mochi::ConstraintType) const>(&mochi::prefab::AddToSceneResult::Filter)), mochi::DynamicArray<mochi::Constraint*> (mochi::prefab::AddToSceneResult::*)(mochi::ConstraintType) const>, "\n  ERROR: Function mochi::prefab::AddToSceneResult::Filter is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
+// struct mochi::prefab::ExportParams
+static_assert(std::is_same_v<decltype(&mochi::prefab::ExportParams::excludeActors), mochi::DynamicArray<mochi::ActorHandle> mochi::prefab::ExportParams::*>, "\n  ERROR: Field mochi::prefab::ExportParams::excludeActors is out-of-sync with C++ definition.\n  Please check the field type, then run mochi_gen_py to regenerate this file.\n");
+
 // free function mochi::prefab::LoadFromFile
 static_assert(std::is_same_v<decltype(&mochi::prefab::LoadFromFile), mochi::prefab::ScenePrefab (*)(std::string_view, std::string_view, mochi::Context*, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::LoadFromFile is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
@@ -340,13 +343,16 @@ static_assert(std::is_same_v<decltype(&mochi::prefab::LoadShapes), void (*)(moch
 static_assert(std::is_same_v<decltype(&mochi::prefab::EnsureFullyLoaded), void (*)(mochi::prefab::ScenePrefab&, std::string_view, mochi::Context*, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::EnsureFullyLoaded is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
 // free function mochi::prefab::ExportScene
-static_assert(std::is_same_v<decltype(&mochi::prefab::ExportScene), void (*)(mochi::Scene const*, std::string_view, std::string_view, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(static_cast<void (*)(mochi::Scene const*, std::string_view, std::string_view, mochi::prefab::ExportParams const&, mochi::Error&)>(&mochi::prefab::ExportScene)), void (*)(mochi::Scene const*, std::string_view, std::string_view, mochi::prefab::ExportParams const&, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
-// free function mochi::prefab::ExportSceneExcluding
-static_assert(std::is_same_v<decltype(&mochi::prefab::ExportSceneExcluding), void (*)(mochi::Scene const*, std::string_view, std::string_view, mochi::Span<mochi::ActorHandle const>, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportSceneExcluding is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+// free function mochi::prefab::ExportScene
+static_assert(std::is_same_v<decltype(static_cast<void (*)(mochi::Scene const*, std::string_view, std::string_view, mochi::Error&)>(&mochi::prefab::ExportScene)), void (*)(mochi::Scene const*, std::string_view, std::string_view, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
 // free function mochi::prefab::ExportActor
-static_assert(std::is_same_v<decltype(&mochi::prefab::ExportActor), void (*)(mochi::Actor const*, std::string_view, std::string_view, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportActor is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+static_assert(std::is_same_v<decltype(static_cast<void (*)(mochi::Actor const*, std::string_view, std::string_view, mochi::prefab::ExportParams const&, mochi::Error&)>(&mochi::prefab::ExportActor)), void (*)(mochi::Actor const*, std::string_view, std::string_view, mochi::prefab::ExportParams const&, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportActor is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
+// free function mochi::prefab::ExportActor
+static_assert(std::is_same_v<decltype(static_cast<void (*)(mochi::Actor const*, std::string_view, std::string_view, mochi::Error&)>(&mochi::prefab::ExportActor)), void (*)(mochi::Actor const*, std::string_view, std::string_view, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ExportActor is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
 // enum mochi::experimental::ControlType
 static_assert(static_cast<int>(mochi::experimental::ControlType::SingleDof) == 0, "\n  ERROR: enum value mochi::experimental::ControlType::SingleDof is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");

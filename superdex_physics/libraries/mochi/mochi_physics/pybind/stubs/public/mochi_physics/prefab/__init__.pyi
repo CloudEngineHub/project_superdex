@@ -3065,6 +3065,38 @@ class AddToSceneResult:
             constraint list in the prefab (same size, same order).
         """
 
+class ExportParams:
+    """Options for :func:`~superdex.physics.prefab.export_scene` and
+    :func:`~superdex.physics.prefab.export_actor`.
+    """
+    @property
+    def exclude_actors(self) -> mochi_physics.DynamicArrayActorHandle:
+        """Handles of actors that :func:`~superdex.physics.prefab.export_scene` should
+        not
+        export.
+
+        Excluding an articulated actor also excludes all of its nested link actors.
+        Excluding a soft-skinned actor also excludes all of its nested link actors and
+        nested soft actors. Any contact filter or contact-pair parameter override
+        entries that reference excluded actors are dropped.
+
+        Note:
+            Nested link and nested soft actor handles are rejected. Pass the top-level
+            articulated or soft-skinned actor handle instead.
+
+        Note:
+            Ignored by :func:`~superdex.physics.prefab.export_actor`.
+        """
+    @exclude_actors.setter
+    def exclude_actors(self, value: mochi_physics.ArrayLikeActorHandle) -> None: ...
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(
+        self,
+        exclude_actors: mochi_physics.ArrayLikeActorHandle = ...,
+    ) -> None: ...
+
 def load_from_file(prefab_path: str, root_path: str) -> ScenePrefab:
     """Fully load a :class:`~superdex.physics.prefab.ScenePrefab` from a file,
     including all nested prefabs and shapes.
@@ -3552,7 +3584,13 @@ def ensure_fully_loaded(prefab: ScenePrefab, root_path: str) -> None:
         :func:`~superdex.physics.prefab.add_to_scene`
     """
 
-def export_scene(scene: mochi_physics.Scene, export_name: str, output_dir: str) -> None:
+@overload
+def export_scene(
+    scene: mochi_physics.Scene,
+    export_name: str,
+    output_dir: str,
+    params: ExportParams,
+) -> None:
     """Export a :class:`~superdex.physics.Scene` to a folder containing a prefab file
     and all generated mesh files.
 
@@ -3563,6 +3601,9 @@ def export_scene(scene: mochi_physics.Scene, export_name: str, output_dir: str) 
         output_dir (str): Directory where the export folder will be created. The
             subdirectories ``<outputDir>/<exportName>`` and
             ``<outputDir>/<exportName>/generated_assets`` are created automatically.
+        params (ExportParams): Export options, see
+            :class:`~superdex.physics.prefab.ExportParams`. Can optionally be
+            omitted in Python.
 
     Raises:
         :class:`~superdex.physics.Error`: If an error occurs.
@@ -3599,68 +3640,34 @@ def export_scene(scene: mochi_physics.Scene, export_name: str, output_dir: str) 
         exported prefab or re-enable the pair after adding the prefab to a scene.
 
     See Also:
-        :func:`~superdex.physics.prefab.export_scene_excluding`,
+        :class:`~superdex.physics.prefab.ExportParams`,
         :func:`~superdex.physics.prefab.export_actor`
     """
 
-def export_scene_excluding(
-    scene: mochi_physics.Scene,
-    export_name: str,
-    output_dir: str,
-    exclude_actors: mochi_physics.ArrayLikeActorHandle,
-) -> None:
-    """Export a :class:`~superdex.physics.Scene` to a folder containing a prefab file
-    and all generated mesh files, omitting a caller-provided set of actors.
+@overload
+def export_scene(scene: mochi_physics.Scene, export_name: str, output_dir: str) -> None:
+    """Overload of :func:`~superdex.physics.prefab.export_scene` that uses default
+    :class:`~superdex.physics.prefab.ExportParams`.
 
     Args:
         scene (Scene): The :class:`~superdex.physics.Scene` to export.
-        export_name (str): Name for the exported prefab. Used both for the export
-            subdirectory and for the prefab filename (``<exportName>.mochi_scene``).
-        output_dir (str): Directory where the export folder will be created. The
-            subdirectories ``<outputDir>/<exportName>`` and
-            ``<outputDir>/<exportName>/generated_assets`` are created automatically.
-        exclude_actors (ArrayLikeActorHandle): Handles of actors that should not be
-            exported. Excluding an articulated actor also excludes all of its nested
-            link actors. Excluding a soft-skinned actor also excludes all of its
-            nested link actors and nested soft actors. Any contact filter or
-            contact-pair parameter override entries that reference excluded actors
-            are dropped.
+        export_name (str): Name for the exported prefab.
+        output_dir (str): Directory where the export folder will be created.
 
     Raises:
         :class:`~superdex.physics.Error`: If an error occurs.
 
-    Note:
-        Generated mesh files (.mochi.h5) are written under generated_assets/ and
-        referenced from the prefab using "./generated_assets/" paths.
-
-    Note:
-        Exported actor names are made unique: when two actors share a name, later
-        ones receive a numeric suffix (e.g. "box", "box1"), so an exported name may
-        differ from the runtime name.
-
-    Warning:
-        Currently exports only rigid, soft, articulated, and soft-skinned actors.
-        Constraints, pose controllers, shell, rod actors, and implicit (non-mesh)
-        shapes are NOT exported.
-
-    Warning:
-        For articulated actors, current joint pose and joint velocities are NOT
-        exported.
-
-    Warning:
-        Scene export does not record explicit settings that enable contact between
-        actor pairs. If such a setting enables contact between adjacent links of an
-        articulated or soft-skinned actor, adding the exported prefab to a scene
-        applies automatic adjacent-link filtering and disables contact for that pair
-        again. To preserve this behavior, add an equivalent enabling entry to the
-        exported prefab or re-enable the pair after adding the prefab to a scene.
-
     See Also:
-        :func:`~superdex.physics.prefab.export_scene`,
-        :func:`~superdex.physics.prefab.export_actor`
+        :func:`~superdex.physics.prefab.export_scene`
     """
 
-def export_actor(actor: mochi_physics.Actor, export_name: str, output_dir: str) -> None:
+@overload
+def export_actor(
+    actor: mochi_physics.Actor,
+    export_name: str,
+    output_dir: str,
+    params: ExportParams,
+) -> None:
     """Export a single actor to a prefab file under
     ``outputDir/exportName/<exportName>.mochi_scene``.
 
@@ -3674,6 +3681,9 @@ def export_actor(actor: mochi_physics.Actor, export_name: str, output_dir: str) 
         output_dir (str): Parent directory for the export. The subdirectories
             ``<outputDir>/<exportName>`` and
             ``<outputDir>/<exportName>/generated_assets`` are created automatically.
+        params (ExportParams): Export options, see
+            :class:`~superdex.physics.prefab.ExportParams`. Can optionally be
+            omitted in Python.
 
     Raises:
         :class:`~superdex.physics.Error`: If an error occurs.
@@ -3705,6 +3715,24 @@ def export_actor(actor: mochi_physics.Actor, export_name: str, output_dir: str) 
         adding the prefab to a scene.
 
     See Also:
-        :func:`~superdex.physics.prefab.export_scene`,
-        :func:`~superdex.physics.prefab.export_scene_excluding`
+        :class:`~superdex.physics.prefab.ExportParams`,
+        :func:`~superdex.physics.prefab.export_scene`
+    """
+
+@overload
+def export_actor(actor: mochi_physics.Actor, export_name: str, output_dir: str) -> None:
+    """Overload of :func:`~superdex.physics.prefab.export_actor` that uses default
+    :class:`~superdex.physics.prefab.ExportParams`.
+
+    Args:
+        actor (Actor): The actor to export. Must not be None.
+        export_name (str): Label used for the actor's name, the export subdirectory,
+            and the prefab filename.
+        output_dir (str): Parent directory for the export.
+
+    Raises:
+        :class:`~superdex.physics.Error`: If an error occurs.
+
+    See Also:
+        :func:`~superdex.physics.prefab.export_actor`
     """

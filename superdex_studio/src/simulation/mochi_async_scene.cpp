@@ -492,14 +492,11 @@ void MochiAsyncScene::ExportPrefab(
   // safe, and keeps _groundPlaneActor single-threaded.
   _asyncScene->QueueCommand([&](mochi::Scene* scene) {
     // The ground plane is a studio convenience, never part of the asset.
-    mochi::ActorHandle const excluded = _groundPlaneActor;
-    mochi::prefab::ExportSceneExcluding(
-        scene,
-        exportName,
-        outputDir,
-        excluded.IsValid() ? mochi::MakeSingletonSpan(excluded)
-                           : mochi::Span<mochi::ActorHandle const>{},
-        error);
+    mochi::prefab::ExportParams params;
+    if (_groundPlaneActor.IsValid()) {
+      params.excludeActors.push_back(_groundPlaneActor);
+    }
+    mochi::prefab::ExportScene(scene, exportName, outputDir, params, error);
   });
   _asyncScene->WaitForQueuedCommands();
 }

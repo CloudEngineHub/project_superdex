@@ -376,3 +376,58 @@ class TestPrefab(MochiTestBase):
         )
         self.assertGreater(len(result.actors), 0)
         mochi.destroy_scene(scene)
+
+    @requires_internal_assets
+    def test_export_scene_exclude_actors(self):
+        """Verify export_scene with default params and with ExportParams(exclude_actors=...)."""
+        prefab_json = """{
+            "actors": {
+                "rigid": [
+                    {"name": "Keep", "shape": "cube/cube_minimal.mochi.json"},
+                    {"name": "Drop", "shape": "cube/cube_minimal.mochi.json"}
+                ]
+            }
+        }"""
+        prefab = mochi.prefab.load_from_json_string(prefab_json, assets_dir)
+        scene = mochi.create_scene("test_export_scene")
+        result = mochi.prefab.add_to_scene(prefab=prefab, scene=scene)
+        drop = next(a for a in result.actors if a.get_name() == "Drop")
+
+        def exported_rigid_names(output_dir, name):
+            path = os.path.join(output_dir, name, f"{name}.mochi_scene")
+            return sorted(
+                a.name for a in mochi.prefab.shallow_load_from_file(path).actors.rigid
+            )
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            mochi.prefab.export_scene(scene, "all", output_dir)
+            self.assertEqual(["Drop", "Keep"], exported_rigid_names(output_dir, "all"))
+
+            params = mochi.prefab.ExportParams(exclude_actors=[drop.get_handle()])
+            mochi.prefab.export_scene(scene, "excluded", output_dir, params)
+            self.assertEqual(["Keep"], exported_rigid_names(output_dir, "excluded"))
+
+        mochi.destroy_scene(scene)
+
+    @requires_internal_assets
+    def test_export_actor_with_and_without_params(self):
+        """Verify export_actor with default params and with ExportParams, which it ignores."""
+        prefab_json = """{
+            "actors": {
+                "rigid": [{"name": "Box", "shape": "cube/cube_minimal.mochi.json"}]
+            }
+        }"""
+        prefab = mochi.prefab.load_from_json_string(prefab_json, assets_dir)
+        scene = mochi.create_scene("test_export_actor")
+        actor = mochi.prefab.add_to_scene(prefab=prefab, scene=scene).actors[0]
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            mochi.prefab.export_actor(actor, "default", output_dir)
+            params = mochi.prefab.ExportParams(exclude_actors=[actor.get_handle()])
+            mochi.prefab.export_actor(actor, "with_params", output_dir, params)
+            for name in ("default", "with_params"):
+                path = os.path.join(output_dir, name, f"{name}.mochi_scene")
+                exported = mochi.prefab.shallow_load_from_file(path)
+                self.assertEqual(1, len(exported.actors.rigid))
+
+        mochi.destroy_scene(scene)

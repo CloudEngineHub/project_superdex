@@ -437,6 +437,16 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportActor_SingleRigid) {
       tempDir.Path(),
       prefabFile,
       "Single rigid actor");
+
+  // ExportActor ignores ExportParams::excludeActors, even when it lists the exported actor.
+  prefab::ExportParams exportParams;
+  exportParams.excludeActors.push_back(rigidActors[0]->GetHandle());
+  prefab::ExportActor(
+      rigidActors[0], "exported_with_params", tempDir.Path().string(), exportParams, ExpectOK{});
+  auto const withParams = prefab::ShallowLoadFromFile(
+      (tempDir.Path() / "exported_with_params" / "exported_with_params.mochi_scene").string(),
+      ExpectOK{});
+  EXPECT_EQ(withParams.actors.rigid.size(), 1);
 }
 
 TEST(PrefabExport, ExportActor_NullActorReportsError) {
@@ -1964,9 +1974,9 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ContactPairOverridesExcludeAndRou
   setOverride(actorB, actorC, 3_r);
 
   auto tempDir = CreateTempDirectory("contact_pair_override_exclusion", ExpectOK{});
-  DynamicArray<ActorHandle> excluded{actorB->GetHandle()};
-  prefab::ExportSceneExcluding(
-      scene, "pair_overrides", tempDir.Path().string(), excluded, ExpectOK{});
+  prefab::ExportParams exportParams;
+  exportParams.excludeActors.push_back(actorB->GetHandle());
+  prefab::ExportScene(scene, "pair_overrides", tempDir.Path().string(), exportParams, ExpectOK{});
   auto const prefabFile = tempDir.Path() / "pair_overrides" / "pair_overrides.mochi_scene";
   auto exported = prefab::ShallowLoadFromFile(prefabFile.string(), ExpectOK{});
   ASSERT_TRUE(exported.contactPairParamsOverrides.has_value());

@@ -391,17 +391,28 @@ LoadShapes(ScenePrefab& prefab, std::string_view rootPath, Context* context, Err
 MOCHI_API void
 EnsureFullyLoaded(ScenePrefab& prefab, std::string_view rootPath, Context* context, Error& error);
 
+struct ExportParams {
+  DynamicArray<ActorHandle> excludeActors{};
+};
+
+MOCHI_API void ExportScene(
+    Scene const* scene,
+    std::string_view exportName,
+    std::string_view outputDir,
+    ExportParams const& params,
+    Error& error);
+
 MOCHI_API void ExportScene(
     Scene const* scene,
     std::string_view exportName,
     std::string_view outputDir,
     Error& error);
 
-MOCHI_API void ExportSceneExcluding(
-    Scene const* scene,
+MOCHI_API void ExportActor(
+    Actor const* actor,
     std::string_view exportName,
     std::string_view outputDir,
-    Span<ActorHandle const> excludeActors,
+    ExportParams const& params,
     Error& error);
 
 MOCHI_API void ExportActor(
