@@ -316,7 +316,7 @@ TEST(RigidBodyUtils, EvalFiniteDifferenceRotationVelocity) {
   vel.SetOmega({1.1_r, -0.7_r, 0.8_r});
   vel.UpdateVSymIfDirty(dt);
 
-  // Large time-step approximate functions. The test fails.
+  // Large time-step approximate functions, whose round-trip error is O(|Rother - R|^2).
   test(EvalTimeSteppedRotation, EvalFiniteDifferenceRotationVelocity, dt, 3e-2_r);
 
   // Large time-step accurate functions

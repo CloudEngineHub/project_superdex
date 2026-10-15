@@ -355,11 +355,11 @@ MOCHI_ANY MOCHI_FORCE_INLINE V ToSimdDirection(V a);
 template <class V, MOCHI_CONCEPT(IsSimd<V>)>
 MOCHI_ANY MOCHI_FORCE_INLINE V Load(typename V::Scalar const* ptr);
 
-// Read N scalars from the specified address into a vector.
+// Read N scalars from the specified address into a vector. Lanes [N, V::kSize) are zero.
 template <int N, class V, MOCHI_CONCEPT(IsSimd<V>)>
 MOCHI_ANY MOCHI_FORCE_INLINE V Load(typename V::Scalar const* ptr);
 
-// Read n scalars from the specified address into a vector.
+// Read n scalars from the specified address into a vector. Lanes [n, V::kSize) are zero.
 // Prefer Load<N, V> if the number is a constexpr.
 template <class V, MOCHI_CONCEPT(IsSimd<V>)>
 MOCHI_ANY MOCHI_FORCE_INLINE V Load(typename V::Scalar const* ptr, int n);
@@ -371,7 +371,7 @@ MOCHI_ANY MOCHI_FORCE_INLINE V
 LoadIndexed(typename V::Scalar const* ptr, Simd<I, V::kSize> indices);
 
 // Load (kTupleCount * 3) values from memory. Deinterleave into 3 output vectors.
-// By default (kTupleCount == N).
+// By default (kTupleCount == N). Lanes [kTupleCount, N) are zero.
 //
 // If the memory order was:
 //    {x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3}
