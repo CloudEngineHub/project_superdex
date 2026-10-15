@@ -154,12 +154,20 @@ MOCHI_SPECIALIZE_COMPUTE_COLLISION_RESPONSE_RANGE(GradTarget::Previous);
 
 namespace {
 
+// HSumEach reduces several lane vectors together, in fewer instructions than separate HSum calls.
+// It sums all lanes, so partial batches, with padding lanes, use HSum.
+template <int kBatchSize>
+constexpr bool kUseHSumEach =
+    kBatchSize == BatchReal<kBatchSize>::kSize && kHasHSumEach<BatchReal<kBatchSize>>;
+
 // Sum over the lanes of a batch of 3-vectors or 3x3 matrices.
-// TODO: Explore reducing the 3 lane vectors together (e.g., fold to native width, transpose, then
-// vertical adds) instead of 3 separate HSum calls.
 template <int kBatchSize>
 MOCHI_FORCE_INLINE Vec4r SumLanes3(BatchReal3<kBatchSize> const& v) {
-  return {HSum<kBatchSize>(v[0]), HSum<kBatchSize>(v[1]), HSum<kBatchSize>(v[2]), 0_r};
+  if constexpr (kUseHSumEach<kBatchSize>) {
+    return HSumEach(v[0], v[1], v[2], BatchReal<kBatchSize>{});
+  } else {
+    return {HSum<kBatchSize>(v[0]), HSum<kBatchSize>(v[1]), HSum<kBatchSize>(v[2]), 0_r};
+  }
 }
 
 template <int kBatchSize>
@@ -170,13 +178,21 @@ MOCHI_FORCE_INLINE VMatrix3x3r SumLanes3x3(BatchReal3x3<kBatchSize> const& m) {
 // Sum over the lanes of a batch of symmetric 3x3 matrices, reading only the upper triangle.
 template <int kBatchSize>
 MOCHI_FORCE_INLINE VMatrix3x3r SumLanesSym3x3(BatchReal3x3<kBatchSize> const& m) {
-  real const m00 = HSum<kBatchSize>(m[0][0]);
-  real const m01 = HSum<kBatchSize>(m[0][1]);
-  real const m02 = HSum<kBatchSize>(m[0][2]);
-  real const m11 = HSum<kBatchSize>(m[1][1]);
-  real const m12 = HSum<kBatchSize>(m[1][2]);
-  real const m22 = HSum<kBatchSize>(m[2][2]);
-  return {Vec4r{m00, m01, m02, 0_r}, Vec4r{m01, m11, m12, 0_r}, Vec4r{m02, m12, m22, 0_r}};
+  if constexpr (kUseHSumEach<kBatchSize>) {
+    // Reducing the off-diagonal entries twice avoids the shuffles to build the rows from 6 sums.
+    return {
+        SumLanes3<kBatchSize>({m[0][0], m[0][1], m[0][2]}),
+        SumLanes3<kBatchSize>({m[0][1], m[1][1], m[1][2]}),
+        SumLanes3<kBatchSize>({m[0][2], m[1][2], m[2][2]})};
+  } else {
+    real const m00 = HSum<kBatchSize>(m[0][0]);
+    real const m01 = HSum<kBatchSize>(m[0][1]);
+    real const m02 = HSum<kBatchSize>(m[0][2]);
+    real const m11 = HSum<kBatchSize>(m[1][1]);
+    real const m12 = HSum<kBatchSize>(m[1][2]);
+    real const m22 = HSum<kBatchSize>(m[2][2]);
+    return {Vec4r{m00, m01, m02, 0_r}, Vec4r{m01, m11, m12, 0_r}, Vec4r{m02, m12, m22, 0_r}};
+  }
 }
 
 // S(r) m. The columns of S(r) m are r x (the columns of m).

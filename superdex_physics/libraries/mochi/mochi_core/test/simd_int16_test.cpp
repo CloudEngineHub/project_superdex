@@ -382,6 +382,11 @@ TEST(Vec16i, Reductions) {
   ExpectReductions(Load<Vec16i>(values.data()));
 }
 
+TEST(Vec16i, HSumEach) {
+  auto const a = Sequence<Vec16i>() + 1;
+  EXPECT_EQ((Vec4i{136, 1360, 13600, 136000}), HSumEach(a, 10 * a, 100 * a, 1000 * a));
+}
+
 TEST(Vec16i, TransposedIO) {
   std::array<int, 3 * Vec16i::kSize> tuples{};
   for (int i = 0; i < static_cast<int>(tuples.size()); ++i) {

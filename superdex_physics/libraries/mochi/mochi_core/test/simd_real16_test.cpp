@@ -441,6 +441,12 @@ TEST(Vec16r, Reductions) {
   ExpectReductions(Load<Vec16r>(values.data()));
 }
 
+TEST(Vec16r, HSumEach) {
+  auto const a = StaticCast<Vec16r>(Sequence<Vec16i>() + 1);
+  EXPECT_EQ(
+      (Vec4r{136_r, 1360_r, 13600_r, 136000_r}), HSumEach(a, 10_r * a, 100_r * a, 1000_r * a));
+}
+
 TEST(Vec16r, Reciprocal) {
   std::array<real, Vec16r::kSize> values{};
   for (int i = 0; i < Vec16r::kSize; ++i) {

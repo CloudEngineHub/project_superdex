@@ -730,6 +730,33 @@ MOCHI_SIMD_BENCHMARK_VEC4F(HSum, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC8F(HSum, Vec8f);
 
 /****************************************************************************************
+  HSumEach
+*/
+template <class V>
+static void HSumEach(benchmark::State& state) {
+  V a = {};
+  V b = {};
+  V c = {};
+  V d = {};
+  mochi::Simd<typename V::Scalar, 4> s = {};
+  for (auto x : state) {
+    benchmark::DoNotOptimize(a);
+    benchmark::DoNotOptimize(b);
+    benchmark::DoNotOptimize(c);
+    benchmark::DoNotOptimize(d);
+    s = mochi::HSumEach(a, b, c, d);
+    MOCHI_NO_DISCARD_IN_LOOP(s);
+  }
+  state.counters["FLOPs"] =
+      benchmark::Counter(state.iterations() * 4 * (V::kSize - 1), benchmark::Counter::kIsRate);
+  benchmark::DoNotOptimize(s);
+}
+MOCHI_SIMD_BENCHMARK_VEC4D(HSumEach, Vec4d);
+MOCHI_SIMD_BENCHMARK_VEC8D(HSumEach, Vec8d);
+MOCHI_SIMD_BENCHMARK_VEC4F(HSumEach, Vec4f);
+MOCHI_SIMD_BENCHMARK_VEC8F(HSumEach, Vec8f);
+
+/****************************************************************************************
   Exp
 */
 

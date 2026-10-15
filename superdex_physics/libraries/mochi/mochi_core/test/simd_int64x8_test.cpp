@@ -366,6 +366,13 @@ TEST(Vec8l, ReductionsAvx512) {
   ExpectReductions(Load<Vec8l>(values.data()));
 }
 
+TEST(Vec8l, HSumEach) {
+  auto const a = Vec8l{1, 2, 3, 4, 5, 6, 7, 8};
+  EXPECT_EQ(
+      (Vec4l{36, 360, 3600, 36000}),
+      HSumEach(a, int64_t{10} * a, int64_t{100} * a, int64_t{1000} * a));
+}
+
 TEST(Vec8l, TransposedIOAvx512) {
   std::array<int64_t, 3 * Vec8l::kSize> tuples{};
   for (int i = 0; i < static_cast<int>(tuples.size()); ++i) {

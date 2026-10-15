@@ -871,6 +871,11 @@ TEST(Vec8r, HSum) {
   EXPECT_NEAR_EQ(36_r, HSum(a));
 }
 
+TEST(Vec8r, HSumEach) {
+  auto const a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
+  EXPECT_EQ((Vec4r{36_r, 360_r, 3600_r, 36000_r}), HSumEach(a, 10_r * a, 100_r * a, 1000_r * a));
+}
+
 TEST(Vec8r, Dot) {
   auto a = Vec8r{1_r, 2_r, 3_r, 4_r, 5_r, 6_r, 7_r, 8_r};
   auto b = Vec8r{0.5_r, -2_r, 3_r, -0.25_r, 1.5_r, -1_r, 2_r, 0.125_r};

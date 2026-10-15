@@ -401,10 +401,19 @@ MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 2> HSumEach(Simd<T, 2> a, Simd<T, 2> b) {
   return Simd<T, 2>::HSumEach(a, b);
 }
 
-template <class T>
+template <class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 4>
-HSumEach(Simd<T, 4> a, Simd<T, 4> b, Simd<T, 4> c, Simd<T, 4> d) {
-  return Simd<T, 4>::HSumEach(a, b, c, d);
+HSumEach(Simd<T, N> a, Simd<T, N> b, Simd<T, N> c, Simd<T, N> d) {
+  static_assert(kHasHSumEach<Simd<T, N>>, "Unsupported N");
+  if constexpr (N == 4) {
+    return Simd<T, 4>::HSumEach(a, b, c, d);
+  } else {
+    return HSumEach(
+        GetHalf<0>(a) + GetHalf<1>(a),
+        GetHalf<0>(b) + GetHalf<1>(b),
+        GetHalf<0>(c) + GetHalf<1>(c),
+        GetHalf<0>(d) + GetHalf<1>(d));
+  }
 }
 
 template <int COUNT, class T, int N>

@@ -447,6 +447,11 @@ TEST(Vec8i, HSum) {
   EXPECT_EQ(36, HSum(a));
 }
 
+TEST(Vec8i, HSumEach) {
+  auto const a = Vec8i{1, 2, 3, 4, 5, 6, 7, 8};
+  EXPECT_EQ((Vec4i{36, 360, 3600, 36000}), HSumEach(a, 10 * a, 100 * a, 1000 * a));
+}
+
 TEST(Vec8i, Less) {
   auto a = Vec8i{1, 4, 5, 8, 9, 12, 13, 16};
   auto b = Vec8i{2, 3, 6, 7, 10, 11, 14, 15};

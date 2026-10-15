@@ -249,7 +249,7 @@ using Vec16r = Simd<real, 16>;
                 HMin | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
                HProd | x     |       | x     | x     |       |       | x     |       |       |       |       |        |        |        |        |
                 HSum | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
-            HSumEach | x     | x     | x     | x     | x     | x     |       |       |       |       |       |        |        |        |        |
+            HSumEach | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
          (V)IsFinite | x     |       | x     | x     |       |       | x     | x     |       |       |       | x      |        |        |        |
               IsTrue | x     | x     | x     | x     | x     | x     | x     | x     |       | x     | x     | x      |        | x      |        |
                 Lerp | x     |       | x     | x     |       |       | x     | x     |       |       |       | x      |        |        |        |
@@ -528,11 +528,17 @@ MOCHI_ANY MOCHI_FORCE_INLINE T HSum(Simd<T, N> a);
 template <class T>
 MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 2> HSumEach(Simd<T, 2> a, Simd<T, 2> b);
 
+/// @brief True if @ref HSumEach of four vectors of type V is supported.
+template <class V>
+inline constexpr bool kHasHSumEach = false;
+template <class T, int N>
+inline constexpr bool kHasHSumEach<Simd<T, N>> = N >= 4 && IsPowerOfTwo(N);
+
 /// @brief Returns {HSum(a), HSum(b), HSum(c), HSum(d)}. Native SIMD backends compute the four sums
-/// together, in fewer instructions than four @ref HSum calls.
-template <class T>
+/// together, in fewer instructions than four @ref HSum calls. Requires @ref kHasHSumEach.
+template <class T, int N>
 MOCHI_ANY MOCHI_FORCE_INLINE Simd<T, 4>
-HSumEach(Simd<T, 4> a, Simd<T, 4> b, Simd<T, 4> c, Simd<T, 4> d);
+HSumEach(Simd<T, N> a, Simd<T, N> b, Simd<T, N> c, Simd<T, N> d);
 
 // NOT FAST: Horizontal product of first COUNT elements of a vector. COUNT of -1 means "all".
 template <int COUNT = -1, class T, int N>
