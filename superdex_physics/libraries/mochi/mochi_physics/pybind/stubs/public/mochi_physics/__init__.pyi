@@ -1741,7 +1741,7 @@ class PreconditionerType:
     """Domain decomposition preconditioner, where each actor is a subdomain.
 
     Note:
-        The most appropriate preconditioner type is used for each actor.
+        By default, an appropriate preconditioner type is selected for each actor.
     """
     COLORED_SSOR: PreconditionerType
     """[Experimental] Colored symmetric successive over-relaxation (SSOR)

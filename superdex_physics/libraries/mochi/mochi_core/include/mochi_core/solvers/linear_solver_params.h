@@ -270,7 +270,7 @@ enum struct PreconditionerType {
   /**
    * @brief Domain decomposition preconditioner, where each actor is a subdomain.
    *
-   * @note The most appropriate preconditioner type is used for each actor.
+   * @note By default, an appropriate preconditioner type is selected for each actor.
    */
   PerActor,
 

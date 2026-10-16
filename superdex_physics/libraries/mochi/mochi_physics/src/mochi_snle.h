@@ -111,6 +111,19 @@ struct ActorSnle : BaseSnle {
     return _useReduced;
   }
 
+  [[nodiscard]] std::optional<PreconditionerType> GetActivePreconditionerType() const {
+    return _useReduced ? reducedPreconditionerType : fullPreconditionerType;
+  }
+
+  void SetActivePreconditionerType(PreconditionerType type) {
+    auto& preconditioner = _useReduced ? reducedPreconditioner : fullPreconditioner;
+    auto& preconditionerType = _useReduced ? reducedPreconditionerType : fullPreconditionerType;
+    preconditionerType = type;
+    if (preconditioner && preconditioner->GetType() != type) {
+      preconditioner.reset();
+    }
+  }
+
   void EnableReduced(AnyMatrix<real>&& reducedDRes) {
     reducedResidual.Reset(ColumnVector<real>::Zero(GetNumRows(reducedDRes)));
     reducedDResidual = std::move(reducedDRes);

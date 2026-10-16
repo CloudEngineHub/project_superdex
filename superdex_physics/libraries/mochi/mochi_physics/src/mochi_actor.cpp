@@ -28,6 +28,7 @@
 #include "mochi_ecs_utils.h"
 #include "mochi_group.h"
 #include "mochi_integration.h"
+#include "mochi_island.h"
 #include "mochi_point_cloud_contact.h"
 #include "mochi_query.h"
 #include "mochi_rigid.h"
@@ -35,6 +36,7 @@
 #include "mochi_shell.h"
 #include "mochi_simulation.h"
 #include "mochi_sleep.h"
+#include "mochi_snle.h"
 #include "mochi_soft.h"
 #include "mochi_soft_rom_systems.h"
 #include "mochi_soft_skinned.h"
@@ -2794,6 +2796,66 @@ void experimental::ConstrainNodesByPosition(
     }
   }
   actor->AddBoundaryConditionNodesWorld(nodesToFix, fixedDofValues, error);
+}
+
+void experimental::SetActorPreconditionerType(
+    Actor* actor,
+    PreconditionerType preconditionerType,
+    Error& error) {
+  MOCHI_ERROR_IF(!actor, error, "Invalid actor.");
+  MOCHI_ERROR_RETURN(error);
+  auto const* actorImpl = dynamic_cast<ActorInterfaceImpl const*>(actor);
+  MOCHI_ERROR_IF(!actorImpl, error, "Invalid actor implementation.");
+  MOCHI_ERROR_RETURN(error);
+
+  auto& reg = actorImpl->reg;
+  auto const e = actorImpl->e;
+  auto* actorSnle = reg.try_get<CActorSnle>(e);
+  MOCHI_ERROR_IF(
+      !actorSnle || !actorSnle->useInSolver,
+      error,
+      "This actor does not support per-actor preconditioner selection.");
+  MOCHI_ERROR_RETURN(error);
+
+  bool supported = false;
+  if (reg.any_of<TagRigidActor, TagArticulatedActor>(e)) {
+    supported = preconditionerType == PreconditionerType::Jacobi ||
+        preconditionerType == PreconditionerType::SymInverse;
+  } else if (reg.any_of<TagSoftActor>(e)) {
+    supported = preconditionerType == PreconditionerType::Jacobi ||
+        preconditionerType == PreconditionerType::SymInverse ||
+        (!actorSnle->UseReduced() &&
+         (preconditionerType == PreconditionerType::BlockJacobi ||
+          preconditionerType == PreconditionerType::AMG));
+  } else if (reg.any_of<TagShellActor>(e)) {
+    supported = preconditionerType == PreconditionerType::Jacobi ||
+        preconditionerType == PreconditionerType::BlockJacobi ||
+        preconditionerType == PreconditionerType::AMG ||
+        preconditionerType == PreconditionerType::SymInverse;
+  } else if (reg.any_of<TagRodActor>(e)) {
+    supported = preconditionerType == PreconditionerType::Jacobi ||
+        preconditionerType == PreconditionerType::BlockJacobi ||
+        preconditionerType == PreconditionerType::SymInverse ||
+        preconditionerType == PreconditionerType::ILU0;
+  }
+  MOCHI_ERROR_IF_NOT(
+      supported, error, "Requested preconditioner type is not supported for this actor.");
+  MOCHI_ERROR_RETURN(error);
+
+  if (actorSnle->GetActivePreconditionerType() == preconditionerType) {
+    return;
+  }
+
+  if (preconditionerType == PreconditionerType::SymInverse && reg.any_of<TagDeformableActor>(e) &&
+      !actorSnle->UseReduced()) {
+    MOCHI_LOG_WARNING(
+        "SymInverse preconditioner may be prohibitively expensive for full-order deformable actors.");
+  }
+
+  auto const& islandMember = reg.get<CIslandMemberInfo const>(e);
+  reg.get<CIslandPreconditioner>(islandMember.island).Reset();
+  actorSnle->SetActivePreconditionerType(preconditionerType);
+  actorImpl->WakeUp();
 }
 
 void experimental::EnableNewtonEulerInertia(Actor* actor, bool enable, Error& error) {

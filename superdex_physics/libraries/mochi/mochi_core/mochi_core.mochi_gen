@@ -1883,7 +1883,7 @@ enum PreconditionerType [from_mochi_core] {
   IC0,
   // @brief Domain decomposition preconditioner, where each actor is a subdomain.
   //
-  // @note The most appropriate preconditioner type is used for each actor.
+  // @note By default, an appropriate preconditioner type is selected for each actor.
   PerActor,
   // @brief [Experimental] Colored symmetric successive over-relaxation (SSOR) preconditioner.
   //

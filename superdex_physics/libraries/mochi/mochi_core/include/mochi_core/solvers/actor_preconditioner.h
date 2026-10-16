@@ -544,6 +544,8 @@ class ILU0ActorPrec : public ActorPreconditioner<T> {
   std::unique_ptr<krylov::RelaxedILUPrec<BlockSparseMatrix<T, kBlockSize>>> prec;
 };
 
+// experimental::SetActorPreconditionerType accepts a subset of the preconditioner types supported
+// here for the actor's matrix, never more. Revisit it whenever this support changes.
 template <typename T>
 auto CreateActorPreconditioner(
     PreconditionerType precType,

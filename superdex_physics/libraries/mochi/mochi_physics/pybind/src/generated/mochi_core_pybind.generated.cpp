@@ -249,7 +249,7 @@ void mochi::DeclareMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_
       .value("LDLT", mochi::PreconditionerType::LDLT, "Dense LDLt factorization without pivoting.\n    \n    Note:\n        Only valid for symmetric matrices.\n    \n    Note:\n        May be unstable for indefinite or ill-conditioned matrices.\n    \n    Note:\n        The iterative solver should converge in 1 iteration.")
       .value("ILU0", mochi::PreconditionerType::ILU0, "Incomplete LU factorization with zero fill-in.")
       .value("IC0", mochi::PreconditionerType::IC0, "Incomplete Cholesky factorization with zero fill-in.\n    \n    Note:\n        Only valid for symmetric positive-definite matrices.")
-      .value("PER_ACTOR", mochi::PreconditionerType::PerActor, "Domain decomposition preconditioner, where each actor is a subdomain.\n    \n    Note:\n        The most appropriate preconditioner type is used for each actor.")
+      .value("PER_ACTOR", mochi::PreconditionerType::PerActor, "Domain decomposition preconditioner, where each actor is a subdomain.\n    \n    Note:\n        By default, an appropriate preconditioner type is selected for each actor.")
       .value("COLORED_SSOR", mochi::PreconditionerType::ColoredSSOR, "[Experimental] Colored symmetric successive over-relaxation (SSOR)\n    preconditioner.\n    \n    Note:\n        Only valid for symmetric positive-definite matrices.\n    \n    Warning:\n        This is an experimental feature. It may be changed or removed in the future.\n        Use at your own risk.")
       .value("COUNT", mochi::PreconditionerType::Count, "Number of preconditioner type enum values.")
     ;

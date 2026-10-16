@@ -1014,6 +1014,9 @@ CalibrateNormalViscousDampingCoefficient(real cor, real impactVelocity, Error& e
     real impactVelocity,
     Error& error);
 
+MOCHI_API void
+SetActorPreconditionerType(Actor* actor, PreconditionerType preconditionerType, Error& error);
+
 // [Rigid and articulated] Enable/disable Newton-Euler inertia. Default is false.
 MOCHI_API void EnableNewtonEulerInertia(Actor* actor, bool enable, Error& error);
 

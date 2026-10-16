@@ -44,6 +44,31 @@ fn experimental::RestoreStateFromScene(Scene* sceneTo, Scene const* sceneFrom, S
 fn experimental::ApplyImprovedConvergenceSettings(Scene* scene) -> void [mochi_error];
 
 fn experimental::GetContactForceWorldBatch(Span<Actor const* const> actors, Span<Actor const* const> colliders) -> real [mochi_error, units("N")];
+
+// @brief Set the preconditioner type for an actor.
+//
+// @param[in] actor Actor to configure.
+// @param[in] preconditionerType Preconditioner to use.
+//
+// @warning @ref PreconditionerType::SymInverse may be prohibitively expensive for full-order
+// deformable actors.
+//
+// @note This setting takes effect only when the scene uses @ref PreconditionerType::PerActor.
+// @note For a ROM actor that switches between reduced and full order, the setting applies only to
+// its current representation. Each representation keeps its own setting across switches.
+// @note Supported combinations are:
+//
+// - Standalone dynamic rigid actors, ROM actors (including nested soft actors), and articulated
+//   actors with at least one degree of freedom: @ref PreconditionerType::Jacobi and @ref
+//   PreconditionerType::SymInverse.
+// - Full-order soft actors (including nested soft actors) and shell actors: @ref
+//   PreconditionerType::Jacobi, @ref PreconditionerType::BlockJacobi, @ref PreconditionerType::AMG,
+//   and @ref PreconditionerType::SymInverse.
+// - Rod actors: @ref PreconditionerType::Jacobi, @ref PreconditionerType::BlockJacobi, @ref
+//   PreconditionerType::ILU0, and @ref PreconditionerType::SymInverse.
+// @note All other actors are unsupported, including static actors and nested link actors.
+fn experimental::SetActorPreconditionerType(Actor* actor, PreconditionerType preconditionerType) -> void [mochi_error];
+
 fn experimental::EnableNewtonEulerInertia(Actor* actor, bool enable) -> void [mochi_error];
 fn experimental::IsNewtonEulerInertiaEnabled(Actor const* actor) -> bool [mochi_error];
 fn experimental::SetSoftMaterialParamsField(Actor* actor, SoftMaterialParams const& params, int elementIndex) -> void [mochi_error];

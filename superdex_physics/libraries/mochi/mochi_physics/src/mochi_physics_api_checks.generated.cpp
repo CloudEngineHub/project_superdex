@@ -492,6 +492,9 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::ApplyImprovedConverg
 // free function mochi::experimental::GetContactForceWorldBatch
 static_assert(std::is_same_v<decltype(&mochi::experimental::GetContactForceWorldBatch), mochi::real (*)(mochi::Span<mochi::Actor const* const>, mochi::Span<mochi::Actor const* const>, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::GetContactForceWorldBatch is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
+// free function mochi::experimental::SetActorPreconditionerType
+static_assert(std::is_same_v<decltype(&mochi::experimental::SetActorPreconditionerType), void (*)(mochi::Actor*, mochi::PreconditionerType, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::SetActorPreconditionerType is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
 // free function mochi::experimental::EnableNewtonEulerInertia
 static_assert(std::is_same_v<decltype(&mochi::experimental::EnableNewtonEulerInertia), void (*)(mochi::Actor*, bool, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::EnableNewtonEulerInertia is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 

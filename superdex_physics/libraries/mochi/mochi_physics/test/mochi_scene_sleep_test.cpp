@@ -957,6 +957,12 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
        {ActorType::Rigid, ActorType::Articulated},
        OnRepeat::WakeUp,
        [](WakeContext& c) { EnableNewtonEulerInertia(c.actor, true, test::ExpectOK{}); }},
+      {"SetActorPreconditionerType",
+       kAll,
+       OnRepeat::NoWake,
+       [](WakeContext& c) {
+         SetActorPreconditionerType(c.actor, PreconditionerType::Jacobi, test::ExpectOK{});
+       }},
       // Forces, boundary conditions and queries
       {"SetExternalForcesOnDofs", kWithExternalForces, OnRepeat::WakeUp, SetZeroExternalForce},
       {"ClearExternalForces",
