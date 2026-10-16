@@ -167,6 +167,15 @@ std::optional<std::filesystem::path> superdex::robotics::FindBotsRoot(
   return std::nullopt;
 }
 
+std::string superdex::robotics::GetBotSceneBaseRoot(
+    std::string_view sceneFilePath,
+    std::string_view baseScenePath) {
+  if (auto botsRoot = FindBotsRoot(std::filesystem::path(std::string(sceneFilePath)))) {
+    return botsRoot->string();
+  }
+  return std::filesystem::path(std::string(baseScenePath)).parent_path().string();
+}
+
 // Returns true if `name` is a valid tag identifier (the part after the leading '@').
 // Identifier rules: every character must be a letter, digit, or underscore.
 static bool IsValidTagIdentifier(std::string_view name) {

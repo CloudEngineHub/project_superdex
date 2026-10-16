@@ -31,6 +31,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace superdex::robotics {
 
@@ -216,6 +217,20 @@ struct ParsedRootFile {
  */
 [[nodiscard]] MOCHI_API std::optional<std::filesystem::path> FindBotsRoot(
     std::filesystem::path const& startPath);
+
+/**
+ * @brief Root that a bot scene's base-scene prefab resolves its non-`./`, non-absolute references
+ * (nested prefabs, shapes, render models) against: the scene file's `.superdex_root` directory,
+ * else the base scene's own directory.
+ *
+ * @param[in] sceneFilePath The `.mochi_bot_scene` file. For an archive, its extracted target.
+ * @param[in] baseScenePath Absolute path of the scene's base-scene prefab.
+ *
+ * @return The root directory.
+ */
+[[nodiscard]] MOCHI_API std::string GetBotSceneBaseRoot(
+    std::string_view sceneFilePath,
+    std::string_view baseScenePath);
 
 /**
  * @brief Parse a `.superdex_root` JSON file into its tag table.

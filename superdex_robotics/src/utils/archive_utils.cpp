@@ -739,8 +739,12 @@ BotArchiveMetadata superdex::robotics::ReadBotArchiveMetadata(
 // ---------------------------------------------------------------------------
 
 #if SUPERDEXROBOTICS_WITH_BOT_SCENE
+/* Collect `scenePath` and everything it references, resolving each reference exactly as
+ * prefab::AddToScene will when the scene loads: `./` from the referencing prefab's directory,
+ * absolute as-is, anything else from `rootPath` (shared by the whole nested tree). */
 static void CollectScenePrefabDependencies(
     std::filesystem::path const& scenePath,
+    std::string const& rootPath,
     std::set<std::filesystem::path>& collectedFiles,
     Error& error) {
   MOCHI_ERROR_RETURN(error);
@@ -751,14 +755,18 @@ static void CollectScenePrefabDependencies(
   }
   auto prefab = mochi::prefab::ShallowLoadFromFile(canonical.generic_string(), error);
   MOCHI_ERROR_RETURN(error);
-  auto const parentDir = canonical.parent_path();
-  // Helper: resolve a path relative to the scene file's directory and collect it.
+  auto const prefabFile = canonical.generic_string();
+  auto const Resolve = [&](DynamicString const& asset) {
+    return NormalizeBotPath(
+        std::string(
+            mochi::prefab::GetPrefabFullPath(
+                std::string_view(asset.c_str(), asset.size()), rootPath, prefabFile)));
+  };
   auto const CollectAsset = [&](DynamicString const& asset) {
     if (asset.empty()) {
       return;
     }
-    auto const resolved = NormalizeBotPath(parentDir / asset.c_str());
-    collectedFiles.insert(resolved);
+    collectedFiles.insert(Resolve(asset));
   };
   // Rigid actors.
   for (auto const& actor : prefab.actors.rigid) {
@@ -793,8 +801,7 @@ static void CollectScenePrefabDependencies(
   // Nested prefabs.
   for (auto const& nested : prefab.prefabs) {
     if (!nested.path.empty()) {
-      auto const nestedPath = NormalizeBotPath(parentDir / nested.path.c_str());
-      CollectScenePrefabDependencies(nestedPath, collectedFiles, error);
+      CollectScenePrefabDependencies(Resolve(nested.path), rootPath, collectedFiles, error);
       MOCHI_ERROR_RETURN(error);
     }
   }
@@ -804,7 +811,10 @@ std::set<std::filesystem::path> superdex::robotics::CollectPrefabFiles(
     std::filesystem::path const& prefabPath,
     Error& error) {
   std::set<std::filesystem::path> files;
-  CollectScenePrefabDependencies(prefabPath, files, error);
+  // A prefab collected on its own is rooted at its own directory, the same way
+  // BotScene::SpawnPrefabInstance roots a spawnable.
+  auto const canonical = std::filesystem::weakly_canonical(prefabPath);
+  CollectScenePrefabDependencies(canonical, canonical.parent_path().generic_string(), files, error);
   if (!error.IsOK()) {
     files.clear();
   }
@@ -912,21 +922,27 @@ void superdex::robotics::ArchiveBotScene(ArchiveParams const& params, Error& err
   // 1. The .mochi_bot_scene file itself.
   collectedFiles.insert(sceneCanonical);
 
-  // 2. Base scene and its transitive shape/prefab dependencies.
+  // 2. Base scene and its transitive shape/prefab dependencies, resolved against the same root
+  //    BotScene loads them with.
   if (!prefab.scene.baseScene.empty()) {
     auto const baseScenePath = NormalizeBotPath(std::string(prefab.scene.baseScene));
-    CollectScenePrefabDependencies(baseScenePath, collectedFiles, error);
+    auto const baseRoot = GetBotSceneBaseRoot(
+        sceneCanonical.generic_string(),
+        std::string_view(prefab.scene.baseScene.c_str(), prefab.scene.baseScene.size()));
+    CollectScenePrefabDependencies(baseScenePath, baseRoot, collectedFiles, error);
     MOCHI_ERROR_RETURN(error);
   }
 
-  // 3. Spawnable prefab dependencies.
+  // 3. Spawnable prefab dependencies. BotScene::SpawnPrefabInstance roots each spawnable at its
+  //    own directory.
   for (auto const& spawnPrefab : prefab.scene.spawnablePrefabs) {
     auto const spawnPath = NormalizeBotPath(std::string(spawnPrefab.path));
     auto const spawnPathString = spawnPath.generic_string();
     if (IsBotArchivePath(spawnPathString)) {
       collectedFiles.insert(spawnPath);
     } else {
-      CollectScenePrefabDependencies(spawnPath, collectedFiles, error);
+      CollectScenePrefabDependencies(
+          spawnPath, spawnPath.parent_path().string(), collectedFiles, error);
       MOCHI_ERROR_RETURN(error);
     }
   }

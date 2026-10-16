@@ -213,6 +213,10 @@ MOCHI_API void ArchiveBotScene(ArchiveParams const& params, superdex::Error& err
  * models, flow files, and nested prefabs, transitively -- as canonical absolute paths. These are
  * the files @ref ArchiveBotScene archives for a base scene or spawnable prefab.
  *
+ * References resolve exactly as prefab::AddToScene resolves them when the prefab loads: `./` from
+ * the referencing prefab's directory, absolute as-is, anything else from @p prefabPath's own
+ * directory.
+ *
  * @param[in] prefabPath The .mochi_scene or .mochi_prefab file.
  * @param[in,out] error Error status. Check @ref Error::IsOK for success.
  * @return The prefab file and its dependencies, or an empty set on failure. */
