@@ -177,6 +177,10 @@ class _ScriptedClient:
             self.release.wait(timeout=10)
         return [f"ok {command}" for command in commands]
 
+    def request(self, command: str) -> str:
+        self.batches.append([command])
+        return f"ok {command}"
+
 
 class TestUnrealCVClientNeverResends(unittest.TestCase):
     def _client(self) -> UnrealCVClient:
@@ -214,6 +218,118 @@ class TestUnrealCVClientNeverResends(unittest.TestCase):
         # Only the caller's new request reaches the new connection.
         self.assertEqual([["vget /a"]], fresh.batches)
         self.assertEqual([["vset /actor/x 1"]], self.hung.batches)
+
+
+class TestUnrealCVClientDeferredVsets(unittest.TestCase):
+    def _client(self) -> tuple[UnrealCVClient, _ScriptedClient]:
+        client = UnrealCVClient(request_timeout=None)
+        ue = _ScriptedClient(answers=True)
+        client._client = cast(Any, ue)
+        client._connected = True
+        return client, ue
+
+    def _reset(self, client: UnrealCVClient) -> list[str | None]:
+        replies = []
+        replies += client._request_batch(["vset /object/a/hide", "vset /object/b/show"])
+        replies += client._request_batch(["vset /object/c/rgba 1 0 0 1"])
+        replies += client._request_batch(["vget /object/d/location"])
+        replies += client._request_batch(["vset /camera/1/local_location 1 2 3"])
+        return replies
+
+    def test_vsets_go_in_one_batch_in_the_order_they_were_made(self) -> None:
+        plain, plain_ue = self._client()
+        self._reset(plain)
+        deferred, deferred_ue = self._client()
+
+        with deferred.defer_vsets():
+            replies = self._reset(deferred)
+
+        self.assertEqual(
+            [
+                [
+                    "vset /object/a/hide",
+                    "vset /object/b/show",
+                    "vset /object/c/rgba 1 0 0 1",
+                ],
+                ["vget /object/d/location"],
+                ["vset /camera/1/local_location 1 2 3"],
+            ],
+            deferred_ue.batches,
+        )
+        # UE runs the same commands in the same order as without deferring.
+        self.assertEqual(
+            [c for batch in plain_ue.batches for c in batch],
+            [c for batch in deferred_ue.batches for c in batch],
+        )
+        self.assertEqual(
+            ["ok", "ok", "ok", "ok vget /object/d/location", "ok"], replies
+        )
+
+    def test_a_single_request_sends_the_held_vsets_first(self) -> None:
+        client, ue = self._client()
+
+        with client.defer_vsets():
+            client._request_batch(["vset /object/a/hide"])
+            client._request("vset /scene/reset 7")
+
+        self.assertEqual([["vset /object/a/hide"], ["vset /scene/reset 7"]], ue.batches)
+
+    def test_held_failures_are_logged_once_per_target(self) -> None:
+        client, ue = self._client()
+
+        def fail(commands: list[str]) -> list[str]:
+            ue.batches.append(commands)
+            return ["error Can not find object"] * len(commands)
+
+        with (
+            patch.object(ue, "request_batch", fail),
+            self.assertLogs(level="WARNING") as logs,
+        ):
+            for _ in range(2):
+                with client.defer_vsets():
+                    client._request_batch(["vset /object/absent/hide"])
+
+        self.assertEqual(2, len(ue.batches))
+        self.assertEqual(1, sum("absent" in line for line in logs.output))
+
+    def test_a_reconnect_reports_a_failing_target_again(self) -> None:
+        client, ue = self._client()
+
+        def fail(commands: list[str]) -> list[str]:
+            return ["error Can not find object"] * len(commands)
+
+        with (
+            patch.object(ue, "request_batch", fail),
+            self.assertLogs(level="WARNING") as logs,
+        ):
+            with client.defer_vsets():
+                client._request_batch(["vset /object/absent/hide"])
+            with (
+                patch("unrealcv.Client", return_value=ue),
+                patch.object(client, "connect", return_value=True),
+            ):
+                client.reconnect()
+            with client.defer_vsets():
+                client._request_batch(["vset /object/absent/hide"])
+
+        self.assertEqual(2, sum("absent" in line for line in logs.output))
+
+    def test_unanswered_held_commands_are_logged_as_failed(self) -> None:
+        for answers, unanswered in ((None, ["a", "b"]), (["ok"], ["b"])):
+            client, ue = self._client()
+            with (
+                self.subTest(answers=answers),
+                patch.object(ue, "request_batch", return_value=answers),
+                self.assertLogs(level="WARNING") as logs,
+            ):
+                with client.defer_vsets():
+                    client._request_batch(
+                        ["vset /object/a/hide", "vset /object/b/hide"]
+                    )
+            failed = [
+                n for n in ("a", "b") if any(f"/{n}/" in line for line in logs.output)
+            ]
+            self.assertEqual(unanswered, failed)
 
 
 class TestUnrealCVClientCallWorker(unittest.TestCase):

@@ -28,7 +28,8 @@ import queue
 import socket
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
@@ -195,6 +196,11 @@ class UnrealCVClient:
         self._cropped_camera_ids: set[int] = set()
         self._hidden_bone_camera_ids: set[int] = set()
 
+        # vset commands held by defer_vsets() until one batch sends them all; None
+        # when not deferring.
+        self._deferred_vsets: list[str] | None = None
+        self._reported_deferred_failures: set[str] = set()
+
         # Create the unrealcv client
         self._client = unrealcv.Client((host, port))
 
@@ -259,6 +265,8 @@ class UnrealCVClient:
 
         if self._connected:
             self._mark_disconnected()
+        # A fresh connection reports each failing target again.
+        self._reported_deferred_failures.clear()
         self._client = unrealcv.Client((self._host, self._port))
         return self.connect(resolve_cameras=False)
 
@@ -390,6 +398,7 @@ class UnrealCVClient:
         Returns:
             The response string, or None if the request failed.
         """
+        self._flush_deferred_vsets()
         with self._request_lock:
             # Checked under the lock: a request that failed while this one waited
             # has retired the client.
@@ -408,7 +417,67 @@ class UnrealCVClient:
                 self._mark_disconnected()
                 return None
 
-    def _request_batch(  # noqa: C901
+    @contextmanager
+    def defer_vsets(self) -> Iterator[None]:
+        """Send every ``vset`` batch made inside as one batch, when the block ends.
+
+        A batch of only ``vset`` commands is held and answered ``ok`` at once; any
+        other request first sends the held commands, so UE runs every command in
+        the order it was made. The held batch's failures are logged when it is sent,
+        once per command target per connection. For a reset's scene randomization, which makes many
+        small batches, each otherwise a round trip to a renderer busy with other
+        worlds.
+        """
+        if self._deferred_vsets is not None:
+            yield
+            return
+        self._deferred_vsets = []
+        try:
+            yield
+        finally:
+            self._flush_deferred_vsets()
+            self._deferred_vsets = None
+
+    def _flush_deferred_vsets(self) -> None:
+        if not self._deferred_vsets:
+            return
+        commands, self._deferred_vsets = self._deferred_vsets, []
+        result = self._send_batch(commands)
+        replies = list((result[0] if isinstance(result, tuple) else result) or [])
+        # _send_batch returns one reply per command, in command order, on every path (failures are
+        # None), so a short list can only be an unanswered tail; each missing reply counts as failed.
+        replies += [None] * (len(commands) - len(replies))
+        for command, reply in zip(commands, replies):
+            if isinstance(reply, str) and reply.lower() == "ok":
+                continue
+            parts = command.split()
+            target = parts[1] if len(parts) > 1 else command
+            if target in self._reported_deferred_failures:
+                continue
+            # Once per target per connection (reconnect() clears it): a missing actor otherwise warns on every reset.
+            self._reported_deferred_failures.add(target)
+            logger.warning(
+                "Deferred UnrealCV command failed (reported once per target): %s -> %s",
+                command,
+                reply,
+            )
+
+    def _request_batch(
+        self, commands: list[str], use_async: bool = False, profile: bool = False
+    ) -> list[str | None] | tuple[list[str | None], dict]:
+        """Send ``commands`` in one batch (see :meth:`_send_batch`), or hold them
+        inside :meth:`defer_vsets`."""
+        if self._deferred_vsets is not None and not use_async:
+            if commands and all(c.startswith("vset ") for c in commands):
+                self._deferred_vsets.extend(commands)
+                # Callers here never act on a vset reply; a request whose reply matters goes
+                # through _request(), which sends the held commands first and returns UE's answer.
+                held: list[str | None] = ["ok"] * len(commands)
+                return (held, {}) if profile else held
+            self._flush_deferred_vsets()
+        return self._send_batch(commands, use_async=use_async, profile=profile)
+
+    def _send_batch(  # noqa: C901
         self, commands: list[str], use_async: bool = False, profile: bool = False
     ) -> list[str | None] | tuple[list[str | None], dict]:
         """
