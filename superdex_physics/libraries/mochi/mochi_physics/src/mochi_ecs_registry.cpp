@@ -19,6 +19,7 @@
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/dynamic_array.h>
 
+#include <atomic>
 #include <unordered_map>
 
 #define MOCHI_USE_GNU_NAME_DEMANGLING                                          \
@@ -50,19 +51,39 @@ static std::string DemangleTypeName(char const* mangledName) {
 }
 #endif
 
+// Return the demangled type name that RTTI reports.
+static std::string GetRttiTypeName(std::type_info const& stdInfo) {
+#if MOCHI_USE_GNU_NAME_DEMANGLING
+  // std::type_info::name() returns a mangled string on this platform.
+  return DemangleTypeName(stdInfo.name());
+#elif MOCHI_PLATFORM_WINDOWS
+  // On Windows, std::type_info::name() returns a string that has already been demangled,
+  // but it may be prefixed with "struct" or "class", which we choose to omit.
+  std::string typeName = stdInfo.name();
+  if (typeName.starts_with("struct ")) {
+    typeName = typeName.substr(7);
+  } else if (typeName.starts_with("class ")) {
+    typeName = typeName.substr(6);
+  }
+  return typeName;
+#else
+#error TODO: Return a demangled type name for this compiler/platform combination.
+#endif
+}
+
 // NOTE: If we had a wrapper for entt::registry, then we could extend its features.
 // Instead, this file adds features and data is stored in this global context component.
 namespace {
 struct CComponentMetadata {
   CComponentMetadata() = default;
   ~CComponentMetadata() = default;
-  MOCHI_DECLARE_MOVE_ONLY(CComponentMetadata);
+  MOCHI_DECLARE_NO_COPY_NO_MOVE(CComponentMetadata);
 
   // Set to true by FinalizeComponentRegistration
   bool isFinal = false;
 
   // Used to prevent logging spam
-  mutable bool hasWarned = false;
+  mutable std::atomic<bool> hasWarned = false;
 
   // Number of unregistered types when FinalizeComponentRegistration was called (ideally zero).
   int numComponentTypesWhenFinalized = 0;
@@ -152,21 +173,7 @@ void ecs::detail::RegisterComponentImpl(
     typeName = reflectionInfo->_nameWithNamespace;
   } else {
     // Fall back on the name that RTTI reports (compiler-specific string).
-#if MOCHI_USE_GNU_NAME_DEMANGLING
-    // std::type_info::name() returns a mangled string on this platform.
-    typeName = DemangleTypeName(stdInfo.name());
-#elif MOCHI_PLATFORM_WINDOWS
-    // On Windows, std::type_info::name() returns a string that has already been demangled,
-    // but it may be prefixed with "struct" or "class", which we choose to omit.
-    typeName = stdInfo.name();
-    if (typeName.starts_with("struct ")) {
-      typeName = typeName.substr(7);
-    } else if (typeName.starts_with("class ")) {
-      typeName = typeName.substr(6);
-    }
-#else
-#error TODO: Initialize typeName with a demangled string for this compiler/platform combination.
-#endif
+    typeName = GetRttiTypeName(stdInfo);
   }
 
   // Append to allComponents
@@ -248,8 +255,7 @@ void ecs::FinalizeComponentRegistration(entt::registry& reg) {
   }
 }
 
-void ecs::DetectUnregisteredComponents([[maybe_unused]] entt::registry const& reg) {
-#if MOCHI_ASSERT_VERBOSE_ENABLED
+void ecs::DetectUnregisteredComponents(entt::registry const& reg) {
   auto const& metadata = GetComponentMetadata(reg);
   if (!metadata.hasWarned) {
     int numTypes = 0;
@@ -258,7 +264,7 @@ void ecs::DetectUnregisteredComponents([[maybe_unused]] entt::registry const& re
     }
 
     int numTypesAddedAfterFinalize = numTypes - metadata.numComponentTypesWhenFinalized;
-    if (numTypesAddedAfterFinalize != 0) {
+    if (numTypesAddedAfterFinalize != 0 && !metadata.hasWarned.exchange(true)) {
       MOCHI_LOG_WARNING(
           "%d unregistered ECS component types were used with the entt::registry for the first time after "
           "mochi::ecs::FinalizeComponentRegistration was called! Unfortunately this code cannot determine the "
@@ -266,10 +272,24 @@ void ecs::DetectUnregisteredComponents([[maybe_unused]] entt::registry const& re
           "a call to mochi::ecs::RegisterComponent in the appropriate file's InitializeOnce method. If you "
           "can't figure out what component type it was, then the instructions in D84765137 should help.",
           numTypesAddedAfterFinalize);
-      metadata.hasWarned = true;
     }
   }
-#endif // MOCHI_ASSERT_VERBOSE_ENABLED
+}
+
+void ecs::detail::DetectUnregisteredComponentImpl(
+    entt::registry const& reg,
+    entt::type_info const& enttInfo,
+    std::type_info const& stdInfo) {
+  auto const* metadata = reg.try_ctx<CComponentMetadata>();
+  if (metadata && metadata->isFinal && !metadata->enttTypeToIndex.contains(enttInfo.hash()) &&
+      !metadata->hasWarned.exchange(true)) {
+    // The name comes from RTTI because ENTT_STANDARD_CPP leaves EnTT's type names empty.
+    MOCHI_LOG_WARNING(
+        "Unregistered ECS component type %s was used after mochi::ecs::FinalizeComponentRegistration "
+        "was called! Please register it by adding a call to mochi::ecs::RegisterComponent in the "
+        "appropriate file's InitializeOnce method.",
+        GetRttiTypeName(stdInfo).c_str());
+  }
 }
 
 Span<ComponentTypeInfo const> ecs::GetAllComponentTypes(entt::registry const& reg) {

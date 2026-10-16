@@ -139,11 +139,24 @@ void RegisterComponent(entt::registry& reg);
 void FinalizeComponentRegistration(entt::registry& reg);
 
 /**
- * @brief Call this periodically after FinalizeComponentRegistration to ensure that every
- * component type was correctly registered before it was used.
- * @see RegisterComponent, FinalizeComponentRegistration
+ * @brief Call this periodically after FinalizeComponentRegistration to warn if component types that
+ * were not registered got a pool after it, e.g. by being added to an entity.
+ * @see RegisterComponent, FinalizeComponentRegistration, DetectUnregisteredComponent
  */
 void DetectUnregisteredComponents(entt::registry const& reg);
+
+/**
+ * @brief Call this when a component type is used after FinalizeComponentRegistration, to warn by
+ * name if the type was not registered. Unlike DetectUnregisteredComponents, which only notices
+ * types that got a pool, it also catches uses that create none. Does nothing until
+ * FinalizeComponentRegistration has been called on the registry.
+ * @note It shares the single warning per registry of DetectUnregisteredComponents. It may be called
+ * from several threads at once.
+ * @tparam ComponentT - The component type.
+ * @see RegisterComponent, FinalizeComponentRegistration, DetectUnregisteredComponents
+ */
+template <class ComponentT>
+void DetectUnregisteredComponent(entt::registry const& reg);
 
 /**
  * @brief Return information about every component type that has been registered.

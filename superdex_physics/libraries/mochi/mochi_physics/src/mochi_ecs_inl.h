@@ -1350,6 +1350,16 @@ MOCHI_FORCE_INLINE PoolT<T>& FindPool(entt::registry& reg) {
   return const_cast<PoolT<T>&>(std::as_const(reg).storage<std::remove_const_t<T>>());
 }
 
+// In debug builds, warns by name if one of the given components isn't registered. The views below
+// call it for all of their components before they look up any pool, so it doesn't depend on which
+// pools exist or on where a check stops.
+template <typename... T>
+MOCHI_FORCE_INLINE void WarnIfUnregistered([[maybe_unused]] entt::registry const& reg) {
+#if MOCHI_DEBUG
+  (DetectUnregisteredComponent<T>(reg), ...);
+#endif // MOCHI_DEBUG
+}
+
 // Converts an inclusion type list and exclusion type list into an ENTT view
 template <typename includeListT, typename excludeListT>
 struct ViewFromTypeLists;
@@ -1360,6 +1370,7 @@ struct ViewFromTypeLists<entt::type_list<IncludeT...>, entt::type_list<ExcludeT.
   using type = ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>;
 
   MOCHI_FORCE_INLINE static auto Get(entt::registry& reg) {
+    WarnIfUnregistered<IncludeT..., ExcludeT...>(reg);
     // Excluded pools come from the mutable registry, which creates a missing one, so that a
     // component added during the invocation still excludes its entity.
     return type{FindPool<IncludeT>(reg)..., reg.storage<std::remove_const_t<ExcludeT>>()...};
@@ -1418,6 +1429,7 @@ struct IsEntityInView;
 template <typename... IncludeT, typename... ExcludeT>
 struct IsEntityInView<ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
   static bool Test(entt::registry& reg, entt::entity e) {
+    WarnIfUnregistered<IncludeT..., ExcludeT...>(reg);
     // Entity must have all of the component types in IncludeT and none in ExcludeT
     return reg.all_of<std::remove_const_t<IncludeT>...>(e) &&
         !reg.any_of<std::remove_const_t<ExcludeT>...>(e);
@@ -1435,6 +1447,7 @@ struct ViewOfEntity<ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
   using ViewT = ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>;
 
   MOCHI_FORCE_INLINE static std::optional<ViewT> Get(entt::registry& reg, entt::entity e) {
+    WarnIfUnregistered<IncludeT..., ExcludeT...>(reg);
     return Get(
         reg, e, std::index_sequence_for<IncludeT...>{}, std::index_sequence_for<ExcludeT...>{});
   }
@@ -1477,6 +1490,7 @@ struct NonEmptyView<ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>> {
   using ViewT = ViewEx<Included<IncludeT...>, Excluded<ExcludeT...>>;
 
   MOCHI_FORCE_INLINE static std::optional<ViewT> Get(entt::registry& reg) {
+    WarnIfUnregistered<IncludeT..., ExcludeT...>(reg);
     return Get(reg, std::index_sequence_for<IncludeT...>{});
   }
 
@@ -1674,7 +1688,11 @@ template <typename... Policies, typename SystemT, typename... ExternalT>
 MOCHI_FORCE_INLINE void
 InvokeOnEntity(SystemT system, entt::registry& reg, entt::entity e, ExternalT... extParams) {
   auto invoker = InvokerImpl<entt::type_list<Policies...>, ExternalT...>{extParams...};
-  MOCHI_ASSERT_VERBOSE(invoker.CanInvokeOnEntity(system, reg, e));
+#if MOCHI_DEBUG || MOCHI_ASSERT_VERBOSE_ENABLED
+  // Outside the assert since, in debug builds, the check also warns about unregistered components.
+  [[maybe_unused]] bool const canInvoke = invoker.CanInvokeOnEntity(system, reg, e);
+  MOCHI_ASSERT_VERBOSE(canInvoke);
+#endif // MOCHI_DEBUG || MOCHI_ASSERT_VERBOSE_ENABLED
   invoker.InvokeOnEntity(system, reg, e);
 }
 
