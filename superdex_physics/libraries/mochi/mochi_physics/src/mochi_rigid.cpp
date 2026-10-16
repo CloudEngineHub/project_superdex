@@ -788,8 +788,6 @@ static void InitRigidActor_Dynamic(
   reg.emplace<CConvergenceStatus>(e);
 
   // Surface discretization
-  std::unique_ptr<CFemSurfaceDiscretization> surfDiscr =
-      nullptr; // Temporary for initialization. Not stored as component to reduce memory footprint.
   std::shared_ptr<TriangularMesh const> boundaryMesh;
   if (meshComponent) {
     boundaryMesh = meshComponent->mesh;
@@ -804,8 +802,6 @@ static void InitRigidActor_Dynamic(
     MOCHI_ERROR_RETURN(error);
     reg.emplace<CFemSurfaceDiscretizationLite>(
         e, CFemSurfaceDiscretizationLite::Create(params.boundaryElementType, *boundaryMesh));
-    surfDiscr = std::make_unique<CFemSurfaceDiscretization>(
-        CFemSurfaceDiscretization::Create(params.boundaryElementType, *boundaryMesh));
   }
 
   // Center-of-mass (if there is mass)
@@ -822,15 +818,15 @@ static void InitRigidActor_Dynamic(
   if (shapePtr) {
     // Get or compute volume
     std::optional<real> volume = shapePtr->GetVolume();
-    if (!volume && surfDiscr) {
-      // Compute volume by computing the mass with a density of 1.
-      // If we do this, then store the center-of-mass for later use.
-      surfDiscr->Visit([&](auto const& discrImpl) {
-        comLocal = Vec4r{};
-        volume = 0_r;
-        ComputeCenterOfMassFem(
-            MakeConstSpan(discrImpl.femElements), /*density*/ 1_r, *comLocal, *volume);
-      });
+    if (!volume && boundaryMesh) {
+      // Compute the volume, and store the center-of-mass for later use.
+      comLocal = Vec4r{};
+      volume = 0_r;
+      ComputeVolumeAndCentroid(
+          boundaryMesh->GetNodeCoordinates(),
+          boundaryMesh->GetElementConnectivity(),
+          *comLocal,
+          *volume);
     }
     MOCHI_ERROR_IF(
         !volume.has_value() || (*volume <= 0_r),
@@ -882,20 +878,11 @@ static void InitRigidActor_Dynamic(
       comLocal = ToSimd(*params.centerOfMass);
     } else if (comLocal) {
       // Already computed (see above)
-    } else if (auto center = shapePtr->GetCentroid()) {
-      // Already computed by the Shape
-      comLocal = ToSimd(*center);
-    } else if (surfDiscr) {
-      // Compute the center-of-mass (density does not matter for this).
-      surfDiscr->Visit([&](auto const& discrImpl) {
-        comLocal = Vec4r{};
-        real massIgnored = 0_r;
-        ComputeCenterOfMassFem(
-            MakeConstSpan(discrImpl.femElements), /*density*/ 1_r, *comLocal, massIgnored);
-      });
     } else {
-      MOCHI_ERROR_SET(error, "Cannot create dynamic rigid actor. Center-of-mass unknown.");
-      return;
+      // Already computed by the Shape, which reported the volume
+      auto const center = shapePtr->GetCentroid();
+      MOCHI_ASSERT_VERBOSE(center.has_value(), "Shapes report their volume and centroid together.");
+      comLocal = ToSimd(*center);
     }
 
     // Compute moment of inertia.
@@ -917,12 +904,13 @@ static void InitRigidActor_Dynamic(
           Vec4r{inI[1], inI[3], inI[4]}, // ixy, iyy, iyz
           Vec4r{inI[2], inI[4], inI[5]}, // ixz, iyz, izz
       };
-    } else if (surfDiscr) {
-      surfDiscr->Visit([&](auto const& discrImpl) {
-        auto moiTwo = ComputeSecondMomentOfInertiaFem(
-            MakeConstSpan(discrImpl.femElements), *density, *comLocal);
-        moi = SecondMomentToMomentOfInertia(moiTwo);
-      });
+    } else if (boundaryMesh) {
+      auto moiTwo = ComputeSecondMomentOfInertia(
+          boundaryMesh->GetNodeCoordinates(),
+          boundaryMesh->GetElementConnectivity(),
+          *density,
+          *comLocal);
+      moi = SecondMomentToMomentOfInertia(moiTwo);
     } else {
       MOCHI_ERROR_SET(error, "Cannot create dynamic rigid actor. Moment-of-inertia unknown.");
       return;
@@ -992,13 +980,16 @@ static void InitRigidActor_Dynamic(
 
   // Components to detect and compute contact against other actors
   if (useContact) {
-    MOCHI_ASSERT(surfDiscr, "Surface discretization is missing.");
+    MOCHI_ASSERT(boundaryMesh, "Surface mesh is missing.");
     reg.emplace<TagUseContact>(e);
+
+    // Temporary for initialization. Not stored as component to reduce memory footprint.
+    auto const surfDiscr =
+        CFemSurfaceDiscretization::Create(params.boundaryElementType, *boundaryMesh);
 
     // Active boundary faces.
     CActiveBoundaryFaces* activeBoundaryFaces = nullptr;
     if (params.boundarySubsampling) {
-      MOCHI_ERROR_IF_NOT(boundaryMesh, error, "A boundary mesh is required for hyper-reduction.");
       MOCHI_ERROR_IF_NOT(
           params.boundarySubsampling->subsamplingDensity >= 0_r &&
               params.boundarySubsampling->subsamplingDensity <= 1_r,
@@ -1007,14 +998,14 @@ static void InitRigidActor_Dynamic(
       MOCHI_ERROR_RETURN(error);
       if (params.boundarySubsampling->subsamplingDensity < 1_r) {
         activeBoundaryFaces = &reg.emplace<CActiveBoundaryFaces>(
-            e, CreateActiveBoundaryFaces(*params.boundarySubsampling, boundaryMesh, *surfDiscr));
+            e, CreateActiveBoundaryFaces(*params.boundarySubsampling, boundaryMesh, surfDiscr));
       }
     }
 
     // Initialize contact sample with respect to the root transform.
-    int const numSamples = surfDiscr->GetNumQuadPoints();
+    int const numSamples = surfDiscr.GetNumQuadPoints();
     auto& contactSamples = reg.emplace<CContactSamples<TimeStep::Current>>(e, numSamples);
-    surfDiscr->Visit([&](auto& discrImpl) {
+    surfDiscr.Visit([&](auto& discrImpl) {
       constexpr int kNumQuadsPerFace = std::decay_t<decltype(discrImpl)>::kNumQuads;
       int const numBoundFaces = boundaryMesh->GetNumElements();
 

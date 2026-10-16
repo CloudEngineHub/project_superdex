@@ -427,16 +427,26 @@ TEST_F(ActorMassTest, DefaultDensity) {
   auto constexpr kCenter = kScale / 2_r;
 
   auto [tetCoordinates, tetConnectivity] = test::CreateMinimalTetMeshUnitCube(kScale);
-  auto tetMeshShape = _mochiContext->CreateTetMeshShape(
-      Flatten(MakeSpan(tetCoordinates)), Flatten(MakeSpan(tetConnectivity)), test::ExpectOK{});
-  RigidActorParams params{
-      .shape = tetMeshShape, .colliderType = ColliderType::Box, .isStatic = false};
-  auto* actor = _scene->CreateRigidActor(params, test::ExpectOK{});
-  MOCHI_DEFER(_scene->DestroyActor(actor));
+  auto [triCoordinates, triConnectivity] = test::CreateMinimalTriMeshUnitCube(kScale);
+  // A tetrahedral shape provides its volume and center of mass; for a triangle shape, rigid
+  // creation computes them from its surface.
+  for (ShapeHandle const& shape :
+       {_mochiContext->CreateTetMeshShape(
+            Flatten(MakeSpan(tetCoordinates)),
+            Flatten(MakeSpan(tetConnectivity)),
+            test::ExpectOK{}),
+        _mochiContext->CreateTriMeshShape(
+            Flatten(MakeSpan(triCoordinates)),
+            Flatten(MakeSpan(triConnectivity)),
+            test::ExpectOK{})}) {
+    RigidActorParams params{.shape = shape, .colliderType = ColliderType::Box, .isStatic = false};
+    auto* actor = _scene->CreateRigidActor(params, test::ExpectOK{});
+    MOCHI_DEFER(_scene->DestroyActor(actor));
 
-  EXPECT_NEAR_EQ(kDefaultDensity * kVolume, actor->GetMass(test::ExpectOK{}));
-  EXPECT_NEAR_EQ(kDefaultDensity, actor->GetDensity(test::ExpectOK{}));
-  EXPECT_NEAR_EQ(kCenter, actor->GetRigidCenterOfMassLocal(test::ExpectOK{}));
+    EXPECT_NEAR_EQ(kDefaultDensity * kVolume, actor->GetMass(test::ExpectOK{}));
+    EXPECT_NEAR_EQ(kDefaultDensity, actor->GetDensity(test::ExpectOK{}));
+    EXPECT_NEAR_EQ(kCenter, actor->GetRigidCenterOfMassLocal(test::ExpectOK{}));
+  }
 }
 
 // =============================================================================
@@ -512,6 +522,7 @@ TEST_F(ActorMassTest, SoftActor_Api) {
 
   EXPECT_NEAR_RTOL(kMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);
   EXPECT_NEAR_RTOL(kDensity, actor->GetDensity(test::ExpectOK{}), kApiRelTol);
+  EXPECT_NEAR_EQ(kScale / 2_r, actor->GetRigidCenterOfMassLocal(test::ExpectOK{}));
 
   actor->SetDensity(kNewDensity, test::ExpectOK{});
   EXPECT_NEAR_RTOL(kNewMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);

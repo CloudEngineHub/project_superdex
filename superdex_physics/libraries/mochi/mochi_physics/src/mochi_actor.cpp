@@ -318,12 +318,9 @@ class ActorInterfaceImpl : public ActorInterface {
     if (auto const* rbInertia = reg.try_get<CRigidBodyInertia const>(e)) {
       // Rigid actor.
       return ToReal3(rbInertia->GetCenterOfMassLocal());
-    } else if (auto const* volDisc = reg.try_get<CFemVolumeDiscretizationP1Q4 const>(e)) {
-      // Soft actor. Compute the CoM on the fly.
-      Vec4r comLocal;
-      real mass = 0_r;
-      ComputeCenterOfMassFem(MakeSpan(volDisc->femElements), 1_r, comLocal, mass);
-      return ToReal3(comLocal);
+    } else if (reg.any_of<TagSoftActor>(e)) {
+      // Soft actor: the volume-weighted barycenter of its rest mesh.
+      return reg.get<CTetrahedralMesh const>(e).mesh->GetBarycenter();
     } else {
       MOCHI_ERROR_SET(error, "Center of mass not supported for this type of actor.");
       return {};

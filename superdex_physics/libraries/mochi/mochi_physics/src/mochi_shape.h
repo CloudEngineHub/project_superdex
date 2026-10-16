@@ -74,7 +74,8 @@ class Shape {
   // Return the volume of the shape, if possible.
   virtual std::optional<real> GetVolume() const = 0;
 
-  // Return the centroid (center-of-mass assuming uniform density), if possible.
+  // Return the centroid (center-of-mass assuming uniform density), if possible. Must have a value
+  // whenever GetVolume() does.
   virtual std::optional<Real3> GetCentroid() const = 0;
 
   // Return this shape's raw triangular surface mesh, or nullptr if it doesn't have one.

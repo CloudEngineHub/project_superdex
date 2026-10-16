@@ -16,7 +16,6 @@
 
 #include <mochi_core/test/mochi_test_helpers.h>
 
-#include <mochi_core/elements/tetrahedral/finite_element.h>
 #include <mochi_core/geometry/tetrahedral_mesh.h>
 #include <mochi_core/linear_algebra/matrix_operations.h>
 #include <mochi_core/utils/rand_utils.h>
@@ -24,10 +23,10 @@
 
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
-#include <vector>
 
 using namespace mochi;
 
@@ -46,26 +45,15 @@ static std::unique_ptr<TetrahedralMesh> CreateMesh_Grid(mochi::Int3 dims, mochi:
 
 static constexpr real kRoundingRelTol = 1e3_r * std::numeric_limits<real>::epsilon();
 
-static void TestMomentOfInertia(
+static void TestMassProperties(
     std::unique_ptr<TetrahedralMesh>& mesh,
     VMatrix3x3r const* momentOfInertiaExact = nullptr,
     real const density = 1_r,
     real const exactRelTol = kRoundingRelTol) {
-  using ElementT = tetrahedral::Pk3DElement<1, 1>;
-
-  int numEle = mesh->GetNumElements();
-  auto coordinates = mesh->GetNodeCoordinates();
-  auto connectivity = mesh->GetElementConnectivity();
-  std::vector<ElementT> elements;
-  elements.reserve(numEle);
-  for (int i = 0; i < numEle; ++i) {
-    elements.emplace_back(int(i), coordinates, connectivity);
-  }
-  real mass = {};
-  Vec4r comLocal = {};
-  ComputeCenterOfMassFem(Span<ElementT const>(elements), density, comLocal, mass);
-  VMatrix3x3r I =
-      ComputeSecondMomentOfInertiaFem(Span<ElementT const>(elements), density, comLocal);
+  real const volume = mesh->GetTotalMeasure();
+  Vec4r const centerOfMass = ToSimd(mesh->GetBarycenter());
+  VMatrix3x3r I = ComputeSecondMomentOfInertia(
+      mesh->GetNodeCoordinates(), mesh->GetElementConnectivity(), density, centerOfMass);
 
   // Error
   if (momentOfInertiaExact) {
@@ -74,28 +62,25 @@ static void TestMomentOfInertia(
   }
 
   TriangularMesh boundaryMesh = CreateBoundaryMesh(*mesh);
-  // Append a zero-area face, which must contribute nothing rather than a NaN.
-  auto const meshConnectivity = boundaryMesh.GetElementConnectivity();
-  std::vector<Int3> boundaryConnectivity(meshConnectivity.begin(), meshConnectivity.end());
-  boundaryConnectivity.emplace_back(0, 0, 1);
+  Vec4r boundaryCentroid = {};
+  real boundaryVolume = {};
+  ComputeVolumeAndCentroid(
+      boundaryMesh.GetNodeCoordinates(),
+      boundaryMesh.GetElementConnectivity(),
+      boundaryCentroid,
+      boundaryVolume);
+  VMatrix3x3r boundaryI = ComputeSecondMomentOfInertia(
+      boundaryMesh.GetNodeCoordinates(),
+      boundaryMesh.GetElementConnectivity(),
+      density,
+      boundaryCentroid);
 
-  using BoundaryElementT = triangular::Pk2DElement<1, 1>;
-  std::vector<BoundaryElementT> boundaryElements;
-  int numBoundaryElements = isize(boundaryConnectivity);
-  boundaryElements.reserve(numBoundaryElements);
-  for (int i = 0; i < numBoundaryElements; ++i) {
-    boundaryElements.emplace_back(
-        i, boundaryMesh.GetNodeCoordinates(), MakeConstSpan(boundaryConnectivity));
-  }
-  Vec4r boundaryComLocal = {};
-  real boundaryMass = {};
-  ComputeCenterOfMassFem(
-      Span<BoundaryElementT const>(boundaryElements), density, boundaryComLocal, boundaryMass);
-  VMatrix3x3r boundaryI = ComputeSecondMomentOfInertiaFem(
-      Span<BoundaryElementT const>(boundaryElements), density, boundaryComLocal);
-
-  // The volume and surface integrals of the same polyhedron agree to rounding, even with one-point
-  // rules.
+  // The surface integrals agree with the mesh's volume and barycenter, and with the volume
+  // integral, to rounding.
+  real const mass = density * volume;
+  real const radiusOfGyration = Sqrt(Trace3x3(I) / mass);
+  EXPECT_NEAR(density * boundaryVolume, mass, kRoundingRelTol * mass);
+  EXPECT_NEAR(Norm<3>(boundaryCentroid - centerOfMass), 0_r, kRoundingRelTol * radiusOfGyration);
   EXPECT_NEAR(Norm3x3(boundaryI - I), 0_r, kRoundingRelTol * Norm3x3(I));
 }
 
@@ -107,7 +92,7 @@ TEST(RigidBody, MomentOfInertia_Cube) {
   ComputeSecondMomentOfInertiaCuboid(density, sizes, momentOfInertiaExact);
 
   std::unique_ptr<TetrahedralMesh> mesh = CreateMesh_Grid(Int3{5, 5, 5}, ToReal3(sizes));
-  TestMomentOfInertia(mesh, &momentOfInertiaExact, density);
+  TestMassProperties(mesh, &momentOfInertiaExact, density);
 }
 
 TEST(RigidBody, MomentOfInertia_Cuboid) {
@@ -118,7 +103,7 @@ TEST(RigidBody, MomentOfInertia_Cuboid) {
   ComputeSecondMomentOfInertiaCuboid(density, sizes, momentOfInertiaExact);
 
   std::unique_ptr<TetrahedralMesh> mesh = CreateMesh_Grid(Int3{5, 6, 7}, ToReal3(sizes));
-  TestMomentOfInertia(mesh, &momentOfInertiaExact, density);
+  TestMassProperties(mesh, &momentOfInertiaExact, density);
 }
 
 TEST(RigidBody, MomentOfInertia_Sphere) {
@@ -128,12 +113,11 @@ TEST(RigidBody, MomentOfInertia_Sphere) {
   real radius = 1_r;
   ComputeSecondMomentOfInertiaSphere(density, radius, momentOfInertiaExact);
 
-  // FEM approximation
   std::string filePath = test::GetAssetPath("sphere/icosphere_4subdiv.1.mochi.json");
   std::unique_ptr<TetrahedralMesh> mesh = CreateMesh_File(filePath);
 
   // The icosphere's inertia differs from the sphere's by the tessellation error.
-  TestMomentOfInertia(mesh, &momentOfInertiaExact, density, 5e-2_r);
+  TestMassProperties(mesh, &momentOfInertiaExact, density, 5e-2_r);
 }
 
 // The Duck and Armadillo meshes used below are not shipped externally.
@@ -143,7 +127,7 @@ TEST_IF(MOCHI_INTERNAL, RigidBody, MomentOfInertia_Duck) {
   std::string filePath = test::GetAssetPath("duck/duck_fine_mesh.mochi.json");
   std::unique_ptr<TetrahedralMesh> mesh = CreateMesh_File(filePath);
 
-  TestMomentOfInertia(mesh, nullptr, density);
+  TestMassProperties(mesh, nullptr, density);
 }
 
 TEST_IF(MOCHI_INTERNAL, RigidBody, MomentOfInertia_Armadillo) {
@@ -152,7 +136,7 @@ TEST_IF(MOCHI_INTERNAL, RigidBody, MomentOfInertia_Armadillo) {
   std::string filePath = test::GetAssetPath("armadillo/armadillo_coarse_mesh.mochi.json");
   std::unique_ptr<TetrahedralMesh> mesh = CreateMesh_File(filePath);
 
-  TestMomentOfInertia(mesh, nullptr, density);
+  TestMassProperties(mesh, nullptr, density);
 }
 
 static void TestReal3(Real3 const& a, Real3 const& b, real tol) {
