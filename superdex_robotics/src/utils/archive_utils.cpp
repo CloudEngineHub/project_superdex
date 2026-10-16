@@ -399,15 +399,15 @@ static void CollectBotDependencies(
   auto const type = loader.GetBotFileType(path, error);
   if (type == BotFileType::ModBotPrefab) {
     auto modBotPrefab = loader.LoadModBotPrefab(path, error);
-    CollectBotDependencies(modBotPrefab.base.c_str(), loader, collectedFiles, warnings, error);
+    CollectBotDependencies(modBotPrefab.base, loader, collectedFiles, warnings, error);
     for (auto const& mod : modBotPrefab.modifications) {
       std::visit(
           OverloadVisitor{
               [&](AttachBot const& m) {
-                CollectBotDependencies(m.path.c_str(), loader, collectedFiles, warnings, error);
+                CollectBotDependencies(m.path, loader, collectedFiles, warnings, error);
               },
               [&](ReplaceLinkWithBot const& m) {
-                CollectBotDependencies(m.path.c_str(), loader, collectedFiles, warnings, error);
+                CollectBotDependencies(m.path, loader, collectedFiles, warnings, error);
               },
               [&](AttachLink const& m) {
                 CollectLinkAssets(m.link, collectedFiles, warnings, error);

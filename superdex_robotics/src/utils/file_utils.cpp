@@ -902,7 +902,7 @@ DynamicString superdex::robotics::HashBotFile(std::string_view path, Error& erro
           "HashBotFile: '%s' does not exist; hashing without its contents", file.c_str());
       return;
     }
-    HashFileIntoState(state, file.c_str(), error);
+    HashFileIntoState(state, file, error);
   };
   for (auto const& link : botPrefab.links) {
     hashFileIfPresent(link.renderModelFile);
