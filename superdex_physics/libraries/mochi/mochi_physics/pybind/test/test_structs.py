@@ -292,6 +292,7 @@ class TestStructs(MochiTestBase):
             line_search_wolfe1=2e-4,
             abs_div_tol=2e9,
             max_elapsed_time_seconds=5,
+            convergence_mode=mochi.NonLinearSolverConvergenceMode.GLOBAL,
             rel_tol=1e-5,
             rel_step_tol=1e-6,
             stop_if_no_improvement=True,
@@ -306,6 +307,9 @@ class TestStructs(MochiTestBase):
         self.assertEqual(2, params_kw_all.d_residual_assembly_period)
         self.assertEqual(10, params_kw_all.max_iter)
         self.assertAlmostEqual(5.0, params_kw_all.max_elapsed_time_seconds)
+        self.assertEqual(
+            mochi.NonLinearSolverConvergenceMode.GLOBAL, params_kw_all.convergence_mode
+        )
         self.assertAlmostEqual(1e-5, params_kw_all.abs_tol)
         self.assertAlmostEqual(1e-5, params_kw_all.rel_tol)
         self.assertAlmostEqual(1e-6, params_kw_all.rel_step_tol)
@@ -342,6 +346,7 @@ class TestStructs(MochiTestBase):
         params.d_residual_assembly_period = 1
         params.max_iter = 4
         params.max_elapsed_time_seconds = 0
+        params.convergence_mode = mochi.NonLinearSolverConvergenceMode.DEFAULT
         params.abs_tol = 1e-4
         params.rel_tol = 1e-4
         params.rel_step_tol = 0
@@ -430,12 +435,15 @@ class TestStructs(MochiTestBase):
 
         # Test keyword argument constructor with all fields in shuffled order.
         params_kw_all = mochi.ExperimentalEvalParams(
+            consistency_res_norm_step=2e-3,
             fitted_saturation_hessian=mochi.SaturationHessianParams(
                 contact_friction=False,
-                joint_friction=False,
+                joint_friction=True,
                 constraint_saturation=False,
             ),
+            friction_model=mochi.CoulombFrictionModel.CINF_REGULARIZED,
             fade_friction=False,
+            consistency_res_norm=True,
             implicit_normal_force_for_dissipation=True,
             explicit_normals=True,
         )
@@ -443,8 +451,13 @@ class TestStructs(MochiTestBase):
         self.assertFalse(params_kw_all.fade_friction)
         self.assertTrue(params_kw_all.implicit_normal_force_for_dissipation)
         self.assertFalse(params_kw_all.fitted_saturation_hessian.contact_friction)
-        self.assertFalse(params_kw_all.fitted_saturation_hessian.joint_friction)
+        self.assertTrue(params_kw_all.fitted_saturation_hessian.joint_friction)
         self.assertFalse(params_kw_all.fitted_saturation_hessian.constraint_saturation)
+        self.assertEqual(
+            mochi.CoulombFrictionModel.CINF_REGULARIZED, params_kw_all.friction_model
+        )
+        self.assertTrue(params_kw_all.consistency_res_norm)
+        self.assertAlmostEqual(2e-3, params_kw_all.consistency_res_norm_step)
 
         # Test keyword argument constructor with some fields (rest use defaults)
         params_kw_partial = mochi.ExperimentalEvalParams(
@@ -470,8 +483,11 @@ class TestStructs(MochiTestBase):
         params.fade_friction = False
         params.implicit_normal_force_for_dissipation = True
         params.fitted_saturation_hessian = mochi.SaturationHessianParams(
-            contact_friction=False, joint_friction=False, constraint_saturation=False
+            contact_friction=False, joint_friction=True, constraint_saturation=False
         )
+        params.friction_model = mochi.CoulombFrictionModel.CINF_REGULARIZED
+        params.consistency_res_norm = True
+        params.consistency_res_norm_step = 2e-3
 
     def test_solver_params(self):
         # Test a few default values to prove the C++ constructor ran
@@ -482,16 +498,17 @@ class TestStructs(MochiTestBase):
         # Test keyword argument constructor with all fields in shuffled order.
         params_kw_all = mochi.SolverParams(
             non_linear_solver=mochi.NonLinearSolverParams(max_iter=10),
-            experimental_eval=mochi.ExperimentalEvalParams(),
-            integration_method=mochi.IntegrationMethod.BACKWARD_EULER,
+            experimental_eval=mochi.ExperimentalEvalParams(explicit_normals=True),
+            integration_method=mochi.IntegrationMethod.BDF2,
             linear_solver=mochi.LinearSolverParams(max_iter=500),
         )
         self.assertEqual(10, params_kw_all.non_linear_solver.max_iter)
         self.assertEqual(500, params_kw_all.linear_solver.max_iter)
         self.assertEqual(
-            mochi.IntegrationMethod.BACKWARD_EULER,
+            mochi.IntegrationMethod.BDF2,
             params_kw_all.integration_method,
         )
+        self.assertTrue(params_kw_all.experimental_eval.explicit_normals)
 
         # Test keyword argument constructor with some fields (rest use defaults)
         params_kw_partial = mochi.SolverParams(

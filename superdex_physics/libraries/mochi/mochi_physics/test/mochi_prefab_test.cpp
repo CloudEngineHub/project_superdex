@@ -1727,6 +1727,7 @@ TEST(Prefab, Serialization_SceneParams) {
           "dResidualAssemblyPeriod": 2,
           "maxIter": 6,
           "maxElapsedTimeSeconds": 3.14,
+          "convergenceMode": "Global",
           "absTol": 6.78e-05,
           "relTol": 6.66e-05,
           "relStepTol": 0.555,
@@ -1754,7 +1755,8 @@ TEST(Prefab, Serialization_SceneParams) {
           "relDivTol": 12300000000,
           "maxIter": 911,
           "restartSize": 2345,
-          "abortIfNotSpd": true
+          "abortIfNotSpd": true,
+          "verbosity": "Error"
         },
         "integrationMethod": "BDF2",
         "experimentalEval": {
@@ -1763,9 +1765,12 @@ TEST(Prefab, Serialization_SceneParams) {
           "implicitNormalForceForDissipation": true,
           "fittedSaturationHessian": {
             "contactFriction": false,
-            "jointFriction": false,
+            "jointFriction": true,
             "constraintSaturation": false
-          }
+          },
+          "frictionModel": "CinfRegularized",
+          "consistencyResNorm": true,
+          "consistencyResNormStep": 4.44e-05
         }
       }
     },
@@ -1816,10 +1821,16 @@ TEST(Prefab, Serialization_SceneParams) {
     // Solver Params:
     ASSERT_TRUE(scene.solver.has_value());
     auto const& solver = *scene.solver;
-    EXPECT_EQ(SaturationHessianParams::All(false), solver.experimentalEval.fittedSaturationHessian);
+    EXPECT_EQ(
+        (SaturationHessianParams{
+            .contactFriction = false, .jointFriction = true, .constraintSaturation = false}),
+        solver.experimentalEval.fittedSaturationHessian);
     EXPECT_EQ(true, solver.experimentalEval.implicitNormalForceForDissipation);
     EXPECT_EQ(false, solver.experimentalEval.fadeFriction);
     EXPECT_EQ(true, solver.experimentalEval.explicitNormals);
+    EXPECT_EQ(CoulombFrictionModel::CinfRegularized, solver.experimentalEval.frictionModel);
+    EXPECT_EQ(true, solver.experimentalEval.consistencyResNorm);
+    EXPECT_NEAR_EQ(4.44e-5_r, solver.experimentalEval.consistencyResNormStep);
     EXPECT_EQ(IntegrationMethod::BDF2, solver.integrationMethod);
     EXPECT_EQ(LinearSolverType::ParallelCG, solver.linearSolver.solverType);
     EXPECT_EQ(PreconditionerType::BlockJacobi, solver.linearSolver.preconditionerType);
@@ -1829,11 +1840,14 @@ TEST(Prefab, Serialization_SceneParams) {
     EXPECT_NEAR_EQ(12300000000_r, solver.linearSolver.relDivTol);
     EXPECT_NEAR_EQ(3.32e-6_r, solver.linearSolver.relTol);
     EXPECT_EQ(2345, solver.linearSolver.restartSize);
+    EXPECT_TRUE(solver.linearSolver.abortIfNotSpd);
+    EXPECT_EQ(VerbosityLevel::Error, solver.linearSolver.verbosity);
     EXPECT_EQ(NonLinearSolverType::BFGS, solver.nonLinearSolver.solverType);
     EXPECT_EQ(
         LinearToleranceStrategy::EisenstatWalker1, solver.nonLinearSolver.linearToleranceStrategy);
     EXPECT_EQ(6, solver.nonLinearSolver.maxIter);
     EXPECT_NEAR_EQ(3.14, solver.nonLinearSolver.maxElapsedTimeSeconds);
+    EXPECT_EQ(NonLinearSolverConvergenceMode::Global, solver.nonLinearSolver.convergenceMode);
     EXPECT_NEAR_EQ(6.66e-5_r, solver.nonLinearSolver.relTol);
     EXPECT_NEAR_EQ(44400_r, solver.nonLinearSolver.relDivTol);
     EXPECT_NEAR_EQ(0.555_r, solver.nonLinearSolver.relStepTol);
