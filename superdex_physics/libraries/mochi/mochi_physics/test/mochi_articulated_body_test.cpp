@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "mochi_articulated_test_scenes.h"
 #include "mochi_physics_test_fixture.h"
 
 #include <mochi_physics/mochi_physics.h>
@@ -764,48 +765,8 @@ class ArticulatedBodyDynamicsTest : public test::MochiSceneTestBase {
       real dampingCoeff,
       real inertiaCoeff,
       real frictionCoeff) {
-    auto const numBones = isize(joints);
-    TransformRT const offset{Real3{1_r, 1_r, 1_r}};
-
-    // Build per-joint friction params (if any)
-    ArticulatedJointFrictionParams fp{};
-    bool const hasFriction = (dampingCoeff > 0 || frictionCoeff > 0);
-    if (dampingCoeff > 0) {
-      fp.viscous = dampingCoeff;
-    }
-    if (frictionCoeff > 0) {
-      fp.coulomb = frictionCoeff;
-    }
-
-    // Build joints and links
-    ArticulatedActorParams params;
-    params.joints.resize(numBones);
-    params.links.resize(numBones);
-    for (int i = 0; i < numBones; ++i) {
-      bool const isFreeJoint = (joints[i] == ArticulatedJointType::Free);
-
-      auto& joint = params.joints[i];
-      joint.type = joints[i];
-      joint.axis = Real3{1_r, 0_r, 0_r};
-      // The first link is offset from the root; subsequent links are co-located.
-      if (i == 0) {
-        joint.parentLinkFromJoint = offset;
-      }
-      // Broadcast inertia/friction to non-free joints (matches InitJointParams behavior).
-      if (inertiaCoeff > 0 && !isFreeJoint) {
-        joint.inertia = inertiaCoeff;
-      }
-      if (hasFriction && !isFreeJoint) {
-        joint.friction = fp;
-      }
-
-      auto& link = params.links[i];
-      link.parentLink = i - 1;
-      link.shape = _cubeShape;
-      link.layer = "Articulated";
-      link.colliderType = ColliderType::Box;
-    }
-    return _scene->CreateArticulatedActor(params, test::ExpectOK{});
+    return test::CreateUnitCubeChain(
+        _scene, _cubeShape, joints, dampingCoeff, inertiaCoeff, frictionCoeff);
   }
 
   void TestGetVelocity(Span<ArticulatedJointType const> joints) {

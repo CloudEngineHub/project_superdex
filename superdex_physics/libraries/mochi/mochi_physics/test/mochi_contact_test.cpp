@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "mochi_articulated_test_scenes.h"
 #include "mochi_physics_test_fixture.h"
 
 #include <mochi_core/geometry/tetrahedral_mesh.h>
@@ -60,82 +61,6 @@ using namespace mochi;
 using namespace mochi::experimental;
 using namespace mochi::test;
 namespace {
-// Bone 0 is static. Nodes with y > 0.5 have no weight on bone 2, so the samples of the cube face
-// y = 1 depend on bone 1 only, and the samples of other faces depend on bones 1 and 2.
-SkinningData MakeThreeBoneSkinning(Span<Real3 const> coordinates) {
-  int const numNodes = isize(coordinates);
-  SkinningData skinning;
-  skinning.weightsPerNode = 3;
-  skinning.indices.reserve(3 * numNodes);
-  skinning.weights.reserve(3 * numNodes);
-  for (int node = 0; node < numNodes; ++node) {
-    skinning.indices.push_back(0);
-    skinning.indices.push_back(1);
-    skinning.indices.push_back(2);
-    skinning.weights.push_back(0.2_r);
-    real const weight1 = coordinates[node][1] > 0.5_r ? 0.8_r : (node % 2 == 0 ? 0.3_r : 0.5_r);
-    skinning.weights.push_back(weight1);
-    skinning.weights.push_back(0.8_r - weight1);
-  }
-  return skinning;
-}
-// If blendedSoftName is non-empty, the nodes with x < blendedMaxX are blended with the soft actor
-// of that name.
-ShapeHandle CreateThreeBoneShape(
-    Context* context,
-    DynamicArray<int> constrainedNodes = {},
-    DynamicString const& blendedSoftName = {},
-    real blendedMaxX = std::numeric_limits<real>::max()) {
-  auto&& [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube();
-  auto mesh = std::make_shared<TetrahedralMesh const>(coordinates, connectivity);
-  int const numNodes = mesh->GetNumNodes();
-  auto skinning =
-      std::make_shared<SkinningData const>(MakeThreeBoneSkinning(MakeConstSpan(coordinates)));
-
-  std::shared_ptr<ConstrainedNodesData const> constrainedNodesData;
-  if (!constrainedNodes.empty()) {
-    constrainedNodesData =
-        std::make_shared<ConstrainedNodesData const>(std::move(constrainedNodes));
-  }
-
-  std::shared_ptr<BlendingDataMap> blending;
-  if (!blendedSoftName.empty()) {
-    BlendingDataTargetMesh target;
-    target.indices.resize(numNodes);
-    target.weights.resize(numNodes, 0_r);
-    for (int node = 0; node < numNodes; ++node) {
-      target.indices[node] = node;
-      if (coordinates[node][0] < blendedMaxX) {
-        target.weights[node] = 0.4_r;
-      }
-    }
-    blending = std::make_shared<BlendingDataMap>();
-    blending->perSourceShapeData.emplace(blendedSoftName, std::move(target));
-  }
-
-  auto shape =
-      std::make_shared<TetrahedralMeshShape>(mesh, skinning, constrainedNodesData, blending);
-  return assert_cast<ContextImpl*>(context)->RegisterShape(shape, test::ExpectOK{});
-}
-
-ShapeHandle CreateThreeBoneTetRomShape(Context* context) {
-  auto&& [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube();
-  ModelData model;
-  model.mesh.emplace();
-  model.mesh->nodesPerElement = 4;
-  model.mesh->coordinates = Flatten(MakeSpan(coordinates));
-  model.mesh->connectivity = Flatten(MakeSpan(connectivity));
-  model.mesh->skinning = MakeThreeBoneSkinning(MakeConstSpan(coordinates));
-  model.constrainedNodes = DynamicArray<int>{0};
-
-  DynamicArray<real> basis(model.mesh->coordinates.size(), 0_r);
-  for (int node = 1; node < model.mesh->GetNumNodes(); ++node) {
-    basis[3 * node] = 1_r;
-  }
-  return experimental::CreateModelShapeWithLinearRom(
-      context, model, "contact_test", MakeConstSpan(basis), test::ExpectOK{});
-}
-
 void UpdateArticulatedFullPose(entt::registry& reg, entt::entity entity) {
   auto const* joints = reg.get<CArticulatedBodyShape const>(entity).shape->GetJointsData();
   auto const& poseInfo = reg.get<CArticulatedJointPoseInfo const>(entity);
@@ -169,58 +94,6 @@ void AddToArticulatedPose(entt::registry& reg, entt::entity entity, int localDof
   articulated::AddLieDeltaToReducedPose(
       joints->jointTypes, joints->dofInfo, poseInfo, reducedPose, delta, reducedPose);
   UpdateArticulatedFullPose(reg, entity);
-}
-
-ArticulatedActorParams MakeThreeBoneSkeletonParams(Context* context) {
-  ArticulatedActorParams params;
-  params.joints = {
-      {.name = "joint_0", .type = ArticulatedJointType::Hard},
-      {.name = "joint_1",
-       .type = ArticulatedJointType::Spherical,
-       .parentLinkFromJoint = TransformRT{Real3{1_r, 0_r, 0_r}}},
-      {.name = "joint_2",
-       .type = ArticulatedJointType::Spherical,
-       .parentLinkFromJoint = TransformRT{Real3{0_r, 1_r, 0_r}}}};
-  ShapeHandle const linkShape = test::CreateUnitCubeTetMeshShape(context);
-  params.links = {
-      {.name = "link_0",
-       .parentLink = -1,
-       .shape = linkShape,
-       .colliderType = ColliderType::None,
-       .hasGravity = false,
-       .density = 1e-10_r},
-      {.name = "link_1",
-       .parentLink = 0,
-       .shape = linkShape,
-       .colliderType = ColliderType::None,
-       .hasGravity = false,
-       .density = 1e-10_r},
-      {.name = "link_2",
-       .parentLink = 1,
-       .shape = linkShape,
-       .colliderType = ColliderType::None,
-       .hasGravity = false,
-       .density = 1e-10_r}};
-  return params;
-}
-
-// An articulated actor with the skeleton of MakeThreeBoneSkeletonParams and the skin of
-// CreateThreeBoneShape in the "Colliding" layer.
-Actor* CreateThreeBoneSkinnedActor(
-    Context* context,
-    Scene* scene,
-    real coulombCoefficient,
-    real viscousCoefficient,
-    real dampingCoefficient) {
-  ArticulatedActorParams params = MakeThreeBoneSkeletonParams(context);
-  ArticulatedSkinParams skinParams;
-  skinParams.shape = CreateThreeBoneShape(context);
-  skinParams.layer = "Colliding";
-  skinParams.contact.coulombFrictionCoefficient = coulombCoefficient;
-  skinParams.contact.viscousFrictionCoefficient = viscousCoefficient;
-  skinParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
-  params.skin = std::move(skinParams);
-  return scene->CreateArticulatedActor(params, test::ExpectOK{});
 }
 
 } // namespace
@@ -1912,7 +1785,7 @@ class MochiSoftSkinnedStaticContact : public MochiContactTestBase {
 
   // PartiallyBlendedFom blends only the nodes with x < 0.5, so that the partitions of the samples
   // on the face x = 1 have no soft actor.
-  enum class Mode { Fom, Rom, BlendedFom, BlendedRom, PartiallyBlendedFom };
+  using Mode = ThreeBoneSoftSkinnedMode;
 
   entt::entity _articulated = entt::null;
   ColumnVector<real> _pose;
@@ -1929,52 +1802,17 @@ class MochiSoftSkinnedStaticContact : public MochiContactTestBase {
 
   void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
       override {
-    SoftSkinnedActorParams params;
     TransformRT const worldFromRoot = UsesBlendedSurface()
         ? TransformRT{Quaternion::FromRotationVector(Real3{0.2_r, -0.3_r, 0.1_r}), Real3{0.4_r, -0.2_r, 0.3_r}}
         : TransformRT::Identity();
-    params.skeletonParams = MakeThreeBoneSkeletonParams(_mochiContext);
-    params.skeletonParams.worldFromRoot = worldFromRoot;
-    if (UsesBlendedSurface()) {
-      ArticulatedSkinParams skinParams;
-      skinParams.shape = CreateThreeBoneShape(
-          _mochiContext,
-          {},
-          "soft",
-          _mode == Mode::PartiallyBlendedFom ? 0.5_r : std::numeric_limits<real>::max());
-      skinParams.layer = "Colliding";
-      skinParams.contact.coulombFrictionCoefficient = coulombCoefficient;
-      skinParams.contact.viscousFrictionCoefficient = viscousCoefficient;
-      skinParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
-      params.skeletonParams.skin = std::move(skinParams);
-    }
-
-    SoftActorParams softParams;
-    softParams.name = "soft";
-    softParams.shape = UsesRom() ? CreateThreeBoneTetRomShape(_mochiContext)
-                                 : CreateThreeBoneShape(_mochiContext, DynamicArray<int>{0});
-    softParams.layer = UsesBlendedSurface() ? "" : "Colliding";
-    softParams.hasGravity = false;
-    softParams.hasInertia = false;
-    softParams.hasStress = true;
-    softParams.material.neoHookean.youngsModulus = 1e-10_r;
-    softParams.contact.coulombFrictionCoefficient = coulombCoefficient;
-    softParams.contact.viscousFrictionCoefficient = viscousCoefficient;
-    softParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
-    params.softParams.push_back(std::move(softParams));
-
-    Actor* articulatedActor = nullptr;
-    if (UsesRom()) {
-      ExperimentalSoftSkinnedActorParams experimentalParams;
-      ExperimentalSoftActorParams softExperimentalParams;
-      softExperimentalParams.rom.emplace();
-      softExperimentalParams.rom->source = "contact_test";
-      experimentalParams.softParams.push_back(std::move(softExperimentalParams));
-      articulatedActor = experimental::CreateSoftSkinnedActor(
-          _scene, params, experimentalParams, test::ExpectOK{});
-    } else {
-      articulatedActor = _scene->CreateSoftSkinnedActor(params, test::ExpectOK{});
-    }
+    Actor* const articulatedActor = CreateThreeBoneSoftSkinnedActor(
+        _mochiContext,
+        _scene,
+        _mode,
+        worldFromRoot,
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient);
     _articulated = GetEntity(articulatedActor->GetHandle());
     auto const& softHandles = articulatedActor->GetNestedSoftActors(test::ExpectOK{});
     ASSERT_EQ(1, isize(softHandles));
@@ -2052,12 +1890,11 @@ class MochiSoftSkinnedStaticContact : public MochiContactTestBase {
 
  private:
   bool UsesRom() const {
-    return _mode == Mode::Rom || _mode == Mode::BlendedRom;
+    return test::UsesRom(_mode);
   }
 
   bool UsesBlendedSurface() const {
-    return _mode == Mode::BlendedFom || _mode == Mode::BlendedRom ||
-        _mode == Mode::PartiallyBlendedFom;
+    return test::UsesBlendedSurface(_mode);
   }
 
   void UpdateRomState() {
