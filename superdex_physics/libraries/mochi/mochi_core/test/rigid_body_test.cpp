@@ -24,6 +24,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,11 +44,14 @@ static std::unique_ptr<TetrahedralMesh> CreateMesh_Grid(mochi::Int3 dims, mochi:
 
 // ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
 
+static constexpr real kRoundingRelTol = 1e3_r * std::numeric_limits<real>::epsilon();
+
 static void TestMomentOfInertia(
     std::unique_ptr<TetrahedralMesh>& mesh,
     VMatrix3x3r const* momentOfInertiaExact = nullptr,
-    real const density = 1_r) {
-  using ElementT = tetrahedral::Pk3DElement<1, 4>;
+    real const density = 1_r,
+    real const exactRelTol = kRoundingRelTol) {
+  using ElementT = tetrahedral::Pk3DElement<1, 1>;
 
   int numEle = mesh->GetNumElements();
   auto coordinates = mesh->GetNodeCoordinates();
@@ -64,10 +68,9 @@ static void TestMomentOfInertia(
       ComputeSecondMomentOfInertiaFem(Span<ElementT const>(elements), density, comLocal);
 
   // Error
-  real normExact = {};
   if (momentOfInertiaExact) {
-    normExact = Norm3x3(*momentOfInertiaExact);
-    EXPECT_NEAR(Norm3x3(I - *momentOfInertiaExact), 0_r, 5e-2 * normExact);
+    real const normExact = Norm3x3(*momentOfInertiaExact);
+    EXPECT_NEAR(Norm3x3(I - *momentOfInertiaExact), 0_r, exactRelTol * normExact);
   }
 
   TriangularMesh boundaryMesh = CreateBoundaryMesh(*mesh);
@@ -76,7 +79,7 @@ static void TestMomentOfInertia(
   std::vector<Int3> boundaryConnectivity(meshConnectivity.begin(), meshConnectivity.end());
   boundaryConnectivity.emplace_back(0, 0, 1);
 
-  using BoundaryElementT = triangular::Pk2DElement<1>;
+  using BoundaryElementT = triangular::Pk2DElement<1, 1>;
   std::vector<BoundaryElementT> boundaryElements;
   int numBoundaryElements = isize(boundaryConnectivity);
   boundaryElements.reserve(numBoundaryElements);
@@ -90,14 +93,10 @@ static void TestMomentOfInertia(
       Span<BoundaryElementT const>(boundaryElements), density, boundaryComLocal, boundaryMass);
   VMatrix3x3r boundaryI = ComputeSecondMomentOfInertiaFem(
       Span<BoundaryElementT const>(boundaryElements), density, boundaryComLocal);
-  if (momentOfInertiaExact) {
-    EXPECT_NEAR(Norm3x3(boundaryI - *momentOfInertiaExact), 0_r, 5e-2 * normExact);
-  }
 
-  if (!momentOfInertiaExact) {
-    normExact = Norm3x3(I);
-    EXPECT_NEAR(Norm3x3(boundaryI - I), 0_r, 1e-2 * normExact);
-  }
+  // The volume and surface integrals of the same polyhedron agree to rounding, even with one-point
+  // rules.
+  EXPECT_NEAR(Norm3x3(boundaryI - I), 0_r, kRoundingRelTol * Norm3x3(I));
 }
 
 TEST(RigidBody, MomentOfInertia_Cube) {
@@ -133,7 +132,8 @@ TEST(RigidBody, MomentOfInertia_Sphere) {
   std::string filePath = test::GetAssetPath("sphere/icosphere_4subdiv.1.mochi.json");
   std::unique_ptr<TetrahedralMesh> mesh = CreateMesh_File(filePath);
 
-  TestMomentOfInertia(mesh, &momentOfInertiaExact, density);
+  // The icosphere's inertia differs from the sphere's by the tessellation error.
+  TestMomentOfInertia(mesh, &momentOfInertiaExact, density, 5e-2_r);
 }
 
 // The Duck and Armadillo meshes used below are not shipped externally.
@@ -172,18 +172,17 @@ TEST(RigidBody, IntegrateAndFiniteDifferenceRigidTransformLie) {
 
   TransformRT const transform =
       IntegrateRigidTransformLie(kDt, transformPrev, pivotLocal, linVel, angVel);
-  real constexpr kTolerance = 1e-4_r;
   TestReal3(
       ToReal3(transformPrev.TransformPoint(pivotLocal) + linVel * kDt),
       ToReal3(transform.TransformPoint(pivotLocal)),
-      kTolerance);
+      kRoundingRelTol);
 
   Vec4r linVelTest;
   Vec4r angVelTest;
   FiniteDifferenceRigidTransformLie(
       kDt, transform, transformPrev, pivotLocal, linVelTest, angVelTest);
-  TestReal3(ToReal3(linVel), ToReal3(linVelTest), kTolerance);
-  TestReal3(ToReal3(angVel), ToReal3(angVelTest), kTolerance);
+  TestReal3(ToReal3(linVel), ToReal3(linVelTest), kRoundingRelTol);
+  TestReal3(ToReal3(angVel), ToReal3(angVelTest), kRoundingRelTol);
 
   // Two half steps land on the full step.
   TransformRT const halfSteps = IntegrateRigidTransformLie(
@@ -192,8 +191,8 @@ TEST(RigidBody, IntegrateAndFiniteDifferenceRigidTransformLie) {
       pivotLocal,
       linVel,
       angVel);
-  TestReal3(transform.GetTranslation(), halfSteps.GetTranslation(), kTolerance);
-  EXPECT_TRUE(NearEqual(transform.GetRotation(), halfSteps.GetRotation(), kTolerance));
+  TestReal3(transform.GetTranslation(), halfSteps.GetTranslation(), kRoundingRelTol);
+  EXPECT_TRUE(NearEqual(transform.GetRotation(), halfSteps.GetRotation(), kRoundingRelTol));
 }
 
 // Wrapper of RigidBodyVel::EvalTimeSteppedRotation()
@@ -244,7 +243,7 @@ TEST(RigidBodyUtils, EvalTimeSteppedRotation) {
 
     // Check the determinant
     real det = Determinant3x3(AsMatrixView(Rnew));
-    EXPECT_TRUE(NearEqual(det, 1_r, 1e-3_r));
+    EXPECT_TRUE(NearEqual(det, 1_r, kRoundingRelTol));
   };
 
   real dt = 1e-3_r;
@@ -286,10 +285,10 @@ TEST(RigidBodyUtils, EvalFiniteDifferenceRotationVelocity) {
         evalVelocity(QuaternionFromMatrix(R), QuaternionFromMatrix(Rnew), dt, velTest);
 
         // Validate
-        EXPECT_TRUE(NearEqual(
+        TestReal3(
             ToReal3(vel.GetOmegaAndVSym().first),
             ToReal3(velTest.GetOmegaAndVSym().first),
-            1e-5_r));
+            kRoundingRelTol);
 
         // Perform round-trip conversion, first finite-difference velocity, then time-step rotation.
         // This operation has a round-trip error for approximate functions, because evalVelocity
@@ -310,7 +309,11 @@ TEST(RigidBodyUtils, EvalFiniteDifferenceRotationVelocity) {
   test(EvalTimeSteppedRotation, EvalFiniteDifferenceRotationVelocity, dt, 3e-2_r);
 
   // Small time-step accurate functions
-  test(EvalTimeSteppedRotationAccurate, EvalFiniteDifferenceRotationVelocityAccurate, dt, 1e-5_r);
+  test(
+      EvalTimeSteppedRotationAccurate,
+      EvalFiniteDifferenceRotationVelocityAccurate,
+      dt,
+      kRoundingRelTol);
 
   dt = 3e-1_r;
   vel.SetOmega({1.1_r, -0.7_r, 0.8_r});
@@ -320,7 +323,11 @@ TEST(RigidBodyUtils, EvalFiniteDifferenceRotationVelocity) {
   test(EvalTimeSteppedRotation, EvalFiniteDifferenceRotationVelocity, dt, 3e-2_r);
 
   // Large time-step accurate functions
-  test(EvalTimeSteppedRotationAccurate, EvalFiniteDifferenceRotationVelocityAccurate, dt, 1e-5_r);
+  test(
+      EvalTimeSteppedRotationAccurate,
+      EvalFiniteDifferenceRotationVelocityAccurate,
+      dt,
+      kRoundingRelTol);
 }
 
 TEST(RigidBodyUtils, GetFiniteStepRotationVector) {
@@ -333,9 +340,9 @@ TEST(RigidBodyUtils, GetFiniteStepRotationVector) {
   RigidBodyVel vel;
   vel.SetFromFiniteDifferencePose(
       TransformRT{qOld}, TransformRT{Quaternion::FromRotationVector(step) * qOld}, kDt);
-  EXPECT_TRUE(NearEqual(ToReal3(vel.GetFiniteStepRotationVector(kDt)), ToReal3(step), 1e-5_r));
-  EXPECT_TRUE(NearEqual(
-      ToReal3(vel.GetFiniteStepRotationVector(-kDt)), Real3{-0.48_r, 0_r, 0.64_r}, 1e-5_r));
+  TestReal3(ToReal3(vel.GetFiniteStepRotationVector(kDt)), ToReal3(step), kRoundingRelTol);
+  TestReal3(
+      ToReal3(vel.GetFiniteStepRotationVector(-kDt)), Real3{-0.48_r, 0_r, 0.64_r}, kRoundingRelTol);
 
   // Small steps approach omega * dt, and zero velocity gives a zero step.
   Vec4r const omega{1e-3_r, -2e-3_r, 1.5e-3_r};
@@ -369,12 +376,12 @@ TEST(RigidBodyUtils, RotateInertia) {
   auto matReal = RotateInertia(m, q);
   auto matVec4 = RotateInertia(Vec4r(m), q);
   auto matVMatrix3x3 = RotateInertia(VDiagonalMatrix<3>(m), q);
-  EXPECT_NEAR_EQ(matVec4, matReal);
-  EXPECT_NEAR_EQ(matVMatrix3x3, matReal);
+  EXPECT_NEAR_TOL(matVec4, matReal, kRoundingRelTol * m);
+  EXPECT_NEAR_TOL(matVMatrix3x3, matReal, kRoundingRelTol * m);
   Vec4r vecM{1.8_r, 2.1_r, 1.1_r};
   matVec4 = RotateInertia(vecM, q);
   matVMatrix3x3 = RotateInertia(VDiagonalMatrix<3>(vecM), q);
-  EXPECT_NEAR_EQ(matVMatrix3x3, matVec4);
+  EXPECT_NEAR_TOL(matVMatrix3x3, matVec4, kRoundingRelTol * HMax<3>(vecM));
 }
 
 TEST(RigidBodyUtils, IsMomentOfInertiaValid) {

@@ -443,52 +443,53 @@ inline real ComputeVolumeFem(
   return volume;
 }
 
-// Computes the second moment of inertia of a rigid body based on a FEM discretization with unifor
-// density
-template <int kPolyOrder, int kQuadDegree>
+// Computes the second moment of inertia of a rigid body based on a FEM discretization with uniform
+// density. Exact for any quadrature rule: a tetrahedron with volume V and vertices pᵢ relative to
+// centerOfMass has second moment V/20 · (Σᵢ pᵢpᵢᵀ + ssᵀ) per unit density, with s = Σᵢ pᵢ, and
+// its quadrature weights sum to V.
+template <int kQuadDegree>
 inline VMatrix3x3r ComputeSecondMomentOfInertiaFem(
-    Span<tetrahedral::Pk3DElement<kPolyOrder, kQuadDegree> const> finiteElements,
+    Span<tetrahedral::Pk3DElement<1, kQuadDegree> const> finiteElements,
     real density,
     Vec4r const& centerOfMass) {
-  using ElementT = tetrahedral::Pk3DElement<kPolyOrder, kQuadDegree>;
-  constexpr int kNumQuad = ElementT::kNumQuadPoints;
-
-  // Reset
   VMatrix3x3r outInertia = {};
-  // Integrate
-  for (auto element : finiteElements) {
-    for (int q = 0; q < kNumQuad; ++q) {
-      Vec4r y = ToSimd(element.mapEvaluated[q]) - centerOfMass;
-      outInertia += Outer3(y, y) * element.quadWeights[q];
+  for (auto const& element : finiteElements) {
+    VMatrix3x3r vertexOuterSum = {};
+    Vec4r vertexSum = {};
+    for (int const node : element.Nodes()) {
+      Vec4r const p = ToSimd(element.coordinates[node]) - centerOfMass;
+      vertexOuterSum += Outer3(p, p);
+      vertexSum += p;
     }
+    outInertia += (vertexOuterSum + Outer3(vertexSum, vertexSum)) * Sum(element.quadWeights);
   }
 
-  outInertia *= density;
+  outInertia *= density / 20_r;
   return outInertia;
 }
 
-// Computes the second moment of inertia of a rigid body based on a FEM discretization with uniform
-// density
-template <int kPolyOrder, int kQuadDegree>
+// Computes the second moment of inertia of a rigid body with uniform density based on a FEM
+// discretization of its closed boundary. Exact for any quadrature rule: each face (a, b, c)
+// relative to centerOfMass contributes the second moment of the signed tetrahedron it spans with
+// centerOfMass, det(a, b, c)/120 · (aaᵀ + bbᵀ + ccᵀ + ssᵀ) per unit density, with s = a + b + c.
+template <int kQuadDegree>
 inline VMatrix3x3r ComputeSecondMomentOfInertiaFem(
-    Span<triangular::Pk2DElement<kPolyOrder, kQuadDegree> const> finiteElements,
+    Span<triangular::Pk2DElement<1, kQuadDegree> const> finiteElements,
     real density,
     Vec4r const& centerOfMass) {
-  using ElementT = triangular::Pk2DElement<kPolyOrder, kQuadDegree>;
-  constexpr int kNumQuad = ElementT::kNumQuadPoints;
-
-  // Reset
   VMatrix3x3r outInertia = {};
-  // Integrate
-  for (auto element : finiteElements) {
-    Vec4r const normal = ToSimd(element.Normal());
-    for (int q = 0; q < kNumQuad; ++q) {
-      Vec4r y = ToSimd(element.mapEvaluated[q]) - centerOfMass;
-      outInertia += Outer3(y, y) * Dot(y, normal) * element.quadWeights[q];
-    }
+  for (auto const& element : finiteElements) {
+    Int3 const nodes = element.Nodes();
+    Vec4r const a = ToSimd(element.coordinates[nodes[0]]) - centerOfMass;
+    Vec4r const b = ToSimd(element.coordinates[nodes[1]]) - centerOfMass;
+    Vec4r const c = ToSimd(element.coordinates[nodes[2]]) - centerOfMass;
+    Vec4r const s = a + b + c;
+    // det(a, b, c), from the edges to reduce cancellation on small faces far from centerOfMass
+    real const det = Dot<3>(a, Cross3(b - a, c - a));
+    outInertia += (Outer3(a, a) + Outer3(b, b) + Outer3(c, c) + Outer3(s, s)) * det;
   }
 
-  outInertia *= density / 5.0_r;
+  outInertia *= density / 120_r;
   return outInertia;
 }
 
