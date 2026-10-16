@@ -1350,7 +1350,7 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
   ;
 
   registry.GetClass<mochi::NonLinearSolverParams>()
-    .def("__init__", [](mochi::NonLinearSolverParams* self, nb::object solver_type, nb::object d_residual_assembly_period, nb::object max_iter, nb::object max_elapsed_time_seconds, nb::object convergence_mode, nb::object abs_tol, nb::object rel_tol, nb::object rel_step_tol, nb::object stop_if_no_improvement, nb::object psd_proj_mode, nb::object gradient_descent_fallback, nb::object explosion_control, nb::object abs_div_tol, nb::object rel_div_tol, nb::object line_search_max_iter, nb::object line_search_alpha, nb::object line_search_wolfe1, nb::object line_search_wolfe2, nb::object line_search_max_rel_increase, nb::object line_search_type, nb::object linear_tolerance_strategy, nb::object verbosity) {
+    .def("__init__", [](mochi::NonLinearSolverParams* self, nb::object solver_type, nb::object d_residual_assembly_period, nb::object max_iter, nb::object max_elapsed_time_seconds, nb::object convergence_mode, nb::object abs_tol, nb::object rel_tol, nb::object rel_step_tol, nb::object stop_if_no_improvement, nb::object psd_proj_mode, nb::object explosion_control, nb::object abs_div_tol, nb::object rel_div_tol, nb::object line_search_max_iter, nb::object line_search_alpha, nb::object line_search_wolfe1, nb::object line_search_wolfe2, nb::object line_search_max_rel_increase, nb::object line_search_type, nb::object linear_tolerance_strategy, nb::object verbosity) {
       mochi::NonLinearSolverParams result{};
       result.solverType = nb::cast<mochi::NonLinearSolverType>(solver_type);
       result.dResidualAssemblyPeriod = nb::cast<int>(d_residual_assembly_period);
@@ -1362,7 +1362,6 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       result.relStepTol = nb::cast<mochi::real>(rel_step_tol);
       result.stopIfNoImprovement = nb::cast<bool>(stop_if_no_improvement);
       result.psdProjMode = nb::cast<mochi::PsdProjectionMode>(psd_proj_mode);
-      result.gradientDescentFallback = nb::cast<bool>(gradient_descent_fallback);
       result.explosionControl = nb::cast<bool>(explosion_control);
       result.absDivTol = nb::cast<mochi::real>(abs_div_tol);
       result.relDivTol = nb::cast<mochi::real>(rel_div_tol);
@@ -1387,7 +1386,6 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("rel_step_tol") = mochi::NonLinearSolverParams{}.relStepTol
       , nb::arg("stop_if_no_improvement") = mochi::NonLinearSolverParams{}.stopIfNoImprovement
       , nb::arg("psd_proj_mode") = mochi::NonLinearSolverParams{}.psdProjMode
-      , nb::arg("gradient_descent_fallback") = mochi::NonLinearSolverParams{}.gradientDescentFallback
       , nb::arg("explosion_control") = mochi::NonLinearSolverParams{}.explosionControl
       , nb::arg("abs_div_tol") = mochi::NonLinearSolverParams{}.absDivTol
       , nb::arg("rel_div_tol") = mochi::NonLinearSolverParams{}.relDivTol
@@ -1413,7 +1411,6 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
     .def_rw("rel_step_tol", &mochi::NonLinearSolverParams::relStepTol, "Relative tolerance on the L2 norm of the raw linear-solve increment before line\nsearch scaling.\n\nNote:\n    The solve terminates with :class:`STOPPED\n    <superdex.physics.ConvergenceStatus>` status if ``|dx|/|x|`` is below this\n    threshold (i.e., the step norm is below this fraction of the current\n    solution norm).\n\nNote:\n    0 disables this criterion.\n\nNote:\n    Default is :const:`~superdex.physics.DEFAULT_REL_STEP_TOL`.")
     .def_rw("stop_if_no_improvement", &mochi::NonLinearSolverParams::stopIfNoImprovement, "Stop the solve if the line search figure of merit does not improve from the\nprevious iteration.")
     .def_rw("psd_proj_mode", &mochi::NonLinearSolverParams::psdProjMode, "Positive Semi-Definite (PSD) projection mode for the dresidual matrix.")
-    .def_rw("gradient_descent_fallback", &mochi::NonLinearSolverParams::gradientDescentFallback, "Fall back to gradient descent direction if the solver search direction fails.")
     .def_rw("explosion_control", &mochi::NonLinearSolverParams::explosionControl, "Enable heuristic explosion prevention.")
     .def_rw("abs_div_tol", &mochi::NonLinearSolverParams::absDivTol, "Absolute divergence tolerance.\n\nNote:\n    Triggers explosion control if residual norm exceeds this value.\n\nNote:\n    Used only if\n    :attr:`~superdex.physics.NonLinearSolverParams.explosion_control` is true.")
     .def_rw("rel_div_tol", &mochi::NonLinearSolverParams::relDivTol, "Relative divergence tolerance, relative to the initial residual.\n\nNote:\n    Triggers explosion control if relative residual norm exceeds this value.\n\nNote:\n    Used only if\n    :attr:`~superdex.physics.NonLinearSolverParams.explosion_control` is true.")

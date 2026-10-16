@@ -54,9 +54,8 @@ struct NewtonSolverParams {
   real solRelTol = NonLinearSolverParams{}.relStepTol;              // Relative tolerance on solution step. See @ref NonLinearSolverParams::relStepTol.
   bool stopIfNoImprovement = NonLinearSolverParams{}.stopIfNoImprovement; // Boolean for whether to stop if there is no improvement w.r.t. the previous Newton iteration in the figure of merit monitored by the line search
 
-  // Retries and fallbacks
+  // Retries
   PsdProjectionMode psdProjMode = NonLinearSolverParams{}.psdProjMode; // PSD projection mode
-  bool gradientDescentFallback = NonLinearSolverParams{}.gradientDescentFallback; // Whether to fall back to the gradient descent direction if the Newton direction fails
   SaturationHessianParams fittedSaturationHessian = ExperimentalEvalParams{}.fittedSaturationHessian; // Per-pathway control of fitted Hessian use in force saturation terms
 
   // Explosion control

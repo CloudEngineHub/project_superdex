@@ -51,9 +51,8 @@ void mochi::GetIslandNewtonParams(
   outNewtonParams.solRelTol = simParams.nonLinearSolver.relStepTol;
   outNewtonParams.stopIfNoImprovement = simParams.nonLinearSolver.stopIfNoImprovement;
 
-  // Retries and fallbacks
+  // Retries
   outNewtonParams.psdProjMode = simParams.nonLinearSolver.psdProjMode;
-  outNewtonParams.gradientDescentFallback = simParams.nonLinearSolver.gradientDescentFallback;
   outNewtonParams.fittedSaturationHessian = simParams.experimentalEval.fittedSaturationHessian;
 
   // Explosion control

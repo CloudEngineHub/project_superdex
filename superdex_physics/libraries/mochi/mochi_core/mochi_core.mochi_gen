@@ -1671,11 +1671,9 @@ struct NonLinearSolverParams [from_mochi_core] {
   // iteration.
   bool stopIfNoImprovement = false;
 
-  # Retries and fallbacks
+  # Retries
   // @brief Positive Semi-Definite (PSD) projection mode for the dresidual matrix.
   PsdProjectionMode psdProjMode = Default;
-  // @brief Fall back to gradient descent direction if the solver search direction fails.
-  bool gradientDescentFallback = false;
 
   # Explosion Control
   // @brief Enable heuristic explosion prevention.

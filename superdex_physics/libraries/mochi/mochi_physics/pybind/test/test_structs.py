@@ -281,7 +281,6 @@ class TestStructs(MochiTestBase):
         # Test keyword argument constructor with all fields in shuffled order.
         params_kw_all = mochi.NonLinearSolverParams(
             solver_type=mochi.NonLinearSolverType.BFGS,
-            gradient_descent_fallback=True,
             abs_tol=1e-5,
             line_search_alpha=0.6,
             d_residual_assembly_period=2,
@@ -315,7 +314,6 @@ class TestStructs(MochiTestBase):
         self.assertAlmostEqual(1e-6, params_kw_all.rel_step_tol)
         self.assertTrue(params_kw_all.stop_if_no_improvement)
         self.assertEqual(mochi.PsdProjectionMode.ALWAYS, params_kw_all.psd_proj_mode)
-        self.assertTrue(params_kw_all.gradient_descent_fallback)
         self.assertFalse(params_kw_all.explosion_control)
         self.assertAlmostEqual(2e9, params_kw_all.abs_div_tol)
         self.assertAlmostEqual(2e4, params_kw_all.rel_div_tol)
@@ -352,7 +350,6 @@ class TestStructs(MochiTestBase):
         params.rel_step_tol = 0
         params.stop_if_no_improvement = False
         params.psd_proj_mode = mochi.PsdProjectionMode.DEFAULT
-        params.gradient_descent_fallback = False
         params.explosion_control = True
         params.abs_div_tol = 1e9
         params.rel_div_tol = 1e4

@@ -802,24 +802,15 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
         status.improvedInLastIter = TakeStep(
             problem,
             status,
-            /*takeFinalLsStepIfNoImprovement*/ isLastTry && !_params.gradientDescentFallback);
+            /*takeFinalLsStepIfNoImprovement*/ isLastTry);
         retry = !status.improvedInLastIter;
       }
 
       if (retry) { // The Newton-Raphson step was not successful.
         if (isLastTry) {
           // If 'retry' and 'isLastTry' are true, this is the last try and there was no improvement
-          // in the line search. Try a gradient descent step if the gradient descent fallback is
-          // enabled.
-          if (_params.gradientDescentFallback) {
-            dxStep = -_workspace.residual;
-            status.improvedInLastIter = TakeStep(
-                problem,
-                status,
-                /*takeFinalLsStepIfNoImprovement*/ true);
-          }
-
-          if (!status.improvedInLastIter && _params.verbosity >= VerbosityLevel::Verbose) {
+          // in the line search, so the final line-search iterate was taken.
+          if (_params.verbosity >= VerbosityLevel::Verbose) {
             MOCHI_LOG(
                 "\n\t\tUnable to take Newton-Raphson step with improvement. This was the last try in this Newton-Raphson iteration. Taking step without improvement (|dx|=%.5e).\n",
                 problem.GetIncrement().Norm());

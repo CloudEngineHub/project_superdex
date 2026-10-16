@@ -1733,7 +1733,6 @@ TEST(Prefab, Serialization_SceneParams) {
           "relStepTol": 0.555,
           "stopIfNoImprovement": true,
           "psdProjMode": "IfFailRetry",
-          "gradientDescentFallback": true,
           "explosionControl": false,
           "absDivTol": 3450000000,
           "relDivTol": 44400,
@@ -1861,7 +1860,6 @@ TEST(Prefab, Serialization_SceneParams) {
     EXPECT_EQ(LineSearchType::Simple, solver.nonLinearSolver.lineSearchType);
     EXPECT_EQ(2, solver.nonLinearSolver.dResidualAssemblyPeriod);
     EXPECT_FALSE(solver.nonLinearSolver.explosionControl);
-    EXPECT_TRUE(solver.nonLinearSolver.gradientDescentFallback);
     EXPECT_TRUE(solver.nonLinearSolver.stopIfNoImprovement);
     EXPECT_EQ(VerbosityLevel::Verbose, solver.nonLinearSolver.verbosity);
     EXPECT_EQ(PsdProjectionMode::IfFailRetry, solver.nonLinearSolver.psdProjMode);

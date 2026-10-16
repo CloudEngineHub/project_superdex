@@ -382,13 +382,10 @@ struct NonLinearSolverParams {
    * iteration. */
   bool stopIfNoImprovement = false;
 
-  // Retries and fallbacks
+  // Retries
 
   /** @brief Positive Semi-Definite (PSD) projection mode for the dresidual matrix. */
   PsdProjectionMode psdProjMode = PsdProjectionMode::Default;
-
-  /** @brief Fall back to gradient descent direction if the solver search direction fails. */
-  bool gradientDescentFallback = false;
 
   // Explosion control
 
@@ -480,7 +477,6 @@ struct NonLinearSolverParams {
   MOCHI_FIELD(relStepTol)
   MOCHI_FIELD(stopIfNoImprovement)
   MOCHI_FIELD(psdProjMode)
-  MOCHI_FIELD(gradientDescentFallback)
   MOCHI_FIELD(explosionControl)
   MOCHI_FIELD(absDivTol)
   MOCHI_FIELD(relDivTol)

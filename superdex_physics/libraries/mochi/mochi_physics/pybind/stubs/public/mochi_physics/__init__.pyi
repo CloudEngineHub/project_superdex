@@ -3922,8 +3922,6 @@ class NonLinearSolverParams:
     """
     psd_proj_mode: PsdProjectionMode
     """Positive Semi-Definite (PSD) projection mode for the dresidual matrix."""
-    gradient_descent_fallback: bool
-    """Fall back to gradient descent direction if the solver search direction fails."""
     explosion_control: bool
     """Enable heuristic explosion prevention."""
     abs_div_tol: float
@@ -4010,7 +4008,6 @@ class NonLinearSolverParams:
         rel_step_tol: float = ...,
         stop_if_no_improvement: bool = ...,
         psd_proj_mode: PsdProjectionMode | int = ...,
-        gradient_descent_fallback: bool = ...,
         explosion_control: bool = ...,
         abs_div_tol: float = ...,
         rel_div_tol: float = ...,
