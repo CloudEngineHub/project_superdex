@@ -94,29 +94,32 @@ void mochi::ComputeCollisionResponseRange(
   for (int s = pointRange.Min(); s <= pointRange.Max(); s += kCollResponseBatchSize) {
     int const numPoints = Min(pointRange.Max() - s + 1, kCollResponseBatchSize);
 
-#define MOCHI_BATCH_CASE(N)                                                                      \
-  case N:                                                                                        \
-    ComputeBatchCollisionForceDForce<N, kGradTarget>(                                            \
-        assemEnergy ? MakeSpan(outResponse.energy).subspan(s, N) : Span<double>{},               \
-        assemForce ? MakeSpan(outResponse.force).subspan(s, N) : Span<Real3>{},                  \
-        assemDForce ? MakeSpan(outResponse.dforce).subspan(s, N) : Span<VMatrix3x3r>{},          \
-        MakeConstSpan(sdfInfoImplicit.val).subspan(s, N),                                        \
-        MakeConstSpan(sdfInfoImplicit.grad).subspan(s, N),                                       \
-        config.explicitNormals ? MakeConstSpan(sdfInfoExplicit.val).subspan(s, N)                \
-                               : Span<real const>{},                                             \
-        config.explicitNormals ? MakeConstSpan(sdfInfoExplicit.grad).subspan(s, N)               \
-                               : Span<Real3 const>{},                                            \
-        config.validCollidingNormals ? MakeConstSpan(contactQuery.normalColliding).subspan(s, N) \
-                                     : Span<Real3 const>{},                                      \
-        MakeConstSpan(contactQuery.posColliding).subspan(s, N),                                  \
-        MakeConstSpan(contactQuery.posCollidingStageStart).subspan(s, N),                        \
-        params,                                                                                  \
-        config,                                                                                  \
-        dtStage,                                                                                 \
-        assemEnergy,                                                                             \
-        assemForce,                                                                              \
-        assemDForce,                                                                             \
-        contactQuery.isSdfGradUnitary);                                                          \
+    // Discard unreachable batch sizes, so the batch kernels get no dead call sites.
+#define MOCHI_BATCH_CASE(N)                                                                        \
+  case N:                                                                                          \
+    if constexpr ((N) <= kCollResponseBatchSize) {                                                 \
+      ComputeBatchCollisionForceDForce<N, kGradTarget>(                                            \
+          assemEnergy ? MakeSpan(outResponse.energy).subspan(s, N) : Span<double>{},               \
+          assemForce ? MakeSpan(outResponse.force).subspan(s, N) : Span<Real3>{},                  \
+          assemDForce ? MakeSpan(outResponse.dforce).subspan(s, N) : Span<VMatrix3x3r>{},          \
+          MakeConstSpan(sdfInfoImplicit.val).subspan(s, N),                                        \
+          MakeConstSpan(sdfInfoImplicit.grad).subspan(s, N),                                       \
+          config.explicitNormals ? MakeConstSpan(sdfInfoExplicit.val).subspan(s, N)                \
+                                 : Span<real const>{},                                             \
+          config.explicitNormals ? MakeConstSpan(sdfInfoExplicit.grad).subspan(s, N)               \
+                                 : Span<Real3 const>{},                                            \
+          config.validCollidingNormals ? MakeConstSpan(contactQuery.normalColliding).subspan(s, N) \
+                                       : Span<Real3 const>{},                                      \
+          MakeConstSpan(contactQuery.posColliding).subspan(s, N),                                  \
+          MakeConstSpan(contactQuery.posCollidingStageStart).subspan(s, N),                        \
+          params,                                                                                  \
+          config,                                                                                  \
+          dtStage,                                                                                 \
+          assemEnergy,                                                                             \
+          assemForce,                                                                              \
+          assemDForce,                                                                             \
+          contactQuery.isSdfGradUnitary);                                                          \
+    }                                                                                              \
     break;
 
     // Compute contact response
@@ -457,25 +460,26 @@ RigidContactSums mochi::ComputeRigidContactSums(
   }
 
   // The remaining points, fewer than a full batch, are summed over their own lanes.
-#define MOCHI_BATCH_CASE(N)                                           \
-  case N: {                                                           \
-    RigidContactLaneSums<N> lastBatchSums MOCHI_NO_INIT(assemDForce); \
-    AddBatchRigidContactSums<N, kGradTarget>(                         \
-        s,                                                            \
-        contactQuery,                                                 \
-        params,                                                       \
-        config,                                                       \
-        dtStage,                                                      \
-        weights,                                                      \
-        origin,                                                       \
-        assemEnergy,                                                  \
-        assemForce,                                                   \
-        assemDForce,                                                  \
-        outForce,                                                     \
-        lastBatchSums);                                               \
-    lastBatchSums.AddTo(sums, assemEnergy, assemForce, assemDForce);  \
-    break;                                                            \
-  }
+#define MOCHI_BATCH_CASE(N)                                             \
+  case N:                                                               \
+    if constexpr ((N) < kCollResponseBatchSize) {                       \
+      RigidContactLaneSums<N> lastBatchSums MOCHI_NO_INIT(assemDForce); \
+      AddBatchRigidContactSums<N, kGradTarget>(                         \
+          s,                                                            \
+          contactQuery,                                                 \
+          params,                                                       \
+          config,                                                       \
+          dtStage,                                                      \
+          weights,                                                      \
+          origin,                                                       \
+          assemEnergy,                                                  \
+          assemForce,                                                   \
+          assemDForce,                                                  \
+          outForce,                                                     \
+          lastBatchSums);                                               \
+      lastBatchSums.AddTo(sums, assemEnergy, assemForce, assemDForce);  \
+    }                                                                   \
+    break;
 
   int const numPoints = pointRange.Max() - s + 1;
   // clang-format off
@@ -758,9 +762,11 @@ SkinnedContactSums mochi::ComputeSkinnedContactSums(
   if (fullBatches.Size() > 0) {
     addSums.template operator()<kCollResponseBatchSize>(fullBatches);
   }
-#define MOCHI_BATCH_CASE(N)                    \
-  case N:                                      \
-    addSums.template operator()<N>(lastBatch); \
+#define MOCHI_BATCH_CASE(N)                       \
+  case N:                                         \
+    if constexpr ((N) < kCollResponseBatchSize) { \
+      addSums.template operator()<N>(lastBatch);  \
+    }                                             \
     break;
   // clang-format off
   switch (numRemaining) {
