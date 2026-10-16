@@ -136,6 +136,9 @@ class RigidBodyInertia {
   [[nodiscard]] Vec4r const& GetCenterOfMassLocal() const {
     return _comLocal;
   }
+  [[nodiscard]] real GetVolume() const {
+    return _volume;
+  }
   [[nodiscard]] real GetMass() const {
     return _mass;
   }

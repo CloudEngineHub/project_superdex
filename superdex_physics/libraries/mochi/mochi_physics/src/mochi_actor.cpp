@@ -446,9 +446,15 @@ class ActorInterfaceImpl : public ActorInterface {
     return ToReal3(prev->angularVelocityWorld);
   }
 
+#define MOCHI_ERROR_RETURN_IF_STATIC(functionName, ...)                               \
+  MOCHI_ERROR_IF(                                                                     \
+      reg.all_of<TagStaticActor>(e) && !reg.all_of<TagArticulatedLinkActor>(e),       \
+      error,                                                                          \
+      functionName " is not supported for static actors, except articulated links."); \
+  MOCHI_ERROR_RETURN(error, __VA_ARGS__);
+
   real GetMass(Error& error) const override {
-    MOCHI_ERROR_IF(reg.any_of<TagStaticActor>(e), error, "Cannot get mass of static actor");
-    MOCHI_ERROR_RETURN(error, 0_r);
+    MOCHI_ERROR_RETURN_IF_STATIC("GetMass", 0_r);
 
     static_assert(
         static_cast<int>(ActorType::Count) == 6,
@@ -470,9 +476,7 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   real GetDensity(Error& error) const override {
-    MOCHI_ERROR_IF(
-        reg.any_of<TagStaticActor>(e), error, "GetDensity not supported for static actors.");
-    MOCHI_ERROR_RETURN(error, 0_r);
+    MOCHI_ERROR_RETURN_IF_STATIC("GetDensity", 0_r);
 
     if (auto const* rigid = reg.try_get<CRigidBodyInertia const>(e)) {
       // Rigid
@@ -489,13 +493,11 @@ class ActorInterfaceImpl : public ActorInterface {
   void SetDensity(real density, Error& error) override {
     MOCHI_ERROR_IF(
         !IsFinite(density) || (density <= 0_r), error, "Density must be positive and finite.");
-    MOCHI_ERROR_IF(
-        reg.any_of<TagStaticActor>(e), error, "SetDensity not supported for static actors.");
-    MOCHI_ERROR_RETURN(error);
+    MOCHI_ERROR_RETURN_IF_STATIC("SetDensity");
 
     if (auto* rigidInertia = reg.try_get<CRigidBodyInertia>(e)) {
-      // Rigid
-      if (rigidInertia->GetDensity() == density) {
+      // Rigid. Links without a shape have no volume, so they have no mass at any density.
+      if (rigidInertia->GetVolume() == 0_r || rigidInertia->GetDensity() == density) {
         return; // No change
       }
       rigidInertia->SetDensity(density);
@@ -516,6 +518,8 @@ class ActorInterfaceImpl : public ActorInterface {
     InvalidateActorConvergenceWeights(reg, e);
     WakeUp();
   }
+
+#undef MOCHI_ERROR_RETURN_IF_STATIC
 
   void SetInertiaProperties(
       real mass,

@@ -9620,7 +9620,7 @@ class Actor:
             :class:`~superdex.physics.Error`: If an error occurs.
 
         Note:
-            Not supported for static actors.
+            Not supported for standalone static actors.
         """
     def get_density(self) -> float:
         """Get the density of the actor in the undeformed configuration.
@@ -9651,6 +9651,9 @@ class Actor:
         Note:
             Only supported for rigid actors (except static rigid actors), articulated
             links and soft actors.
+
+        Note:
+            Has no effect on links of articulated actors without a shape.
 
         Note:
             The moment of inertia is updated based on the new density. The center of

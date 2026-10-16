@@ -491,6 +491,7 @@ TEST_F(ActorMassTest, RigidActor_Api) {
 
     EXPECT_EQ(0_r, actor->GetMass(test::ExpectNotOK{}));
     EXPECT_EQ(0_r, actor->GetDensity(test::ExpectNotOK{}));
+    actor->SetDensity(kNewDensity, test::ExpectNotOK{});
   }
 }
 
@@ -603,6 +604,59 @@ TEST_F(ActorMassTest, ArticulatedActor_Api) {
   EXPECT_NEAR_RTOL(kExpectedTotalMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);
   EXPECT_EQ(0_r, actor->GetDensity(test::ExpectNotOK{}));
   actor->SetDensity(1000_r, test::ExpectNotOK{});
+}
+
+// A link welded to the world is static, but keeps the inertia of its shape. A link without a shape
+// has no inertia, and setting its density has no effect.
+TEST_F(ActorMassTest, ArticulatedLink_Api) {
+  auto constexpr kScale = Real3{0.1_r, 0.2_r, 0.3_r};
+  auto constexpr kVolume = kScale[0] * kScale[1] * kScale[2];
+  auto constexpr kDensity = 1000_r;
+  auto constexpr kLinkMass = kDensity * kVolume;
+  auto constexpr kNewDensity = 2000_r;
+  auto constexpr kNewLinkMass = kNewDensity * kVolume;
+
+  auto [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube(kScale);
+  auto cubeShape = _mochiContext->CreateTetMeshShape(
+      Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), test::ExpectOK{});
+
+  ArticulatedActorParams actorParams;
+  actorParams.joints = {
+      {.type = ArticulatedJointType::Hard},
+      {.type = ArticulatedJointType::Spherical},
+      {.type = ArticulatedJointType::Spherical}};
+  actorParams.links = {
+      {.parentLink = -1,
+       .shape = cubeShape,
+       .colliderType = ColliderType::None,
+       .density = kDensity},
+      {.parentLink = 0,
+       .shape = cubeShape,
+       .colliderType = ColliderType::None,
+       .density = kDensity},
+      {.parentLink = 1, .colliderType = ColliderType::None}};
+  auto* actor = _scene->CreateArticulatedActor(actorParams, test::ExpectOK{});
+  MOCHI_DEFER(_scene->DestroyActor(actor));
+  auto const links = actor->GetNestedLinkActors(test::ExpectOK{});
+  Actor* staticLink = _scene->GetActor(links[0]);
+  Actor* dynamicLink = _scene->GetActor(links[1]);
+  Actor* dummyLink = _scene->GetActor(links[2]);
+  ASSERT_TRUE(staticLink->IsStatic());
+
+  for (Actor* link : {staticLink, dynamicLink}) {
+    EXPECT_NEAR_RTOL(kLinkMass, link->GetMass(test::ExpectOK{}), kApiRelTol);
+    EXPECT_NEAR_RTOL(kDensity, link->GetDensity(test::ExpectOK{}), kApiRelTol);
+  }
+  EXPECT_EQ(0_r, dummyLink->GetMass(test::ExpectOK{}));
+  EXPECT_EQ(0_r, dummyLink->GetDensity(test::ExpectOK{}));
+  dummyLink->SetDensity(kNewDensity, test::ExpectOK{});
+  EXPECT_EQ(0_r, dummyLink->GetMass(test::ExpectOK{}));
+  EXPECT_EQ(0_r, dummyLink->GetDensity(test::ExpectOK{}));
+
+  staticLink->SetDensity(kNewDensity, test::ExpectOK{});
+  EXPECT_NEAR_RTOL(kNewLinkMass, staticLink->GetMass(test::ExpectOK{}), kApiRelTol);
+  EXPECT_NEAR_RTOL(kNewDensity, staticLink->GetDensity(test::ExpectOK{}), kApiRelTol);
+  EXPECT_NEAR_RTOL(kNewLinkMass + kLinkMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);
 }
 
 TEST_IF_F(MOCHI_ENABLE_ROM_ACTORS, ActorMassTest, RomActor_Api) {

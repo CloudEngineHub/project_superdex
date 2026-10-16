@@ -176,7 +176,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
       }
       return result;
     }
-      , "Get the total mass of the actor.\n\nReturns:\n    Mass [kg] of the actor.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Not supported for static actors."
+      , "Get the total mass of the actor.\n\nReturns:\n    Mass [kg] of the actor.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Not supported for standalone static actors."
     )
     .def("get_density", [](mochi::Actor& self) {
       mochi::Error error;
@@ -196,7 +196,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
       }
     }
       , nb::arg("density")
-      , "Set the density of the actor in the undeformed configuration.\n\nArgs:\n    density (float): Density [kg/m³] to set. Must be positive.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid actors (except static rigid actors), articulated\n    links and soft actors.\n\nNote:\n    The moment of inertia is updated based on the new density. The center of\n    mass is left unchanged.\n\nSee Also:\n    :meth:`~superdex.physics.Actor.get_density`,\n    :meth:`~superdex.physics.Actor.set_inertia_properties`,\n    :meth:`~superdex.physics.Actor.set_soft_material_params`"
+      , "Set the density of the actor in the undeformed configuration.\n\nArgs:\n    density (float): Density [kg/m³] to set. Must be positive.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid actors (except static rigid actors), articulated\n    links and soft actors.\n\nNote:\n    Has no effect on links of articulated actors without a shape.\n\nNote:\n    The moment of inertia is updated based on the new density. The center of\n    mass is left unchanged.\n\nSee Also:\n    :meth:`~superdex.physics.Actor.get_density`,\n    :meth:`~superdex.physics.Actor.set_inertia_properties`,\n    :meth:`~superdex.physics.Actor.set_soft_material_params`"
     )
     .def("set_inertia_properties", [](mochi::Actor& self, mochi::real mass, mochi::Real3 const& center_of_mass, mochi::Real6 const& moment_of_inertia) {
       mochi::Error error;

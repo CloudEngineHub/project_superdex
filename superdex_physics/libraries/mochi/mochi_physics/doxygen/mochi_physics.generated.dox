@@ -5161,7 +5161,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 /// @return Mass [kg] of the actor.
 ///
-/// @note Not supported for static actors.
+/// @note Not supported for standalone static actors.
 ///
 
 /// @fn real mochi::Actor::GetDensity(Error& error) const
@@ -5184,6 +5184,7 @@
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note Only supported for rigid actors (except static rigid actors), articulated links and soft actors.
+/// @note Has no effect on links of articulated actors without a shape.
 /// @note The moment of inertia is updated based on the new density. The center of mass is left unchanged.
 ///
 /// @see @ref mochi::Actor::GetDensity "GetDensity", @ref mochi::Actor::SetInertiaProperties "SetInertiaProperties", @ref mochi::Actor::SetSoftMaterialParams "SetSoftMaterialParams"

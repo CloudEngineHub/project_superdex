@@ -1405,7 +1405,9 @@ void InitializeOnce(entt::registry& reg) {
 
 real GetActorMass(entt::registry const& reg, entt::entity actor) {
   MOCHI_ASSERT(reg.all_of<TagRigidActor>(actor), "Expected rigid actor.");
-  MOCHI_ASSERT(!reg.any_of<TagStaticActor>(actor), "Cannot get mass of static actor.");
+  MOCHI_ASSERT(
+      !reg.all_of<TagStaticActor>(actor) || reg.all_of<TagArticulatedLinkActor>(actor),
+      "Cannot get mass of static actor.");
   return reg.get<CRigidBodyInertia>(actor).GetMass();
 }
 } // namespace mochi::rigid
