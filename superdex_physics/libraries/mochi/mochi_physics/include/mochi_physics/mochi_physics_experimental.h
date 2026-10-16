@@ -677,9 +677,9 @@ struct SpatialTendonParams {
 struct DisplacementControlActuatorParams {
   // Initial value of the target displacement (state variable)
   real targetDisplacement = 0_r; // [generalized coordinate units]
-  // Stiffness in the penalty used to control displacement
+  // Stiffness in the penalty used to control displacement. Must be non-negative and finite.
   real stiffness = 1e9_r; // [generalized force / generalized coordinate units]
-  // Damping coefficient to reduce oscillations
+  // Damping coefficient to reduce oscillations. Must be non-negative and finite.
   real damping = 0_r; // [generalized force / (generalized coordinate / s) units]
   // Set true if this actuator is attached to a transmission that can transmit force in both
   // directions (e.g. gearbox or rigid linkage); leave false (default) for rope-like
