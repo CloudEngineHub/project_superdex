@@ -63,6 +63,8 @@ class _FakeMaterialOverride:
     source_radius: object = "default"
     texture_index: object = "default"
     texture_probability: object = None
+    scalar_params: dict[str, object] | None = None
+    vector_params: dict[str, list[object]] | None = None
 
     @property
     def uses_rgb(self) -> bool:
@@ -550,7 +552,7 @@ class BuildActorMaterialCommandsExclusiveTest(unittest.TestCase):
             commands,
             [
                 f"vset /object/{self._ACTOR}/texture_index 0.5",
-                f"vset /object/{self._ACTOR}/hsva 0.0 0.0 1.0 1.0",
+                f"vset /object/{self._ACTOR}/hsva 0.0 0.0 1.0 -1000000.0",
                 f"vset /object/{self._ACTOR}/roughness 0.6",
                 f"vset /object/{self._ACTOR}/metallic 0.2",
             ],
@@ -585,11 +587,61 @@ class BuildActorMaterialCommandsExclusiveTest(unittest.TestCase):
             commands,
             [
                 f"vset /object/{self._ACTOR}/texture_index NIST_Board_Render 0.5",
-                f"vset /object/{self._ACTOR}/hsva NIST_Board_Render 0.0 0.0 1.0 1.0",
+                f"vset /object/{self._ACTOR}/hsva NIST_Board_Render 0.0 0.0 1.0 -1000000.0",
                 f"vset /object/{self._ACTOR}/roughness NIST_Board_Render 0.6",
                 f"vset /object/{self._ACTOR}/metallic NIST_Board_Render 0.2",
             ],
         )
+
+    def test_texture_mode_preserves_explicit_alpha(self):
+        override = self._exclusive_override()
+        override.alpha = 0.75
+        with patch("numpy.random.uniform", side_effect=[0.1, 0.5, 0.6, 0.2]):
+            commands = _build_actor_material_commands(self._ACTOR, override, {})
+        self.assertIn(f"vset /object/{self._ACTOR}/hsva 0.0 0.0 1.0 0.75", commands)
+
+
+class NamedMaterialDrTest(unittest.TestCase):
+    def test_named_ranges_use_the_supplied_generator(self):
+        override = _FakeMaterialOverride(
+            roughness=None,
+            metallic=None,
+            specular=None,
+            scalar_params={
+                "HueShift": _FakeRangeConfig(-180.0, 180.0),
+                "Fixed": 0.2,
+                "Skipped": None,
+            },
+            vector_params={
+                "ColorTint": [
+                    _FakeRangeConfig(0.1, 0.9),
+                    0.4,
+                    _FakeRangeConfig(0.1, 0.9),
+                ]
+            },
+        )
+        with patch("numpy.random.uniform", side_effect=AssertionError("unseeded draw")):
+            first = _build_actor_material_commands(
+                "Foam", override, {}, np.random.default_rng(77)
+            )
+            repeated = _build_actor_material_commands(
+                "Foam", override, {}, np.random.default_rng(77)
+            )
+            other = _build_actor_material_commands(
+                "Foam", override, {}, np.random.default_rng(78)
+            )
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(first, other)
+        self.assertEqual(len(first), 3)
+        self.assertGreaterEqual(float(first[0].split()[-1]), -180.0)
+        self.assertLessEqual(float(first[0].split()[-1]), 180.0)
+        self.assertEqual(first[1], "vset /object/Foam/scalar_param Fixed 0.2")
+        rgb = [float(value) for value in first[2].split()[-3:]]
+        self.assertGreaterEqual(rgb[0], 0.1)
+        self.assertLessEqual(rgb[0], 0.9)
+        self.assertEqual(rgb[1], 0.4)
+        self.assertGreaterEqual(rgb[2], 0.1)
+        self.assertLessEqual(rgb[2], 0.9)
 
 
 class DecimalDrValuesTest(unittest.TestCase):

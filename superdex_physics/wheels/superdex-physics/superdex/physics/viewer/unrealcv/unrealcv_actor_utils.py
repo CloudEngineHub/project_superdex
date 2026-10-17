@@ -897,7 +897,11 @@ def _get_global_ranges(material_cfg: Any) -> dict[str, Any]:
     }
 
 
-def _build_scalar_param_commands(actor_name: str, override: Any) -> list[str]:
+def _build_scalar_param_commands(
+    actor_name: str,
+    override: Any,
+    rng: np.random.Generator | None = None,
+) -> list[str]:
     """Generic named scalar material params -> vset .../scalar_param <name> <v>.
 
     Escape hatch for material params not covered by the semantic fields. Each
@@ -907,7 +911,7 @@ def _build_scalar_param_commands(actor_name: str, override: Any) -> list[str]:
     params = getattr(override, "scalar_params", None) or {}
     commands: list[str] = []
     for name, spec in params.items():
-        val = _resolve_override_value(spec, None)
+        val = _resolve_override_value(spec, None, rng)
         if val is not None:
             commands.append(
                 f"vset /object/{actor_name}/scalar_param {name} {_decimal(val)}"
@@ -915,7 +919,11 @@ def _build_scalar_param_commands(actor_name: str, override: Any) -> list[str]:
     return commands
 
 
-def _build_vector_param_commands(actor_name: str, override: Any) -> list[str]:
+def _build_vector_param_commands(
+    actor_name: str,
+    override: Any,
+    rng: np.random.Generator | None = None,
+) -> list[str]:
     """Generic named vector (RGB) material params -> vset .../vector_param <name> <r> <g> <b>.
 
     Each value is a 3-element ``[r, g, b]`` list of fixed floats and/or ranges.
@@ -927,7 +935,7 @@ def _build_vector_param_commands(actor_name: str, override: Any) -> list[str]:
     for name, channels in params.items():
         rgb: list[float] = []
         for spec in list(channels)[:3]:
-            val = _resolve_override_value(spec, None)
+            val = _resolve_override_value(spec, None, rng)
             rgb.append(0.0 if val is None else val)
         rgb += [0.0] * (3 - len(rgb))
         commands.append(
@@ -949,7 +957,7 @@ def _build_exclusive_color_texture_cmds(
     Each rep picks EITHER a texture swap OR a flat hue tint, never both:
 
     - texture mode (``uniform() < texture_probability``): sample ``texture_index``
-      from its range and reset the tint to neutral white (``hsva 0 0 1 1``) so the
+      from its range and reset the tint to neutral white, preserving alpha, so the
       texture shows its true colors and does not inherit a hue tint left over from
       a previous hue-mode rep (MIDs persist between reps).
     - hue mode (otherwise): tint the flat-white slot with the sampled
@@ -972,8 +980,16 @@ def _build_exclusive_color_texture_cmds(
             commands.extend(
                 _material_cmds(actor_name, "texture_index", _decimal(tex), component)
             )
+        alpha = _resolve_override_value(getattr(override, "alpha", None), None, rng)
         commands.extend(
-            _material_cmds(actor_name, "hsva", "0.0 0.0 1.0 1.0", component)
+            _material_cmds(
+                actor_name,
+                "hsva",
+                _decimals(
+                    0.0, 0.0, 1.0, KEEP_PREVIOUS_TOKEN if alpha is None else alpha
+                ),
+                component,
+            )
         )
     else:
         # Hue mode: sampled tint on the flat-white texture slot (index 0).
@@ -1096,12 +1112,13 @@ def _build_actor_material_commands(
         "opacity",
         getattr(override, "opacity", None) if override else "default",
         ranges.get("opacity"),
+        rng,
     )
     if c is not None:
         commands.append(c)
 
-    commands.extend(_build_scalar_param_commands(actor_name, override))
-    commands.extend(_build_vector_param_commands(actor_name, override))
+    commands.extend(_build_scalar_param_commands(actor_name, override, rng))
+    commands.extend(_build_vector_param_commands(actor_name, override, rng))
 
     return commands
 
