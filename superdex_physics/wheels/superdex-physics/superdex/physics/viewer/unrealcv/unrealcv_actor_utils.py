@@ -2119,6 +2119,19 @@ def capture_dr_state(
     return state
 
 
+def _resolve_instance_name(
+    actor: str, unrealcvactor_cfg: UnrealCVActorConfig | None
+) -> str:
+    """Map a config key to its UE instance name; pass anything else through."""
+    if unrealcvactor_cfg is not None:
+        instance_name, _kind, _spawn_arg = _get_mapped_instance_name(
+            unrealcvactor_cfg, actor
+        )
+        if instance_name:
+            return instance_name
+    return actor
+
+
 def get_material_params(
     client: UnrealCVClient,
     actor: str,
@@ -2146,12 +2159,7 @@ def get_material_params(
     Returns:
         The parsed JSON payload, or ``{}`` if the query failed (error logged).
     """
-    if unrealcvactor_cfg is not None:
-        instance_name, _kind, _spawn_arg = _get_mapped_instance_name(
-            unrealcvactor_cfg, actor
-        )
-        if instance_name:
-            actor = instance_name
+    actor = _resolve_instance_name(actor, unrealcvactor_cfg)
 
     command = f"vget /object/{actor}/material_params"
     if component:
@@ -2174,6 +2182,42 @@ def get_material_params(
         return json.loads(resp)
     except (json.JSONDecodeError, ValueError):
         logger.warning("Failed to parse material_params JSON for %s", actor)
+        return {}
+
+
+def get_light_info(
+    client: UnrealCVClient,
+    actor: str,
+    unrealcvactor_cfg: UnrealCVActorConfig | None = None,
+) -> dict[str, Any]:
+    """Query every light on an actor and the DR controls each one carries.
+
+    Per light: component name, class, mobility, and per control (light_intensity,
+    color, source_radius, mobility, or the skylight_* set) its current value, the
+    UE property it maps to, its unit, and whether a write takes effect -- a Static
+    light accepts the vset but ignores it, and only a Movable one can be moved or
+    rotated.
+
+    Args:
+        client: Connected UnrealCVClient.
+        actor: UE actor instance name, or a config key resolved through
+            ``unrealcvactor_cfg`` (see ``get_material_params``).
+        unrealcvactor_cfg: Optional config used to resolve ``actor``.
+
+    Returns:
+        The parsed JSON payload (``lights`` empty for an actor without lights),
+        or ``{}`` if the query failed (error logged).
+    """
+    actor = _resolve_instance_name(actor, unrealcvactor_cfg)
+
+    resp = client._request(f"vget /object/{actor}/light_info")
+    if not resp or resp.lower().startswith("error"):
+        logger.warning("light_info failed for '%s': %s", actor, resp)
+        return {}
+    try:
+        return json.loads(resp)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Failed to parse light_info JSON for %s", actor)
         return {}
 
 

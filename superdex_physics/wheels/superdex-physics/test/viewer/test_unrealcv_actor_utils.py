@@ -29,6 +29,7 @@ from superdex.physics.viewer.unrealcv.unrealcv_actor_utils import (
     apply_hdri_lighting_dr,
     apply_mpc_dr,
     apply_scale_dr,
+    get_light_info,
     get_material_params,
     KEEP_PREVIOUS_TOKEN,
 )
@@ -812,3 +813,41 @@ class GetMaterialParamsTest(unittest.TestCase):
     def test_dropped_response_returns_empty(self):
         client = self._client(None)
         self.assertEqual(get_material_params(client, self._ACTOR), {})
+
+
+class GetLightInfoTest(unittest.TestCase):
+    _ACTOR = "BP_SpotlightTest_C0"
+
+    def _client(self, response):
+        client = MagicMock()
+        client._request.return_value = response
+        return client
+
+    def test_command_and_parsed_payload(self):
+        client = self._client('{"actor":"A","lights":[{"component":"Spot"}]}')
+        result = get_light_info(client, self._ACTOR)
+        client._request.assert_called_once_with(
+            f"vget /object/{self._ACTOR}/light_info"
+        )
+        self.assertEqual(result["lights"], [{"component": "Spot"}])
+
+    def test_actor_without_lights_is_a_valid_answer(self):
+        client = self._client('{"actor":"A","lights":[]}')
+        self.assertEqual(get_light_info(client, self._ACTOR)["lights"], [])
+
+    def test_config_resolves_key_to_instance_name(self):
+        cfg = SimpleNamespace(
+            actor_mapping={"Lamp": "blueprint:///Game/BP_Spot@BP_SpotlightTest_C0"},
+            articulated_actor_mapping={},
+        )
+        client = self._client('{"lights":[]}')
+        get_light_info(client, "Lamp", unrealcvactor_cfg=cfg)
+        client._request.assert_called_once_with(
+            "vget /object/BP_SpotlightTest_C0/light_info"
+        )
+
+    def test_failures_return_empty(self):
+        for response in ("error Can not find object", "not json", None):
+            self.assertEqual(
+                get_light_info(self._client(response), self._ACTOR), {}, response
+            )
