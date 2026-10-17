@@ -216,13 +216,16 @@ static void LinearSolve_PsdMatrix(PreconditionerType precType) {
     ldltParams.preconditionerType = PreconditionerType::None;
     LinearSolver<real> ldltSolver(ldltParams); // Set params through the constructor.
     EXPECT_EQ(ldltSolver.GetParams().solverType, LinearSolverType::LDLT);
+    auto const A = MakeLaplacianSparseMatrix<real>(LinearSolver<real>::kSparseLdltDofThreshold, 1);
+    ColumnVector<real> xRef(A.Rows()), b(A.Rows()), x(A.Rows());
+    xRef.SetRandom(123);
+    A.Apply(xRef, b);
     for (int ii = 0; ii < 3; ++ii) {
-      outputVec.SetZero();
-      auto const ldltStatus =
-          ldltSolver.Solve(inputMat, inputVec, outputVec, /* hasOperatorChanged */ ii % 2 == 0);
-      ColumnVector<real> delta = expected - outputVec;
+      x.SetZero();
+      auto const ldltStatus = ldltSolver.Solve(A, b, x, /* hasOperatorChanged */ ii % 2 == 0);
+      ColumnVector<real> delta = xRef - x;
       EXPECT_EQ(ldltStatus.convergence, LinearSolverConvergenceStatus::Converged);
-      EXPECT_NEAR_TOL(delta.Norm(), 0_r, kErrorRelTol * expected.Norm());
+      EXPECT_NEAR_TOL(delta.Norm(), 0_r, kErrorRelTol * xRef.Norm());
     }
   }
 
