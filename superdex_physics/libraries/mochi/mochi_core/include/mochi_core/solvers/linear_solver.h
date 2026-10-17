@@ -358,13 +358,7 @@ LinearSolverStatus LinearSolver<T>::Solve(
       // dense LDLt otherwise.
       if constexpr (IsBlockSparseMatrix<MatrixType> || IsSparseMatrix<MatrixType>) {
         if (A.Rows() >= kSparseLdltDofThreshold) {
-          constexpr int kBlockSize = []() {
-            if constexpr (IsBlockSparseMatrix<MatrixType>) {
-              return MatrixType::kBlockSize;
-            } else {
-              return 1;
-            }
-          }();
+          constexpr int kBlockSize = MatrixType::kBlockSize;
           static_assert(
               kBlockSize == 1 || kBlockSize == 3 || kBlockSize == 4,
               "Only block sizes 1, 3 and 4 are currently supported");

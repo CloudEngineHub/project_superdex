@@ -62,6 +62,8 @@ class SparseMatrix {
   using NonConstScalar = std::remove_const_t<Scalar>;
   using NonConstIdx = std::remove_const_t<CRIdx>;
   using NonConstPtr = std::remove_const_t<Ptr>;
+  // CSR is the BSR format of BlockSparseMatrix with 1x1 blocks.
+  static constexpr int kBlockSize = 1;
 
   static_assert(
       std::signed_integral<CRIdx> && std::signed_integral<Ptr>,
