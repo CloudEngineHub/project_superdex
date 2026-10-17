@@ -297,8 +297,8 @@ struct TagUseNewtonEulerInertia {};
 
 // Get the Newton solver parameters for a simulation island.
 void GetIslandNewtonParams(
-    int numDofs,
-    SolverParams const& simParams,
+    entt::registry const& reg,
+    entt::entity island,
     NewtonSolverParams& outNewtonParams);
 
 // Set Dirichlet BCs on the solution vector. The BC indices must index the solution vector.

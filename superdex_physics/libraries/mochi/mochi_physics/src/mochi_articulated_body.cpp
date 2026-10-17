@@ -2414,6 +2414,15 @@ static bool HasDryFriction(CArticulatedJointFrictionParams const& friction) {
   });
 }
 
+bool articulated::ReadsJointFrictionHessianChoice(
+    entt::registry const& reg,
+    Span<entt::entity const> entities) {
+  return std::ranges::any_of(entities, [&](entt::entity e) {
+    auto const* friction = reg.try_get<CArticulatedJointFrictionParams>(e);
+    return friction && HasDryFriction(*friction);
+  });
+}
+
 // Whether any joint has nonzero joint inertia, requiring inertia-force assembly.
 static bool HasJointInertia(CArticulatedInertiaParams const& inertia) {
   return std::any_of(inertia.begin(), inertia.end(), [](real value) { return value != 0_r; });

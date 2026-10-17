@@ -1042,6 +1042,12 @@ void InitializeOnce(entt::registry& reg);
 
 // Get the mass of an articulated actor.
 [[nodiscard]] real GetActorMass(entt::registry const& reg, entt::entity actor);
+
+// Whether the assembly of any of the entities reads SaturationHessianParams::jointFriction. Only
+// articulated actors with joint dry friction do.
+[[nodiscard]] bool ReadsJointFrictionHessianChoice(
+    entt::registry const& reg,
+    Span<entt::entity const> entities);
 } // namespace articulated
 
 } // namespace mochi

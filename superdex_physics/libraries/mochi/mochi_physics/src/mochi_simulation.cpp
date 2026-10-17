@@ -17,8 +17,10 @@
 #include "mochi_simulation.h"
 
 #include "mochi_actor_convergence.h"
+#include "mochi_articulated_body.h"
 #include "mochi_ecs_utils.h"
 #include "mochi_integration.h"
+#include "mochi_island.h"
 #include "mochi_rigid.h"
 #include "mochi_soft.h"
 #include "mochi_solve.h"
@@ -32,10 +34,13 @@
 using namespace mochi;
 
 void mochi::GetIslandNewtonParams(
-    int numDofs,
-    SolverParams const& simParams,
+    entt::registry const& reg,
+    entt::entity island,
     NewtonSolverParams& outNewtonParams) {
   MOCHI_PROFILE_SCOPE();
+  int const numDofs = reg.get<CIslandDofInfo>(island).dofsSize;
+  auto const& descendants = reg.get<CIslandDescendants>(island);
+  auto const& simParams = reg.ctx<CSimulationParams const>();
 
   // Solver type
   outNewtonParams.solverType = simParams.nonLinearSolver.solverType;
@@ -54,6 +59,11 @@ void mochi::GetIslandNewtonParams(
   // Retries
   outNewtonParams.psdProjMode = simParams.nonLinearSolver.psdProjMode;
   outNewtonParams.fittedSaturationHessian = simParams.experimentalEval.fittedSaturationHessian;
+  if (!articulated::ReadsJointFrictionHessianChoice(reg, descendants.compoundActors)) {
+    // Mark the joint-friction pathway fitted where nothing reads it, so it doesn't trigger
+    // Newton retries.
+    outNewtonParams.fittedSaturationHessian.jointFriction = true;
+  }
 
   // Explosion control
   outNewtonParams.explosionControl = simParams.nonLinearSolver.explosionControl;

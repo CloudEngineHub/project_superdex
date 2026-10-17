@@ -16,6 +16,7 @@
 
 #include "mochi_articulated_test_scenes.h"
 #include "mochi_physics_test_fixture.h"
+#include "mochi_test_scene_builders.h"
 
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/mochi_physics_experimental.h>
@@ -34,6 +35,7 @@
 #include <mochi_physics/src/mochi_rigid.h>
 #include <mochi_physics/src/mochi_shape.h>
 #include <mochi_physics/src/mochi_snle.h>
+#include <mochi_physics/src/mochi_solve.h>
 
 #include <gtest/gtest.h>
 
@@ -1173,6 +1175,78 @@ TEST_IF_F(MOCHI_USE_DOUBLE_PRECISION, ArticulatedBodyDynamicsTest, FrictionForce
         /* testHessian */ true,
         /* useNewtonEulerInertia */ false);
   }
+}
+
+// A failed Newton attempt is retried to fit the joint-friction Hessian only on islands with joint
+// dry friction, its only reader. Other exact saturation Hessians still trigger the retry.
+TEST_F(ArticulatedBodyDynamicsTest, RetriesForJointFrictionOnlyWithJointDryFriction) {
+  // One Newton iteration, whose attempts each run one line-search iteration. Armijo with a
+  // sufficient-decrease coefficient above 1/2 rejects full Newton steps on these nearly quadratic
+  // merits, so every attempt fails and the line-search iterations count the attempts.
+  auto solverParams = _scene->GetSolverParams();
+  solverParams.nonLinearSolver.maxIter = 1;
+  solverParams.nonLinearSolver.lineSearchType = LineSearchType::Armijo;
+  solverParams.nonLinearSolver.lineSearchWolfe1 = 0.75_r;
+  solverParams.nonLinearSolver.lineSearchMaxIter = 1;
+  _scene->SetSolverParams(solverParams, test::ExpectOK{});
+
+  auto const expectNewtonAttempts = [&](Actor* actor, int expected) {
+    _scene->Step(1e-2_r);
+    EXPECT_EQ(expected, _scene->GetSolverStats().maxLineSearchIters);
+    _scene->DestroyActor(actor->GetHandle());
+  };
+  auto const createRigidActor = [&]() {
+    return _scene->CreateRigidActor(
+        {.shape = _cubeShape, .colliderType = ColliderType::None}, test::ExpectOK{});
+  };
+  expectNewtonAttempts(createRigidActor(), 1);
+  std::array const joints{ArticulatedJointType::Revolute};
+  expectNewtonAttempts(CreateActor(joints, 0_r, 0_r, /* frictionCoeff */ 0_r), 1);
+  expectNewtonAttempts(CreateActor(joints, 0_r, 0_r, /* frictionCoeff */ 1e-3_r), 2);
+
+  solverParams.experimentalEval.fittedSaturationHessian.contactFriction = false;
+  _scene->SetSolverParams(solverParams, test::ExpectOK{});
+  expectNewtonAttempts(createRigidActor(), 2);
+}
+
+// GetIslandNewtonParams marks the joint-friction pathway fitted on islands without joint dry
+// friction, so no other term may read it: with every actor type, its Hessian choice changes exactly
+// the dresiduals of islands with joint dry friction.
+TEST_IF_F(
+    MOCHI_HDF5_AND_INTERNAL,
+    ArticulatedBodyDynamicsTest,
+    OnlyJointDryFrictionReadsJointFrictionHessianChoice) {
+  auto [scene, agent] =
+      test::CreateSceneActorTypes(_mochiContext, "ActorTypes", IntegrationMethod::BackwardEuler);
+  // Gravity keeps the agent's joints moving against its pose controller, so that the fitted and
+  // exact Hessians of its joint dry friction differ.
+  DynamicArray<ArticulatedJointFrictionParams> friction(
+      agent->GetArticulatedJointFrictionParams(test::ExpectOK{}));
+  for (auto& params : friction) {
+    params.coulomb = 1e-3_r;
+  }
+  agent->SetArticulatedJointFrictionParams(friction, test::ExpectOK{});
+  test::AdvanceScene(scene, 3);
+
+  auto& reg = test::GetRegistry(scene);
+  for (entt::entity island : reg.view<CIslandDescendants const>()) {
+    auto const& descendants = reg.get<CIslandDescendants const>(island);
+    auto const assembleDResidual = [&](bool fittedJointFriction) {
+      SnleProblemFunctions<real> functions;
+      functions.assemble = [&](SnleProblem<real>& problem, AssemblyParams const& params) {
+        solver::AssembleIslandPipeline(reg, island, params, problem);
+      };
+      auto const& dofInfo = reg.get<CIslandDofInfo const>(island);
+      SnleProblem<real> problem(dofInfo.dofsSize, dofInfo.poseSize, std::move(functions));
+      GetSolutions(problem.solution, reg, descendants.actors, /*baseOffset*/ 0);
+      problem.UpdateDResidual(/*psdDRes*/ false, {.jointFriction = fittedJointFriction});
+      return ToMatrix(problem.GetDResidual());
+    };
+    EXPECT_EQ(
+        articulated::ReadsJointFrictionHessianChoice(reg, descendants.compoundActors),
+        !test::NearEqualMatrices(assembleDResidual(false), assembleDResidual(true), 0_r));
+  }
+  _mochiContext->DestroyScene(scene);
 }
 
 TEST_F(ArticulatedBodyDynamicsTest, ExternalForces) {

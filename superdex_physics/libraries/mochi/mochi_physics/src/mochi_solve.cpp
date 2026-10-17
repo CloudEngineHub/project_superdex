@@ -1125,9 +1125,7 @@ bool mochi::solver::StepIslandNewtonAsync(
   MOCHI_PROFILE_SCOPE();
   MOCHI_ASSERT(descendants.actors.size() > 0, "Empty islands should have been pruned");
 
-  auto const& islandDofInfo = reg.get<CIslandDofInfo>(island);
   auto& islandSolverStats = reg.get<CIslandSolverStats>(island);
-  int const numDofs = islandDofInfo.dofsSize;
 
   // Clear island solver stats.
   islandSolverStats.stages.clear();
@@ -1144,7 +1142,7 @@ bool mochi::solver::StepIslandNewtonAsync(
   // ------------------------------------------------------------------------
   auto const& simParams = reg.ctx<CSimulationParams const>();
   NewtonSolverParams newtonParams;
-  GetIslandNewtonParams(numDofs, simParams, newtonParams);
+  GetIslandNewtonParams(reg, island, newtonParams);
   auto& preconditioner = reg.get<CIslandPreconditioner>(island);
   NewtonSolver<real> snleSolver(newtonParams, preconditioner);
 

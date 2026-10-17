@@ -237,9 +237,6 @@ static void KrylovSolveZ(
     SnleProblem<real>& problemForward,
     ColumnVectorView<real const> rhs,
     ColumnVectorView<real> outZ) {
-  auto const& islandDofInfo = reg.get<CIslandDofInfo>(island);
-  int const numDofs = islandDofInfo.dofsSize;
-
   // Retrieve backpropagation solver stats component.
   auto& islandBackPropSolverStats = reg.get<CIslandBackPropSolverStats>(island);
 
@@ -252,9 +249,8 @@ static void KrylovSolveZ(
 
   // Get outer and inner solver parameters
   auto const& backpropParams = reg.ctx<CBackPropagationSolverParams const>();
-  auto const& simParams = reg.ctx<CSimulationParams const>();
   NewtonSolverParams newtonParamsForward;
-  GetIslandNewtonParams(numDofs, simParams, newtonParamsForward);
+  GetIslandNewtonParams(reg, island, newtonParamsForward);
   KrylovSolverParams& innerLParams = newtonParamsForward.lParams;
   innerLParams.absTol = backpropParams.innerSolverAbsTol;
 
@@ -408,9 +404,8 @@ static void NewtonSolveZ(
 
   // Configure NR solver
   // ------------------------------------------------------------------------
-  auto const& simParams = reg.ctx<CSimulationParams const>();
   NewtonSolverParams newtonParams;
-  GetIslandNewtonParams(numDofs, simParams, newtonParams);
+  GetIslandNewtonParams(reg, island, newtonParams);
   // Apply general back-propagation parameters
   // - Currently, the back-propagation solver uses regular residual-based line search, but in the
   // test examples line-search never acted in practice.
