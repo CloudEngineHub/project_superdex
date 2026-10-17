@@ -23,6 +23,7 @@
 #include <mochi_core/linear_algebra/krylov/tools/tensor_traits.h>
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/linear_algebra/utils/matrix_concepts.h>
+#include <mochi_core/mochi_config.h>
 #include <mochi_core/solvers/island_operators.h>
 #include <mochi_core/solvers/krylov_solver.h>
 #include <mochi_core/utils/math_utils.h>
@@ -161,7 +162,8 @@ LinearSolverStatus ParallelPCG(
     // WARNING: Each worker must own a COPY (not a reference) of the lambda.
     TaskSemaphore ready1(numTargetWorkers), ready2(numTargetWorkers);
     TimePoint const timeoutTime = Timer::Now() +
-        /* Empirically chosen wait time */ TimeSpanFromSeconds(50e-6 + numTargetWorkers * 5e-6);
+        /* Empirically chosen wait time */
+        TimeSpanFromSeconds((MOCHI_DEBUG ? 5e-3 : 50e-6) + numTargetWorkers * 5e-6);
     auto areAllWorkersReady = [/* By VALUE */ ready1,
                                /* By VALUE */ ready2,
                                numTargetWorkers](
