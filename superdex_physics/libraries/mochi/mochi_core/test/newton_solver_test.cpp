@@ -344,6 +344,17 @@ TEST(NewtonSolver, SmoothLocalMinimum) {
         EXPECT_EQ(result.numIterDone, resultBis.numIterDone);
         EXPECT_EQ(result.numLastLSIterDone, resultBis.numLastLSIterDone);
         EXPECT_EQ(result.totalNumLinearIterDone, resultBis.totalNumLinearIterDone);
+
+        // The stored increment must be the step taken, also when the line search fails and the
+        // solve keeps its last trial. With these parameters, Armijo and Wolfe reject both trials.
+        params.maxIter = 1;
+        params.lineSearch.maxIter = 2;
+        params.lineSearch.alpha = 0.5_r;
+        params.lineSearch.wolfe1 = 0.75_r;
+        solver.SetParams(params);
+        problem.SetSolution(x0);
+        solver.Solve(problem);
+        EXPECT_NEAR(problem.GetIncrement()[0], problem.GetSolution()[0] - x0[0], kAbsTol);
       }
     }
   }

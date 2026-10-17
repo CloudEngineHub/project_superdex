@@ -19,6 +19,7 @@
 #include <mochi_core/solvers/newton_solver_params.h>
 #include <mochi_core/solvers/newton_solver_status.h>
 #include <mochi_core/solvers/snle_problem.h>
+#include <mochi_core/utils/basic_utils.h>
 
 #include <cmath>
 #include <limits>
@@ -183,6 +184,7 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
 
   bool improved = false;
   auto scale = T(1);
+  auto scaleNew = scale;
   auto scaleMin = T(0);
   auto scaleMax = std::numeric_limits<T>::infinity();
   int& it = status.numLastLSIterDone;
@@ -193,6 +195,8 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
     // Compute new candidate solution
     if (it > 0) {
       problem.SetSolution(sol0, /*invokePost*/ false);
+      problem.ScaleIncrement(scaleNew / scale);
+      scale = scaleNew;
     }
     problem.UpdateSolution();
 
@@ -205,19 +209,14 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
     double const merit = problem.GetObjective();
 
     // Check current iterate
-    if (!std::isfinite(dotDxRes) || !std::isfinite(merit) || (merit > status.merit + scale * t1)) {
+    if (!IsFinite(dotDxRes) || !IsFinite(merit) || (merit > status.merit + scale * t1)) {
       // If not finite or 1st Wolfe condition is not met, reduce the scale.
       scaleMax = scale;
-      T const scaleNew = scaleMin + params.alpha * (scale - scaleMin);
-      problem.ScaleIncrement(scaleNew / scale);
-      scale = scaleNew;
+      scaleNew = scaleMin + params.alpha * (scale - scaleMin);
     } else if (dotDxRes < t2 * scale) {
       // If 1st Wolfe condition is met but 2nd is not, increase the scale.
       scaleMin = scale;
-      T const scaleNew =
-          std::isfinite(scaleMax) ? T(0.5) * (scale + scaleMax) : scale / params.alpha;
-      problem.ScaleIncrement(scaleNew / scale);
-      scale = scaleNew;
+      scaleNew = IsFinite(scaleMax) ? T(0.5) * (scale + scaleMax) : scale / params.alpha;
     } else {
       // If both conditions are met, update merit and exit line search.
       status.merit = merit;
@@ -249,6 +248,7 @@ bool LineSearch<T>::WolfeStrong(Problem& problem, Status& status, LsParams const
 
   bool improved = false;
   auto scale = T(1);
+  auto scaleNew = scale;
   auto scaleMin = T(0);
   auto scaleMax = std::numeric_limits<T>::infinity();
   int& it = status.numLastLSIterDone;
@@ -259,6 +259,8 @@ bool LineSearch<T>::WolfeStrong(Problem& problem, Status& status, LsParams const
     // Compute new candidate solution
     if (it > 0) {
       problem.SetSolution(sol0, /*invokePost*/ false);
+      problem.ScaleIncrement(scaleNew / scale);
+      scale = scaleNew;
     }
     problem.UpdateSolution();
 
@@ -270,21 +272,16 @@ bool LineSearch<T>::WolfeStrong(Problem& problem, Status& status, LsParams const
     double const dotDxRes = problem.GetResidual().Dot(problem.GetIncrement());
     double const merit = problem.GetObjective();
 
-    if (!std::isfinite(dotDxRes) || !std::isfinite(merit) || (merit > status.merit + scale * t1) ||
+    if (!IsFinite(dotDxRes) || !IsFinite(merit) || (merit > status.merit + scale * t1) ||
         (dotDxRes > std::abs(t2 * scale))) {
       // If not finite, 1st Wolfe condition is not met, or 2nd Wolfe condition is not met by above,
       // reduce the scale.
       scaleMax = scale;
-      T const scaleNew = scaleMin + params.alpha * (scale - scaleMin);
-      problem.ScaleIncrement(scaleNew / scale);
-      scale = scaleNew;
+      scaleNew = scaleMin + params.alpha * (scale - scaleMin);
     } else if (dotDxRes < -std::abs(t2 * scale)) {
       // If 2nd Wolfe condition is not met by below, increase the scale.
       scaleMin = scale;
-      T const scaleNew =
-          std::isfinite(scaleMax) ? T(0.5) * (scale + scaleMax) : scale / params.alpha;
-      problem.ScaleIncrement(scaleNew / scale);
-      scale = scaleNew;
+      scaleNew = IsFinite(scaleMax) ? T(0.5) * (scale + scaleMax) : scale / params.alpha;
     } else {
       // If both conditions are met, update merit and exit line search.
       status.merit = merit;
