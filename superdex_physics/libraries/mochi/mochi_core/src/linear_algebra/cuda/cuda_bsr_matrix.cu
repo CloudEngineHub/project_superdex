@@ -24,11 +24,11 @@ namespace mochi::krylov::details {
 template <typename Scalar, krylov::Direction kMajorDir>
 MOCHI_GPU_KERNEL void Convert(
     int blockSize,
-    int nb,
+    int nBlockRows,
     int const* MOCHI_RESTRICT rowPtr,
     Scalar const* MOCHI_RESTRICT csrVal,
     Scalar* MOCHI_RESTRICT bsrVal) {
-  for (int rb = blockIdx.x; rb < nb; rb += gridDim.x) {
+  for (int rb = blockIdx.x; rb < nBlockRows; rb += gridDim.x) {
     // Number of block columns in this block row
     int const numBlockCols = rowPtr[rb + 1] - rowPtr[rb];
     int const totalCols = numBlockCols * blockSize;
@@ -56,7 +56,7 @@ void ConvertCsrToBsr(
     int blockSize,
     int nBlockRows,
     int maxNnzPerRow,
-    int* d_csrRowPtr,
+    int const* d_bsrRowPtr,
     Scalar const* d_csrVal,
     Scalar* d_bsrVal) {
   MOCHI_ASSERT_VERBOSE(blockSize > 0, "Invalid block size (%d)", blockSize);
@@ -74,7 +74,7 @@ void ConvertCsrToBsr(
   auto const nColsX = (unsigned int)(Min(maxNnzPerRow, maxThreadsPerBlock / nRowsY));
   dim3 blockDim{nColsX, (unsigned int)(nRowsY)};
   Convert<Scalar, kMajorDir>
-      <<<nBlockRows, blockDim>>>(blockSize, nBlockRows, d_csrRowPtr, d_csrVal, d_bsrVal);
+      <<<nBlockRows, blockDim>>>(blockSize, nBlockRows, d_bsrRowPtr, d_csrVal, d_bsrVal);
   MOCHI_CUDA_CHECK_LAST();
 }
 
@@ -82,7 +82,7 @@ template void ConvertCsrToBsr<double, krylov::Direction::ColMajor>(
     int blockSize,
     int nBlockRows,
     int maxNnzPerRow,
-    int* d_csrRowPtr,
+    int const* d_bsrRowPtr,
     double const* d_csrVal,
     double* d_bsrVal);
 
@@ -90,7 +90,7 @@ template void ConvertCsrToBsr<double, krylov::Direction::RowMajor>(
     int blockSize,
     int nBlockRows,
     int maxNnzPerRow,
-    int* d_csrRowPtr,
+    int const* d_bsrRowPtr,
     double const* d_csrVal,
     double* d_bsrVal);
 
@@ -98,7 +98,7 @@ template void ConvertCsrToBsr<float, krylov::Direction::ColMajor>(
     int blockSize,
     int nBlockRows,
     int maxNnzPerRow,
-    int* d_csrRowPtr,
+    int const* d_bsrRowPtr,
     float const* d_csrVal,
     float* d_bsrVal);
 
@@ -106,7 +106,7 @@ template void ConvertCsrToBsr<float, krylov::Direction::RowMajor>(
     int blockSize,
     int nBlockRows,
     int maxNnzPerRow,
-    int* d_csrRowPtr,
+    int const* d_bsrRowPtr,
     float const* d_csrVal,
     float* d_bsrVal);
 

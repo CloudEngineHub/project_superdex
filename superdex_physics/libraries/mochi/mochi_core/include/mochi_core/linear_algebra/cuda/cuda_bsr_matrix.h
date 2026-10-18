@@ -33,7 +33,7 @@ void ConvertCsrToBsr(
     int blockSize,
     int nBlockRows,
     int maxNnzPerRow,
-    int* d_csrRowPtr,
+    int const* d_bsrRowPtr,
     Scalar const* d_csrVal,
     Scalar* d_bsrVal);
 
