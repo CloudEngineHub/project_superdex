@@ -1238,7 +1238,8 @@ void mochi::InitRigidActor(
 
           // Get or request the GridSdf.
           bool isPending = false;
-          sdfCollider.shape = gridSdfShape->RequestGridSdf(gridSdfParams, &isPending);
+          sdfCollider.shape = gridSdfShape->RequestGridSdf(gridSdfParams, &isPending, error);
+          MOCHI_ERROR_RETURN(error);
 
           // If the GridSdf is being computed asynchronously, then add a component.
           // We will wait for completion before the next simulation step.

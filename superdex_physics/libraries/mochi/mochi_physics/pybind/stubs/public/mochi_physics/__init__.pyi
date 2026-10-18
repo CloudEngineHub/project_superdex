@@ -1152,7 +1152,8 @@ class ColliderType:
 
     Note:
         If the grid is not baked in the actor's Shape, it is computed at
-        initialization (expensive).
+        initialization (expensive), and actor creation fails if it cannot be
+        computed.
 
     Note:
         Also supported for soft actors via SDF mapping.
@@ -5347,11 +5348,19 @@ class RigidActorParams:
     shape doesn't already have one.
 
     Note:
-        Ignored if :attr:`~superdex.physics.RigidActorParams.collider_type` is not
-        :class:`SDF <superdex.physics.ColliderType>`.
+        Ignored unless :attr:`~superdex.physics.RigidActorParams.shape` is a
+        tetrahedral or triangular mesh shape and
+        :attr:`~superdex.physics.RigidActorParams.collider_type` is :class:`SDF
+        <superdex.physics.ColliderType>` or :class:`AUTO
+        <superdex.physics.ColliderType>`.
 
     Note:
-        Ignored if the shape already has a grid-based SDF.
+        Ignored if the shape already has a grid-based SDF, or one is already being
+        computed.
+
+    Note:
+        Actor creation fails if these parameters are used but cannot produce an SDF
+        for the shape.
     """
     has_gravity: bool
     """If true, actor is affected by gravity.

@@ -804,11 +804,11 @@ TEST_IF_P(MOCHI_USE_HDF5, MochiContextTest, LoadShapeFromFile_Sdf) {
         bool isPending = false;
         GridSdfParams sdfParams;
         sdfParams.boundaryPaddingDist = 0.005_r; // more than detectionParams.tolerance
-        newShapePtr->RequestGridSdf(sdfParams, &isPending); // Start SDF processing
+        newShapePtr->RequestGridSdf(sdfParams, &isPending, ExpectOK{}); // Start SDF processing
         EXPECT_TRUE(isPending);
         newShapePtr->GetGridSdfSemaphore().Wait(); // Wait for completion
-        auto newGridSdf =
-            newShapePtr->RequestGridSdf(sdfParams, &isPending); // Get newly processed SDF
+        auto newGridSdf = newShapePtr->RequestGridSdf(
+            sdfParams, &isPending, ExpectOK{}); // Get newly processed SDF
         EXPECT_FALSE(isPending);
         EXPECT_NE((GridSdf const*)nullptr, newGridSdf.get());
 
@@ -2064,6 +2064,25 @@ static void TestGridSdfCache(Context* context, ShapeHandle shape1, ShapeHandle s
   RigidActorParams actorParams;
   actorParams.colliderType = ColliderType::Sdf;
   actorParams.isStatic = true;
+
+  // GridSdf params that are invalid for the shape's mesh fail creation every time, and leave no
+  // entity behind.
+  GridSdfParams const invalidSdf{
+      .resolutionMode = GridSdfResolutionMode::Explicit,
+      .resolutionDelta = {1e-4_r, 1e-4_r, 1e-4_r}};
+  actorParams.shape = shapes[0];
+  actorParams.sdf = invalidSdf;
+  for (int i = 0; i < 2; ++i) {
+    Error error;
+    EXPECT_EQ(nullptr, scene->CreateRigidActor(actorParams, error));
+    EXPECT_STREQ(
+        "Computed SDF resolution would include more than a billion cells. Your mesh may have "
+        "degenerate bounds or degenerate triangles. See GridSdfParams for resolution options.",
+        error.GetDescription());
+  }
+  auto& reg = test::GetRegistry(scene);
+  EXPECT_TRUE(reg.view<CSdfCollider const>().empty());
+
   actorParams.sdf = GridSdfParams{.resolutionDelta = {0.1_r, 0.1_r, 0.1_r}};
   actorParams.shape = shapes[0];
   auto* firstActor = scene->CreateRigidActor(actorParams, ExpectOK{});
@@ -2084,7 +2103,6 @@ static void TestGridSdfCache(Context* context, ShapeHandle shape1, ShapeHandle s
 
   // By this time, every actor should have a GridSdfCollider with valid data.
   // Every even actor should share the same GridSdf pointer. Every odd one should share.
-  auto& reg = test::GetRegistry(scene);
   Sdf const* sdfs[kNumActors] = {};
   for (int i = 0; i < kNumActors; ++i) {
     auto e = GetEntity(reg, actors[i], ExpectOK{});
@@ -2096,6 +2114,10 @@ static void TestGridSdfCache(Context* context, ShapeHandle shape1, ShapeHandle s
   for (int i = 2; i < kNumActors; ++i) {
     EXPECT_EQ(sdfs[i - 2], sdfs[i]); // Expected every other actor to share the same GridSdf
   }
+
+  // Once the shape has a GridSdf, invalid params are ignored.
+  actorParams.sdf = invalidSdf;
+  scene->CreateRigidActor(actorParams, ExpectOK{});
 }
 
 TEST(GridSdfShapeTest, PendingGridSdfTaskKeepsSurfaceMeshAlive) {
@@ -2179,7 +2201,7 @@ TEST(GridSdfShapeTest, PendingGridSdfTaskKeepsSurfaceMeshAlive) {
   params.boundaryPaddingDist = 0.01_r;
 
   bool isPending = false;
-  auto const requested = shape->RequestGridSdf(params, &isPending);
+  auto const requested = shape->RequestGridSdf(params, &isPending, ExpectOK{});
   ASSERT_EQ(nullptr, requested);
   ASSERT_TRUE(isPending);
   ASSERT_EQ(nullptr, shape->GetGridSdf());

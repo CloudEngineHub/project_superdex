@@ -280,14 +280,18 @@ class GridSdfShape : public Shape {
   std::shared_ptr<GridSdf const> GetGridSdf() const;
 
   // If this shape already has a GridSdf, then return it.
-  // Else if this shape does not support GridSdf, then set an error and return nullptr.
-  // Else if a GridSdf can be computed, then start an async task (if not already started) and
-  // return nullptr with (*outIsPending = true). To get the result of the async task, call
+  // Else if an async task is already computing one, then return nullptr with
+  // (*outIsPending = true), ignoring these params: the task uses the params of the request that
+  // started it.
+  // Else if a GridSdf cannot be computed with these params, then set an error and return nullptr
+  // with (*outIsPending = false).
+  // Else start an async task that computes one with these params, and return nullptr with
+  // (*outIsPending = true). To get the result of the async task, call
   // GetGridSdfSemaphore().Wait(), then GetGridSdf().
-  std::shared_ptr<GridSdf const> RequestGridSdf(GridSdfParams const& params, bool* outIsPending)
-      const;
+  std::shared_ptr<GridSdf const>
+  RequestGridSdf(GridSdfParams const& params, bool* outIsPending, Error& error) const;
 
-  // If you RequestGridSdf starts an async job, then you can use this semaphore to wait for
+  // If RequestGridSdf starts an async task, then you can use this semaphore to wait for its
   // completion (see RequestGridSdf above).
   TaskSemaphore GetGridSdfSemaphore() const {
     return _gridSdfSem;

@@ -47,6 +47,12 @@ class GridSdf final : public Sdf {
       GridSdfParams const& params,
       Error& error);
 
+  // Sets the error that the constructor above would set, without computing the SDF.
+  static void Validate(
+      std::shared_ptr<TriangularMesh const> const& mesh,
+      GridSdfParams const& params,
+      Error& error);
+
   // Create a GridSdf by reference counting an existing DenseGrid3D, and applying a 3D
   // transformation relative to the local space of the owning actor.
   GridSdf(std::shared_ptr<DenseGrid3D<real> const> const& grid, VMatrix4x4r const& actorFromGrid);

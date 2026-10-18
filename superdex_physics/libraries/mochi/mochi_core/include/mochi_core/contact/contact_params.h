@@ -413,7 +413,7 @@ enum class ColliderType {
    * @note Accurate for closed non-intersecting geometries provided the grid resolution is
    * sufficient.
    * @note If the grid is not baked in the actor's Shape, it is computed at initialization
-   * (expensive).
+   * (expensive), and actor creation fails if it cannot be computed.
    * @note Also supported for soft actors via SDF mapping.
    *
    * @see GridSdfParams

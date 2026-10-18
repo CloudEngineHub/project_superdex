@@ -121,11 +121,12 @@ std::shared_ptr<GridSdf const> GridSdfShape::GetGridSdf() const {
   return _gridSdf;
 }
 
-std::shared_ptr<GridSdf const> GridSdfShape::RequestGridSdf(
-    GridSdfParams const& params,
-    bool* outIsPending) const {
+std::shared_ptr<GridSdf const>
+GridSdfShape::RequestGridSdf(GridSdfParams const& params, bool* outIsPending, Error& error) const {
   *outIsPending = false;
+  MOCHI_ERROR_RETURN(error, {});
   bool shouldSchedule = false;
+  std::shared_ptr<TriangularMesh const> surfaceMesh;
 
   // Synchronize
   {
@@ -138,6 +139,15 @@ std::shared_ptr<GridSdf const> GridSdfShape::RequestGridSdf(
       *outIsPending = true;
       return {};
     } else {
+      // Snapshot the surface mesh before scheduling: ~GridSdfShape waits for the async task only in
+      // its base destructor, by which point the derived shape's mesh members are already destroyed.
+      surfaceMesh = GetSurfaceMesh();
+      MOCHI_ASSERT(surfaceMesh != nullptr, "Every derived shape class should have one");
+
+      // The async task cannot report errors, so validate the inputs it will use.
+      GridSdf::Validate(surfaceMesh, params, error);
+      MOCHI_ERROR_RETURN(error, {});
+
       // We will start the async task for ourselves.
       *outIsPending = true;
       shouldSchedule = true;
@@ -147,10 +157,6 @@ std::shared_ptr<GridSdf const> GridSdfShape::RequestGridSdf(
 
   // Start an async task if necessary
   if (shouldSchedule) {
-    // Snapshot the surface mesh before scheduling: ~GridSdfShape waits for this task only in its
-    // base destructor, by which point the derived shape's mesh members are already destroyed.
-    std::shared_ptr<TriangularMesh const> surfaceMesh = GetSurfaceMesh();
-    MOCHI_ASSERT(surfaceMesh != nullptr, "Every derived shape class should have one");
     Schedule(
         "GridSdf",
         [this,
@@ -161,13 +167,10 @@ std::shared_ptr<GridSdf const> GridSdfShape::RequestGridSdf(
           // until sem.Done() below, so the base subobject outlives every use of `this` here.
           // Keep sem.Done() last — the base may be freed the moment it runs. Derived members
           // do not survive, hence surfaceMesh is captured by value above.
-          Error error;
-          auto newGridSdf = std::make_shared<GridSdf>(surfaceMesh, params, error);
-          if (error.IsOK()) {
+          auto newGridSdf = std::make_shared<GridSdf>(surfaceMesh, params, ErrorAssert{});
+          {
             std::lock_guard lock(_gridSdfMutex);
             _gridSdf = std::move(newGridSdf);
-          } else {
-            MOCHI_LOG_ERROR("Failed to create GridSdf: %s", error.ToString().c_str());
           }
           sem.Done();
         });

@@ -82,8 +82,7 @@ ComputeEdgeBasedResolution(TriangularMesh const* mesh, GridSdfParams const& para
   // Compute edge size
   auto nodes = mesh->GetNodeCoordinates();
   auto edges = mesh->GetEdges();
-  MOCHI_ERROR_IF(edges.empty(), error, "Empty triangle mesh cannot be used to compute an SDF.");
-  MOCHI_ERROR_RETURN(error, {});
+  MOCHI_ASSERT_VERBOSE(!edges.empty(), "Expected the caller to reject empty meshes.");
   real edgeSize = 0_r;
 
   switch (params.resolutionMode) {
@@ -181,12 +180,22 @@ GridSdf GridSdf::Create(GridSdfData&& data) {
   return GridSdf{std::move(grid), actorFromGrid};
 }
 
-void GridSdf::Initialize(
+namespace {
+// Bounds and number of cells of the grid that samples the SDF of a mesh.
+struct GridSdfLayout {
+  Aabb colliderBounds;
+  Aabb gridBounds;
+  Int3 cellDims;
+};
+} // namespace
+
+// Computes the grid layout, or sets an error if a GridSdf cannot be computed for this mesh and
+// params.
+static GridSdfLayout ComputeGridSdfLayout(
     std::shared_ptr<TriangularMesh const> const& mesh,
     GridSdfParams const& params,
     Error& error) {
-  MOCHI_ERROR_RETURN(error);
-  MOCHI_PROFILE_SCOPE();
+  MOCHI_ERROR_RETURN(error, {});
 
   MOCHI_ERROR_IF_NOT(mesh, error, "Must provide a triangle mesh");
   MOCHI_ERROR_IF_NOT(
@@ -198,7 +207,10 @@ void GridSdf::Initialize(
           (params.resolutionDelta[1] > 0_r) && (params.resolutionDelta[2] > 0_r),
       error,
       "Resolution delta must be finite and positive.");
-  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_RETURN(error, {});
+  MOCHI_ERROR_IF(
+      mesh->GetEdges().empty(), error, "Empty triangle mesh cannot be used to compute an SDF.");
+  MOCHI_ERROR_RETURN(error, {});
 
   // Determine delta
   Real3 delta{};
@@ -222,7 +234,7 @@ void GridSdf::Initialize(
     default:
       MOCHI_ERROR_SET(error, "Invalid GridSdfResolutionMode");
   }
-  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_RETURN(error, {});
 
   // Grid bounds
   Aabb colliderBounds = mesh->GetAabb();
@@ -232,49 +244,77 @@ void GridSdf::Initialize(
   Real3 epsilon = gridBounds.GetSize() * std::numeric_limits<real>::epsilon();
   gridBounds = Aabb{gridBounds.GetMin() - epsilon, gridBounds.GetMax() + epsilon};
 
-  // Grid resolution
+  // Grid resolution, in double until the checks below pass, because converting an out-of-range
+  // value to int is undefined behavior.
   auto gridSize = gridBounds.GetSize();
-  auto cellDims64 = StaticCast<NdArray<int64_t, 3>>(Ceil(gridSize / delta));
+  auto const cellDimsForDelta = StaticCast<Double3>(Ceil(gridSize / delta));
 
-  // Sanity check in case of excessively small delta
+  // Sanity check in case of excessively small delta. Also rejects NaN.
   for (int i = 0; i < 3; ++i) {
-    MOCHI_ERROR_IF(
-        cellDims64[i] >= std::numeric_limits<int>::max(),
+    MOCHI_ERROR_IF_NOT(
+        cellDimsForDelta[i] < std::numeric_limits<int>::max(),
         error,
         "Computed SDF grid resolution would be too large. Your mesh may have degenerate bounds or degenerate "
         "triangles. See GridSdfParams for resolution options.");
   }
+
+  // Every grid needs at least 1 cell (voxel), but that isn't enough for good results.
+  // In fact, mochi_contact.cpp will log a warning if there are less than 6 cells per axis.
+  auto const cellDimsDouble =
+      Max(cellDimsForDelta, StaticCast<Double3>(params.minGridResolution), Double3{1.0, 1.0, 1.0});
   MOCHI_ERROR_IF(
-      static_cast<double>(cellDims64[0]) * cellDims64[1] * cellDims64[2] >= 1e9,
+      cellDimsDouble[0] * cellDimsDouble[1] * cellDimsDouble[2] >= 1e9,
       error,
       "Computed SDF resolution would include more than a billion cells. Your mesh may have degenerate bounds "
       "or degenerate triangles. See GridSdfParams for resolution options.");
-  MOCHI_ERROR_RETURN(error);
+  // The grid has N + 1 samples per axis, and DenseGrid3D counts and indexes them with int.
+  MOCHI_ERROR_IF(
+      (cellDimsDouble[0] + 1) * (cellDimsDouble[1] + 1) * (cellDimsDouble[2] + 1) >
+          std::numeric_limits<int>::max(),
+      error,
+      "Computed SDF grid resolution would be too large. Your mesh may have degenerate bounds or degenerate "
+      "triangles. See GridSdfParams for resolution options.");
+  MOCHI_ERROR_RETURN(error, {});
 
-  auto cellDims = StaticCast<Int3>(cellDims64);
+  auto const cellDims = StaticCast<Int3>(cellDimsDouble);
   for (int i = 0; i < 3; ++i) {
     MOCHI_ASSERT_VERBOSE(
         (gridSize[i] / static_cast<real>(cellDims[i])) <= delta[i],
         "This algorithm should result in a cell size no larger than the delta computed based on GridSdfParams.");
   }
 
-  // Every grid needs at least 1 cell (voxel), but that isn't enough for good results.
-  // In fact, mochi_contact.cpp will log a warning if there are less than 6 cells per axis.
-  for (int i = 0; i < 3; ++i) {
-    cellDims[i] = Max(cellDims[i], Max(1, params.minGridResolution[i]));
-  }
+  return {colliderBounds, gridBounds, cellDims};
+}
+
+void GridSdf::Validate(
+    std::shared_ptr<TriangularMesh const> const& mesh,
+    GridSdfParams const& params,
+    Error& error) {
+  ComputeGridSdfLayout(mesh, params, error);
+}
+
+void GridSdf::Initialize(
+    std::shared_ptr<TriangularMesh const> const& mesh,
+    GridSdfParams const& params,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_PROFILE_SCOPE();
+
+  auto const layout = ComputeGridSdfLayout(mesh, params, error);
+  MOCHI_ERROR_RETURN(error);
 
   // If there are N cells in a particular direction, then the scalar field will have (N + 1) values.
-  auto gridDims = cellDims + Int3{1, 1, 1};
+  auto gridDims = layout.cellDims + Int3{1, 1, 1};
 
   // Initialize dense grid
-  auto newGrid = std::make_shared<DenseGrid3D<real>>(gridDims, gridBounds, colliderBounds);
+  auto newGrid =
+      std::make_shared<DenseGrid3D<real>>(gridDims, layout.gridBounds, layout.colliderBounds);
 
   // WARNING: This is very slow. It could be made faster if that's important enough.
   _isMeshClosed = InitializeBruteForce(mesh, *newGrid);
 
   // Same bounds as the grid because transform is identity
-  _colliderBoundsInActorSpace = colliderBounds;
+  _colliderBoundsInActorSpace = layout.colliderBounds;
 
   // Store pointer-to-const
   _distanceGrid = newGrid;

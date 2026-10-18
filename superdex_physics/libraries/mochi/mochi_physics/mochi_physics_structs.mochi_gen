@@ -272,8 +272,11 @@ struct RigidActorParams [equality] {
   // @brief Parameters used to construct a grid-based Signed Distance Field (SDF) if the shape
   // doesn't already have one.
   //
-  // @note Ignored if @ref colliderType is not @ref ColliderType::Sdf.
-  // @note Ignored if the shape already has a grid-based SDF.
+  // @note Ignored unless @ref shape is a tetrahedral or triangular mesh shape and @ref colliderType
+  // is @ref ColliderType::Sdf or @ref ColliderType::Auto.
+  // @note Ignored if the shape already has a grid-based SDF, or one is already being computed.
+  // @note Actor creation fails if these parameters are used but cannot produce an SDF for the
+  // shape.
   GridSdfParams sdf;
 
   // @brief If true, actor is affected by gravity.

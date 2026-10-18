@@ -244,6 +244,63 @@ TEST(GridSdf, BoundaryPadding) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Validation Test
+// ---------------------------------------------------------------------------
+
+TEST(GridSdf, ValidateMatchesConstructor) {
+  auto const cube = CreateTestMesh();
+  auto const flat = std::make_shared<TriangularMesh>(test::CreateMinimalTriMeshSingleTri());
+  auto const empty =
+      std::make_shared<TriangularMesh>(cube->GetNodeCoordinates(), Span<Int3 const>{});
+  struct Case {
+    std::shared_ptr<TriangularMesh const> mesh;
+    GridSdfResolutionMode mode;
+    real delta;
+    char const* error;
+    Int3 minGridResolution = {1, 1, 1};
+    real padding = 0_r;
+  };
+  char const* const kTooManyCells =
+      "Computed SDF resolution would include more than a billion cells. Your mesh may have "
+      "degenerate bounds or degenerate triangles. See GridSdfParams for resolution options.";
+  char const* const kTooLarge =
+      "Computed SDF grid resolution would be too large. Your mesh may have degenerate bounds or "
+      "degenerate triangles. See GridSdfParams for resolution options.";
+  real constexpr kMaxReal = std::numeric_limits<real>::max();
+  Case const cases[] = {
+      {cube, GridSdfResolutionMode::Explicit, 0.5_r, ""},
+      {empty,
+       GridSdfResolutionMode::Explicit,
+       0.5_r,
+       "Empty triangle mesh cannot be used to compute an SDF."},
+      {flat,
+       GridSdfResolutionMode::SmallestAxis,
+       0.5_r,
+       "Mesh AABB side length must be finite and positive for SDF computation."},
+      {cube, GridSdfResolutionMode::Explicit, 1e-4_r, kTooManyCells},
+      {cube, GridSdfResolutionMode::Explicit, 0.5_r, kTooManyCells, {1000, 1000, 1000}},
+      {cube, GridSdfResolutionMode::Explicit, 1e-30_r, kTooLarge},
+      // Fewer than a billion cells, but more samples than an int can count.
+      {cube, GridSdfResolutionMode::Explicit, 10_r, kTooLarge, {600000000, 1, 1}},
+      // Infinite grid size over infinite delta.
+      {cube, GridSdfResolutionMode::LargestAxis, kMaxReal, kTooLarge, {1, 1, 1}, kMaxReal},
+  };
+  for (auto const& [mesh, mode, delta, expectedError, minGridResolution, padding] : cases) {
+    auto params = CreateBaseParams();
+    params.resolutionMode = mode;
+    params.resolutionDelta = Real3{delta, delta, delta};
+    params.minGridResolution = minGridResolution;
+    params.boundaryPaddingDist = padding;
+    Error validateError;
+    GridSdf::Validate(mesh, params, validateError);
+    EXPECT_STREQ(expectedError, validateError.GetDescription());
+    Error constructorError;
+    GridSdf const sdf(mesh, params, constructorError);
+    EXPECT_STREQ(expectedError, constructorError.GetDescription());
+  }
+}
+
 // Off-center geometry makes actor-from-grid rotation and reflection observable.
 static constexpr Real3 kSphereCenter{0.25_r, -0.25_r, 0_r};
 static constexpr real kSphereRadius = 0.25_r;
