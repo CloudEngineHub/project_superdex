@@ -253,8 +253,16 @@ void DeepFlowMap::MapPoints(
     DynamicArray<ColliderJacDofs>* outDofsJac) const {
   MOCHI_PROFILE_SCOPE();
 
-  // If no points are passed, return
+  // If no points are passed, return empty outputs
   if (originalPoints.empty()) {
+    outMappedPoints.clear();
+    outInds.clear();
+    if (outMapJac) {
+      outMapJac->clear();
+    }
+    if (outDofsJac) {
+      outDofsJac->clear();
+    }
     return;
   }
 
