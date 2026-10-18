@@ -2049,9 +2049,7 @@ class ActorInterfaceImpl : public ActorInterface {
     // General error checking
     auto const* dofInfo = MOCHI_TRY_GET(CActorDofInfo, reg, e, error);
     MOCHI_ERROR_IF(
-        (reg.any_of<TagRomActor>(e)),
-        error,
-        "ROM actors do not yet support boundary conditions yet.");
+        (reg.any_of<TagRomActor>(e)), error, "ROM actors do not yet support boundary conditions.");
     MOCHI_ERROR_IF(
         !reg.all_of<CDirichletBC<real>>(e),
         error,
@@ -2206,28 +2204,39 @@ class ActorInterfaceImpl : public ActorInterface {
         if (dof.rotSize <= 1) {
           continue;
         }
-        std::vector<int> rotInds(dof.rotSize);
+        std::array<int, RigidSize::kDRot> rotIndsStorage MOCHI_NO_INIT;
+        auto const rotInds = MakeSpan(rotIndsStorage).subspan(0, dof.rotSize);
         std::iota(rotInds.begin(), rotInds.end(), dof.GetRotOffset());
         MOCHI_ERROR_IF(hasPartialRotationBCs(rotInds), error, "Rotation BCs must be all or none.");
       }
     }
     MOCHI_ERROR_RETURN(error);
 
-    // If necessary, convert dof indices and values to pose
-    std::vector<int> poseIndContainer;
-    std::vector<real> poseValContainer;
+    // If necessary, convert DoF indices and values to pose. addBCs() reads the outputs through
+    // poseIndices and poseValues, so they and their allocator must outlive it.
+    MOCHI_FILO_STACK_ALLOCATOR(allocator, sizeof(real) * 6 * 256); // 6 arrays, up to 256 DoFs
+    DynamicArray<int> poseIndContainer(&allocator);
+    DynamicArray<real> poseValContainer(&allocator);
     if (dofInfo->poseSize != dofInfo->dofsSize) {
-      // Create temp vectors for all dofs and indices
-      std::vector<real> dofs(dofInfo->dofsSize, 0_r);
-      DynamicArray<bool> indsDofs(dofInfo->dofsSize, false);
+      // Reserve the outputs before the temporaries, which this scope frees first (FILO). Reserving
+      // the pose size means the outputs never grow.
+      poseIndContainer.reserve(dofInfo->poseSize);
+      poseValContainer.reserve(dofInfo->poseSize);
+
+      // Create temp vectors for all DoFs and indices
+      DynamicArray<real> dofs(dofInfo->dofsSize, 0_r, &allocator);
+      DynamicArray<bool> indsDofs(dofInfo->dofsSize, false, &allocator);
       for (int i = 0; i < dofIndices.size(); ++i) {
         dofs[dofIndices[i]] = dofValuesWorld[i];
         indsDofs[dofIndices[i]] = true;
       }
 
-      // Convert to pose and indices
-      std::vector<real> pose(dofInfo->poseSize);
-      DynamicArray<bool> indsPose(dofInfo->poseSize, false);
+      // Convert to pose and indices. The conversions write every pose entry, so neither array
+      // needs initializing.
+      DynamicArray<real> pose(&allocator);
+      pose.resize_noinit(dofInfo->poseSize);
+      DynamicArray<bool> indsPose(&allocator);
+      indsPose.resize_noinit(dofInfo->poseSize);
       if (reg.all_of<TagRigidActor>(e)) {
         ConvertRigidDofsToPose(dofs, pose);
         ConvertRigidDofFlagsToPoseFlags(indsDofs, indsPose);
@@ -2242,8 +2251,6 @@ class ActorInterfaceImpl : public ActorInterface {
       }
 
       // Extract the required pose values and indices
-      poseIndContainer.reserve(dofInfo->poseSize);
-      poseValContainer.reserve(dofInfo->poseSize);
       for (int i = 0; i < indsPose.size(); ++i) {
         if (indsPose[i]) {
           poseIndContainer.push_back(i);
