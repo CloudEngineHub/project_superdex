@@ -166,10 +166,10 @@
 
 /// @var mochi::prefab::SoftActorPrefab::sdf
 ///
-/// @brief [Experimental] Parameters used to construct a grid-based Signed Distance Field (SDF) if the shape doesn't already have one.
+/// @brief [Experimental] Parameters used to construct a grid-based Signed Distance Field (SDF) from the shape's surface mesh.
 ///
-/// @note Ignored if @ref mochi::prefab::SoftActorPrefab::colliderType "colliderType" is not @ref mochi::ColliderType::Sdf "ColliderType::Sdf".
-/// @note Ignored if the shape already has a grid-based SDF.
+/// @note Ignored unless @ref mochi::prefab::SoftActorPrefab::colliderType "colliderType" is @ref mochi::ColliderType::Sdf "ColliderType::Sdf" or @ref mochi::ColliderType::Auto "ColliderType::Auto".
+/// @note The SDF is computed when the actor is created, even if the shape already has one.
 ///
 /// @warning This is an experimental feature. It may be changed or removed in the future. Use at your own risk.
 ///

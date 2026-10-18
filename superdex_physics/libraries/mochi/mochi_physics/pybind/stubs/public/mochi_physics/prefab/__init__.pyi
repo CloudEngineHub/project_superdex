@@ -935,14 +935,17 @@ class SoftActorPrefab(mochi_physics.SoftActorParams):
     """
     sdf: mochi_physics.GridSdfParams
     """[Experimental] Parameters used to construct a grid-based Signed Distance Field
-    (SDF) if the shape doesn't already have one.
+    (SDF) from the shape's surface mesh.
 
     Note:
-        Ignored if :attr:`~superdex.physics.prefab.SoftActorPrefab.collider_type` is
-        not :class:`SDF <superdex.physics.ColliderType>`.
+        Ignored unless
+        :attr:`~superdex.physics.prefab.SoftActorPrefab.collider_type` is
+        :class:`SDF <superdex.physics.ColliderType>` or :class:`AUTO
+        <superdex.physics.ColliderType>`.
 
     Note:
-        Ignored if the shape already has a grid-based SDF.
+        The SDF is computed when the actor is created, even if the shape already has
+        one.
 
     Warning:
         This is an experimental feature. It may be changed or removed in the future.

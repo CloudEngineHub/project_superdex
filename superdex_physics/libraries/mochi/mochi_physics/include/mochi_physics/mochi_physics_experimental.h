@@ -855,14 +855,14 @@ struct ExperimentalSoftActorParams {
   ColliderType colliderType = ColliderType::None;
 
   /**
-   * @brief [Experimental] Parameters used to construct a grid-based Signed Distance Field (SDF) if
-   * the shape doesn't already have one.
+   * @brief [Experimental] Parameters used to construct a grid-based Signed Distance Field (SDF)
+   * from the shape's surface mesh.
    *
    * @warning The use of @ref GridSdfParams for a soft actor is experimental. It may be changed or
    * removed in the future. Use at your own risk.
    *
-   * @note Ignored if @ref colliderType is not @ref ColliderType::Sdf.
-   * @note Ignored if the shape already has a grid-based SDF.
+   * @note Ignored unless @ref colliderType is @ref ColliderType::Sdf or @ref ColliderType::Auto.
+   * @note The SDF is computed when the actor is created, even if the shape already has one.
    */
   GridSdfParams sdf;
 
