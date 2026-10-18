@@ -244,8 +244,6 @@ void ApplyBlockSsorOperator(
   ColumnVectorView<Scalar> tview(t, nRows);
   if constexpr (kPrecBlockSize == kBlockSizeA) {
     [[maybe_unused]] ColumnVector<Scalar> xTmp;
-    [[maybe_unused]] auto const xTmpRequiredSize = static_cast<NonConstIdx>(
-        mochi::details::RowMultiplier<Scalar, kBlockSizeA>::GetWorkspaceSize(A.MaxNnzPerRow()));
     [[maybe_unused]] ColumnVector<Scalar, kBlockSizeA> Ly;
     [[maybe_unused]] auto aLy = mochi::details::GetAccessor(Ly);
     for (int jc = 0; jc < x.Cols(); ++jc) {
@@ -268,8 +266,7 @@ void ApplyBlockSsorOperator(
               aLy,
               /*br*/ 0,
               /*c*/ 0,
-              xTmp,
-              xTmpRequiredSize);
+              xTmp);
           ti -= Ly;
         } else {
           static_assert(
@@ -302,8 +299,7 @@ void ApplyBlockSsorOperator(
               aLy,
               /*br*/ 0,
               /*c*/ 0,
-              xTmp,
-              xTmpRequiredSize);
+              xTmp);
           ti -= Ly;
         } else {
           static_assert(

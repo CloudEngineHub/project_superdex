@@ -106,8 +106,7 @@ class BlockSparseMatrix {
       : _nBlockCols(other.BlockCols()),
         _ptr(other._ptr.data(), other._ptr.data() + other._ptr.size()),
         _idx(other._idx.data(), other._idx.data() + other._idx.size()),
-        _v(other._v.data(), other._v.data() + other._v.size()),
-        _maxNnzPerRow(other._maxNnzPerRow) {}
+        _v(other._v.data(), other._v.data() + other._v.size()) {}
 
   // Construct by copying a non-const BlockSparseMatrix of compatible type.
   // Performs a shallow or deep copy of the values, depending on the Storage type.
@@ -120,17 +119,11 @@ class BlockSparseMatrix {
       : _nBlockCols(other.BlockCols()),
         _ptr(other._ptr.data(), other._ptr.data() + other._ptr.size()),
         _idx(other._idx.data(), other._idx.data() + other._idx.size()),
-        _v(other._v.data(), other._v.data() + other._v.size()),
-        _maxNnzPerRow(other._maxNnzPerRow) {}
+        _v(other._v.data(), other._v.data() + other._v.size()) {}
 
   BlockSparseMatrix(CRIdx nBlockCol_, Storage<Ptr> ptr_, Storage<CRIdx> idx_, Storage<Scalar> v_)
-      : _nBlockCols(nBlockCol_),
-        _ptr(std::move(ptr_)),
-        _idx(std::move(idx_)),
-        _v(std::move(v_)),
-        _maxNnzPerRow(0) {
+      : _nBlockCols(nBlockCol_), _ptr(std::move(ptr_)), _idx(std::move(idx_)), _v(std::move(v_)) {
     MOCHI_ASSERT_VERBOSE(isize(_idx) * kBlockSize * kBlockSize == isize(_v), "Size mismatch");
-    GetMaxNnzPerRow();
   }
 
   template <
@@ -145,14 +138,12 @@ class BlockSparseMatrix {
       : _nBlockCols(nBlockCol),
         _ptr(graph.GetPointers().begin(), graph.GetPointers().end()),
         _idx(graph.GetTargets().begin(), graph.GetTargets().end()),
-        _v(kBlockSize * kBlockSize * graph.NumTargets(), Scalar(0), rest...),
-        _maxNnzPerRow(0) {
+        _v(kBlockSize * kBlockSize * graph.NumTargets(), Scalar(0), rest...) {
     static_assert(std::is_same_v<CRIdx const, CRIdxG const>, "Inconsistent row index types");
     static_assert(std::is_same_v<Ptr const, PtrG const>, "Inconsistent pointer index types");
     if constexpr (sizeof...(ExtraArgs) > 0) {
       static_assert(std::is_same_v<Storage<Scalar>, DynamicArray<Scalar>>);
     }
-    GetMaxNnzPerRow();
   }
 
   template <
@@ -167,14 +158,12 @@ class BlockSparseMatrix {
       : _nBlockCols(nBlockCol),
         _ptr(std::move(graph.GetMovablePointers())),
         _idx(std::move(graph.GetMovableTargets())),
-        _v(kBlockSize * kBlockSize * _idx.size(), Scalar(0), rest...),
-        _maxNnzPerRow(0) {
+        _v(kBlockSize * kBlockSize * _idx.size(), Scalar(0), rest...) {
     static_assert(std::is_same_v<CRIdx const, CRIdxG const>, "Inconsistent row index types");
     static_assert(std::is_same_v<Ptr const, PtrG const>, "Inconsistent pointer index types");
     if constexpr (sizeof...(ExtraArgs) > 0) {
       static_assert(std::is_same_v<Storage<Scalar>, DynamicArray<Scalar>>);
     }
-    GetMaxNnzPerRow();
   }
 
   // Construct a SQUARE BlockSparseMatrix by moving the sparsity pattern from a Graph.
@@ -237,9 +226,13 @@ class BlockSparseMatrix {
     }
   }
 
-  /// @brief Returns the maximum number of non-zeros per row.
-  MOCHI_FORCE_INLINE CRIdx MaxNnzPerRow() const {
-    return _maxNnzPerRow;
+  /// @brief Scans the row pointers and returns the maximum number of non-zero entries per row.
+  [[nodiscard]] NonConstIdx ComputeMaxNnzPerRow() const {
+    NonConstIdx maxNumBlocks = 0;
+    for (NonConstIdx br = 0; br < BlockRows(); ++br) {
+      maxNumBlocks = Max<NonConstIdx>(maxNumBlocks, _ptr[br + 1] - _ptr[br]);
+    }
+    return kBlockSize * maxNumBlocks;
   }
 
   // @brief Returns the total number of rows in the matrix.
@@ -447,14 +440,6 @@ class BlockSparseMatrix {
   auto operator()(CRIdx r, CRIdx c) const;
 
  protected:
-  /// @brief Count the maximum number of non-zero entries per row
-  void GetMaxNnzPerRow() {
-    for (NonConstIdx i = 0; i + 1 < _ptr.size(); ++i) {
-      _maxNnzPerRow = std::max<NonConstIdx>(_maxNnzPerRow, _ptr[i + 1] - _ptr[i]);
-    }
-    _maxNnzPerRow *= kBlockSize;
-  }
-
   /// @brief Find a row and column in the sparsity pattern. Returns the offset of the corresponding
   /// value in _v, or -1 if not found.
   auto FindValueIndex(CRIdx r, CRIdx c) const {
@@ -479,7 +464,6 @@ class BlockSparseMatrix {
   Storage<Ptr> _ptr;
   Storage<CRIdx> _idx;
   Storage<Scalar> _v;
-  NonConstIdx _maxNnzPerRow = 0;
 
   template <
       typename OScal,
@@ -674,7 +658,7 @@ struct RowMultiplier {
   using VType = Simd<NonConstScalar>; // Native SIMD type.
 
   /// @brief Workspace size to guarantee safe memory writes. Only needed for ApplyToColVector.
-  static int GetWorkspaceSize(int nnz) {
+  [[nodiscard]] MOCHI_FORCE_INLINE static int GetWorkspaceSize(int nnz) {
     return nnz + VType::kSize; // Enough for the native SIMD type.
   }
 
@@ -769,9 +753,7 @@ struct RowMultiplier {
   /// @brief Product between a block row and a column vector. The column vector may be part of a
   /// column-major matrix.
   /// @remarks
-  /// - 'xTmpRequiredSize' must be greater than or equal to the largest number of non-zeros in a
-  ///   row, rounded up to the closest multiple of the SIMD vector size. It is **strongly**
-  ///   recommended to call the method `GetWorkspaceSize` to get the required size.
+  /// - 'xTmp' is a workspace, grown as needed.
   /// - Requires a scalar type with SIMD support.
   /// - Most performant if 'Ax' is also stored column-major.
   /// - Most performant if 'x' is a column vector itself and NOT part of a column-major matrix with
@@ -779,12 +761,7 @@ struct RowMultiplier {
   ///   further, e.g. by moving the loop over columns from outside to inside the kernel to improve
   ///   cache efficiency.
   /// - Force-inlined, like its kernels: GCC and MSVC otherwise call them once per block row.
-  template <
-      typename Indices,
-      typename Values,
-      typename AccessorIn,
-      typename AccessorOut,
-      typename Idx>
+  template <typename Indices, typename Values, typename AccessorIn, typename AccessorOut>
   MOCHI_FORCE_INLINE static void ApplyToColVector(
       Indices const& rowIndices,
       Values const& rowValues,
@@ -794,8 +771,7 @@ struct RowMultiplier {
       AccessorOut&& Ax,
       int br,
       int c,
-      ColumnVector<NonConstScalar>& xTmp,
-      Idx xTmpRequiredSize) {
+      ColumnVector<NonConstScalar>& xTmp) {
     static_assert(VType::kIsSupported, "The kernel requires a scalar type with SIMD support");
     static_assert(AccessorIn::RowColCosts().first == 1, "The kernel requires column-major x");
 
@@ -817,9 +793,7 @@ struct RowMultiplier {
       using VTypeHalf = Simd<NonConstScalar, VType::kSize / 2>; // Half the size of VType.
       constexpr auto kIncr = static_cast<size_t>(VType::kSize);
       auto const len = static_cast<size_t>(kBlockSize * numBlocks);
-      MOCHI_ASSERT_VERBOSE(
-          xTmpRequiredSize >= mochi::RoundUp(len, kIncr),
-          "Insufficient buffer size for SIMD writes.");
+      auto const xTmpRequiredSize = GetWorkspaceSize(kBlockSize * numBlocks);
       if (xTmp.Rows() < xTmpRequiredSize) {
         xTmp.Resize(xTmpRequiredSize);
       }
@@ -1265,8 +1239,6 @@ void BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>::AccessorApplyTo
           //--- Col-major X.
           //--- Temporary vector for contiguous memory access to 'x'.
           ColumnVector<NonConstScalar> xTmp;
-          auto const xTmpRequiredSize = static_cast<Idx>(
-              details::RowMultiplier<NonConstScalar, kBlockSize>::GetWorkspaceSize(_maxNnzPerRow));
           for (int c = 0; c < nCols; ++c) {
             //--- Compute the product looping over block rows. Using moving pointers to indices and
             //--- values instead of creating views for every block row improves performance for some
@@ -1278,16 +1250,7 @@ void BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, Storage>::AccessorApplyTo
               if (numBlocksInRow > 0) {
                 auto const rowLeadDim = kBlockSize * numBlocksInRow;
                 details::RowMultiplier<NonConstScalar, kBlockSize>::ApplyToColVector(
-                    idxPtr,
-                    vPtr,
-                    numBlocksInRow,
-                    rowLeadDim,
-                    xLocal,
-                    AxLocal,
-                    br,
-                    c,
-                    xTmp,
-                    xTmpRequiredSize);
+                    idxPtr, vPtr, numBlocksInRow, rowLeadDim, xLocal, AxLocal, br, c, xTmp);
                 idxPtr += numBlocksInRow;
                 vPtr += kBlockSize * rowLeadDim;
               } else {

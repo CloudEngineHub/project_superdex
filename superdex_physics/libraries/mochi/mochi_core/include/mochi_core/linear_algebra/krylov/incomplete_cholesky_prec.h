@@ -818,9 +818,6 @@ void IncompleteCholeskyPrec<BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, St
   y = x;
 
   [[maybe_unused]] ColumnVector<NonConstScalar> xTmp;
-  [[maybe_unused]] auto const xTmpRequiredSize = static_cast<NonConstIdx>(
-      mochi::details::RowMultiplier<NonConstScalar, kBlockSize>::GetWorkspaceSize(
-          _factorization.MaxNnzPerRow()));
   ColumnVector<NonConstScalar, kBlockSize> product;
   [[maybe_unused]] auto productAccessor = mochi::details::GetAccessor(product);
   auto const rPtr = _factorization.Pointers();
@@ -842,8 +839,7 @@ void IncompleteCholeskyPrec<BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, St
             productAccessor,
             /*br*/ 0,
             /*c*/ 0,
-            xTmp,
-            xTmpRequiredSize);
+            xTmp);
         yi -= product;
       } else {
         static_assert(mochi::details::MatTraits<Output>::kMajorDir == krylov::Direction::RowMajor);
@@ -868,8 +864,7 @@ void IncompleteCholeskyPrec<BlockSparseMatrix<Scalar, kBlockSize, CRIdx, Ptr, St
             productAccessor,
             /*br*/ 0,
             /*c*/ 0,
-            xTmp,
-            xTmpRequiredSize);
+            xTmp);
         yi -= product;
       } else {
         static_assert(mochi::details::MatTraits<Output>::kMajorDir == krylov::Direction::RowMajor);
