@@ -32,7 +32,7 @@ template <typename Scalar, krylov::Direction kMajorDir>
 void ConvertCsrToBsr(
     int blockSize,
     int nBlockRows,
-    int maxNNZBlockPerRow,
+    int maxNnzPerRow,
     int* d_csrRowPtr,
     Scalar const* d_csrVal,
     Scalar* d_bsrVal);
