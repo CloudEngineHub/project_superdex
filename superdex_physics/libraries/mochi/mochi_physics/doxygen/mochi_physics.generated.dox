@@ -5669,7 +5669,7 @@
 /// @brief Add boundary conditions to specified DoFs.
 ///
 /// @param[in] dofIndices DoF indices to constrain.
-/// @param[in] dofValuesWorld Target values in the actor-specific representations described below. Length must equal @p dofIndices.
+/// @param[in] dofValuesWorld Target values in the actor-specific representations described below. Length must equal @p dofIndices. Values must be finite.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note Not supported for nested soft actors (see @ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
@@ -5693,7 +5693,7 @@
 /// @brief Add permanent boundary conditions to specified DoFs.
 ///
 /// @param[in] dofIndices DoF indices to constrain.
-/// @param[in] dofValuesWorld Target values in the actor-specific representations documented by @ref mochi::Actor::AddBoundaryConditionDofsWorld "AddBoundaryConditionDofsWorld". Length must equal @p dofIndices.
+/// @param[in] dofValuesWorld Target values in the actor-specific representations documented by @ref mochi::Actor::AddBoundaryConditionDofsWorld "AddBoundaryConditionDofsWorld". Length must equal @p dofIndices. Values must be finite.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note Not supported for nested soft actors (see @ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
@@ -5711,7 +5711,7 @@
 /// @brief Add world-space boundary conditions for specified nodes.
 ///
 /// @param[in] nodeIndices Node indices to constrain.
-/// @param[in] nodePositionsWorld Target positions [m] in world frame. Length must be 3 times the size of @p nodeIndices.
+/// @param[in] nodePositionsWorld Target positions [m] in world frame. Length must be 3 times the size of @p nodeIndices. Values must be finite.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note Only supported for standalone soft actors and shell actors.
@@ -5730,7 +5730,7 @@
 /// @brief Add permanent world-space boundary conditions for specified nodes.
 ///
 /// @param[in] nodeIndices Node indices to constrain.
-/// @param[in] nodePositionsWorld Target positions [m] in world frame. Length must be 3 times the size of @p nodeIndices.
+/// @param[in] nodePositionsWorld Target positions [m] in world frame. Length must be 3 times the size of @p nodeIndices. Values must be finite.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note Only supported for standalone soft actors and shell actors.

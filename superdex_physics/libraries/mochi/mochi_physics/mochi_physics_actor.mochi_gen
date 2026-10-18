@@ -786,7 +786,7 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @param[in] dofIndices DoF indices to constrain.
   // @param[in] dofValuesWorld Target values in the actor-specific representations described below.
-  // Length must equal @ref dofIndices.
+  // Length must equal @ref dofIndices. Values must be finite.
   //
   // @warning Constrained 3D rotations may exhibit small numerical differences due to differences in
   // the internal representation.
@@ -834,7 +834,7 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @param[in] dofIndices DoF indices to constrain.
   // @param[in] dofValuesWorld Target values in the actor-specific representations documented by
-  // @ref AddBoundaryConditionDofsWorld. Length must equal @ref dofIndices.
+  // @ref AddBoundaryConditionDofsWorld. Length must equal @ref dofIndices. Values must be finite.
   //
   // @warning Permanent boundary conditions are retained for the lifetime of the actor and cannot
   // be removed by @ref ClearBoundaryConditions. Adding a permanent boundary condition to the same
@@ -856,7 +856,7 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @param[in] nodeIndices Node indices to constrain.
   // @param[in] nodePositionsWorld Target positions [m] in world frame. Length must be 3 times the
-  // size of @ref nodeIndices.
+  // size of @ref nodeIndices. Values must be finite.
   //
   // @warning Adding boundary conditions to the same nodes repeatedly without clearing grows the
   // per-step cost without bound. See @ref AddBoundaryConditionDofsWorld.
@@ -879,7 +879,7 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @param[in] nodeIndices Node indices to constrain.
   // @param[in] nodePositionsWorld Target positions [m] in world frame. Length must be 3 times the
-  // size of @ref nodeIndices.
+  // size of @ref nodeIndices. Values must be finite.
   //
   // @warning Add each permanent boundary condition only once. Duplicates can never be cleared and
   // irreversibly grow the per-step cost. See @ref AddBoundaryConditionDofsWorldPermanent.

@@ -2059,6 +2059,8 @@ class ActorInterfaceImpl : public ActorInterface {
         error,
         "Dirichlet boundary conditions are not supported in differentiable scenes.");
     MOCHI_ERROR_IF(dofIndices.size() != dofValuesWorld.size(), error, "Array size mismatch");
+    MOCHI_ERROR_IF_NOT(
+        IsFinite(dofValuesWorld), error, "Boundary condition values must be finite.");
     MOCHI_ERROR_RETURN(error);
     int const numDofs = GetNumDofs();
     for (int i : dofIndices) {

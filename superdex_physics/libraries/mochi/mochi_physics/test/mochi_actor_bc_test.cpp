@@ -21,6 +21,7 @@
 #include "mochi_physics_test_fixture.h"
 
 #include <array>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -71,9 +72,13 @@ TEST_F(MochiActorBC, RigidComTranslation) {
   Real3 com0 = getCOM(box);
   EXPECT_NEAR_EQ(com0, center);
 
-  // Add 3 BCs so the COM can't move
+  // Non-finite values are rejected without adding BCs
+  box->AddBoundaryConditionDofsWorld(
+      comIndices, Real3{0_r, std::numeric_limits<real>::quiet_NaN(), 0_r}, test::ExpectNotOK{});
   EXPECT_EQ(0, isize(box->GetBoundaryConditionDofIndices()));
   EXPECT_EQ(0, isize(box->GetBoundaryConditionDofValuesWorld()));
+
+  // Add 3 BCs so the COM can't move
   box->AddBoundaryConditionDofsWorld(comIndices, com0, test::ExpectOK{});
   EXPECT_TRUE(test::EqualSpan(comIndices, box->GetBoundaryConditionDofIndices()));
   EXPECT_TRUE(test::NearEqualSpan(com0, box->GetBoundaryConditionDofValuesWorld()));

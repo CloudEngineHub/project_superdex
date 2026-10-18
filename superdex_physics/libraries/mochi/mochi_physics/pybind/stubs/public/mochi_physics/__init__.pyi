@@ -10673,6 +10673,7 @@ class Actor:
             dof_indices (ArrayLikeInt): DoF indices to constrain.
             dof_values_world (ArrayLikeReal): Target values in the actor-specific
                 representations described below. Length must equal ``dof_indices``.
+                Values must be finite.
 
         Raises:
             :class:`~superdex.physics.Error`: If an error occurs.
@@ -10766,7 +10767,7 @@ class Actor:
             dof_values_world (ArrayLikeReal): Target values in the actor-specific
                 representations documented by
                 :meth:`~superdex.physics.Actor.add_boundary_condition_dofs_world`.
-                Length must equal ``dof_indices``.
+                Length must equal ``dof_indices``. Values must be finite.
 
         Raises:
             :class:`~superdex.physics.Error`: If an error occurs.
@@ -10811,7 +10812,8 @@ class Actor:
         Args:
             node_indices (ArrayLikeInt): Node indices to constrain.
             node_positions_world (ArrayLikeReal): Target positions [m] in world frame.
-                Length must be 3 times the size of ``node_indices``.
+                Length must be 3 times the size of ``node_indices``. Values must be
+                finite.
 
         Raises:
             :class:`~superdex.physics.Error`: If an error occurs.
@@ -10860,7 +10862,8 @@ class Actor:
         Args:
             node_indices (ArrayLikeInt): Node indices to constrain.
             node_positions_world (ArrayLikeReal): Target positions [m] in world frame.
-                Length must be 3 times the size of ``node_indices``.
+                Length must be 3 times the size of ``node_indices``. Values must be
+                finite.
 
         Raises:
             :class:`~superdex.physics.Error`: If an error occurs.
