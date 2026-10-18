@@ -57,8 +57,10 @@
 #include <mochi_physics/mochi_physics_experimental.h>
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -2177,6 +2179,40 @@ class ActorInterfaceImpl : public ActorInterface {
     }
     MOCHI_ERROR_RETURN(error);
 
+    auto hasSomeRotation = [&](Span<int const> rotInds) {
+      return std::find_first_of(
+                 dofIndices.begin(), dofIndices.end(), rotInds.begin(), rotInds.end()) !=
+          dofIndices.end();
+    };
+
+    auto hasAllRotations = [&](Span<int const> rotInds) {
+      return std::includes(dofIndices.begin(), dofIndices.end(), rotInds.begin(), rotInds.end());
+    };
+
+    auto hasPartialRotationBCs = [&](Span<int const> rotInds) {
+      return hasSomeRotation(rotInds) != hasAllRotations(rotInds);
+    };
+
+    if (reg.all_of<TagRigidActor>(e)) {
+      // Rigid actor
+      std::array<int, RigidSize::kDRot> constexpr kRotInds = {
+          RigidSize::kDTrans, RigidSize::kDTrans + 1, RigidSize::kDTrans + 2};
+      MOCHI_ERROR_IF(hasPartialRotationBCs(kRotInds), error, "Rotation BCs must be all or none.");
+    } else {
+      // Articulated actor
+      MOCHI_ASSERT_VERBOSE(reg.all_of<TagArticulatedActor>(e), "Unexpected actor type");
+      auto const* joints = reg.get<CArticulatedBodyShape const>(e).shape->GetJointsData();
+      for (auto const& dof : joints->dofInfo) {
+        if (dof.rotSize <= 1) {
+          continue;
+        }
+        std::vector<int> rotInds(dof.rotSize);
+        std::iota(rotInds.begin(), rotInds.end(), dof.GetRotOffset());
+        MOCHI_ERROR_IF(hasPartialRotationBCs(rotInds), error, "Rotation BCs must be all or none.");
+      }
+    }
+    MOCHI_ERROR_RETURN(error);
+
     // If necessary, convert dof indices and values to pose
     std::vector<int> poseIndContainer;
     std::vector<real> poseValContainer;
@@ -2217,43 +2253,7 @@ class ActorInterfaceImpl : public ActorInterface {
       poseIndices = poseIndContainer;
       poseValues = poseValContainer;
     }
-
-    auto hasSomeRotation = [&](Span<int const> rotInds) {
-      return std::find_first_of(
-                 dofIndices.begin(), dofIndices.end(), rotInds.begin(), rotInds.end()) !=
-          dofIndices.end();
-    };
-
-    auto hasAllRotations = [&](Span<int const> rotInds) {
-      return std::includes(dofIndices.begin(), dofIndices.end(), rotInds.begin(), rotInds.end());
-    };
-
-    auto hasPartialRotationBCs = [&](Span<int const> rotInds) {
-      return hasSomeRotation(rotInds) != hasAllRotations(rotInds);
-    };
-
-    if (reg.all_of<TagRigidActor>(e)) {
-      // Rigid actor
-      std::array<int, RigidSize::kDRot> constexpr kRotInds = {
-          RigidSize::kDTrans, RigidSize::kDTrans + 1, RigidSize::kDTrans + 2};
-      MOCHI_ERROR_IF(hasPartialRotationBCs(kRotInds), error, "Rotation BCs must be all or none.");
-      MOCHI_ERROR_RETURN(error);
-      addBCs();
-    } else {
-      // Articulated actor
-      MOCHI_ASSERT_VERBOSE(reg.all_of<TagArticulatedActor>(e), "Unexpected actor type");
-      auto const* joints = reg.get<CArticulatedBodyShape const>(e).shape->GetJointsData();
-      for (auto const& dof : joints->dofInfo) {
-        if (dof.rotSize <= 1) {
-          continue;
-        }
-        std::vector<int> rotInds(dof.rotSize);
-        std::iota(rotInds.begin(), rotInds.end(), dof.GetRotOffset());
-        MOCHI_ERROR_IF(hasPartialRotationBCs(rotInds), error, "Rotation BCs must be all or none.");
-      }
-      MOCHI_ERROR_RETURN(error);
-      addBCs();
-    }
+    addBCs();
   }
 
   void AddBoundaryConditionDofsWorld(

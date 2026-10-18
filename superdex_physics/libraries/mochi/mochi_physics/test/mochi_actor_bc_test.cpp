@@ -525,3 +525,29 @@ TEST_F(MochiActorBC, BoundaryConditionSettersRejectNestedSoftActors) {
     nestedSoftActor->AddBoundaryConditionConstrainedNodesAtRestPermanent(error);
   });
 }
+
+TEST_F(MochiActorBC, BoundaryConditionSettersRejectPartialRotations) {
+  RigidActorParams rigidParams;
+  rigidParams.shape = _cubeShape;
+  rigidParams.colliderType = ColliderType::Box;
+  Actor* rigidActor = _scene->CreateRigidActor(rigidParams, test::ExpectOK{});
+
+  ArticulatedActorParams articulatedParams;
+  articulatedParams.joints = {{.type = ArticulatedJointType::Free}};
+  articulatedParams.links = {{.shape = _cubeShape, .colliderType = ColliderType::None}};
+  Actor* articulatedActor = _scene->CreateArticulatedActor(articulatedParams, test::ExpectOK{});
+
+  // DoFs 3-5 are the rotation of both actors. Constraining only some of them is rejected and adds
+  // nothing.
+  int const partialRotationDofIndices[] = {3, 4};
+  real const partialRotationValues[] = {0_r, 0_r};
+  for (Actor* actor : {rigidActor, articulatedActor}) {
+    Error error;
+    actor->AddBoundaryConditionDofsWorld(partialRotationDofIndices, partialRotationValues, error);
+    EXPECT_STREQ("Rotation BCs must be all or none.", error.GetDescription());
+    actor->AddBoundaryConditionDofsWorldPermanent(
+        partialRotationDofIndices, partialRotationValues, test::ExpectNotOK{});
+    EXPECT_EQ(0, isize(actor->GetBoundaryConditionDofIndices()));
+    EXPECT_EQ(0, isize(actor->GetBoundaryConditionDofValuesWorld()));
+  }
+}
