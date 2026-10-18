@@ -274,6 +274,16 @@ static GridSdfLayout ComputeGridSdfLayout(
       error,
       "Computed SDF grid resolution would be too large. Your mesh may have degenerate bounds or degenerate "
       "triangles. See GridSdfParams for resolution options.");
+  // DenseGrid3D stores this voxel size and its reciprocal, so both must be finite and positive. A
+  // zero or tiny grid extent, e.g. a flat mesh without padding, makes one of them zero or infinite.
+  auto const voxelSize = StaticCast<Double3>(gridSize) / cellDimsDouble;
+  Real3 const storedVoxelSize = StaticCast<Real3>(voxelSize);
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(storedVoxelSize) && (Min(storedVoxelSize) > 0_r) &&
+          IsFinite(StaticCast<Real3>(1.0 / voxelSize)),
+      error,
+      "Computed SDF voxel size is too small. Your mesh may be flat with too little boundary padding, or "
+      "so far from the origin that its padding is lost to floating-point rounding.");
   MOCHI_ERROR_RETURN(error, {});
 
   auto const cellDims = StaticCast<Int3>(cellDimsDouble);

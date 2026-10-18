@@ -267,6 +267,9 @@ TEST(GridSdf, ValidateMatchesConstructor) {
   char const* const kTooLarge =
       "Computed SDF grid resolution would be too large. Your mesh may have degenerate bounds or "
       "degenerate triangles. See GridSdfParams for resolution options.";
+  char const* const kVoxelTooSmall =
+      "Computed SDF voxel size is too small. Your mesh may be flat with too little boundary "
+      "padding, or so far from the origin that its padding is lost to floating-point rounding.";
   real constexpr kMaxReal = std::numeric_limits<real>::max();
   Case const cases[] = {
       {cube, GridSdfResolutionMode::Explicit, 0.5_r, ""},
@@ -285,6 +288,15 @@ TEST(GridSdf, ValidateMatchesConstructor) {
       {cube, GridSdfResolutionMode::Explicit, 10_r, kTooLarge, {600000000, 1, 1}},
       // Infinite grid size over infinite delta.
       {cube, GridSdfResolutionMode::LargestAxis, kMaxReal, kTooLarge, {1, 1, 1}, kMaxReal},
+      // A flat mesh without padding has a zero grid extent, hence a zero voxel size.
+      {flat, GridSdfResolutionMode::Explicit, 0.5_r, kVoxelTooSmall},
+      // A tiny padding gives a voxel size whose reciprocal overflows.
+      {flat,
+       GridSdfResolutionMode::Explicit,
+       0.5_r,
+       kVoxelTooSmall,
+       {1, 1, 1},
+       std::numeric_limits<real>::denorm_min()},
   };
   for (auto const& [mesh, mode, delta, expectedError, minGridResolution, padding] : cases) {
     auto params = CreateBaseParams();
