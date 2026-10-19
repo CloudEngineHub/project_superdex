@@ -289,6 +289,7 @@ void TestImpl(
   // assembles through the trace element (also 4 parent nodes).
   using V = BatchReal<kBatchSize>;
   using Vd = BatchDouble<kBatchSize>;
+  fem::BatchElementVector<kBatchSize, VolumeElementLow> const stageStartDispl{};
   auto const lowElems = MakeConstSpan(femLowVolDisc);
   auto const highElems = MakeConstSpan(femHighVolDisc);
   auto const traceElems = MakeConstSpan(elementsTraces);
@@ -310,7 +311,14 @@ void TestImpl(
     bool out = false;
     if (doGravity) {
       out |= fem::GravityWork<kBatchSize>(
-          batchElemIndices, lowElems, batchDispl, outEnergy, outRes, gravityVec, kDensity);
+          batchElemIndices,
+          lowElems,
+          batchDispl,
+          stageStartDispl,
+          outEnergy,
+          outRes,
+          gravityVec,
+          kDensity);
     }
     if (doStress) {
       out |= fem::StressWork<kBatchSize>(

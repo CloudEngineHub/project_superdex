@@ -611,6 +611,7 @@ void AssembleExternalForces(
     CArticulatedJointTransforms<TimeStep::Current> const& currJointTxs,
     CArticulatedJointTransforms<TimeStep::StageStart> const& stageStartJointTxs,
     CArticulatedReducedPose<TimeStep::Current> const& currPose,
+    CArticulatedReducedPose<TimeStep::StageStart> const& stageStartPose,
     CActorSnle& outCompoundSnle);
 
 /*

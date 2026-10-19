@@ -1602,10 +1602,12 @@ void mochi::InitRodActor(
 
 namespace mochi::rod {
 
+// The energies are relative to the stage start.
 static void AddExternalForces(
     CExternalForces const& externalForces,
     TransformRT const& worldFromLocal,
     ColumnVectorView<real const> displacements,
+    ColumnVectorView<real const> stageStartDisplacements,
     double* outObj,
     ColumnVectorView<real>* outRes) {
   if (!outObj && !outRes) {
@@ -1620,7 +1622,7 @@ static void AddExternalForces(
       // Treat external twisting forces as scalars in the local frame.
       real const force = externalForces.forces[i];
       if (outObj) {
-        *outObj -= StaticCast<double>(displacements[dof] * force);
+        *outObj -= StaticCast<double>((displacements[dof] - stageStartDisplacements[dof]) * force);
       }
       if (outRes) {
         (*outRes)[dof] -= force;
@@ -1634,6 +1636,7 @@ static void AddExternalForces(
           nodeStartIndex,
           worldFromLocalR,
           displacements,
+          stageStartDisplacements,
           outObj,
           outRes);
     }
@@ -1674,23 +1677,19 @@ static void AddExternalForces(
     using V = BatchReal<kBatchSize>;
     bool out = false;
 
-    if (hasGravity && (outEnergy || outRes)) {
-      out |= fem::RodGravity<kBatchSize>(
-          nodalMasses, displ, elemIndices, indicesFlat, outEnergy, outRes, gravity);
-    }
-
-    // --- Gather stage-start displacement once for mass and/or stiffness damping ---
+    // --- Gather stage-start displacement once for gravity, mass and/or stiffness damping ---
     //
-    // Stiffness damping needs the full stencil; mass damping needs only stencil node 0, whose
-    // kNumRodFields DoFs are the leading entries of that stencil. When both are active we gather
-    // the superset once and mass damping reuses the leading sub-span instead of re-reading node 0.
-    // The stiffness stage-start also feeds the stress dresidual, so it is gathered on every path;
-    // mass damping reads its target only in the energy/residual branch. (The inertia predicted
-    // target, stage-start + dt*velocity, is different data and is gathered separately below.)
+    // Stiffness damping needs the full stencil; gravity and mass damping need only stencil node 0,
+    // whose kNumRodFields DoFs are the leading entries of that stencil. When several are active we
+    // gather the superset once and the node-0 consumers reuse the leading sub-span instead of
+    // re-reading node 0. The stiffness stage-start also feeds the stress dresidual, so it is
+    // gathered on every path; mass damping reads its target only in the energy/residual branch, and
+    // gravity only in the energy branch. (The inertia predicted target, stage-start +
+    // dt*velocity, is different data and is gathered separately below.)
     NdArray<V, fem::kNumRodStencilDofs> stageStartDispBatch MOCHI_NO_INIT;
     int const numStageStartNodes = hasStiffnessDamping
         ? fem::kNumRodStencilNodes
-        : ((hasMassDamping && (outEnergy || outRes)) ? 1 : 0);
+        : (((hasGravity && outEnergy) || (hasMassDamping && (outEnergy || outRes))) ? 1 : 0);
     if (numStageStartNodes > 0) {
       alignas(alignof(V)) real staging[fem::kNumRodStencilDofs][V::kSize]{};
       for (int b = 0; b < kBatchSize; ++b) {
@@ -1705,6 +1704,18 @@ static void AddExternalForces(
       for (int dof = 0; dof < numStageStartNodes * fem::kNumRodFields; ++dof) {
         stageStartDispBatch[dof] = Load<V>(staging[dof]);
       }
+    }
+
+    if (hasGravity && (outEnergy || outRes)) {
+      out |= fem::RodGravity<kBatchSize>(
+          nodalMasses,
+          displ,
+          stageStartDispBatch,
+          elemIndices,
+          indicesFlat,
+          outEnergy,
+          outRes,
+          gravity);
     }
 
     // --- Inertia on stencil node 0 ---
@@ -1885,6 +1896,7 @@ void AssembleBody(
         externalForces,
         rootTransform.worldFromLocal,
         AsConstView(currPose.value.displacements),
+        AsConstView(stageStartPose.value.displacements),
         params.assemObj ? &outActorSnle.objective : nullptr,
         params.assemRes ? &resView : nullptr);
   }

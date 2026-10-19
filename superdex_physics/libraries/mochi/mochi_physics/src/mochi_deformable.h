@@ -311,7 +311,8 @@ void SetupActiveCollisionNormalsFromElements(
  * `externalForces.dofs[i]`.
  * @param[in] worldFromLocalR Rotation from local to world (used to bring force into local frame).
  * @param[in] displacements Local-frame displacement DoFs of the actor.
- * @param[in,out] outObj Optional objective accumulator.
+ * @param[in] stageStartDisplacements Local-frame stage-start displacement DoFs of the actor.
+ * @param[in,out] outObj Optional objective accumulator. The energy is relative to the stage start.
  * @param[in,out] outRes Optional residual accumulator.
  * @return Number of additional `externalForces` entries consumed beyond `i` (0 or 2). The caller
  * should advance its loop index by this amount in addition to its own `++i`.
@@ -323,6 +324,7 @@ void SetupActiveCollisionNormalsFromElements(
     int nodeStartIndex,
     VMatrix3x3r const& worldFromLocalR,
     ColumnVectorView<real const> displacements,
+    ColumnVectorView<real const> stageStartDisplacements,
     double* outObj,
     ColumnVectorView<real>* outRes) {
   int const numForces = isize(externalForces.dofs);
@@ -345,7 +347,8 @@ void SetupActiveCollisionNormalsFromElements(
   Vec4r const forceLocal =
       DotVecMat3x3(forceWorld, worldFromLocalR); // worldFromLocalR^T * forceWorld
   if (outObj) {
-    Vec4r const dispLocal = Load<3, Vec4r>(&displacements[nodeStartIndex]);
+    Vec4r const dispLocal = Load<3, Vec4r>(&displacements[nodeStartIndex]) -
+        Load<3, Vec4r>(&stageStartDisplacements[nodeStartIndex]);
     *outObj -= StaticCast<double>(Dot<3>(dispLocal, forceLocal));
   }
   if (outRes) {

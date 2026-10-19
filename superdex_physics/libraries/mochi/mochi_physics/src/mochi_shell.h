@@ -109,18 +109,18 @@ template <typename TriElementLow, typename TriElementHigh>
     bool const hasMassDamping = massDampingScale > 0_r;
     bool const hasStiffnessDamping = stiffnessDampingFactor > 0_r;
 
-    // --- Gather displacements once for stress and mass damping ---
+    // --- Gather the stencil global nodes and the stage-start displacements once ---
     //
-    // We always gather the full 6-node bending stencil (18 DoFs) for stress; the first 9 DoFs
-    // (central triangle) double as the mass-damping stage-start. Stencil global nodes are also
-    // needed by the stress block for the shell assembly.
+    // Stress uses the global nodes of the full 6-node bending stencil. Stiffness damping reads the
+    // stage-start displacement of the full stencil (18 DoFs) for its energy and residual. The
+    // gravity energy and mass damping read that of the central triangle only (its first 9 DoFs), so
+    // at most those are gathered when stiffness damping is off.
     using V = BatchReal<kBatchSize>;
     NdArray<V, kStencilDofs> stageStartDispBatch MOCHI_NO_INIT;
     NdArray<int, fem::kBendingStencilNodes, kBatchSize> stencilGlobalNodes MOCHI_NO_INIT;
-    // Stage-start gather depth: full 18 DoFs for stiffness damping (also used as the central
-    // triangle sub-span for mass damping), otherwise just 9 DoFs for mass damping alone.
-    int const numStageStartDofs =
-        hasStiffnessDamping ? kStencilDofs : (hasMassDamping ? kTriangleDofs : 0);
+    int const numStageStartDofs = hasStiffnessDamping
+        ? kStencilDofs
+        : (((hasGravity && outEnergy) || hasMassDamping) ? kTriangleDofs : 0);
 
     for (int b = 0; b < kBatchSize; ++b) {
       int const eleIdx = elemIndices[b];
@@ -152,12 +152,20 @@ template <typename TriElementLow, typename TriElementHigh>
     if (outEnergy || outRes) {
       // Nodes 0-2 (DoFs 0-8) of the bending stencil are the triangle vertices.
       auto const triDisp = MakeConstSpan(displ).subspan(0, kTriangleDofs);
+      auto const triStageStartDisp = MakeConstSpan(stageStartDispBatch).subspan(0, kTriangleDofs);
       Span<BatchReal<kBatchSize>> triRes =
           outRes ? MakeSpan(*outRes).subspan(0, kTriangleDofs) : Span<BatchReal<kBatchSize>>{};
 
       if (hasGravity) {
         out |= fem::GravityWork<kBatchSize>(
-            elemIndices, lowElements, triDisp, outEnergy, triRes, gravity, density);
+            elemIndices,
+            lowElements,
+            triDisp,
+            triStageStartDisp,
+            outEnergy,
+            triRes,
+            gravity,
+            density);
       }
 
       // Gather predicted target using the stride-18 padded L2G. GatherPredTarget reads only the
@@ -187,7 +195,7 @@ template <typename TriElementLow, typename TriElementHigh>
             elemIndices,
             highElements,
             triDisp,
-            MakeConstSpan(stageStartDispBatch).subspan(0, kTriangleDofs),
+            triStageStartDisp,
             outEnergy,
             triRes,
             density,
@@ -245,8 +253,9 @@ void AssembleBody(
  * world coordinates).
  * @param[in] worldFromLocal Rigid transform from the actor's local frame to world.
  * @param[in] displacements Current displacement DoFs in the actor's local frame.
- * @param[in,out] outObj Objective accumulator. If non-null, `dot(displacement, force)` (in local
- * coordinates) is subtracted from it.
+ * @param[in] stageStartDisplacements Stage-start displacement DoFs in the actor's local frame.
+ * @param[in,out] outObj Objective accumulator. If non-null, `dot(displacement -
+ * stageStartDisplacement, force)` (in local coordinates) is subtracted from it.
  * @param[in,out] outRes Residual accumulator. If non-null, the local-frame force is subtracted
  * from the residual entries at the affected DoFs.
  *
@@ -257,6 +266,7 @@ void AddExternalForces(
     CExternalForces const& externalForces,
     TransformRT const& worldFromLocal,
     ColumnVectorView<real const> displacements,
+    ColumnVectorView<real const> stageStartDisplacements,
     double* outObj,
     ColumnVectorView<real>* outRes);
 

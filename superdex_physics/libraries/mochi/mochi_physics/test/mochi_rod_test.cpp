@@ -3222,6 +3222,17 @@ TEST_P(MochiRodActorStraightRodScene, ExternalForceEnergyResidualConsistency) {
     double const scale = Max(1.0, Max(Abs(fdGrad), Abs(double(r0[i]))));
     EXPECT_NEAR(fdGrad, double(r0[i]), double(kRelTol) * scale) << "DOF " << i;
   }
+
+  // At the stage start, the external forces and gravity contribute no energy.
+  currPose.value.displacements = baseDisp;
+  currPose.value.frameAxes = baseAxes;
+  reg.get<CRodPose<TimeStep::StageStart>>(entity).value.displacements = baseDisp;
+  ecs::InvokeOnEntity(rod::AssembleBody, reg, entity, std::cref(objOnly));
+  double const objective = snle.objective;
+  _actor->ClearExternalForces();
+  _scene->SetGravity({0_r, 0_r, 0_r});
+  ecs::InvokeOnEntity(rod::AssembleBody, reg, entity, std::cref(objOnly));
+  EXPECT_EQ(objective, snle.objective);
 }
 
 // Builds `numNodes` points equally spaced by `angleStep` (signed) on a circle of `radius` in the XY

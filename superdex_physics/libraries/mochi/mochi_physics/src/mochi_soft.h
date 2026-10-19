@@ -353,6 +353,33 @@ template <
     bool out = false;
     bool const hasMassDamping = hasInertia && massDampingScale > 0_r;
 
+    // Stage-start displacement only (no velocity), shared by the gravity energy, which is relative
+    // to the stage start, and by mass and stiffness damping, which encode velocity and strain rate,
+    // respectively, as differences from the stage start. This gather does not read the velocity
+    // span (it may be empty, e.g. a posed-stress skinned actor without posed inertia).
+    //
+    // Only gather it when a consumer will actually read it: gravity reads it for the objective
+    // only, mass damping contributes to the objective/residual only, and stiffness damping reads
+    // the stage-start strain only for the objective, residual, or geometric tangent term (see @ref
+    // fem::StressDampingWork). A material-tangent-only stiffness-damping assembly (dresidual-only
+    // with the geometric term off) leaves it unread, so the gather is skipped in that common
+    // modified-Newton case; the condition below must stay in sync with StressDampingWork's
+    // needStrainWork.
+    bool const wantObjOrRes = (outEnergy != nullptr) || (outRes != nullptr);
+    bool const needStageStartDispl = (hasGravity && (outEnergy != nullptr)) ||
+        (hasMassDamping && wantObjOrRes) ||
+        (hasStiffnessDamping && (wantObjOrRes || includeStiffnessDampingGeometricTerm));
+    fem::BatchElementVector<kBatchSize, SoftStencilElement> stageStartDisplBatch MOCHI_NO_INIT;
+    if (needStageStartDispl) {
+      fem::GatherPredTarget<kBatchSize, SoftStencilElement, /*kGatherVelocity*/ false>(
+          indicesFlat,
+          elemIndices,
+          stageStartDispl,
+          stageStartVel,
+          /*dtStage*/ 0_r,
+          stageStartDisplBatch);
+    }
+
     if (hasStress) {
       out |= fem::StressWork<kBatchSize>(
           elemIndices,
@@ -370,6 +397,7 @@ template <
           elemIndices,
           lowVolElements,
           displ,
+          stageStartDisplBatch,
           outEnergy,
           outRes,
           gravity,
@@ -390,30 +418,6 @@ template <
           density,
           dtfi2,
           activeVolWeights);
-    }
-
-    // Stage-start displacement only (no velocity), shared by mass and stiffness damping. Their
-    // strain-rate dependence is encoded as a displacement difference, so the velocity span is not
-    // read (it may be empty, e.g. a posed-stress skinned actor without posed inertia).
-    //
-    // Only gather it when a consumer will actually read it: mass damping contributes to the
-    // objective/residual only, and stiffness damping reads the stage-start strain only for the
-    // objective, residual, or geometric tangent term (see @ref fem::StressDampingWork). A
-    // material-tangent-only stiffness-damping assembly (dresidual-only with the geometric term off)
-    // leaves it unread, so the gather is skipped in that common modified-Newton case; the condition
-    // below must stay in sync with StressDampingWork's needStrainWork.
-    bool const wantObjOrRes = (outEnergy != nullptr) || (outRes != nullptr);
-    bool const needStageStartDispl = (hasMassDamping && wantObjOrRes) ||
-        (hasStiffnessDamping && (wantObjOrRes || includeStiffnessDampingGeometricTerm));
-    fem::BatchElementVector<kBatchSize, SoftStencilElement> stageStartDisplBatch MOCHI_NO_INIT;
-    if (needStageStartDispl) {
-      fem::GatherPredTarget<kBatchSize, SoftStencilElement, /*kGatherVelocity*/ false>(
-          indicesFlat,
-          elemIndices,
-          stageStartDispl,
-          stageStartVel,
-          /*dtStage*/ 0_r,
-          stageStartDisplBatch);
     }
 
     // Mass damping (residual/objective only): α/dt · M · (displ − stageStartDispl). Reuses

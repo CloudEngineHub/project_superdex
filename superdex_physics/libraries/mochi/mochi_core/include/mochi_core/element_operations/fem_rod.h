@@ -328,13 +328,15 @@ RodStencilNodeIndex(Span<int const> l2gFlat, int elementIndex, int localNode) {
 
 /// @brief Compute gravity work for a batch of rod stencils.
 ///
-/// Only the displacement DoFs (first 3 of 4) of node 0 contribute, via the incremental potential
-/// -u·(m g). Node 0 always exists, so no lane masking is required. The caller discards padded-lane
-/// contributions during scatter.
+/// Only the displacement DoFs (first 3 of 4) of node 0 contribute, via the potential
+/// -(u - u₀)·(m g) relative to the stage-start displacement u₀. Node 0 always exists, so no lane
+/// masking is required. The caller discards padded-lane contributions during scatter.
 ///
 /// @tparam kBatchSize Batch size.
 /// @param[in] nodalMasses  Per-node lumped mass array [kg].
 /// @param[in] disp  Batched stencil displacement vector (12 DoFs = 3 nodes × 4 fields).
+/// @param[in] stageStartDisp  Batched stencil stage-start displacement vector. Only node 0's
+/// displacement DoFs are read, and only if @p outEnergy is non-null.
 /// @param[in] elementIndices  Stencil indices for each batch lane.
 /// @param[in] l2gFlat  Flattened local-to-global map; node indices are read from it.
 /// @param[out] outEnergy  If non-null, accumulates per-element energy.
@@ -345,6 +347,7 @@ template <int kBatchSize>
 bool RodGravity(
     Span<real const> nodalMasses,
     BatchRodVector<kBatchSize> const& disp,
+    BatchRodVector<kBatchSize> const& stageStartDisp,
     NdArray<int, kBatchSize> const& elementIndices,
     Span<int const> l2gFlat,
     BatchDouble<kBatchSize>* outEnergy,
@@ -373,12 +376,10 @@ bool RodGravity(
   V const mgz = mass * V{gravity[2]};
 
   if (evalObj) {
-    // Energy = -dot(u, m*g).
-    // Note: This is a consistent incremental potential that generates the correct residual, but
-    // it differs from the textbook gravitational potential energy, in that it is not computed
-    // relative to a single zero location in space. This is cheaper, since it doesn't require
-    // loading the reference geometry to compute absolute position.
-    *outEnergy -= StaticCast<Vd>(disp[0] * mgx + disp[1] * mgy + disp[2] * mgz);
+    // Energy = -dot(u - u₀, m*g).
+    *outEnergy -= StaticCast<Vd>(
+        (disp[0] - stageStartDisp[0]) * mgx + (disp[1] - stageStartDisp[1]) * mgy +
+        (disp[2] - stageStartDisp[2]) * mgz);
   }
   if (evalRes) {
     (*outRes)[0] -= mgx;

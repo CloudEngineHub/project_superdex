@@ -75,6 +75,7 @@ static void BenchmarkGravityWork(benchmark::State& state, GravityWorkMode mode) 
     }
     batchedDisp[d] = Load<V>(staging);
   }
+  NdArray<V, kDim> const batchedStageStartDisp{};
 
   BatchDouble<kBatchSize> energy{0.0};
   NdArray<V, kDim> res{};
@@ -85,6 +86,7 @@ static void BenchmarkGravityWork(benchmark::State& state, GravityWorkMode mode) 
         elementIndices,
         MakeConstSpan(elements),
         batchedDisp,
+        batchedStageStartDisp,
         evalObj ? &energy : nullptr,
         evalRes ? &res : nullptr,
         kGravity,

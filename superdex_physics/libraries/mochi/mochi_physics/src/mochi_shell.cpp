@@ -144,6 +144,7 @@ void mochi::shell::AddExternalForces(
     CExternalForces const& externalForces,
     TransformRT const& worldFromLocal,
     ColumnVectorView<real const> displacements,
+    ColumnVectorView<real const> stageStartDisplacements,
     double* outObj,
     ColumnVectorView<real>* outRes) {
   if (!outObj && !outRes) {
@@ -163,6 +164,7 @@ void mochi::shell::AddExternalForces(
         nodeStartIndex,
         worldFromLocalR,
         displacements,
+        stageStartDisplacements,
         outObj,
         outRes);
   }
@@ -266,6 +268,7 @@ void mochi::shell::AssembleBody(
         externalForces,
         rootTransform.worldFromLocal,
         AsConstView(currDispl.value),
+        AsConstView(stageStartDispl.value),
         params.assemObj ? &outActorSnle.objective : nullptr,
         params.assemRes ? &resView : nullptr);
   }

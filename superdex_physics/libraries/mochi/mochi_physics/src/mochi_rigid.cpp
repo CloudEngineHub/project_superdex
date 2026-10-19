@@ -686,7 +686,12 @@ void mochi::rigid::EntityAssemble(
   if (hasGravityTag &&
       IsAssemblyNeeded(StateDependency::ZeroOrder, false /*inputDependency*/, gradTarget)) {
     AddRigidBodyGravity(
-        currPose.value, rigidInertia, ToReal3(sceneGravity->accel), energy, gradient);
+        currPose.value,
+        stageStartPose.value,
+        rigidInertia,
+        ToReal3(sceneGravity->accel),
+        energy,
+        gradient);
   }
 
   // Compute inertial terms

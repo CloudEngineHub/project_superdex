@@ -2222,6 +2222,7 @@ void articulated::compound::AssembleExternalForces(
     CArticulatedJointTransforms<TimeStep::Current> const& currJointTxs,
     CArticulatedJointTransforms<TimeStep::StageStart> const& stageStartJointTxs,
     CArticulatedReducedPose<TimeStep::Current> const& currPose,
+    CArticulatedReducedPose<TimeStep::StageStart> const& stageStartPose,
     CActorSnle& outCompoundSnle) {
   auto const* joints = bodyShape.shape->GetJointsData();
   auto const jointTypes = joints->jointTypes;
@@ -2265,7 +2266,9 @@ void articulated::compound::AssembleExternalForces(
     if (force == 0_r) {
       return false;
     }
-    AddSingleDofExternalForce(currPose.value[poseInfo[i].offset], force, energy, gradient);
+    int const offset = poseInfo[i].offset;
+    AddSingleDofExternalForce(
+        currPose.value[offset], stageStartPose.value[offset], force, energy, gradient);
     return true;
   };
   AssembleJointForces(
@@ -2747,6 +2750,7 @@ void articulated::compound::EntityAssemble(
         currJointTxs,
         stageStartJointTxs,
         currPose,
+        stageStartPose,
         outCompoundSnle);
   }
 
