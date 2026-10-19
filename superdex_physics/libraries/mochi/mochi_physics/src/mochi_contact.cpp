@@ -1215,7 +1215,7 @@ static void DetectCollisionsWithSingleCollider(
   // If the collider is a ROM with a rigid transform layer, add the rigid Jacobians.
   if (!outResult.sampleIndices.empty() && /*isContactMapped*/ (outResult.ndofs > 0) &&
       reg.all_of<TagRomActor>(collider)) {
-    rom::AddRigidContactJacobians(reg, collider, outResult);
+    rom::AddRigidContactJacobians(reg, collider, positionsToQuery, worldFromColliding, outResult);
   }
 
   // Reindex points in contact to sample point indices.

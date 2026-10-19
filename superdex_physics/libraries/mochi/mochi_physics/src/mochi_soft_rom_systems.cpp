@@ -406,6 +406,8 @@ template std::optional<TransformRT> mochi::rom::GetRigidTransform<TimeStep::Prev
 void mochi::rom::AddRigidContactJacobians(
     RigidTransformRegistryExp reg,
     entt::entity entity,
+    Span<Real3 const> positionsInColliding,
+    TransformRT const& worldFromColliding,
     ContactDetectionResult& outContact) {
   // Confirm if this is a ROM actor
   if (!reg.all_of<TagRomActor>(entity)) {
@@ -442,15 +444,22 @@ void mochi::rom::AddRigidContactJacobians(
   // dp/dtLocal^T = Rroot^T
   // dp/drLocal^T = skew(z) * Rroot^T
 
+  // For a sample q in the colliding frame, p = Rc * q + tc, so
+  // z = (Rroot^T * Rc) * (q - Rc^T * (troot - tc)) - tlocal - v.
+  // Subtracting the root origin before rotating keeps world-space offsets from cancelling after
+  // rounding.
+
   // Prepare common data
-  Vec4r troot = ToSimd(transformRoot.GetTranslation());
-  std::pair<VMatrix3x3r, VMatrix3x3r> Rroot_T =
-      ToVMatrix3x3_WithTranspose(transformRoot.GetRotation());
+  Vec4r const rootInColliding =
+      worldFromColliding.TransformPointInverse(transformRoot.VGetTranslation());
+  VMatrix3x3r const rootFromCollidingRotT = ToVMatrix3x3Transpose(
+      Conjugate(transformRoot.GetRotation()) * worldFromColliding.GetRotation());
+  VMatrix3x3r const RrootT = ToVMatrix3x3Transpose(transformRoot.GetRotation());
   Vec4r tlocalAndPivot = rigidState.VGetTranslation();
   if (pivot) {
     tlocalAndPivot += ToSimd(pivot->position);
   }
-  VMatrix3x3r const& DpDtlocalT = Rroot_T.second;
+  VMatrix3x3r const& DpDtlocalT = RrootT;
 
   // Resize number of DoFs
   int ndofsOld = outContact.ndofs;
@@ -472,11 +481,11 @@ void mochi::rom::AddRigidContactJacobians(
     std::copy_backward(ddef_ddofs, ddef_ddofs + ndofsOld, ddef_ddofs + outContact.ndofs);
 
     // Compute rotated local contact point
-    Vec4r p = ToSimd(outContact.posColliding[s]);
-    Vec4r z = DotVecMat3x3(p - troot, Rroot_T.first) - tlocalAndPivot;
+    Vec4r const q = ToSimd(positionsInColliding[outContact.sampleIndices[s]]);
+    Vec4r z = DotVecMat3x3(q - rootInColliding, rootFromCollidingRotT) - tlocalAndPivot;
 
     // Compute rotation Jacobian
-    VMatrix3x3r DpDRlocalT = Dot3x3(lie::DMultRotVecDRot(-z), Rroot_T.second);
+    VMatrix3x3r DpDRlocalT = Dot3x3(lie::DMultRotVecDRot(-z), RrootT);
 
     // Add translation and rotation Jacobians. Transposed for convenience of the copy.
     std::copy(DpDtlocalT.data(), DpDtlocalT.data() + RigidSize::kDTrans, ddef_ddofs);

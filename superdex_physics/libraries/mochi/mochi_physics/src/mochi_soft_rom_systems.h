@@ -201,11 +201,12 @@ using RigidTransformRegistryExp = ecs::PartialRegistry<
 template <TimeStep kTimeStep>
 std::optional<TransformRT> GetRigidTransform(RigidTransformRegistryExp reg, entt::entity entity);
 
-// Modify the contact Jacobians stored in outContact.mapInfo to account for the rigid transform
-// layer.
+// Add rigid-layer contact Jacobians. outContact.sampleIndices must index positionsInColliding.
 void AddRigidContactJacobians(
     RigidTransformRegistryExp reg,
     entt::entity entity,
+    Span<Real3 const> positionsInColliding,
+    TransformRT const& worldFromColliding,
     ContactDetectionResult& outContact);
 
 /***************************************************************************
