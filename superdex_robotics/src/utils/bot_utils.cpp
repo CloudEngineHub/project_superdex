@@ -347,7 +347,7 @@ void superdex::robotics::RemoveLinkAndDescendants(BotPrefab& botPrefab, int link
 void superdex::robotics::ApplyMod(
     BotPrefab& botPrefab,
     AttachLink const& mod,
-    IBotLoader const&,
+    IBotLoader const& /*unused*/,
     bool /*validate*/,
     Error& error) {
   MOCHI_ERROR_RETURN(error);

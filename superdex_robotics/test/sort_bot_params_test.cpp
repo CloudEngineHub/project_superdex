@@ -86,17 +86,21 @@ struct InMemoryBotLoader : IBotLoader {
   DynamicString basePath;
   BotPrefab baseBot;
 
-  BotFileType GetBotFileType(std::string_view, Error&) const override {
+  BotFileType GetBotFileType(std::string_view /*path*/, Error& /*error*/) const override {
     return BotFileType::BotPrefab;
   }
-  BotPrefab LoadBotPrefab(std::string_view path, Error&) const override {
+  BotPrefab LoadBotPrefab(std::string_view path, Error& /*error*/) const override {
     return (!basePath.empty() && path == std::string_view(basePath)) ? baseBot : child;
   }
-  ModBotPrefab LoadModBotPrefab(std::string_view, Error&) const override {
+  ModBotPrefab LoadModBotPrefab(std::string_view /*path*/, Error& /*error*/) const override {
     return {};
   }
-  ShapeHandle LoadShape(std::string_view, Real3 const&, TransformRT const&, Context*, Error&)
-      const override {
+  ShapeHandle LoadShape(
+      std::string_view /*path*/,
+      Real3 const& /*bakeScale*/,
+      TransformRT const& /*bakeTransform*/,
+      Context* /*context*/,
+      Error& /*error*/) const override {
     return {};
   }
 };
