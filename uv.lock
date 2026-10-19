@@ -464,37 +464,6 @@ wheels = [
 ]
 
 [[package]]
-name = "polyscope"
-version = "2.5.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/20/57/bf8bfc975ff6ab7547ae68db4f87ffb3fc7861acbe0fdd08cd4de9b66db1/polyscope-2.5.0.tar.gz", hash = "sha256:3a97e57297b231a9fc93a98c4f9eab852819d79f0807ce64071cdc9dabd53868", size = 14746772, upload-time = "2025-08-19T08:32:52.246Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/25/c0f6647624e0e24902f4d2dcf7b4ad646858f7fe2de542c6752052d97365/polyscope-2.5.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:22df5c1be72846d7be247f0dec1a9fd88a85360cc561efbdedbf51c326ad35d3", size = 7022623, upload-time = "2025-08-19T08:29:56.964Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/84/32e15cccbafbc61b986081e9128199929e4b0018fdd22a24c6727eaa93b4/polyscope-2.5.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:04b720ca35fa39d21dbf127a032212a8b91a76e6e2be8fa43696ce49d833d082", size = 6779665, upload-time = "2025-08-19T08:29:58.699Z" },
-    { url = "https://files.pythonhosted.org/packages/c8/6d/f6bd89a3bac460b3fcdeaacee4ff2dbae8f29f06a336a57a7e4f455601ad/polyscope-2.5.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f1d375dd24e82831a00484723037f33bb92d895bd26ce4a7541d693dddb18b45", size = 7689595, upload-time = "2025-08-19T08:30:00.437Z" },
-    { url = "https://files.pythonhosted.org/packages/3e/a7/840ece674328a0b6ad860a0d1ad38663cdf4cf3cfbcacf8cc935d870e67c/polyscope-2.5.0-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:9aa3a926600a22bc5138f179b5a0bac71bc0782e1ed7fcdf737dc2d06d405bb1", size = 8041248, upload-time = "2025-08-19T08:30:02.363Z" },
-    { url = "https://files.pythonhosted.org/packages/be/4e/82ea84c9e90125eba5c73e28c1caa01d03f304e06936759150a7a3565827/polyscope-2.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c093803adb7a74540e4f536812978d44acfdaf585238da8e118a7a5ecbad35e6", size = 7826546, upload-time = "2025-08-19T08:30:04.203Z" },
-    { url = "https://files.pythonhosted.org/packages/02/2c/e60d6c88eef4d755bfe10a13ea530e8ae407f9257638c2ac7f6d545bcc84/polyscope-2.5.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:3885178f793043a186eb4e75b4786d006c2063e341ccfe4c68feea0fd1e782d0", size = 9481108, upload-time = "2025-08-19T08:30:06.055Z" },
-    { url = "https://files.pythonhosted.org/packages/47/0d/7f749ff35a99df8883d4c79967531cec5970753ebf8b455233cdee592e60/polyscope-2.5.0-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:fdec04499a38b49ad6a366fc63bc9eeb76422f01eb56f2ae54ed801c078be6fc", size = 10448338, upload-time = "2025-08-19T08:30:09.298Z" },
-    { url = "https://files.pythonhosted.org/packages/90/ff/7bac1e8ce7e1d8bc7cacd70e62ad4361b3dcc10553dff313bc51ac82c0a8/polyscope-2.5.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:a5c98845a7e938a6c08829daeeb733bee6c0ad9c95cbf461614dacdae2d31360", size = 10001021, upload-time = "2025-08-19T08:30:11.543Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/54/f176207da4ddf065b6a3f22c2072af17f21b005eae590f7265c9a0286c3f/polyscope-2.5.0-cp312-cp312-win32.whl", hash = "sha256:249bc1cf313c5d61f3c5e98c441cdf06ec25a2582bbffa746b53ce68eb25ea45", size = 7225386, upload-time = "2025-08-19T08:30:13.64Z" },
-    { url = "https://files.pythonhosted.org/packages/4b/76/ed2e4b52f8cf29b4e815a1c4cbed1979edf6d61a67085e8c02ff58b06cee/polyscope-2.5.0-cp312-cp312-win_amd64.whl", hash = "sha256:dbb0d030611d72db8f7e282285bd2cf7f6488af82d52160fbe4fe9bee50f9ab6", size = 8667705, upload-time = "2025-08-19T08:30:15.409Z" },
-    { url = "https://files.pythonhosted.org/packages/45/86/736d08f6715e1965a1cd904e77ffb4456c295d5af95ac7f3df1ab341b9e4/polyscope-2.5.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:ede57b05a352f81c8abe9f4979e21ceb025cc7f6b5c63cbe78a8eff4d57245fe", size = 7022730, upload-time = "2025-08-19T08:30:18.268Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/e0/c09266d5bf2aa7fc031febbe80294c6cdbe029c96593a0ea61ade25681a9/polyscope-2.5.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:9512af145f1c688d47ebbebe2a9b3a4dae81f61ce69cb8df07cf17daf8f72124", size = 6779665, upload-time = "2025-08-19T08:30:20.475Z" },
-    { url = "https://files.pythonhosted.org/packages/88/eb/2471503819f54c37b675a8de998afae0965babc0842599c79a34fc04769e/polyscope-2.5.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fd92636964204907a0631bfd15b58e35119963e745a2c8ce3070cce31f992744", size = 7690303, upload-time = "2025-08-19T08:30:22.711Z" },
-    { url = "https://files.pythonhosted.org/packages/37/b3/231a407c1a778fd00ee12ab5e138c8f3242541c6552b52a4c16cd0c02533/polyscope-2.5.0-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:a08732e78a91067a855417ce60fcac83e100b65af611dc94008cbb161aacef4f", size = 8041385, upload-time = "2025-08-19T08:30:24.613Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/33/d9df9f22e65fcad83e7c340c2d06ffe34934f606d0c56ae04f9de962228d/polyscope-2.5.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ccc1d04e3d0c6b071bc1d1acbad4209dbdfd7f9350e229c07e485d1f668947d0", size = 7827660, upload-time = "2025-08-19T08:30:26.425Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/11/5642fad122abf44f10e64080cce33203fee9b5c24d33ba33389a7120fbc2/polyscope-2.5.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:0819e8b4ef543a64075b943767ff3245d64fc9780934a634e3f0dd51a8dc6ff9", size = 9480984, upload-time = "2025-08-19T08:30:28.699Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/c0/3bfcb016d39c789d82d71804093244715293328be92ab7519c7a51708868/polyscope-2.5.0-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:e4cdf6bfb07e5353f52b8877994f984dc9e3fc35a99f70d65ed94da4ef38e592", size = 10448343, upload-time = "2025-08-19T08:30:31.613Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/02/8399e1ede1daea62e3ea3e25e39b615f5c0eb5ac233e534f34db18c9a70e/polyscope-2.5.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:7ea87f39c6c8809b9d92c743fdba00127811107d495f97365060422f04ed84d2", size = 10001404, upload-time = "2025-08-19T08:30:34.221Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/12/ff66809bcfb8f6883cef7a61d5602368000e123893db21346649d693e755/polyscope-2.5.0-cp313-cp313-win32.whl", hash = "sha256:def6926f3ac66ab956cfea43a3d6d34ede5cdff2be36ad4f09901aeeed9da66b", size = 7225140, upload-time = "2025-08-19T08:30:36.419Z" },
-    { url = "https://files.pythonhosted.org/packages/86/fa/7afeaba5dbebfda50f7ad1f360529651554dc8d4c905ba5074677cdfeadd/polyscope-2.5.0-cp313-cp313-win_amd64.whl", hash = "sha256:b98cd39478f17f08977ebbdf099aa760806916c7b84ec8a9ee926642c5a67e70", size = 8667698, upload-time = "2025-08-19T08:30:38.715Z" },
-]
-
-[[package]]
 name = "psutil"
 version = "7.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -975,7 +944,6 @@ dependencies = [
     { name = "imageio", extra = ["ffmpeg"] },
     { name = "numpy" },
     { name = "pillow" },
-    { name = "polyscope" },
     { name = "pycollada" },
     { name = "pyre-extensions" },
     { name = "rerun-sdk" },
@@ -992,7 +960,6 @@ requires-dist = [
     { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.36.1" },
     { name = "numpy" },
     { name = "pillow" },
-    { name = "polyscope", specifier = ">=2.5.0,<2.6" },
     { name = "pycollada" },
     { name = "pyre-extensions" },
     { name = "rerun-sdk", specifier = "==0.33.0" },

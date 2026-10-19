@@ -29,7 +29,6 @@ dependencies = [
     "imageio[ffmpeg]>=2.36.1",  # Image/video I/O with FFmpeg support for recordings.
     "numpy",
     "pillow",
-    "polyscope>=2.5.0,<2.6",
     "pycollada",
     "pyre-extensions",
     "rerun-sdk==0.33.0",

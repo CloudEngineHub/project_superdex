@@ -34,6 +34,7 @@ from superdex.physics.viewer.backend import (
     POLYSCOPE_AVAILABLE,
     polyscope_imgui as psim,
     POLYSCOPE_VERSION_GE_2_5_0,
+    POLYSCOPE_VERSION_LT_2_6_0,
 )
 from superdex.physics.viewer.logging_handler import LoggingHandler
 from superdex.physics.viewer.renderers.actor_renderer import ActorRenderer
@@ -61,7 +62,9 @@ logger = logging.getLogger(__name__)
 
 ########################################################################################
 
-VIEWER_AVAILABLE = POLYSCOPE_AVAILABLE and POLYSCOPE_VERSION_GE_2_5_0
+VIEWER_AVAILABLE = (
+    POLYSCOPE_AVAILABLE and POLYSCOPE_VERSION_GE_2_5_0 and POLYSCOPE_VERSION_LT_2_6_0
+)
 """Whether the viewer is available or not."""
 
 ########################################################################################
@@ -134,7 +137,8 @@ class Viewer:
             raise RuntimeError(
                 "Failed to initialize the renderer. Polyscope is not installed in the "
                 "current environment, or it's an incompatible version. Please install "
-                "Polyscope >= 2.5.0 to enable the renderer."
+                '"polyscope>=2.5.0,<2.6" to enable the renderer. Polyscope 2.6 is not '
+                "supported, and Polyscope 2.5 does not publish Python 3.14 wheels."
             )
 
         # Validate input configuration.
@@ -272,6 +276,9 @@ class Viewer:
         allocated by the renderer should be released at this point. Calling close on a
         already closed renderer has no effect and won't raise an error.
         """
+
+        if not hasattr(self, "_state"):
+            return
 
         # Remove logging handler.
         handler = self._state.logging.handler

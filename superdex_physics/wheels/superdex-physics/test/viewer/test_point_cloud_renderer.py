@@ -23,7 +23,7 @@ from superdex.physics.viewer.renderers.point_cloud_renderer import PointCloudRen
 ########################################################################################
 
 
-@skip_if(not VIEWER_AVAILABLE, "Requires Polyscope >= 2.5.0")
+@skip_if(not VIEWER_AVAILABLE, "Requires Polyscope >= 2.5.0, < 2.6")
 class TestPointCloudRenderer(TestCase):
     """Test suite for PointCloudRenderer functionality."""
 

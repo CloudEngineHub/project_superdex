@@ -23,7 +23,7 @@ from superdex.physics.viewer.renderers.mesh_renderer import MeshRenderer
 ########################################################################################
 
 
-@skip_if(not VIEWER_AVAILABLE, "Requires Polyscope >= 2.5.0")
+@skip_if(not VIEWER_AVAILABLE, "Requires Polyscope >= 2.5.0, < 2.6")
 class TestMeshRenderer(TestCase):
     """Test suite for MeshRenderer functionality."""
 

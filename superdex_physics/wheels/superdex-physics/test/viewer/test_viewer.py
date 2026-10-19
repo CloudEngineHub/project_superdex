@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
+import runpy
+import sys
 import unittest
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -28,13 +32,51 @@ from superdex.physics.utils.testing.testcases import (
     make_single_rigid_cube_scene,
     MochiContextTestCase,
 )
-from superdex.physics.viewer import Viewer, VIEWER_AVAILABLE, ViewerCfg
+from superdex.physics.viewer import backend, Viewer, VIEWER_AVAILABLE, ViewerCfg
 from superdex.physics.viewer.viewer_state import ActorState
 
 ########################################################################################
 
 
-@skip_if(not VIEWER_AVAILABLE, "Requires Polyscope >= 2.5.0")
+class TestViewerUnavailable(unittest.TestCase):
+    def test_unavailable_viewer_raises_without_cleanup_errors(self) -> None:
+        with (
+            patch("superdex.physics.viewer.viewer.VIEWER_AVAILABLE", False),
+            patch("sys.unraisablehook") as unraisable,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Polyscope is not installed"):
+                Viewer(ViewerCfg())
+            gc.collect()
+
+        unraisable.assert_not_called()
+
+
+class TestPolyscopeVersionDetection(unittest.TestCase):
+    def _detect(self, *api: str) -> dict[str, object]:
+        """Runs the backend module against a stand-in Polyscope exposing `api`."""
+        polyscope = ModuleType("polyscope")
+        for name in api:
+            setattr(polyscope, name, MagicMock())
+        stand_ins = {
+            "polyscope": polyscope,
+            "polyscope.imgui": ModuleType("polyscope.imgui"),
+            "polyscope.implot": None,
+        }
+        with patch.dict(sys.modules, stand_ins):
+            return runpy.run_path(backend.__file__)
+
+    def test_accepts_polyscope_2_5(self) -> None:
+        flags = self._detect("get_ui_scale", "set_view_center")
+        self.assertTrue(flags["POLYSCOPE_VERSION_GE_2_5_0"])
+        self.assertTrue(flags["POLYSCOPE_VERSION_LT_2_6_0"])
+
+    def test_rejects_polyscope_2_6(self) -> None:
+        flags = self._detect("get_ui_scale", "set_view_center_raw")
+        self.assertTrue(flags["POLYSCOPE_VERSION_GE_2_5_0"])
+        self.assertFalse(flags["POLYSCOPE_VERSION_LT_2_6_0"])
+
+
+@skip_if(not VIEWER_AVAILABLE, "Requires Polyscope >= 2.5.0, < 2.6")
 class TestViewer(MochiContextTestCase):
     """Test suite for the Viewer class functionality."""
 

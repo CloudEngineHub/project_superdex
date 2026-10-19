@@ -45,6 +45,8 @@ except ImportError:
 # fmt: off
 POLYSCOPE_VERSION_GE_2_5_0 = POLYSCOPE_AVAILABLE and hasattr(polyscope, "get_ui_scale")
 """Flag indicating if the Polyscope version is at least >= 2.5.0."""
+POLYSCOPE_VERSION_LT_2_6_0 = POLYSCOPE_AVAILABLE and hasattr(polyscope, "set_view_center")
+"""Flag indicating if the Polyscope version is < 2.6.0."""
 # fmt: on
 
 # For type-checking, use static imports so modules can be found (doesn't affect runtime behavior)
