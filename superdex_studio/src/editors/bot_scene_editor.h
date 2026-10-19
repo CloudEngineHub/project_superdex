@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace superdex::studio {
@@ -172,6 +173,13 @@ class BotSceneEditor : public AssetEditor {
     std::vector<int> children;
   };
   SpawnRename _spawnRename;
+  // The bot whose Name field is being edited: its name and the (slot, entry) indices that named it
+  // when editing started.
+  struct BotRename {
+    std::string name;
+    std::vector<std::pair<int, int>> slotEntries;
+  };
+  BotRename _botRename;
   // Set by OpenTask: brings the Task Preview tab forward the next time it is drawn.
   bool _focusTaskWindow = false;
 };

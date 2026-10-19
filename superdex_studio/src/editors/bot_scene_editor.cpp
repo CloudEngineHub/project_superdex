@@ -692,6 +692,142 @@ ControllerEditResult ShowControllers(
   return result;
 }
 
+struct SlotEditResult {
+  bool changed = false;
+  bool structural = false;
+};
+
+// Edits the scene's slots. Warns about anything LoadBotScenePrefabFromFile would reject, since a
+// scene saved that way cannot be reopened.
+SlotEditResult ShowSlots(superdex::robotics::BotScenePrefab& prefab) {
+  SlotEditResult result;
+  auto& slots = prefab.slots;
+  std::set<std::string, std::less<>> botNames;
+  for (auto const& bot : prefab.bots) {
+    botNames.insert(std::string(bot.name));
+  }
+  int slotToDelete = -1;
+  int slotToMoveUp = -1;
+  int slotToMoveDown = -1;
+
+  ImGui::PushID("Slots");
+  for (int i = 0; i < mochi::isize(slots); ++i) {
+    auto& slot = slots[i];
+    ImGui::PushID(i);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1, 0));
+    if (ImGui::Button(ICON_FA_TRASH)) {
+      slotToDelete = i;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(i == 0);
+    if (ImGui::Button(ICON_FA_CARET_UP)) {
+      slotToMoveUp = i;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(i == mochi::isize(slots) - 1);
+    if (ImGui::Button(ICON_FA_CARET_DOWN)) {
+      slotToMoveDown = i;
+    }
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+    ImGui::SameLine();
+    std::string const label =
+        (slot.name.empty() ? std::string("(unnamed)") : std::string(slot.name)) + "###slot";
+    if (ImGui::CollapsingHeader(label.c_str())) {
+      ImGui::Indent();
+      result.changed |= ImGui::InputText("Name", &slot.name);
+      if (slot.name.empty()) {
+        ShowWarning("A slot needs a name");
+      } else if (std::ranges::any_of(slots, [&](auto const& other) {
+                   return &other != &slot &&
+                       std::string_view(other.name) == std::string_view(slot.name);
+                 })) {
+        ShowWarning("Another slot has this name");
+      }
+
+      auto& controlledBots = slot.controlledBots;
+      int botToRemove = -1;
+      ImGui::PushID("ControlledBots");
+      for (int j = 0; j < mochi::isize(controlledBots); ++j) {
+        ImGui::PushID(j);
+        if (ImGui::Button(ICON_FA_TRASH)) {
+          botToRemove = j;
+        }
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(controlledBots[j].c_str());
+        if (!botNames.contains(std::string_view(controlledBots[j]))) {
+          ShowWarning("No bot in this scene has this name");
+        }
+        ImGui::PopID();
+      }
+      ImGui::PopID(); // ControlledBots
+      if (botToRemove >= 0) {
+        controlledBots.erase(controlledBots.begin() + botToRemove);
+        result.structural = true;
+      }
+      if (controlledBots.empty()) {
+        ShowWarning("A slot needs at least one bot");
+      }
+
+      std::vector<std::string> addableBots;
+      for (auto const& name : botNames) {
+        if (std::ranges::none_of(controlledBots, [&](auto const& controlled) {
+              return std::string_view(controlled) == name;
+            })) {
+          addableBots.push_back(name);
+        }
+      }
+      ImGui::BeginDisabled(addableBots.empty());
+      if (ImGui::Button(ICON_FA_PLUS "###AddSlotBot")) {
+        ImGui::OpenPopup("AddSlotBotPopup");
+      }
+      ImGui::EndDisabled();
+      ImGui::SameLine();
+      ImGui::TextUnformatted("Add Bot");
+      if (ImGui::BeginPopup("AddSlotBotPopup")) {
+        for (auto const& name : addableBots) {
+          if (ImGui::MenuItem(name.c_str())) {
+            controlledBots.push_back(mochi::DynamicString{name});
+            result.structural = true;
+          }
+        }
+        ImGui::EndPopup();
+      }
+      ImGui::Unindent();
+    }
+    ImGui::PopID();
+  }
+  ImGui::PopID(); // Slots
+  if (slotToMoveUp > 0) {
+    std::swap(slots[slotToMoveUp], slots[slotToMoveUp - 1]);
+    result.structural = true;
+  }
+  if (slotToMoveDown >= 0 && slotToMoveDown < mochi::isize(slots) - 1) {
+    std::swap(slots[slotToMoveDown], slots[slotToMoveDown + 1]);
+    result.structural = true;
+  }
+  if (slotToDelete >= 0) {
+    slots.erase(slots.begin() + slotToDelete);
+    result.structural = true;
+  }
+  if (ImGui::Button(ICON_FA_PLUS "###AddSlot")) {
+    std::set<std::string> existingNames;
+    for (auto const& slot : slots) {
+      existingNames.insert(std::string(slot.name));
+    }
+    superdex::robotics::SlotEntry newSlot;
+    newSlot.name = mochi::DynamicString{MakeUniqueName("Slot", existingNames)};
+    slots.push_back(std::move(newSlot));
+    result.structural = true;
+  }
+  ImGui::SameLine();
+  ImGui::TextUnformatted("Add Slot");
+
+  return result;
+}
+
 } // namespace
 
 BotSceneEditor::BotSceneEditor(SuperDexStudio* studio, BotSceneAsset* asset)
@@ -1878,7 +2014,38 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
       std::string const label =
           (bot.name.empty() ? std::string("(unnamed)") : std::string(bot.name)) + "###bot";
       if (ImGui::CollapsingHeader(label.c_str())) {
-        changed |= ImGui::InputText("Name", &bot.name);
+        std::string const oldName{bot.name};
+        bool renamed = ImGui::InputText("Name", &bot.name);
+        // Slot entries are found when editing starts, so a name that is briefly empty or taken
+        // while typing neither drops nor adopts any.
+        if (ImGui::IsItemActivated()) {
+          _botRename = {.name = oldName, .slotEntries = {}};
+          for (int s = 0; s < mochi::isize(prefab.slots); ++s) {
+            auto const& controlledBots = prefab.slots[s].controlledBots;
+            for (int j = 0; j < mochi::isize(controlledBots); ++j) {
+              if (std::string_view(controlledBots[j]) == oldName) {
+                _botRename.slotEntries.emplace_back(s, j);
+              }
+            }
+          }
+        }
+        // A name left empty or taken reverts, since slots name bots.
+        if (ImGui::IsItemDeactivatedAfterEdit() &&
+            (bot.name.empty() || std::ranges::any_of(bots, [&](auto const& other) {
+               return &other != &bot && std::string_view(other.name) == std::string_view(bot.name);
+             }))) {
+          bot.name = mochi::DynamicString{_botRename.name};
+          renamed = true;
+        }
+        if (renamed) {
+          for (auto const& [s, j] : _botRename.slotEntries) {
+            if (s < mochi::isize(prefab.slots) &&
+                j < mochi::isize(prefab.slots[s].controlledBots)) {
+              prefab.slots[s].controlledBots[j] = bot.name;
+            }
+          }
+          changed = true;
+        }
         if (ImGui::AssetSlot("Bot", bot.path, assetManager, _studio, AssetType::Bot, true)) {
           // Reset the initial pose to the newly-assigned bot's default pose (the previous pose
           // belonged to a different bot with a different DOF layout).
@@ -1930,6 +2097,16 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
       structural = true;
     }
     if (botToDelete >= 0) {
+      std::string_view const deletedName{bots[botToDelete].name};
+      for (auto& slot : prefab.slots) {
+        auto& controlledBots = slot.controlledBots;
+        controlledBots.erase(
+            std::remove_if(
+                controlledBots.begin(),
+                controlledBots.end(),
+                [&](auto const& name) { return std::string_view(name) == deletedName; }),
+            controlledBots.end());
+      }
       bots.erase(bots.begin() + botToDelete);
       assetManager.ResyncReferencer(_sceneAsset);
       structural = true;
@@ -1946,6 +2123,11 @@ void BotSceneEditor::ShowInfoWindow(bool* open) {
     }
     ImGui::SameLine();
     ImGui::TextUnformatted("Add Bot");
+
+    ImGui::HoverableSeparatorText("Slots");
+    auto const slotResult = ShowSlots(prefab);
+    changed |= slotResult.changed;
+    structural |= slotResult.structural;
   }
 
   ImGui::EndDisabled();
