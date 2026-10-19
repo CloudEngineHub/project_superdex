@@ -122,6 +122,9 @@ class BotSceneEditor : public AssetEditor {
   void ShowTaskWindow(bool* open);
   // The editable spawn list, shown while not simulating.
   void ShowTaskEditor();
+  struct SlotEditResult;
+  // The Slots section of the Bot Scene Info window.
+  SlotEditResult ShowSlots(superdex::robotics::BotScenePrefab& prefab);
 
  private:
   // target asset
@@ -178,8 +181,21 @@ class BotSceneEditor : public AssetEditor {
   struct BotRename {
     std::string name;
     std::vector<std::pair<int, int>> slotEntries;
+    // Slots in _activeSlotBots whose active bot it was.
+    std::vector<std::string> activeSlots;
   };
   BotRename _botRename;
+  // The bot each slot includes in the preview and in simulation, by slot name; a slot without one,
+  // or whose bot it no longer lists, includes its first bot. A view setting: not saved or undone.
+  std::unordered_map<std::string, std::string> _activeSlotBots;
+  // The slot whose Name field is being edited: its name and active bot, and _activeSlotBots, when
+  // editing started.
+  struct SlotRename {
+    std::string name;
+    std::string activeBot;
+    std::unordered_map<std::string, std::string> activeSlotBots;
+  };
+  SlotRename _slotRename;
   // Set by OpenTask: brings the Task Preview tab forward the next time it is drawn.
   bool _focusTaskWindow = false;
 };
