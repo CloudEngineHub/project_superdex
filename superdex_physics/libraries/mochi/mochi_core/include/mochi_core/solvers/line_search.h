@@ -112,7 +112,8 @@ bool LineSearch<T>::Simple(Problem& problem, Status& status, LsParams const& par
     double const merit = problem.GetObjective();
 
     // Check enough improvement
-    if (merit <= (status.merit + std::abs(status.merit * params.maxRelIncrease))) {
+    if (IsFinite(merit) &&
+        merit <= (status.merit + std::abs(status.merit * params.maxRelIncrease))) {
       status.merit = merit;
       improved = true;
       break;
@@ -155,7 +156,7 @@ bool LineSearch<T>::Armijo(Problem& problem, Status& status, LsParams const& par
     double const merit = problem.GetObjective();
 
     // Check enough improvement
-    if (merit <= status.merit + scale * factor0) {
+    if (IsFinite(merit) && merit <= status.merit + scale * factor0) {
       status.merit = merit;
       improved = true;
       break;
@@ -322,7 +323,7 @@ bool LineSearch<T>::ResidualNorm(Problem& problem, Status& status, LsParams cons
     problem.UpdateResidual();
     auto const resNorm = problem.GetResidual().Norm();
 
-    if (resNorm <= resNorm0) {
+    if (IsFinite(resNorm) && resNorm <= resNorm0) {
       improved = true;
       break;
     }
@@ -355,6 +356,10 @@ bool LineSearch<T>::ArmijoOrResidualNorm(Problem& problem, Status& status, LsPar
 
   // Compute current residual norm
   auto const resNorm0 = problem.GetResidual().Norm();
+  auto const residualNormDecreased = [&] {
+    auto const resNorm = problem.GetResidual().Norm();
+    return IsFinite(resNorm) && resNorm < resNorm0;
+  };
 
   bool improved = false;
   auto scale = T(1);
@@ -375,7 +380,7 @@ bool LineSearch<T>::ArmijoOrResidualNorm(Problem& problem, Status& status, LsPar
 
     // Check improvement of the residual norm or enough improvement of the merit
     double const merit = problem.GetObjective();
-    if ((merit <= status.merit + scale * factor0) || (problem.GetResidual().Norm() < resNorm0)) {
+    if ((IsFinite(merit) && merit <= status.merit + scale * factor0) || residualNormDecreased()) {
       status.merit = merit;
       improved = true;
       break;

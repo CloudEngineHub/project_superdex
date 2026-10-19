@@ -751,3 +751,61 @@ TEST(NewtonSolver, PerActorWeighted_FallbackToGlobal) {
   EXPECT_EQ(ConvergenceStatus::Converged, status.convergence); // Solver converged.
   EXPECT_TRUE(status.actorConvergence.empty()); // Empty after fallback.
 }
+
+// ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+/**
+ * The full step lands where the residual is NaN and the objective is NaN or −∞, and must be
+ * rejected. The half step is acceptable to every line search.
+ */
+TEST(NewtonSolver, LineSearchRejectsNonFiniteTrial) {
+  real invalidObjective = 0_r;
+  auto residual = ColumnVector<real>::Zero(2);
+  SnleProblemFunctions<real> functions;
+  functions.assemble = [&invalidObjective, &residual](
+                           SnleProblem<real>& problem, AssemblyParams const& params) {
+    auto const x = problem.GetSolution();
+    bool const isInvalid = x[0] < -1_r;
+    if (params.assemObj) {
+      problem.objective = isInvalid ? invalidObjective : 0.5 * x.Dot(x);
+    }
+    if (params.assemRes) {
+      residual = x;
+      if (isInvalid) {
+        residual.SetConstant(std::numeric_limits<real>::quiet_NaN());
+      }
+      problem.actorResiduals = {{0, &residual}};
+    }
+  };
+  functions.onPostNewIncrement = [](SnleProblem<real>& p) { p.solution += p.increment; };
+  SnleProblem<real> problem{2, 2, std::move(functions)};
+
+  using Ls = LineSearch<real>;
+  for (real const objective :
+       {std::numeric_limits<real>::quiet_NaN(), -std::numeric_limits<real>::infinity()}) {
+    invalidObjective = objective;
+    for (auto const& [type, search] :
+         {std::pair{LineSearchType::Simple, &Ls::Simple},
+          std::pair{LineSearchType::Armijo, &Ls::Armijo},
+          std::pair{LineSearchType::WolfeWeak, &Ls::WolfeWeak},
+          std::pair{LineSearchType::WolfeStrong, &Ls::WolfeStrong},
+          std::pair{LineSearchType::ResidualNorm, &Ls::ResidualNorm},
+          std::pair{LineSearchType::ArmijoOrResidualNorm, &Ls::ArmijoOrResidualNorm}}) {
+      problem.SetSolution(ColumnVector<real>({{1_r, 1_r}}));
+      problem.increment.SetConstant(-3_r);
+      problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
+      NewtonSolverStatus<real> status;
+      status.merit = problem.GetObjective();
+
+      LineSearchParams const params{
+          .type = type,
+          .maxIter = 2,
+          .alpha = 0.5_r,
+          .wolfe1 = 1e-4_r,
+          .wolfe2 = 0.9_r,
+          .maxRelIncrease = 0_r};
+      EXPECT_TRUE(search(problem, status, params));
+      EXPECT_EQ(status.numLastLSIterDone, 1);
+    }
+  }
+}
