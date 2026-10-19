@@ -500,7 +500,7 @@ static void QueryMesh(
       outIsSdfGradUnitary);
 }
 
-// Note: outResult is in collider's frame.
+// Note: outContacts and outSdf are in SDF space, in the reference configuration for mapped SDFs.
 template <TimeStep kTimeStep>
 static void QuerySdf(
     entt::registry const& reg,
@@ -560,6 +560,24 @@ static void QuerySdf(
         outNDofs,
         outMapJac,
         outDofsJac);
+
+    // The map's Jacobians are in SDF space. Rotate them so that outMapJac is the derivative of the
+    // reference position wrt the world position, and outDofsJac that of the world position wrt the
+    // DoFs.
+    VMatrix3x3r const rotSdfFromWorld = ToVMatrix3x3Transpose(worldFromSdf.GetRotation());
+    if (outMapJac) {
+      for (auto& jac : *outMapJac) {
+        jac = Dot3x3(jac, rotSdfFromWorld);
+      }
+    }
+    if (outDofsJac) {
+      int const numDofs = mappedCollider.mapping->GetNumDofs();
+      for (auto& dofsJac : *outDofsJac) {
+        for (int j = 0; j < numDofs; ++j) {
+          dofsJac.jac[j] = DotVecMat3x3(dofsJac.jac[j], rotSdfFromWorld);
+        }
+      }
+    }
   } else {
     // Run the query with a regular SDF.
     auto const* gridSdf = dynamic_cast<GridSdf const*>(sdf);

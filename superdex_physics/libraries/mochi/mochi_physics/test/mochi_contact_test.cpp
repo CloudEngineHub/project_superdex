@@ -467,6 +467,7 @@ struct TestParams {
   real dresTol = 1e-3_r;
   bool ignoreColliderRotDres = false;
   real eps = 1e-4_r;
+  real colliderShear = 0_r;
 };
 } // namespace
 
@@ -1060,6 +1061,11 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     reg.get<CTimeIntegratorState>(entity).dtStage = kDtStage;
 
     return actor;
+  }
+
+  // Rotation applied to a whole scene, so that the actors' root rotations are not the identity.
+  static Quaternion SceneRotation() {
+    return Quaternion::FromRotationVector(Real3(0.3_r, -0.4_r, 0.5_r));
   }
 
   void InitSoftCubeStageStart(entt::entity e) {
@@ -2233,20 +2239,29 @@ class MochiRigidSoftContact : public MochiContactTestBase {
       override {
     auto& reg = GetRegistry();
 
-    auto transform = TransformRT(
-        Quaternion::FromRotationVector(Real3(0.1_r, -0.1_r, 0.2_r)), Real3(0.6_r, 0.6_r, 0.6_r));
+    // Rotate the whole scene, including the stage-start offsets below.
+    Quaternion const sceneRotation = SceneRotation();
+    TransformRT const transform = TransformRT(sceneRotation) *
+        TransformRT(Quaternion::FromRotationVector(Real3(0.1_r, -0.1_r, 0.2_r)),
+                    Real3(0.6_r, 0.6_r, 0.6_r));
     auto* actorA = InitRigidCube(
         1_r, transform, false, coulombCoefficient, viscousCoefficient, dampingCoefficient);
-    auto* actorB =
-        InitSoftCube({}, true, {}, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+    auto* actorB = InitSoftCube(
+        TransformRT(sceneRotation),
+        true,
+        {},
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient);
     InitActors(actorA, actorB);
 
     // Add velocity to the actors
     _posA = reg.get<CRigidState<TimeStep::Current>>(_colliding).value;
     auto& posAold = reg.get<CRigidState<TimeStep::StageStart>>(_colliding).value;
-    posAold.SetTranslation(_posA.GetTranslation() + Real3(0.02_r, 0.01_r, -0.01_r));
+    posAold.SetTranslation(_posA.GetTranslation() + sceneRotation * Real3(0.02_r, 0.01_r, -0.01_r));
     posAold.SetRotation(
-        Quaternion::FromRotationVector(Vec4r(-0.1_r, -0.1_r, -0.2_r)) * _posA.GetRotation());
+        Quaternion::FromRotationVector(sceneRotation * Vec4r(-0.1_r, -0.1_r, -0.2_r)) *
+        _posA.GetRotation());
     _posB = reg.get<CDisplacementSlice<real, TimeStep::Current> const>(_collider).value.Duplicate();
     auto& posBold = reg.get<CDisplacementSlice<real, TimeStep::StageStart>>(_collider);
     for (int i = 0; i < _numDofsB; i++) {
@@ -2303,9 +2318,8 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 10_r, true, 2e-3_r, 1e-2_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
-// Scene with 2 soft actors. Actor A is a translated soft cube. Actor B is a soft cube at the
-// origin, and it has a mapped SDF _collider. The result of collision detection doesn't need to be
-// transformed, as B is at the origin.
+// Scene with 2 soft actors, rotated as a whole. Actor A is a translated soft cube. Actor B is a
+// soft cube at the scene's origin, and it has a mapped SDF _collider.
 class MochiSoftSoftContact : public MochiContactTestBase {
  protected:
   ColumnVector<real> _posA;
@@ -2322,21 +2336,29 @@ class MochiSoftSoftContact : public MochiContactTestBase {
   void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
       override {
     auto& reg = GetRegistry();
+    Quaternion const sceneRotation = SceneRotation();
 
-    // Apply a transformation to avoid contacts on edges
-    TransformRT transformA(Vec4r(0.98_r, 0.24_r, 0.16_r));
+    // Translate A to avoid contacts on edges
+    TransformRT const transformA =
+        TransformRT(sceneRotation) * TransformRT(Vec4r(0.98_r, 0.24_r, 0.16_r));
     auto* actorA = InitSoftCube(
         transformA, false, {}, coulombCoefficient, viscousCoefficient, dampingCoefficient);
     auto* actorB = InitSoftCube(
-        {}, true, _useDeepFlow, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+        TransformRT(sceneRotation),
+        true,
+        _useDeepFlow,
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient);
     InitActors(actorA, actorB);
 
     // Set initial positions
     auto& posA = reg.get<CDisplacementSlice<real, TimeStep::Current>>(_colliding);
     auto& posB = reg.get<CDisplacementSlice<real, TimeStep::Current>>(_collider);
+    auto const coordsB = reg.get<CTetrahedralMesh const>(_collider).mesh->GetNodeCoordinates();
     for (int i = 0; i < _numDofsA; i++) {
       posA.value[i] = (i % 3 == 0) ? 0_r : 0.01_r;
-      posB.value[i] = (i % 3 == 0) ? 0_r : -0.01_r;
+      posB.value[i] = (i % 3 == 0) ? GetParam().colliderShear * coordsB[i / 3][1] : -0.01_r;
     }
     _posA = posA.value.Duplicate();
     _posB = posB.value.Duplicate();
@@ -2378,6 +2400,7 @@ INSTANTIATE_TEST_SUITE_P(
     MochiSoftSoftContact,
     ::testing::Values(
         TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 1e-3_r, 1e-1_r},
+        TestParams{.name = "NoFrictionSheared", .dresTol = 1e-1_r, .colliderShear = 0.01_r},
         TestParams{"Viscous", GradTarget::Current, 0_r, 10_r, 0_r, false, 1e-3_r, 1e-1_r},
         TestParams{"Coulomb", GradTarget::Current, 0.5_r, 0_r, 0_r, false, 1e-3_r, 1e-1_r},
         TestParams{"Damping", GradTarget::Current, 0_r, 0_r, 10_r, false, 1e-3_r, 5e-3_r},
