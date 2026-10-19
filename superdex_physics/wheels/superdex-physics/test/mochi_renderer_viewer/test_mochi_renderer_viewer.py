@@ -20,6 +20,8 @@ Uses mock sockets to test the binary protocol without a running server.
 
 from __future__ import annotations
 
+import io
+import socket
 import struct
 import unittest
 from unittest.mock import MagicMock, patch
@@ -33,23 +35,18 @@ from superdex.physics.viewer.mochi_renderer.mochi_renderer_client import (
 ########################################################################################
 
 
-def _mock_recv_into(mock_sock: MagicMock, *chunks: bytes) -> None:
-    """Make ``mock_sock.recv_into`` deliver *chunks*, then EOF, like a real socket."""
-    pending = list(chunks)
+def _framed_response(*responses: tuple[int, bytes]) -> bytes:
+    """Frame (type, data) responses the way MochiViewerServer sends them."""
+    body = struct.pack("<I", len(responses))
+    for resp_type, data in responses:
+        body += struct.pack("<BI", resp_type, len(data)) + data
+    return struct.pack("<I", len(body)) + body
 
-    def recv_into(view: memoryview) -> int:
-        if not pending:
-            return 0
-        chunk = pending[0]
-        n = min(len(chunk), len(view))
-        view[:n] = chunk[:n]
-        if n == len(chunk):
-            pending.pop(0)
-        else:
-            pending[0] = chunk[n:]
-        return n
 
-    mock_sock.recv_into.side_effect = recv_into
+def _read_response(
+    frame: bytes, destinations: list[memoryview | None] | None = None
+) -> list[ResponseEntry]:
+    return MochiRendererClient._read_response(io.BytesIO(frame), destinations or [])
 
 
 ########################################################################################
@@ -204,97 +201,84 @@ class TestEncodeRequest:
 ########################################################################################
 
 
-class TestDecodeResponse:
-    """Tests for MochiRendererClient._decode_response."""
+class TestReadResponse(unittest.TestCase):
+    """Tests for MochiRendererClient._read_response."""
 
-    def test_single_text_response(self) -> None:
-        text = b"ok"
-        payload = struct.pack("<I", 1)  # num_responses
-        payload += struct.pack("<B", 0)  # type = text
-        payload += struct.pack("<I", len(text))
-        payload += text
+    def test_responses_without_destinations_get_new_buffers(self) -> None:
+        entries = _read_response(_framed_response((0, b"ok"), (1, b"\x01\x02\x03")))
 
-        entries = MochiRendererClient._decode_response(payload)
-        assert len(entries) == 1
-        assert entries[0].type == 0
-        assert entries[0].data == b"ok"
-
-    def test_single_image_response(self) -> None:
-        # Simulate a 2x2 RGBA image header + pixels
-        width, height, channels = 2, 2, 4
-        image_header = struct.pack("<III", width, height, channels)
-        pixels = bytes(range(width * height * channels))
-        image_data = image_header + pixels
-
-        payload = struct.pack("<I", 1)  # num_responses
-        payload += struct.pack("<B", 1)  # type = image
-        payload += struct.pack("<I", len(image_data))
-        payload += image_data
-
-        entries = MochiRendererClient._decode_response(payload)
-        assert len(entries) == 1
-        assert entries[0].type == 1
-        assert entries[0].data == image_data
-
-    def test_multiple_responses(self) -> None:
-        payload = struct.pack("<I", 3)  # num_responses
-
-        # Response 1: text "ok"
-        payload += struct.pack("<B", 0)
-        payload += struct.pack("<I", 2)
-        payload += b"ok"
-
-        # Response 2: text "ok"
-        payload += struct.pack("<B", 0)
-        payload += struct.pack("<I", 2)
-        payload += b"ok"
-
-        # Response 3: image (minimal)
-        img = struct.pack("<III", 1, 1, 4) + b"\xff\x00\x00\xff"
-        payload += struct.pack("<B", 1)
-        payload += struct.pack("<I", len(img))
-        payload += img
-
-        entries = MochiRendererClient._decode_response(payload)
-        assert len(entries) == 3
-        assert entries[0].type == 0
-        assert entries[0].data == b"ok"
-        assert entries[1].type == 0
-        assert entries[1].data == b"ok"
-        assert entries[2].type == 1
-        assert entries[2].data == img
-
-    def test_error_text_response(self) -> None:
-        error_msg = b"error: unknown command"
-        payload = struct.pack("<I", 1)
-        payload += struct.pack("<B", 0)
-        payload += struct.pack("<I", len(error_msg))
-        payload += error_msg
-
-        entries = MochiRendererClient._decode_response(payload)
-        assert len(entries) == 1
-        assert entries[0].type == 0
-        assert entries[0].data == error_msg
+        self.assertEqual([0, 1], [entry.type for entry in entries])
+        self.assertEqual([b"ok", b"\x01\x02\x03"], [entry.data for entry in entries])
+        self.assertFalse(any(entry.data.readonly for entry in entries))
 
     def test_empty_response_list(self) -> None:
-        payload = struct.pack("<I", 0)
-        entries = MochiRendererClient._decode_response(payload)
-        assert len(entries) == 0
+        self.assertEqual([], _read_response(_framed_response()))
 
-    def test_received_payload_is_not_copied(self) -> None:
-        image = struct.pack("<III", 1, 1, 4) + b"\xff\x00\x00\xff"
-        payload = struct.pack("<I", 2)
-        payload += struct.pack("<B", 0) + struct.pack("<I", 2) + b"ok"
-        payload += struct.pack("<B", 1) + struct.pack("<I", len(image)) + image
-        received = memoryview(bytearray(payload))
+    def test_response_is_received_into_a_large_enough_destination(self) -> None:
+        destination = bytearray(8)
 
-        entries = MochiRendererClient._decode_response(received)
+        (entry,) = _read_response(
+            _framed_response((1, b"pixels")), [memoryview(destination)]
+        )
 
-        for entry in entries:
-            assert isinstance(entry.data, memoryview)
-            assert entry.data.obj is received.obj
-        assert entries[0].data == b"ok"
-        assert entries[1].data == image
+        self.assertEqual(b"pixels", entry.data)
+        self.assertIs(destination, entry.data.obj)
+        self.assertEqual(b"pixels\x00\x00", destination)
+
+    def test_too_small_destination_is_left_untouched(self) -> None:
+        destination = bytearray(5)
+
+        (entry,) = _read_response(
+            _framed_response((1, b"pixels")), [memoryview(destination)]
+        )
+
+        self.assertEqual(b"pixels", entry.data)
+        self.assertIsNot(destination, entry.data.obj)
+        self.assertEqual(bytearray(5), destination)
+
+    def test_destinations_are_matched_by_response_index(self) -> None:
+        first, second = bytearray(16), bytearray(16)
+
+        entries = _read_response(
+            _framed_response((0, b"error: camera not found: a"[:16]), (1, b"pixels")),
+            [memoryview(first), memoryview(second)],
+        )
+
+        self.assertIs(first, entries[0].data.obj)
+        self.assertIs(second, entries[1].data.obj)
+        self.assertEqual(b"pixels", entries[1].data)
+
+    def test_length_that_disagrees_with_the_contents_raises(self) -> None:
+        frame = bytearray(_framed_response((0, b"ok")))
+        frame[0] += 1
+
+        with self.assertRaises(ConnectionError):
+            _read_response(bytes(frame))
+
+    def test_truncated_response_raises(self) -> None:
+        with self.assertRaises(ConnectionError):
+            _read_response(_framed_response((1, b"pixels"))[:-1])
+
+    def test_payload_too_short_for_its_count_raises(self) -> None:
+        with self.assertRaises(ConnectionError):
+            _read_response(struct.pack("<II", 2, 0))
+
+    def test_inner_length_past_the_frame_raises_without_reading_on(self) -> None:
+        # The frame claims 1 response of 100 bytes but holds only 2; a later frame
+        # follows.
+        body = struct.pack("<IBI", 1, 0, 100) + b"ok"
+        later = _framed_response((0, b"next"))
+        reader = io.BytesIO(struct.pack("<I", len(body)) + body + later)
+
+        with self.assertRaises(ConnectionError):
+            MochiRendererClient._read_response(reader, [])
+
+        self.assertEqual(later, reader.read()[-len(later) :])
+
+    def test_response_header_past_the_frame_raises(self) -> None:
+        body = struct.pack("<I", 1)  # A response is announced but the frame ends.
+        with self.assertRaises(ConnectionError):
+            _read_response(struct.pack("<I", len(body)) + body + bytes(5))
 
 
 ########################################################################################
@@ -380,96 +364,115 @@ class TestConnection:
 
 
 ########################################################################################
-# request / request_batch with mock socket I/O
+# request / request_batch over a socket pair
 ########################################################################################
 
 
 class TestRequestBatch(unittest.TestCase):
-    """Tests for request_batch using mock socket I/O."""
+    """Tests for request / request_batch over a connected socket pair."""
 
-    def _make_connected_client(self) -> tuple[MochiRendererClient, MagicMock]:
-        """Create a client with a mocked socket injected."""
-        client = MochiRendererClient("localhost", 9000)
-        mock_sock = MagicMock()
-        client._socket = mock_sock
-        return client, mock_sock
+    def _connected_client(
+        self, response: bytes
+    ) -> tuple[MochiRendererClient, socket.socket]:
+        """A client whose server end has already queued *response*."""
+        client_sock, server_sock = socket.socketpair()
+        self.addCleanup(client_sock.close)
+        self.addCleanup(server_sock.close)
+        server_sock.sendall(response)
+        client = MochiRendererClient()
+        client._socket = client_sock
+        return client, server_sock
+
+    def _assert_nothing_sent(self, server_sock: socket.socket) -> None:
+        server_sock.setblocking(False)
+        with self.assertRaises(BlockingIOError):
+            server_sock.recv(1)
 
     def test_request_batch_not_connected(self) -> None:
         client = MochiRendererClient()
         with self.assertRaises(ConnectionError):
             client.request_batch([CommandEntry(text="vget /objects")])
 
-    def test_request_single_text(self) -> None:
-        client, mock_sock = self._make_connected_client()
+    def test_request_batch_sends_the_commands_and_reads_the_responses(self) -> None:
+        client, server_sock = self._connected_client(
+            _framed_response((0, b"ok"), (1, b"pixels"))
+        )
+        commands = [
+            CommandEntry(text="vset /object/box/show"),
+            CommandEntry(text="vget /camera/default/lit"),
+        ]
 
-        # Build the expected response payload
-        response_text = b"ok"
-        response_payload = struct.pack("<I", 1)  # num_responses
-        response_payload += struct.pack("<B", 0)  # type = text
-        response_payload += struct.pack("<I", len(response_text))
-        response_payload += response_text
+        entries = client.request_batch(commands)
 
-        # Frame it
-        response_frame = struct.pack("<I", len(response_payload)) + response_payload
+        payload = MochiRendererClient._encode_request(commands)
+        expected_request = struct.pack("<I", len(payload)) + payload
+        self.assertEqual(expected_request, server_sock.recv(len(expected_request)))
+        self.assertEqual([b"ok", b"pixels"], [entry.data for entry in entries])
 
-        _mock_recv_into(mock_sock, response_frame[:4], response_frame[4:])
+    def test_request_batch_receives_into_the_given_buffers(self) -> None:
+        client, _ = self._connected_client(_framed_response((0, b"ok"), (1, b"pixels")))
+        destination = bytearray(8)
 
-        commands = [CommandEntry(text="vget /objects")]
-        results = client.request_batch(commands)
+        entries = client.request_batch(
+            [CommandEntry(text="vset /a/show"), CommandEntry(text="vget /b/lit")],
+            response_buffers=[None, memoryview(destination)],
+        )
 
-        assert len(results) == 1
-        assert results[0].type == 0
-        assert results[0].data == b"ok"
-        mock_sock.sendall.assert_called_once()
+        self.assertIs(destination, entries[1].data.obj)
+        self.assertEqual(b"pixels", entries[1].data)
 
-    def test_request_convenience_method(self) -> None:
-        client, mock_sock = self._make_connected_client()
+    def test_one_buffer_per_command_is_required(self) -> None:
+        client, server_sock = self._connected_client(b"")
 
-        response_text = b"ok"
-        response_payload = struct.pack("<I", 1)
-        response_payload += struct.pack("<B", 0)
-        response_payload += struct.pack("<I", len(response_text))
-        response_payload += response_text
-        response_frame = struct.pack("<I", len(response_payload)) + response_payload
+        with self.assertRaises(ValueError):
+            client.request_batch(
+                [CommandEntry(text="vset /a/show"), CommandEntry(text="vget /b/lit")],
+                response_buffers=[memoryview(bytearray(8))],
+            )
 
-        _mock_recv_into(mock_sock, response_frame)
+        self._assert_nothing_sent(server_sock)
+
+    def test_unusable_buffer_is_rejected_before_sending(self) -> None:
+        buffers = {
+            "read-only": memoryview(bytes(8)),
+            "not contiguous": memoryview(bytearray(16))[::2],
+        }
+        for reason, buffer in buffers.items():
+            with self.subTest(reason):
+                client, server_sock = self._connected_client(b"")
+
+                with self.assertRaises(ValueError):
+                    client.request_batch(
+                        [CommandEntry(text="vget /b/lit")], response_buffers=[buffer]
+                    )
+
+                self._assert_nothing_sent(server_sock)
+
+    def test_request_returns_the_first_response_data_as_bytes(self) -> None:
+        client, _ = self._connected_client(_framed_response((0, b"ok")))
 
         data = client.request("vset /object/box/show")
-        assert type(data) is bytes
-        assert data == b"ok"
 
+        self.assertIs(bytes, type(data))
+        self.assertEqual(b"ok", data)
 
-########################################################################################
-# Low-level I/O tests
-########################################################################################
+    def test_consecutive_requests_share_the_connection(self) -> None:
+        client, _ = self._connected_client(
+            _framed_response((0, b"first")) + _framed_response((0, b"second"))
+        )
 
+        self.assertEqual(b"first", client.request("vget /a"))
+        self.assertEqual(b"second", client.request("vget /b"))
+        self.assertTrue(client.is_connected())
 
-class TestRecvExact(unittest.TestCase):
-    """Tests for _recv_exact."""
+    def test_a_framing_error_disconnects(self) -> None:
+        body = struct.pack("<IBI", 1, 0, 100) + b"ok"
+        client, _ = self._connected_client(struct.pack("<I", len(body)) + body)
 
-    def test_recv_exact_single_chunk(self) -> None:
-        mock_sock = MagicMock()
-        _mock_recv_into(mock_sock, b"hello")
-        result = MochiRendererClient._recv_exact(mock_sock, 5)
-        assert result == b"hello"
-
-    def test_recv_exact_multiple_chunks(self) -> None:
-        mock_sock = MagicMock()
-        _mock_recv_into(mock_sock, b"he", b"ll", b"o")
-        result = MochiRendererClient._recv_exact(mock_sock, 5)
-        assert result == b"hello"
-
-    def test_recv_exact_leaves_following_data_unread(self) -> None:
-        mock_sock = MagicMock()
-        _mock_recv_into(mock_sock, b"hello world")
-        assert MochiRendererClient._recv_exact(mock_sock, 5) == b"hello"
-        assert MochiRendererClient._recv_exact(mock_sock, 6) == b" world"
-
-    def test_recv_exact_connection_closed(self) -> None:
-        mock_sock = MagicMock()
-        _mock_recv_into(mock_sock, b"hel")
         with self.assertRaises(ConnectionError):
-            MochiRendererClient._recv_exact(mock_sock, 5)
+            client.request("vget /a")
+
+        self.assertFalse(client.is_connected())
 
     def test_send_framed(self) -> None:
         mock_sock = MagicMock()

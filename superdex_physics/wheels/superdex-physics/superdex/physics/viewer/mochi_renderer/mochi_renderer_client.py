@@ -26,7 +26,9 @@ import socket
 import struct
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import BinaryIO
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,11 @@ class CommandEntry:
 
 @dataclass
 class ResponseEntry:
-    """A single response from a batch request."""
+    """A single response from a batch request.
+
+    ``data`` is a view of the destination given for the command when the response
+    fit in it, or of a new buffer otherwise.
+    """
 
     type: int  # 0 = text, 1 = image
     data: bytes | memoryview = b""
@@ -71,6 +77,7 @@ class MochiRendererClient:
         self._host = host
         self._port = port
         self._socket: socket.socket | None = None
+        self._reader: BinaryIO | None = None
         self._lock = threading.Lock()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -124,11 +131,7 @@ class MochiRendererClient:
         """Disconnect from the server. Safe to call if already disconnected."""
         with self._lock:
             if self._socket is not None:
-                try:
-                    self._socket.close()
-                except Exception:
-                    pass
-                self._socket = None
+                self._close_locked()
                 logger.info("Disconnected from mochi_renderer")
 
     def is_connected(self) -> bool:
@@ -166,27 +169,72 @@ class MochiRendererClient:
             raise RuntimeError("Server returned zero responses for a single command")
         return bytes(responses[0].data)
 
-    def request_batch(self, commands: list[CommandEntry]) -> list[ResponseEntry]:
+    def request_batch(
+        self,
+        commands: list[CommandEntry],
+        response_buffers: Sequence[memoryview | None] | None = None,
+    ) -> list[ResponseEntry]:
         """
         Send a batch of commands and return all responses.
 
         Args:
             commands: List of :class:`CommandEntry` objects to send.
+            response_buffers: Optional destination for each command's response, in
+                command order; None leaves a response to a new buffer. A response
+                that fits in its destination is received directly into it, and its
+                ``data`` is then a view of the destination's first bytes.
 
         Returns:
             List of :class:`ResponseEntry` objects, one per server response.
 
         Raises:
-            ConnectionError: If not connected or the connection is lost.
+            ConnectionError: If not connected, the connection is lost, or the response
+                framing is inconsistent. The client then disconnects, since the
+                stream may be left mid-frame.
+            ValueError: If *response_buffers*
+                or a destination is read-only or not C-contiguous. Checked before
+                anything is sent.
         """
+        destinations: list[memoryview | None] = [None] * len(commands)
+        if response_buffers is not None:
+            if len(response_buffers) != len(commands):
+                raise ValueError(
+                    f"Got {len(response_buffers)} response buffers for "
+                    f"{len(commands)} commands"
+                )
+            for index, view in enumerate(response_buffers):
+                if view is None:
+                    continue
+                if view.readonly or not view.c_contiguous:
+                    raise ValueError(
+                        "Response buffers must be writable and C-contiguous"
+                    )
+                destinations[index] = view.cast("B")
         with self._lock:
             sock = self._socket
             if sock is None:
                 raise ConnectionError("Not connected to mochi_renderer")
+            if self._reader is None:
+                self._reader = sock.makefile("rb")
             payload = self._encode_request(commands)
-            self._send_framed(sock, payload)
-            response_payload = self._recv_framed(sock)
-            return self._decode_response(response_payload)
+            try:
+                self._send_framed(sock, payload)
+                return self._read_response(self._reader, destinations)
+            except OSError:
+                # The stream may be mid-frame: never reuse it.
+                self._close_locked()
+                raise
+
+    def _close_locked(self) -> None:
+        """Close the reader and then the socket; the caller holds the lock."""
+        for stream in (self._reader, self._socket):
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+        self._reader = None
+        self._socket = None
 
     # ──────────────────────────────────────────────────────────────────────────
     # Wire protocol encoding / decoding
@@ -215,29 +263,54 @@ class MochiRendererClient:
         return b"".join(parts)
 
     @staticmethod
-    def _decode_response(payload: bytes | memoryview) -> list[ResponseEntry]:
+    def _read_response(
+        reader: BinaryIO, destinations: Sequence[memoryview | None]
+    ) -> list[ResponseEntry]:
         """
-        Decode a response payload into a list of ResponseEntry objects.
+        Read one framed response, receiving each response into its destination.
 
         Layout:
-            [uint32 num_responses]
+            [uint32 payload_length]   (frame header)
+            [uint32 num_responses]    (payload starts here)
             per response:
                 [uint8 type]
                 [uint32 data_length] [data]
         """
-        offset = 0
-        (num_responses,) = struct.unpack_from("<I", payload, offset)
-        offset += 4
+        # Check every length against what is left of the frame before reading, so a
+        # corrupt one cannot read into the next frame or allocate an outsized buffer.
+        (payload_length,) = struct.unpack(
+            "<I", MochiRendererClient._read_exact(reader, 4)
+        )
+        if payload_length < 4:
+            raise MochiRendererClient._framing_error(payload_length)
+        (num_responses,) = struct.unpack(
+            "<I", MochiRendererClient._read_exact(reader, 4)
+        )
+        remaining = payload_length - 4
         entries: list[ResponseEntry] = []
-        for _ in range(num_responses):
-            (resp_type,) = struct.unpack_from("<B", payload, offset)
-            offset += 1
-            (data_len,) = struct.unpack_from("<I", payload, offset)
-            offset += 4
-            data = payload[offset : offset + data_len]
-            offset += data_len
+        for index in range(num_responses):
+            if remaining < 5:
+                raise MochiRendererClient._framing_error(payload_length)
+            resp_type, data_len = struct.unpack(
+                "<BI", MochiRendererClient._read_exact(reader, 5)
+            )
+            remaining -= 5
+            if data_len > remaining:
+                raise MochiRendererClient._framing_error(payload_length)
+            remaining -= data_len
+            destination = destinations[index] if index < len(destinations) else None
+            data = MochiRendererClient._read_into(reader, data_len, destination)
             entries.append(ResponseEntry(type=resp_type, data=data))
+        if remaining != 0:
+            raise MochiRendererClient._framing_error(payload_length)
         return entries
+
+    @staticmethod
+    def _framing_error(payload_length: int) -> ConnectionError:
+        return ConnectionError(
+            f"mochi_renderer response length {payload_length} does not match its "
+            f"contents"
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Low-level framed I/O
@@ -250,22 +323,22 @@ class MochiRendererClient:
         sock.sendall(header + payload)
 
     @staticmethod
-    def _recv_framed(sock: socket.socket) -> memoryview:
-        """Receive a length-prefixed payload from the socket."""
-        header = MochiRendererClient._recv_exact(sock, 4)
-        (length,) = struct.unpack("<I", header)
-        return MochiRendererClient._recv_exact(sock, length)
+    def _read_into(
+        reader: BinaryIO, size: int, destination: memoryview | None
+    ) -> memoryview:
+        """Read *size* bytes into *destination* if they fit, else into a new buffer."""
+        if destination is not None and len(destination) >= size:
+            data = destination[:size]
+        else:
+            data = memoryview(bytearray(size))
+        if reader.readinto(data) != size:
+            raise ConnectionError("Connection closed while reading from mochi_renderer")
+        return data
 
     @staticmethod
-    def _recv_exact(sock: socket.socket, num_bytes: int) -> memoryview:
-        """Read exactly *num_bytes* from *sock*, raising on premature EOF."""
-        view = memoryview(bytearray(num_bytes))
-        received = 0
-        while received < num_bytes:
-            chunk = sock.recv_into(view[received:])
-            if chunk == 0:
-                raise ConnectionError(
-                    "Connection closed while reading from mochi_renderer"
-                )
-            received += chunk
-        return view
+    def _read_exact(reader: BinaryIO, num_bytes: int) -> bytes:
+        """Read exactly *num_bytes*, raising on premature EOF."""
+        data = reader.read(num_bytes)
+        if len(data) != num_bytes:
+            raise ConnectionError("Connection closed while reading from mochi_renderer")
+        return data

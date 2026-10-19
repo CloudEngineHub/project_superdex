@@ -487,6 +487,7 @@ class MochiRendererViewer:
     def render(
         self,
         camera_names: list[str] | None = None,
+        out: RenderFrame | dict[str, RenderFrame] | None = None,
     ) -> RenderFrame | dict[str, RenderFrame] | None:
         """
         Render the current frame.
@@ -497,6 +498,16 @@ class MochiRendererViewer:
             camera_names: If provided, capture from all listed cameras and
                 return a dict mapping camera name to RGBA image. If None,
                 capture from the default camera only.
+            out: Optional storage to receive the images without allocating: one
+                array when camera_names is None, or a dict keyed by camera name.
+                Each must be a writable, C-contiguous uint8 array with room for the
+                12-byte image header plus the pixels, and not a view of another
+                array. A returned image is a view of the storage it was received
+                into, which is its ``base``: your array when it is large enough, or a
+                new one otherwise. Reuse it with ``frame = viewer.render(out=storage)``
+                followed by ``storage = frame.base``. The caller owns the storage;
+                the next render into it overwrites earlier views, so each camera
+                needs its own storage.
 
         Returns:
             When camera_names is None: RGBA image as a numpy uint8 array with
@@ -505,9 +516,36 @@ class MochiRendererViewer:
                 window, so no readback is performed).
             When camera_names is provided: dict mapping camera name to RGBA
                 image array. Cameras that fail to capture are omitted.
+
+        Raises:
+            ValueError: If *out* is a dict without *camera_names* or a single array
+                with them, or a storage array in it is not a writable, C-contiguous
+                uint8 array, or is a view of another array. Checked before the
+                viewer changes any state.
         """
         if self._scene is None:
             return {} if camera_names is not None else None
+
+        if out is not None:
+            if isinstance(out, dict) != (camera_names is not None):
+                raise ValueError(
+                    "out must be a dict keyed by camera name when camera_names is "
+                    "given, and a single array otherwise"
+                )
+            for storage in out.values() if isinstance(out, dict) else [out]:
+                # NumPy gives views of a view the viewed array as their base, so
+                # frame.base would not be this storage.
+                if (
+                    not isinstance(storage, np.ndarray)
+                    or storage.dtype != np.uint8
+                    or memoryview(storage).readonly
+                    or not storage.flags.c_contiguous
+                    or isinstance(storage.base, np.ndarray)
+                ):
+                    raise ValueError(
+                        "Frame storage must be a writable, C-contiguous uint8 array "
+                        "that is not a view of another array"
+                    )
 
         commands: list[CommandEntry] = []
         self._sync_actors(self._scene, commands)
@@ -528,15 +566,23 @@ class MochiRendererViewer:
                 self._client.request_batch(commands)
             return None
 
+        response_buffers: list[memoryview | None] = [None] * len(commands)
         if camera_names is not None:
             for cam_name in camera_names:
+                storage = None if out is None else out.get(cam_name)
+                response_buffers.append(
+                    None if storage is None else memoryview(storage)
+                )
                 commands.append(CommandEntry(text=f"vget /camera/{cam_name}/lit"))
         else:
+            response_buffers.append(None if out is None else memoryview(out))
             commands.append(
                 CommandEntry(text=f"vget /camera/{self._cfg.camera_name}/lit")
             )
 
-        responses = self._client.request_batch(commands)
+        responses = self._client.request_batch(
+            commands, response_buffers=response_buffers
+        )
 
         if not responses:
             return {} if camera_names is not None else None
@@ -1535,24 +1581,28 @@ class MochiRendererViewer:
         Decode an image response from the server.
 
         Image format: [uint32 width] [uint32 height] [uint32 channels] [RGBA pixels]
+
+        The frame is a view of the storage the response was received into, which
+        becomes its ``base``, so it can be passed back to :meth:`render` as ``out``.
         """
         if len(data) < 12:
             return None
 
         width, height, channels = struct.unpack_from("<III", data, 0)
-        pixel_data = data[12:]
-
+        size = len(data) - 12
         expected_size = width * height * channels
-        if len(pixel_data) < expected_size:
+        if size < expected_size:
             logger.warning(
-                f"Image response truncated: expected {expected_size} bytes, "
-                f"got {len(pixel_data)}"
+                f"Image response truncated: expected {expected_size} bytes, got {size}"
             )
             return None
 
-        image = np.frombuffer(pixel_data[:expected_size], dtype=np.uint8)
-        image = image.reshape((height, width, channels))
-        return image
+        # The client receives each response at the start of its storage.
+        storage = data.obj if isinstance(data, memoryview) else data
+        if not isinstance(storage, np.ndarray):
+            storage = np.frombuffer(storage, dtype=np.uint8)
+        pixels = storage.reshape(-1)[12 : 12 + expected_size]
+        return pixels.reshape((height, width, channels))
 
     ####################################################################################
     # Context manager support
