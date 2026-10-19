@@ -842,7 +842,7 @@ class MochiRendererViewer:
 
         Also updates the cached capture size so scene framing keeps the correct aspect
         ratio. Used by the interactive window to make the render resolution follow the
-        window size.
+        frame area (the part of the window the docked panels leave free).
         """
         width = max(1, int(width))
         height = max(1, int(height))
