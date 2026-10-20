@@ -204,15 +204,6 @@ class Scene {
 
   virtual void UpdateDebugger() = 0;
 
-  // Recording ***********************************************************************************
-
-  [[nodiscard]] virtual bool IsRecording() const = 0;
-
-  virtual void
-  StartRecording(std::string_view filePath, RecordingParams const& params, Error& error) = 0;
-
-  virtual void StopRecording() = 0;
-
   // Contact Layers *****************************************************************************
 
   virtual void EnableLayerContactAsymmetric(

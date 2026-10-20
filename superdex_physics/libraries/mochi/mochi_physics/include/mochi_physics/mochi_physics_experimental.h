@@ -1531,6 +1531,51 @@ struct SleepParams {
 MOCHI_API void SetSleepParams(Scene* scene, SleepParams const& params, Error& error);
 
 // -------------------------------------------------------------------
+// Scene recording
+// -------------------------------------------------------------------
+
+struct RecordingParams {
+  bool recordActorMeshes = true;
+
+  bool recordActorLocalToGlobalMap = false;
+
+  bool recordTargetState = true;
+
+  bool recordDynamicActorState = true;
+
+  bool recordStaticActorState = false;
+
+  bool recordContactPoints = false;
+
+  bool recordNodeContactForces = false;
+
+  bool recordSdfDistances = false;
+
+  static RecordingParams All(bool enabled = true) {
+    RecordingParams params;
+    params.recordActorMeshes = enabled;
+    params.recordActorLocalToGlobalMap = enabled;
+    params.recordTargetState = enabled;
+    params.recordDynamicActorState = enabled;
+    params.recordStaticActorState = enabled;
+    params.recordContactPoints = enabled;
+    params.recordNodeContactForces = enabled;
+    params.recordSdfDistances = enabled;
+    return params;
+  }
+};
+
+[[nodiscard]] MOCHI_API bool IsRecording(Scene const* scene, Error& error);
+
+MOCHI_API void StartRecording(
+    Scene* scene,
+    std::string_view filePath,
+    RecordingParams const& params,
+    Error& error);
+
+MOCHI_API void StopRecording(Scene* scene, Error& error);
+
+// -------------------------------------------------------------------
 // Debugging tools
 // -------------------------------------------------------------------
 

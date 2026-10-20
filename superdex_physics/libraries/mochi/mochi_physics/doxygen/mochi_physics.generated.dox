@@ -3835,6 +3835,10 @@
 ///
 /// @brief Wall-clock time [s] spent on recording in the last call to @ref mochi::Scene::Step "Scene::Step".
 ///
+/// @warning Recording is an experimental feature. It may be changed or removed without notice.
+///
+/// @see `experimental::StartRecording`, `experimental::RecordingParams`
+///
 
 /// @struct mochi::SolverStats
 ///
@@ -3867,65 +3871,6 @@
 /// @note Unlike @ref mochi::ConvergenceStatus::Diverged "ConvergenceStatus::Diverged", @ref mochi::ConvergenceStatus::Stopped "ConvergenceStatus::Stopped" does not indicate that the step failed. It means that the nonlinear solve reached a stopping criterion, such as the maximum number of iterations, before meeting its residual tolerances, which may be stricter than the scene requires.
 ///
 /// @see @ref mochi::ConvergenceStatus "ConvergenceStatus", @ref mochi::Actor::GetConvergenceStatus "Actor::GetConvergenceStatus"
-///
-
-/// @struct mochi::RecordingParams
-///
-/// @brief Parameters controlling what data gets included in a scene recording.
-///
-/// @warning The recording system may undergo a substantial refactor to expand its capabilities. Its API and recorded file format may change in future releases.
-///
-/// @see @ref mochi::Scene::StartRecording "Scene::StartRecording", @ref mochi::Scene::StopRecording "Scene::StopRecording"
-///
-
-/// @var mochi::RecordingParams::recordActorMeshes
-///
-/// @brief Include the meshes (if any) when recording actor creation events.
-///
-
-/// @var mochi::RecordingParams::recordActorLocalToGlobalMap
-///
-/// @brief Include the local-to-global map (if any) when recording actor creation events.
-///
-
-/// @var mochi::RecordingParams::recordTargetState
-///
-/// @brief Record articulated pose controller targets and tracking parameters every step.
-///
-
-/// @var mochi::RecordingParams::recordDynamicActorState
-///
-/// @brief Record the state of dynamic actors every step.
-///
-/// @details This includes position, rotation, and velocity. For soft actors, it includes the node displacements and velocities.
-///
-
-/// @var mochi::RecordingParams::recordStaticActorState
-///
-/// @brief Record the state of static actors every step. This includes position and rotation.
-///
-
-/// @var mochi::RecordingParams::recordContactPoints
-///
-/// @brief Record results from @ref mochi::QueryType::ContactPoints "QueryType::ContactPoints" for each dynamic actor every step.
-///
-
-/// @var mochi::RecordingParams::recordNodeContactForces
-///
-/// @brief Record results for @ref mochi::QueryType::NodeContactForces "QueryType::NodeContactForces" for each soft actor every step.
-///
-
-/// @var mochi::RecordingParams::recordSdfDistances
-///
-/// @brief Record SDF distances for @ref mochi::QueryType::SdfDistances "QueryType::SdfDistances" for each dynamic actor every step.
-///
-
-/// @fn RecordingParams mochi::RecordingParams::All(bool enabled)
-///
-/// @brief Return @ref mochi::RecordingParams "RecordingParams" with all boolean options set to the given value.
-///
-/// @param[in] enabled True to enable all options (maximum data), false to disable (minimum data).
-/// @return The initialized @ref mochi::RecordingParams "RecordingParams".
 ///
 
 /// @struct mochi::PoseTrackingParams
@@ -7440,42 +7385,6 @@
 /// @details Please call this periodically if you are not actively stepping the scene. If this function is never called and the scene is never stepped, then some debugger features will not work.
 ///
 /// @note Must be called on the scene's owning thread (like other @ref mochi::Scene "Scene" methods).
-///
-
-/// @fn bool mochi::Scene::IsRecording() const
-///
-/// @brief Check if the scene is currently recording.
-///
-/// @return True if recording is active, false otherwise.
-///
-/// @note A recording write failure does not end the recording session.
-///
-/// @see @ref mochi::Scene::StartRecording "StartRecording", @ref mochi::Scene::StopRecording "StopRecording"
-///
-
-/// @fn void mochi::Scene::StartRecording(std::string_view filePath, RecordingParams const& params, Error& error)
-///
-/// @brief Create or replace the specified file and start recording the scene to an HDF5 file.
-///
-/// @param[in] filePath Path to the output recording file (case sensitive on some filesystems). File will be created or replaced.
-/// @param[in] params Parameters controlling what data to record.
-/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
-///
-/// @note Enabling additional recording features will generally increase the recording file size and degrade performance.
-/// @note If the scene is already recording, the previous recording is stopped before starting the new one.
-/// @note Islands do not sleep while the scene is recording, so recording can change the simulation results.
-///
-/// @warning Requires a build with HDF5 support.
-/// @warning The recording system may undergo a substantial refactor to expand its capabilities. Its API and recorded file format may change in future releases.
-///
-/// @see @ref mochi::Scene::StopRecording "StopRecording", @ref mochi::Scene::IsRecording "IsRecording", @ref mochi::RecordingParams "RecordingParams"
-///
-
-/// @fn void mochi::Scene::StopRecording()
-///
-/// @brief Stop recording the scene and close the recording file.
-///
-/// @see @ref mochi::Scene::StartRecording "StartRecording", @ref mochi::Scene::IsRecording "IsRecording"
 ///
 
 /// @fn void mochi::Scene::EnableLayerContactAsymmetric(std::string_view layerA, std::string_view layerB, bool enable, Error& error)

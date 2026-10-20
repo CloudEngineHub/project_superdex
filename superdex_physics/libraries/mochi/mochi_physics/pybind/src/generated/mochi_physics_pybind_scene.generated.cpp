@@ -935,23 +935,6 @@ void mochi::DefineMochiPhysics_MochiPhysicsScene([[maybe_unused]] nb::module_& m
     .def("update_debugger", &mochi::Scene::UpdateDebugger
       , "This gives the debugger a chance to process messages that require reading or\nwriting scene state.\n\nPlease call this periodically if you are not actively stepping the scene. If\nthis function is never called and the scene is never stepped, then some debugger\nfeatures will not work.\n\nNote:\n    Must be called on the scene's owning thread (like other\n    :class:`~superdex.physics.Scene` methods)."
     )
-    .def("is_recording", &mochi::Scene::IsRecording
-      , "Check if the scene is currently recording.\n\nReturns:\n    True if recording is active, false otherwise.\n\nNote:\n    A recording write failure does not end the recording session.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.start_recording`,\n    :meth:`~superdex.physics.Scene.stop_recording`"
-    )
-    .def("start_recording", [](mochi::Scene& self, std::string_view file_path, mochi::RecordingParams const& params) {
-      mochi::Error error;
-      self.StartRecording(file_path, params, error);
-      if (!error.IsOK()) {
-        throw MochiErrorException(error);
-      }
-    }
-      , nb::arg("file_path")
-      , nb::arg("params")
-      , "Create or replace the specified file and start recording the scene to an HDF5\nfile.\n\nArgs:\n    file_path (str): Path to the output recording file (case sensitive on some\n        filesystems). File will be created or replaced.\n    params (RecordingParams): Parameters controlling what data to record.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Enabling additional recording features will generally increase the recording\n    file size and degrade performance.\n\nNote:\n    If the scene is already recording, the previous recording is stopped before\n    starting the new one.\n\nNote:\n    Islands do not sleep while the scene is recording, so recording can change\n    the simulation results.\n\nWarning:\n    Requires a build with HDF5 support.\n\nWarning:\n    The recording system may undergo a substantial refactor to expand its\n    capabilities. Its API and recorded file format may change in future\n    releases.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.stop_recording`,\n    :meth:`~superdex.physics.Scene.is_recording`,\n    :class:`~superdex.physics.RecordingParams`"
-    )
-    .def("stop_recording", &mochi::Scene::StopRecording
-      , "Stop recording the scene and close the recording file.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.start_recording`,\n    :meth:`~superdex.physics.Scene.is_recording`"
-    )
     .def("enable_layer_contact_asymmetric", [](mochi::Scene& self, std::string_view layer_a, std::string_view layer_b, bool enable) {
       mochi::Error error;
       self.EnableLayerContactAsymmetric(layer_a, layer_b, enable, error);

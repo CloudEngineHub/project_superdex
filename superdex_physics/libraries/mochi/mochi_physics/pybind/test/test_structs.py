@@ -701,12 +701,12 @@ class TestStructs(MochiTestBase):
 
     def test_recording_params(self):
         # Test a few default values to prove the C++ constructor ran
-        params = mochi.RecordingParams()
+        params = mochi.experimental.RecordingParams()
         self.assertTrue(params.record_actor_meshes)
         self.assertFalse(params.record_actor_local_to_global_map)
 
         # Test keyword argument constructor with all fields in shuffled order.
-        params_kw_all = mochi.RecordingParams(
+        params_kw_all = mochi.experimental.RecordingParams(
             record_actor_meshes=False,
             record_dynamic_actor_state=False,
             record_contact_points=True,
@@ -726,7 +726,7 @@ class TestStructs(MochiTestBase):
         self.assertTrue(params_kw_all.record_sdf_distances)
 
         # Test keyword argument constructor with some fields (rest use defaults)
-        params_kw_partial = mochi.RecordingParams(
+        params_kw_partial = mochi.experimental.RecordingParams(
             record_contact_points=True,
             record_sdf_distances=True,
         )

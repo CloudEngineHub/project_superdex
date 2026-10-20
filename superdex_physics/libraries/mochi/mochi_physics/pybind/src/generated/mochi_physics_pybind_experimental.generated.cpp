@@ -61,6 +61,7 @@ void mochi::DeclareMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mo
   registry.StoreClass(nb::class_<mochi::experimental::ShellActorParams>(m_experimental, "ShellActorParams", "Parameters for creating an experimental shell actor."));
   registry.StoreClass(nb::class_<mochi::experimental::SleepParams>(m_experimental, "SleepParams", "[Experimental] Parameters controlling island sleeping.\n\nActors that interact (through contact or constraints) are grouped into islands,\nwhich are solved together. An island at rest can be put to sleep: it keeps its\nstate unchanged and is skipped by :meth:`~superdex.physics.Scene.step` until\nsomething wakes it (e.g. an actor, constraint or scene setting changes through\nthe API, or an awake actor comes into contact with it).\n\nAn island goes to sleep after :attr:`min_steps_before_sleep` consecutive steps\nin which it was at rest, as judged by :attr:`sleep_threshold`. Steps in which\nthe solver did not converge never count, so an island that never converges never\ngoes to sleep.\n\nNote:\n    Changing the sleep parameters wakes all islands.\n\nNote:\n    Sleeping islands are excluded from :class:`~superdex.physics.SolverStats`\n    and :class:`~superdex.physics.experimental.DebugStats`, and their actors\n    report :class:`NONE <superdex.physics.ConvergenceStatus>` from\n    :meth:`~superdex.physics.Actor.get_convergence_status`.\n\nNote:\n    Islands do not sleep while the scene is recording, so recording can change\n    the simulation results.\n\nNote:\n    Sleeping is not supported in differentiable scenes.\n\nWarning:\n    Island sleeping is experimental and may change or be removed without\n    warning.\n\nSee Also:\n    :func:`~superdex.physics.experimental.get_sleep_params`,\n    :func:`~superdex.physics.experimental.set_sleep_params`"));
   registry.StoreClass(nb::class_<mochi::experimental::DebugStats>(m_experimental, "DebugStats"));
+  registry.StoreClass(nb::class_<mochi::experimental::RecordingParams>(m_experimental, "RecordingParams", "[Experimental] Parameters controlling what data gets included in a scene\nrecording.\n\nThis includes per-actor information (meshes, local-to-global maps) recorded at\nactor creation, and per-step information (actor state, controller targets, query\nresults) recorded every step.\n\nWarning:\n    Experimental and may change or be removed without warning.\n\nWarning:\n    The recorded file format may change in future releases.\n\nSee Also:\n    :func:`~superdex.physics.experimental.start_recording`,\n    :func:`~superdex.physics.experimental.stop_recording`,\n    :func:`~superdex.physics.experimental.is_recording`"));
 }
 
 void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::module_& m, [[maybe_unused]] PybindRegistry& registry) {
@@ -574,6 +575,46 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     .def_rw("max_residual_norm_relative_error", &mochi::experimental::DebugStats::maxResidualNormRelativeError, "Largest relative error of the residual norm across integration stages, awake\nsimulation islands and Newton iterations, in the last call to\n:meth:`~superdex.physics.Scene.step`. The error is computed by finite-difference\nconsistency check. It is disabled by default due to its computational cost, but\nit can be activated with\n:attr:`~superdex.physics.ExperimentalEvalParams.consistency_res_norm`.")
   ;
 
+  registry.GetClass<mochi::experimental::RecordingParams>()
+    .def("__init__", [](mochi::experimental::RecordingParams* self, nb::object record_actor_meshes, nb::object record_actor_local_to_global_map, nb::object record_target_state, nb::object record_dynamic_actor_state, nb::object record_static_actor_state, nb::object record_contact_points, nb::object record_node_contact_forces, nb::object record_sdf_distances) {
+      mochi::experimental::RecordingParams result{};
+      result.recordActorMeshes = nb::cast<bool>(record_actor_meshes);
+      result.recordActorLocalToGlobalMap = nb::cast<bool>(record_actor_local_to_global_map);
+      result.recordTargetState = nb::cast<bool>(record_target_state);
+      result.recordDynamicActorState = nb::cast<bool>(record_dynamic_actor_state);
+      result.recordStaticActorState = nb::cast<bool>(record_static_actor_state);
+      result.recordContactPoints = nb::cast<bool>(record_contact_points);
+      result.recordNodeContactForces = nb::cast<bool>(record_node_contact_forces);
+      result.recordSdfDistances = nb::cast<bool>(record_sdf_distances);
+      new (self) mochi::experimental::RecordingParams(std::move(result));
+    }
+      , nb::kw_only()
+      , nb::arg("record_actor_meshes") = mochi::experimental::RecordingParams{}.recordActorMeshes
+      , nb::arg("record_actor_local_to_global_map") = mochi::experimental::RecordingParams{}.recordActorLocalToGlobalMap
+      , nb::arg("record_target_state") = mochi::experimental::RecordingParams{}.recordTargetState
+      , nb::arg("record_dynamic_actor_state") = mochi::experimental::RecordingParams{}.recordDynamicActorState
+      , nb::arg("record_static_actor_state") = mochi::experimental::RecordingParams{}.recordStaticActorState
+      , nb::arg("record_contact_points") = mochi::experimental::RecordingParams{}.recordContactPoints
+      , nb::arg("record_node_contact_forces") = mochi::experimental::RecordingParams{}.recordNodeContactForces
+      , nb::arg("record_sdf_distances") = mochi::experimental::RecordingParams{}.recordSdfDistances
+    )
+    .def(nb::init<>())
+    .def("__copy__", [](mochi::experimental::RecordingParams const& self) { return mochi::experimental::RecordingParams(self); })
+    .def("__deepcopy__", [](mochi::experimental::RecordingParams const& self, nb::dict) { return mochi::experimental::RecordingParams(self); })
+    .def_rw("record_actor_meshes", &mochi::experimental::RecordingParams::recordActorMeshes, "Include the meshes (if any) when recording actor creation events.")
+    .def_rw("record_actor_local_to_global_map", &mochi::experimental::RecordingParams::recordActorLocalToGlobalMap, "Include the local-to-global map (if any) when recording actor creation events.")
+    .def_rw("record_target_state", &mochi::experimental::RecordingParams::recordTargetState, "Record articulated pose controller targets and tracking parameters every step.")
+    .def_rw("record_dynamic_actor_state", &mochi::experimental::RecordingParams::recordDynamicActorState, "Record the state of dynamic actors every step.\n\nThis includes position, rotation, and velocity. For soft actors, it includes the\nnode displacements and velocities.")
+    .def_rw("record_static_actor_state", &mochi::experimental::RecordingParams::recordStaticActorState, "Record the state of static actors every step. This includes position and\nrotation.")
+    .def_rw("record_contact_points", &mochi::experimental::RecordingParams::recordContactPoints, "Record results from :class:`CONTACT_POINTS <superdex.physics.QueryType>` for\neach dynamic actor every step.")
+    .def_rw("record_node_contact_forces", &mochi::experimental::RecordingParams::recordNodeContactForces, "Record results for :class:`NODE_CONTACT_FORCES <superdex.physics.QueryType>` for\neach soft actor every step.")
+    .def_rw("record_sdf_distances", &mochi::experimental::RecordingParams::recordSdfDistances, "Record SDF distances for :class:`SDF_DISTANCES <superdex.physics.QueryType>` for\neach dynamic actor every step.")
+    .def_static("all", &mochi::experimental::RecordingParams::All
+      , nb::arg("enabled") = bool(true)
+      , "Return :class:`~superdex.physics.experimental.RecordingParams` with all boolean\noptions set to the given value.\n\nArgs:\n    enabled (bool): True to enable all options (maximum data), false to disable\n        (minimum data).\n\nReturns:\n    The initialized :class:`~superdex.physics.experimental.RecordingParams`."
+    )
+  ;
+
     m_experimental.def("restore_state_from_scene", [](mochi::Scene* scene_to, mochi::Scene const* scene_from, mochi::StateHandle handle_from) {
       mochi::Error error;
       mochi::experimental::RestoreStateFromScene(scene_to, scene_from, handle_from, error);
@@ -1004,6 +1045,42 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       return result;
     }
       , nb::arg("scene").none()
+    );
+
+    m_experimental.def("is_recording", [](mochi::Scene const* scene) {
+      mochi::Error error;
+      auto result = mochi::experimental::IsRecording(scene, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+      return result;
+    }
+      , nb::arg("scene").none()
+      , "[Experimental] Check if the scene is currently recording.\n\nArgs:\n    scene (Scene): Scene to query.\n\nReturns:\n    True if recording is active, false otherwise.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    A recording write failure does not end the recording session.\n\nWarning:\n    Experimental and may change or be removed without warning.\n\nSee Also:\n    :func:`~superdex.physics.experimental.start_recording`,\n    :func:`~superdex.physics.experimental.stop_recording`"
+    );
+
+    m_experimental.def("start_recording", [](mochi::Scene* scene, std::string_view file_path, mochi::experimental::RecordingParams const& params) {
+      mochi::Error error;
+      mochi::experimental::StartRecording(scene, file_path, params, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+    }
+      , nb::arg("scene").none()
+      , nb::arg("file_path")
+      , nb::arg("params")
+      , "[Experimental] Create or replace the specified file and start recording the\nscene to an HDF5 file.\n\nArgs:\n    scene (Scene): Scene to record.\n    file_path (str): Path to the output recording file (case sensitive on some\n        filesystems). File will be created or replaced.\n    params (RecordingParams): Parameters controlling what data to record.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Enabling additional recording features will generally increase the recording\n    file size and degrade performance.\n\nNote:\n    If the scene is already recording, the previous recording is stopped before\n    starting the new one.\n\nNote:\n    Islands do not sleep while the scene is recording, so recording can change\n    the simulation results.\n\nWarning:\n    Experimental and may change or be removed without warning.\n\nWarning:\n    The recorded file format may change in future releases.\n\nWarning:\n    Requires a build with HDF5 support.\n\nSee Also:\n    :func:`~superdex.physics.experimental.stop_recording`,\n    :func:`~superdex.physics.experimental.is_recording`,\n    :class:`~superdex.physics.experimental.RecordingParams`"
+    );
+
+    m_experimental.def("stop_recording", [](mochi::Scene* scene) {
+      mochi::Error error;
+      mochi::experimental::StopRecording(scene, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+    }
+      , nb::arg("scene").none()
+      , "[Experimental] Stop recording the scene and close the recording file.\n\nArgs:\n    scene (Scene): Scene to stop recording.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nWarning:\n    Experimental and may change or be removed without warning.\n\nSee Also:\n    :func:`~superdex.physics.experimental.start_recording`,\n    :func:`~superdex.physics.experimental.is_recording`"
     );
 
 }

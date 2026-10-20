@@ -572,7 +572,7 @@ class TestScene(MochiTestBase):
     @requires_hdf5
     def test_scene_recording(self):
         scene = mochi.create_scene("My Scene")
-        self.assertFalse(scene.is_recording())
+        self.assertFalse(mochi.experimental.is_recording(scene))
 
         # Make a temp file, to generate a temp file path.
         file, temp_path = tempfile.mkstemp(
@@ -587,12 +587,14 @@ class TestScene(MochiTestBase):
 
             # Record a few steps
             self._create_rigid_box_actor(scene)
-            params = mochi.RecordingParams.all()
-            scene.start_recording(file_path=temp_path, params=params)
+            params = mochi.experimental.RecordingParams.all()
+            mochi.experimental.start_recording(
+                scene, file_path=temp_path, params=params
+            )
             scene.step(0.1)
             scene.step(0.2)
             scene.step(0.3)
-            scene.stop_recording()
+            mochi.experimental.stop_recording(scene)
 
             # Make sure a file was created
             self.assertTrue(os.path.exists(temp_path))

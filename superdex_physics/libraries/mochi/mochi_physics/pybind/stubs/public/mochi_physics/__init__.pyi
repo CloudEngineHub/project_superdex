@@ -7599,6 +7599,14 @@ class PerformanceStats:
     recording_step_duration_sec: float
     """Wall-clock time [s] spent on recording in the last call to
     :meth:`~superdex.physics.Scene.step`.
+
+    Warning:
+        Recording is an experimental feature. It may be changed or removed without
+        notice.
+
+    See Also:
+        :func:`~superdex.physics.experimental.start_recording`,
+        :class:`~superdex.physics.experimental.RecordingParams`
     """
     @overload
     def __init__(self) -> None: ...
@@ -7670,74 +7678,6 @@ class SolverStats:
     ) -> None: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
-
-class RecordingParams:
-    """Parameters controlling what data gets included in a scene recording.
-
-    Warning:
-        The recording system may undergo a substantial refactor to expand its
-        capabilities. Its API and recorded file format may change in future
-        releases.
-
-    See Also:
-        :meth:`~superdex.physics.Scene.start_recording`,
-        :meth:`~superdex.physics.Scene.stop_recording`
-    """
-    record_actor_meshes: bool
-    """Include the meshes (if any) when recording actor creation events."""
-    record_actor_local_to_global_map: bool
-    """Include the local-to-global map (if any) when recording actor creation events."""
-    record_target_state: bool
-    """Record articulated pose controller targets and tracking parameters every step."""
-    record_dynamic_actor_state: bool
-    """Record the state of dynamic actors every step.
-
-    This includes position, rotation, and velocity. For soft actors, it includes the
-    node displacements and velocities.
-    """
-    record_static_actor_state: bool
-    """Record the state of static actors every step. This includes position and
-    rotation.
-    """
-    record_contact_points: bool
-    """Record results from :class:`CONTACT_POINTS <superdex.physics.QueryType>` for
-    each dynamic actor every step.
-    """
-    record_node_contact_forces: bool
-    """Record results for :class:`NODE_CONTACT_FORCES <superdex.physics.QueryType>` for
-    each soft actor every step.
-    """
-    record_sdf_distances: bool
-    """Record SDF distances for :class:`SDF_DISTANCES <superdex.physics.QueryType>` for
-    each dynamic actor every step.
-    """
-    @overload
-    def __init__(self) -> None: ...
-    @overload
-    def __init__(
-        self,
-        record_actor_meshes: bool = ...,
-        record_actor_local_to_global_map: bool = ...,
-        record_target_state: bool = ...,
-        record_dynamic_actor_state: bool = ...,
-        record_static_actor_state: bool = ...,
-        record_contact_points: bool = ...,
-        record_node_contact_forces: bool = ...,
-        record_sdf_distances: bool = ...,
-    ) -> None: ...
-    @staticmethod
-    def all(enabled: bool = ...) -> RecordingParams:
-        """Return :class:`~superdex.physics.RecordingParams` with all boolean options
-        set
-        to the given value.
-
-        Args:
-            enabled (bool): True to enable all options (maximum data), false to disable
-                (minimum data).
-
-        Returns:
-            The initialized :class:`~superdex.physics.RecordingParams`.
-        """
 
 class PoseTrackingParams:
     """Parameters for pose controller tracking constraints.
@@ -14022,63 +13962,6 @@ class Scene:
         Note:
             Must be called on the scene's owning thread (like other
             :class:`~superdex.physics.Scene` methods).
-        """
-    def is_recording(self) -> bool:
-        """Check if the scene is currently recording.
-
-        Returns:
-            True if recording is active, false otherwise.
-
-        Note:
-            A recording write failure does not end the recording session.
-
-        See Also:
-            :meth:`~superdex.physics.Scene.start_recording`,
-            :meth:`~superdex.physics.Scene.stop_recording`
-        """
-    def start_recording(self, file_path: str, params: RecordingParams) -> None:
-        """Create or replace the specified file and start recording the scene to an HDF5
-        file.
-
-        Args:
-            file_path (str): Path to the output recording file (case sensitive on some
-                filesystems). File will be created or replaced.
-            params (RecordingParams): Parameters controlling what data to record.
-
-        Raises:
-            :class:`~superdex.physics.Error`: If an error occurs.
-
-        Note:
-            Enabling additional recording features will generally increase the recording
-            file size and degrade performance.
-
-        Note:
-            If the scene is already recording, the previous recording is stopped before
-            starting the new one.
-
-        Note:
-            Islands do not sleep while the scene is recording, so recording can change
-            the simulation results.
-
-        Warning:
-            Requires a build with HDF5 support.
-
-        Warning:
-            The recording system may undergo a substantial refactor to expand its
-            capabilities. Its API and recorded file format may change in future
-            releases.
-
-        See Also:
-            :meth:`~superdex.physics.Scene.stop_recording`,
-            :meth:`~superdex.physics.Scene.is_recording`,
-            :class:`~superdex.physics.RecordingParams`
-        """
-    def stop_recording(self) -> None:
-        """Stop recording the scene and close the recording file.
-
-        See Also:
-            :meth:`~superdex.physics.Scene.start_recording`,
-            :meth:`~superdex.physics.Scene.is_recording`
         """
     def enable_layer_contact_asymmetric(
         self,

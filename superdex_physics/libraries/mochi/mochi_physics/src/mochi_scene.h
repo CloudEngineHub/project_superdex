@@ -147,10 +147,12 @@ class SceneImpl final : public Scene {
       std::function<void(Constraint const* constraint)> const& callback) const override;
   DebugDraw& GetDebugDraw() override;
   DebugDraw const& GetDebugDraw() const override;
-  bool IsRecording() const override;
-  void StartRecording(std::string_view filePath, RecordingParams const& params, Error& error)
-      override;
-  void StopRecording() override;
+  [[nodiscard]] bool IsRecording() const;
+  void StartRecording(
+      std::string_view filePath,
+      experimental::RecordingParams const& params,
+      Error& error);
+  void StopRecording();
   void EnableLayerContactAsymmetric(
       std::string_view layerA,
       std::string_view layerB,

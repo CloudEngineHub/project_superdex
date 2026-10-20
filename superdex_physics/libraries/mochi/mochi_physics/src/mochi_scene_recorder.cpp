@@ -46,7 +46,7 @@ namespace mochi {
 SceneRecorder::SceneRecorder(
     std::unique_ptr<GroupWriter> writer,
     SceneImpl& scene,
-    RecordingParams const& params)
+    experimental::RecordingParams const& params)
     : _scene(scene), _registry(scene.GetRegistry()), _writer(std::move(writer)), _params(params) {
   // Create a scope called "events" at the root of the file. Every new event will be added as a
   // sub-group. Note that groups can remember the order in which their members were created, so they
@@ -468,7 +468,7 @@ static void WriteActorRecordingData(GroupWriter& writer, CRecordingData const& d
 static void WriteActorStepEvent(
     GroupWriter& writer,
     std::optional<GroupWriter::ScopeGuard>& actorListScope,
-    RecordingParams const& params,
+    experimental::RecordingParams const& params,
     entt::registry const& reg,
     entt::entity e,
     CActorInfo const& info,

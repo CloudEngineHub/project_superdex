@@ -69,7 +69,6 @@ void mochi::DeclareMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_
   registry.StoreClass(nb::class_<mochi::SdfDistances>(m, "SdfDistances", "SDF distance information for active contact sample points.\n\nStores signed distance field (SDF) values and gradients for contact sample\npoints. Negative distances indicate penetration into the surface.\n\nNote:\n    Available via :meth:`~superdex.physics.Actor.get_sdf_distances` after\n    registering :class:`SDF_DISTANCES <superdex.physics.QueryType>`.\n\nSee Also:\n    :class:`SDF_DISTANCES <superdex.physics.QueryType>`,\n    :meth:`~superdex.physics.Actor.register_query`,\n    :meth:`~superdex.physics.Actor.get_sdf_distances`"));
   registry.StoreClass(nb::class_<mochi::PerformanceStats>(m, "PerformanceStats", "Timing and profiling metrics from the last simulation step.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.get_performance_stats`"));
   registry.StoreClass(nb::class_<mochi::SolverStats>(m, "SolverStats", "Solver convergence metrics from the last simulation step.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.get_solver_stats`"));
-  registry.StoreClass(nb::class_<mochi::RecordingParams>(m, "RecordingParams", "Parameters controlling what data gets included in a scene recording.\n\nWarning:\n    The recording system may undergo a substantial refactor to expand its\n    capabilities. Its API and recorded file format may change in future\n    releases.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.start_recording`,\n    :meth:`~superdex.physics.Scene.stop_recording`"));
   registry.StoreClass(nb::class_<mochi::PoseTrackingParams>(m, "PoseTrackingParams", "Parameters for pose controller tracking constraints.\n\nDefines spring-damper parameters for individual pose tracking constraints in an\narticulated actor's pose controller. Each constraint acts on a joint rotation,\nlink translation, or link rotation.\n\nSee Also:\n    :meth:`~superdex.physics.Actor.get_articulated_pose_controller_params`,\n    :meth:`~superdex.physics.Actor.set_articulated_pose_controller_params`,\n    :class:`~superdex.physics.PoseControllerParams`"));
   registry.StoreClass(nb::class_<mochi::PoseControllerParams>(m, "PoseControllerParams", "Parameters to create a pose controller for an articulated actor.\n\nNote:\n    Each tracking array must be empty, have size 1, or have size equal to the\n    number of links. Empty arrays use zero-gain defaults. Size-1 arrays are\n    broadcast to all applicable constraints. Full-size arrays are indexed by\n    link.\n\nNote:\n    Empty controllers are allowed. Constraints are created even when stiffness\n    and damping are both zero, and can be accessed/updated via\n    :meth:`~superdex.physics.Actor.get_articulated_pose_constraints`,\n    :meth:`~superdex.physics.Actor.get_articulated_pose_controller_params` and\n    :meth:`~superdex.physics.Actor.set_articulated_pose_controller_params`.\n\nNote:\n    Control of cycle joints is not supported.\n\nSee Also:\n    :meth:`~superdex.physics.Actor.add_articulated_pose_controller`,\n    :class:`~superdex.physics.PoseTrackingParams`"));
   registry.StoreClass(nb::class_<mochi::PoseConstraintInfo>(m, "PoseConstraintInfo", "Information about a single pose constraint in a pose controller.\n\nSee Also:\n    :class:`~superdex.physics.PoseConstraintType`,\n    :meth:`~superdex.physics.Actor.get_articulated_pose_constraints`"));
@@ -1212,7 +1211,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def_rw("solve_step_duration_sec", &mochi::PerformanceStats::solveStepDurationSec, "Wall-clock time [s] spent solving physics in the last call to\n:meth:`~superdex.physics.Scene.step`.\n\nNote:\n    Does not include time spent in user-defined pre-step and post-step\n    callbacks.")
     .def_rw("pre_step_callbacks_duration_sec", &mochi::PerformanceStats::preStepCallbacksDurationSec, "Wall-clock time [s] spent executing user-defined pre-step callbacks in the last\ncall to :meth:`~superdex.physics.Scene.step`.")
     .def_rw("post_step_callbacks_duration_sec", &mochi::PerformanceStats::postStepCallbacksDurationSec, "Wall-clock time [s] spent executing user-defined post-step callbacks in the last\ncall to :meth:`~superdex.physics.Scene.step`.")
-    .def_rw("recording_step_duration_sec", &mochi::PerformanceStats::recordingStepDurationSec, "Wall-clock time [s] spent on recording in the last call to\n:meth:`~superdex.physics.Scene.step`.")
+    .def_rw("recording_step_duration_sec", &mochi::PerformanceStats::recordingStepDurationSec, "Wall-clock time [s] spent on recording in the last call to\n:meth:`~superdex.physics.Scene.step`.\n\nWarning:\n    Recording is an experimental feature. It may be changed or removed without\n    notice.\n\nSee Also:\n    :func:`~superdex.physics.experimental.start_recording`,\n    :class:`~superdex.physics.experimental.RecordingParams`")
   ;
 
   registry.GetClass<mochi::SolverStats>()
@@ -1239,46 +1238,6 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def_rw("residual_norm", &mochi::SolverStats::residualNorm, "Aggregate residual norm across all awake islands and integration stages in the\nlast call to :meth:`~superdex.physics.Scene.step`. Computed as the root mean\nsquare across integration stages of the L2 norm of per-island residual norms.")
     .def_rw("max_line_search_iters", &mochi::SolverStats::maxLineSearchIters, "Maximum number of line-search iterations per Newton solve across all awake\nislands and integration stages in the last call to\n:meth:`~superdex.physics.Scene.step`.")
     .def_rw("convergence_status", &mochi::SolverStats::convergenceStatus, "Aggregate convergence status of the scene in the last call to\n:meth:`~superdex.physics.Scene.step`.\n\nReturns the worst convergence status across all dynamic actors in awake islands:\n:class:`DIVERGED <superdex.physics.ConvergenceStatus>` if any actor diverged,\n:class:`STOPPED <superdex.physics.ConvergenceStatus>` if any actor's solver was\nstopped, :class:`CONVERGED <superdex.physics.ConvergenceStatus>` if all dynamic\nactors in awake islands converged, :class:`NONE\n<superdex.physics.ConvergenceStatus>` if no dynamic actors exist, all islands\nare asleep, :meth:`~superdex.physics.Scene.step` has not been called yet or the\nlast call to :meth:`~superdex.physics.Scene.step` was with zero time step.\n\nNote:\n    Unlike :class:`DIVERGED <superdex.physics.ConvergenceStatus>`,\n    :class:`STOPPED <superdex.physics.ConvergenceStatus>` does not indicate that\n    the step failed. It means that the nonlinear solve reached a stopping\n    criterion, such as the maximum number of iterations, before meeting its\n    residual tolerances, which may be stricter than the scene requires.\n\nSee Also:\n    :class:`~superdex.physics.ConvergenceStatus`,\n    :meth:`~superdex.physics.Actor.get_convergence_status`")
-  ;
-
-  registry.GetClass<mochi::RecordingParams>()
-    .def("__init__", [](mochi::RecordingParams* self, nb::object record_actor_meshes, nb::object record_actor_local_to_global_map, nb::object record_target_state, nb::object record_dynamic_actor_state, nb::object record_static_actor_state, nb::object record_contact_points, nb::object record_node_contact_forces, nb::object record_sdf_distances) {
-      mochi::RecordingParams result{};
-      result.recordActorMeshes = nb::cast<bool>(record_actor_meshes);
-      result.recordActorLocalToGlobalMap = nb::cast<bool>(record_actor_local_to_global_map);
-      result.recordTargetState = nb::cast<bool>(record_target_state);
-      result.recordDynamicActorState = nb::cast<bool>(record_dynamic_actor_state);
-      result.recordStaticActorState = nb::cast<bool>(record_static_actor_state);
-      result.recordContactPoints = nb::cast<bool>(record_contact_points);
-      result.recordNodeContactForces = nb::cast<bool>(record_node_contact_forces);
-      result.recordSdfDistances = nb::cast<bool>(record_sdf_distances);
-      new (self) mochi::RecordingParams(std::move(result));
-    }
-      , nb::kw_only()
-      , nb::arg("record_actor_meshes") = mochi::RecordingParams{}.recordActorMeshes
-      , nb::arg("record_actor_local_to_global_map") = mochi::RecordingParams{}.recordActorLocalToGlobalMap
-      , nb::arg("record_target_state") = mochi::RecordingParams{}.recordTargetState
-      , nb::arg("record_dynamic_actor_state") = mochi::RecordingParams{}.recordDynamicActorState
-      , nb::arg("record_static_actor_state") = mochi::RecordingParams{}.recordStaticActorState
-      , nb::arg("record_contact_points") = mochi::RecordingParams{}.recordContactPoints
-      , nb::arg("record_node_contact_forces") = mochi::RecordingParams{}.recordNodeContactForces
-      , nb::arg("record_sdf_distances") = mochi::RecordingParams{}.recordSdfDistances
-    )
-    .def(nb::init<>())
-    .def("__copy__", [](mochi::RecordingParams const& self) { return mochi::RecordingParams(self); })
-    .def("__deepcopy__", [](mochi::RecordingParams const& self, nb::dict) { return mochi::RecordingParams(self); })
-    .def_rw("record_actor_meshes", &mochi::RecordingParams::recordActorMeshes, "Include the meshes (if any) when recording actor creation events.")
-    .def_rw("record_actor_local_to_global_map", &mochi::RecordingParams::recordActorLocalToGlobalMap, "Include the local-to-global map (if any) when recording actor creation events.")
-    .def_rw("record_target_state", &mochi::RecordingParams::recordTargetState, "Record articulated pose controller targets and tracking parameters every step.")
-    .def_rw("record_dynamic_actor_state", &mochi::RecordingParams::recordDynamicActorState, "Record the state of dynamic actors every step.\n\nThis includes position, rotation, and velocity. For soft actors, it includes the\nnode displacements and velocities.")
-    .def_rw("record_static_actor_state", &mochi::RecordingParams::recordStaticActorState, "Record the state of static actors every step. This includes position and\nrotation.")
-    .def_rw("record_contact_points", &mochi::RecordingParams::recordContactPoints, "Record results from :class:`CONTACT_POINTS <superdex.physics.QueryType>` for\neach dynamic actor every step.")
-    .def_rw("record_node_contact_forces", &mochi::RecordingParams::recordNodeContactForces, "Record results for :class:`NODE_CONTACT_FORCES <superdex.physics.QueryType>` for\neach soft actor every step.")
-    .def_rw("record_sdf_distances", &mochi::RecordingParams::recordSdfDistances, "Record SDF distances for :class:`SDF_DISTANCES <superdex.physics.QueryType>` for\neach dynamic actor every step.")
-    .def_static("all", &mochi::RecordingParams::All
-      , nb::arg("enabled") = bool(true)
-      , "Return :class:`~superdex.physics.RecordingParams` with all boolean options set\nto the given value.\n\nArgs:\n    enabled (bool): True to enable all options (maximum data), false to disable\n        (minimum data).\n\nReturns:\n    The initialized :class:`~superdex.physics.RecordingParams`."
-    )
   ;
 
   registry.GetClass<mochi::PoseTrackingParams>()

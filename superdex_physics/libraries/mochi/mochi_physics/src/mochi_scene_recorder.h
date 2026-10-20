@@ -23,6 +23,7 @@
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/group_rw.h>
+#include <mochi_physics/mochi_physics_experimental.h>
 
 #include <cstddef>
 #include <map>
@@ -53,7 +54,7 @@ class SceneRecorder final {
   SceneRecorder(
       std::unique_ptr<GroupWriter> writer,
       SceneImpl& scene,
-      RecordingParams const& params = {});
+      experimental::RecordingParams const& params = {});
 
   // Call before a simulation step
   void OnStepBegin(double timeStepSec, Real3 stepGravity);
@@ -94,7 +95,7 @@ class SceneRecorder final {
   Real3 _gravity = {};
   uint64_t _eventCounter = 0;
   bool _hasReportedError = false;
-  RecordingParams _params;
+  experimental::RecordingParams _params;
   std::vector<std::pair<entt::entity, QueryHandle>> _queries;
 };
 
@@ -139,17 +140,17 @@ struct CRecordingData : public NoCopy {
   };
 
   std::map<std::string, Entry> entries;
-  RecordingParams params = {};
+  experimental::RecordingParams params = {};
 
   CRecordingData() = default;
-  inline CRecordingData(RecordingParams params) : params(params) {}
+  inline CRecordingData(experimental::RecordingParams params) : params(params) {}
 };
 
 // This tag on the global ctx when recording is active.
 struct TagSceneRecordingEnabled {};
 
 // Global context component stores the current recording parameters
-using CRecordingParams = RecordingParams;
+using CRecordingParams = experimental::RecordingParams;
 
 /**********************************************************************************************
 Helper Functions

@@ -603,49 +603,6 @@ struct SolverStats {
 #endif
 };
 
-struct RecordingParams {
-  // ------------------------------------------------------------------------------
-  // Per-Actor Information
-  // ------------------------------------------------------------------------------
-
-  bool recordActorMeshes = true;
-
-  bool recordActorLocalToGlobalMap = false;
-
-  // ------------------------------------------------------------------------------
-  // Per-Step Information
-  // ------------------------------------------------------------------------------
-
-  bool recordTargetState = true;
-
-  bool recordDynamicActorState = true;
-
-  bool recordStaticActorState = false;
-
-  bool recordContactPoints = false;
-
-  bool recordNodeContactForces = false;
-
-  bool recordSdfDistances = false;
-
-  // ------------------------------------------------------------------------------
-  // Utils
-  // ------------------------------------------------------------------------------
-
-  static RecordingParams All(bool enabled = true) {
-    RecordingParams params;
-    params.recordActorMeshes = enabled;
-    params.recordActorLocalToGlobalMap = enabled;
-    params.recordTargetState = enabled;
-    params.recordDynamicActorState = enabled;
-    params.recordStaticActorState = enabled;
-    params.recordContactPoints = enabled;
-    params.recordNodeContactForces = enabled;
-    params.recordSdfDistances = enabled;
-    return params;
-  }
-};
-
 struct PoseTrackingParams {
   real stiffness = 0_r;
 

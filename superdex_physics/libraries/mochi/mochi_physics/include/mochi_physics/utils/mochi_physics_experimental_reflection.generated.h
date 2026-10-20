@@ -89,4 +89,15 @@ MOCHI_FIELD(contactElementType)
 MOCHI_FIELD(useContactSkin)
 MOCHI_STRUCT_END_EX()
 
+MOCHI_STRUCT_BEGIN_EX(mochi::experimental::RecordingParams)
+MOCHI_FIELD(recordActorMeshes)
+MOCHI_FIELD(recordActorLocalToGlobalMap)
+MOCHI_FIELD(recordTargetState)
+MOCHI_FIELD(recordDynamicActorState)
+MOCHI_FIELD(recordStaticActorState)
+MOCHI_FIELD(recordContactPoints)
+MOCHI_FIELD(recordNodeContactForces)
+MOCHI_FIELD(recordSdfDistances)
+MOCHI_STRUCT_END_EX()
+
 // clang-format on

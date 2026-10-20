@@ -1555,6 +1555,9 @@ struct PerformanceStats [equality(default)] {
   double postStepCallbacksDurationSec [units("s")] = 0;
 
   // @brief Wall-clock time [s] spent on recording in the last call to @ref Scene::Step.
+  //
+  // @warning Recording is an experimental feature. It may be changed or removed without notice.
+  // @see experimental::StartRecording, experimental::RecordingParams
   double recordingStepDurationSec [units("s")] = 0;
 }
 
@@ -1593,51 +1596,6 @@ struct SolverStats [equality(default)] {
   //
   // @see ConvergenceStatus, Actor::GetConvergenceStatus
   ConvergenceStatus convergenceStatus = ConvergenceStatus::None;
-}
-
-// @brief Parameters controlling what data gets included in a scene recording.
-//
-// @warning The recording system may undergo a substantial refactor to expand its capabilities.
-// Its API and recorded file format may change in future releases.
-//
-// @see Scene::StartRecording, Scene::StopRecording
-struct RecordingParams {
-  # Per-Actor Information
-  // @brief Include the meshes (if any) when recording actor creation events.
-  bool recordActorMeshes = true;
-
-  // @brief Include the local-to-global map (if any) when recording actor creation events.
-  bool recordActorLocalToGlobalMap = false;
-
-  # Per-Step Information
-  // @brief Record articulated pose controller targets and tracking parameters every step.
-  bool recordTargetState = true;
-
-  // @brief Record the state of dynamic actors every step.
-  //
-  // @details This includes position, rotation, and velocity. For soft actors, it includes the node
-  // displacements and velocities.
-  bool recordDynamicActorState = true;
-
-  // @brief Record the state of static actors every step. This includes position and rotation.
-  bool recordStaticActorState = false;
-
-  // @brief Record results from @ref QueryType::ContactPoints for each dynamic actor every step.
-  bool recordContactPoints = false;
-
-  // @brief Record results for @ref QueryType::NodeContactForces for each soft actor every step.
-  bool recordNodeContactForces = false;
-
-  // @brief Record SDF distances for @ref QueryType::SdfDistances for each dynamic actor every step.
-  bool recordSdfDistances = false;
-
-  # Utils
-  // @brief Return @ref RecordingParams with all boolean options set to the given value.
-  //
-  // @param[in] enabled True to enable all options (maximum data), false to disable (minimum data).
-  //
-  // @return The initialized @ref RecordingParams.
-  fn All(bool enabled = true) -> RecordingParams [static];
 }
 
 // @brief Parameters for pose controller tracking constraints.

@@ -654,40 +654,6 @@ class Scene [no_init, no_destruct] {
   // work.
   fn UpdateDebugger() -> void [pure, virtual];
 
-  # Recording
-  // @brief Check if the scene is currently recording.
-  //
-  // @return True if recording is active, false otherwise.
-  //
-  // @note A recording write failure does not end the recording session.
-  //
-  // @see StartRecording, StopRecording
-  fn IsRecording() -> bool [pure, virtual, const, nodiscard];
-
-  // @brief Create or replace the specified file and start recording the scene to an HDF5 file.
-  //
-  // @param[in] filePath Path to the output recording file (case sensitive on some filesystems).
-  // File will be created or replaced.
-  // @param[in] params Parameters controlling what data to record.
-  //
-  // @warning Requires a build with HDF5 support.
-  // @warning The recording system may undergo a substantial refactor to expand its capabilities.
-  // Its API and recorded file format may change in future releases.
-  //
-  // @note Enabling additional recording features will generally increase the recording file size
-  // and degrade performance.
-  // @note If the scene is already recording, the previous recording is stopped before starting
-  // the new one.
-  // @note Islands do not sleep while the scene is recording, so recording can change the simulation results.
-  //
-  // @see StopRecording, IsRecording, RecordingParams
-  fn StartRecording(StringView filePath, RecordingParams const& params) -> void [pure, virtual, mochi_error];
-
-  // @brief Stop recording the scene and close the recording file.
-  //
-  // @see StartRecording, IsRecording
-  fn StopRecording() -> void [pure, virtual];
-
   # Contact Filtering
   // @brief Enable or disable collision detection for an ordered pair of contact layer names. Order
   // matters: controls only the specified direction (actors in layerA checking against actors in

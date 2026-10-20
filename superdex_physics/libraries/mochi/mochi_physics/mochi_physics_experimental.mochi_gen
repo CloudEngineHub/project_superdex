@@ -673,3 +673,97 @@ struct experimental::DebugStats [no_reflection] {
 }
 
 fn experimental::GetDebugStats(Scene const* scene) -> experimental::DebugStats [mochi_error];
+
+// @brief [Experimental] Parameters controlling what data gets included in a scene recording.
+//
+// @details This includes per-actor information (meshes, local-to-global maps) recorded at actor
+// creation, and per-step information (actor state, controller targets, query results) recorded
+// every step.
+//
+// @warning Experimental and may change or be removed without warning.
+// @warning The recorded file format may change in future releases.
+//
+// @see experimental::StartRecording, experimental::StopRecording, experimental::IsRecording
+struct experimental::RecordingParams {
+  # Per-Actor Information
+  // @brief Include the meshes (if any) when recording actor creation events.
+  bool recordActorMeshes = true;
+
+  // @brief Include the local-to-global map (if any) when recording actor creation events.
+  bool recordActorLocalToGlobalMap = false;
+
+  # Per-Step Information
+  // @brief Record articulated pose controller targets and tracking parameters every step.
+  bool recordTargetState = true;
+
+  // @brief Record the state of dynamic actors every step.
+  //
+  // @details This includes position, rotation, and velocity. For soft actors, it includes the node
+  // displacements and velocities.
+  bool recordDynamicActorState = true;
+
+  // @brief Record the state of static actors every step. This includes position and rotation.
+  bool recordStaticActorState = false;
+
+  // @brief Record results from @ref QueryType::ContactPoints for each dynamic actor every step.
+  bool recordContactPoints = false;
+
+  // @brief Record results for @ref QueryType::NodeContactForces for each soft actor every step.
+  bool recordNodeContactForces = false;
+
+  // @brief Record SDF distances for @ref QueryType::SdfDistances for each dynamic actor every step.
+  bool recordSdfDistances = false;
+
+  # Utils
+  // @brief Return @ref experimental::RecordingParams with all boolean options set to the given
+  // value.
+  //
+  // @param[in] enabled True to enable all options (maximum data), false to disable (minimum data).
+  //
+  // @return The initialized @ref experimental::RecordingParams.
+  fn All(bool enabled = true) -> experimental::RecordingParams [static];
+}
+
+// @brief [Experimental] Check if the scene is currently recording.
+//
+// @param[in] scene Scene to query.
+//
+// @return True if recording is active, false otherwise.
+//
+// @warning Experimental and may change or be removed without warning.
+//
+// @note A recording write failure does not end the recording session.
+//
+// @see experimental::StartRecording, experimental::StopRecording
+fn experimental::IsRecording(Scene const* scene) -> bool [mochi_error, nodiscard];
+
+// @brief [Experimental] Create or replace the specified file and start recording the scene to an
+// HDF5 file.
+//
+// @param[in,out] scene Scene to record.
+// @param[in] filePath Path to the output recording file (case sensitive on some filesystems).
+// File will be created or replaced.
+// @param[in] params Parameters controlling what data to record.
+//
+// @warning Experimental and may change or be removed without warning.
+// @warning The recorded file format may change in future releases.
+// @warning Requires a build with HDF5 support.
+//
+// @note Enabling additional recording features will generally increase the recording file size
+// and degrade performance.
+// @note If the scene is already recording, the previous recording is stopped before starting
+// the new one.
+// @note Islands do not sleep while the scene is recording, so recording can change the simulation
+// results.
+//
+// @see experimental::StopRecording, experimental::IsRecording, experimental::RecordingParams
+fn experimental::StartRecording(Scene* scene, StringView filePath, experimental::RecordingParams const& params) -> void [mochi_error];
+
+// @brief [Experimental] Stop recording the scene and close the recording file.
+//
+// @param[in,out] scene Scene to stop recording.
+//
+// @warning Experimental and may change or be removed without warning.
+//
+// @see experimental::StartRecording, experimental::IsRecording
+fn experimental::StopRecording(Scene* scene) -> void [mochi_error];

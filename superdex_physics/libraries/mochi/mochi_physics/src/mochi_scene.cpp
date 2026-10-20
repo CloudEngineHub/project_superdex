@@ -950,7 +950,7 @@ bool SceneImpl::IsRecording() const {
 
 void SceneImpl::StartRecording(
     std::string_view filePath,
-    RecordingParams const& params,
+    experimental::RecordingParams const& params,
     Error& error) {
   MOCHI_ERROR_RETURN(error);
   if (IsRecording()) {
@@ -3571,6 +3571,28 @@ void experimental::SetSleepParams(Scene* scene, SleepParams const& params, Error
   MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
   MOCHI_ERROR_RETURN(error);
   assert_cast<SceneImpl*>(scene)->SetSleepParams(params, error);
+}
+
+bool experimental::IsRecording(Scene const* scene, Error& error) {
+  MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
+  MOCHI_ERROR_RETURN(error, {});
+  return assert_cast<SceneImpl const*>(scene)->IsRecording();
+}
+
+void experimental::StartRecording(
+    Scene* scene,
+    std::string_view filePath,
+    experimental::RecordingParams const& params,
+    Error& error) {
+  MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
+  MOCHI_ERROR_RETURN(error);
+  assert_cast<SceneImpl*>(scene)->StartRecording(filePath, params, error);
+}
+
+void experimental::StopRecording(Scene* scene, Error& error) {
+  MOCHI_ERROR_IF(scene == nullptr, error, "Invalid scene pointer");
+  MOCHI_ERROR_RETURN(error);
+  assert_cast<SceneImpl*>(scene)->StopRecording();
 }
 
 Actor* CopyActorToSingletonScene(Actor const* actor, Context* context, Error& error) {

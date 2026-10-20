@@ -770,17 +770,6 @@
  */
 
 /**
- * @defgroup recording Recording
- * @brief Capture of per-step simulation data to an HDF5 file for offline analysis, replay and training-data generation. Driven by @ref superdex::Scene::StartRecording, @ref superdex::Scene::StopRecording and @ref superdex::Scene::IsRecording.
- */
-
-/* ---- Recording / - (1) ---- */
-/**
- * @struct superdex::RecordingParams
- * @ingroup recording
- */
-
-/**
  * @defgroup debugging Debugging & Diagnostics
  * @brief Simulation debugging and diagnostics.
  */
