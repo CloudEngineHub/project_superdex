@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -1099,6 +1100,104 @@ TEST(MochiContact, FindPointContacts_GridSdf) {
       kAngleTol,
       kTestCentersAndCorners,
       kExpectUnitNormal);
+}
+
+// A point's contact position must not depend on whether it lands in a full batch, the tail, or a
+// buffer flushed early or at the end, because friction compares it bit for bit with the position
+// from the stage-start pass, which repeats the query on a subset of the points. Distances and
+// gradients only need to agree within rounding.
+template <typename ShapeT>
+static void TestPointContactsIndependentOfBatchPosition(
+    ShapeT const& shape,
+    Real3 const& sampleCenterInCollider,
+    Real3 const& sampleHalfExtents) {
+  // Far from the origin, where rounding differences are large.
+  TransformRT const pointsFromCollider{
+      Quaternion::FromRotationVector(Real3{0.31_r, -0.58_r, 0.24_r}), Real3{0.1_r, 0.2_r, -32.1_r}};
+  ContactDetectionParams params;
+  params.tolerance = kInf;
+
+  // Enough points for several buffer and queue flushes, plus a tail.
+  constexpr int kNumPoints = 1100;
+  std::mt19937 rng(7);
+  std::uniform_real_distribution<real> unit(-1_r, 1_r);
+  DynamicArray<Real3> points(kNumPoints);
+  for (auto& point : points) {
+    Real3 const offset{unit(rng), unit(rng), unit(rng)};
+    point = pointsFromCollider.TransformPoint(sampleCenterInCollider + offset * sampleHalfExtents);
+  }
+
+  auto query = [&](Span<Real3 const> queryPoints, ContactDetectionResult& outResult) {
+    FindPointContactsT(
+        queryPoints,
+        &shape,
+        params,
+        pointsFromCollider,
+        outResult.sampleIndices,
+        outResult.posColliding,
+        outResult.sdfInfo,
+        outResult.isSdfGradUnitary);
+  };
+
+  ContactDetectionResult all;
+  query(points, all);
+  ASSERT_EQ(all.sampleIndices.size(), points.size());
+
+  // A few ulp at the sample points' distance from the origin.
+  constexpr real kTolerance = 16_r * 32_r * std::numeric_limits<real>::epsilon();
+  int numMismatches = 0;
+  for (int i = 0; i < kNumPoints; ++i) {
+    ContactDetectionResult single;
+    query(Span<Real3 const>{&points[i], 1}, single);
+    ASSERT_EQ(single.sampleIndices.size(), size_t{1});
+    numMismatches +=
+        std::memcmp(&all.posColliding[i], &single.posColliding[0], sizeof(Real3)) != 0 ? 1 : 0;
+    EXPECT_NEAR_TOL(all.sdfInfo.val[i], single.sdfInfo.val[0], kTolerance) << "point " << i;
+    EXPECT_NEAR_TOL(all.sdfInfo.grad[i], single.sdfInfo.grad[0], kTolerance) << "point " << i;
+  }
+  EXPECT_EQ(numMismatches, 0) << numMismatches << " of " << kNumPoints << " positions differ";
+}
+
+// The flat colliders' top face is at y = 0, near z = 32 m.
+static constexpr Real3 kFarTopFaceCenter{0_r, 0_r, 32_r};
+static constexpr Real3 kFarTopFaceSampleHalfExtents{0.9_r, 0.1_r, 0.9_r};
+
+static std::shared_ptr<TriangularMesh const> CreateFarGroundMesh() {
+  return CreateTriangularMeshBox(Quaternion{}, Real3{0_r, -0.5_r, 32_r}, Real3{1_r, 0.5_r, 1_r});
+}
+
+TEST(MochiContact, FindPointContacts_PlaneIndependentOfBatchPosition) {
+  TestPointContactsIndependentOfBatchPosition(
+      Plane{Real3{0_r, 1_r, 0_r}, 0_r}, kFarTopFaceCenter, kFarTopFaceSampleHalfExtents);
+}
+
+TEST(MochiContact, FindPointContacts_SphereIndependentOfBatchPosition) {
+  TestPointContactsIndependentOfBatchPosition(
+      Sphere{Real3{0_r, -1_r, 32_r}, 1_r}, kFarTopFaceCenter, Real3{0.3_r, 0.1_r, 0.3_r});
+}
+
+TEST(MochiContact, FindPointContacts_ObbIndependentOfBatchPosition) {
+  TestPointContactsIndependentOfBatchPosition(
+      Obb{TransformRT{Quaternion::RotationY(0.37_r), Real3{0_r, -0.5_r, 32_r}},
+          Real3{1_r, 0.5_r, 1_r}},
+      kFarTopFaceCenter,
+      kFarTopFaceSampleHalfExtents);
+}
+
+TEST(MochiContact, FindPointContacts_MeshIndependentOfBatchPosition) {
+  MeshCollider collider{CreateFarGroundMesh()};
+  collider.Initialize();
+  TestPointContactsIndependentOfBatchPosition(
+      collider, kFarTopFaceCenter, kFarTopFaceSampleHalfExtents);
+}
+
+TEST(MochiContact, FindPointContacts_GridSdfIndependentOfBatchPosition) {
+  GridSdfParams params;
+  params.resolutionMode = GridSdfResolutionMode::Explicit;
+  params.resolutionDelta = {0.05_r, 0.05_r, 0.05_r};
+  GridSdf const collider(CreateFarGroundMesh(), params, test::ExpectOK{});
+  TestPointContactsIndependentOfBatchPosition(
+      collider, kFarTopFaceCenter, kFarTopFaceSampleHalfExtents);
 }
 
 TEST(MochiContact, FindPointContacts_Sphere) {

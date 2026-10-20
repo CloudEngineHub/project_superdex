@@ -739,45 +739,91 @@ static auto GetQueryFuncForPointsAndSdf(entt::registry const& reg, entt::entity 
   return queryFunc;
 }
 
-static void TransformToCollider(
-    entt::registry const& /* reg */,
-    entt::entity /* collider */,
+// Not inlined, so equal transforms give bit-identical matrices at every call site.
+MOCHI_NO_INLINE static VMatrix4x4r ComputeColliderFromCollidingMatT(
     TransformRT const& worldFromColliding,
-    TransformRT const& worldFromCollider,
-    Span<Real3 const> positionsInColliding,
-    Span<int const> /* colliderFeatureIndices */,
-    DynamicArray<int>& outIndices,
-    DynamicArray<Real3>& outContacts) {
-  outIndices.resize_noinit(positionsInColliding.size());
-  std::iota(outIndices.begin(), outIndices.end(), 0);
-  outContacts.resize_noinit(positionsInColliding.size());
-  auto const colliderFromColliding = Invert(worldFromCollider) * worldFromColliding;
-  ArrayTransformPoints(MakeSpan(outContacts), positionsInColliding, colliderFromColliding);
+    TransformRT const& worldFromCollider) {
+  return ToVMatrix4x4Transpose(Invert(worldFromCollider) * worldFromColliding);
 }
 
-template <TimeStep kTimeStep>
-static void MapToCollider(
+// Stage-start positions are the current positions minus each sample's displacement in the collider
+// frame, A p - A0 p0 = (A - A0) p0 + R (p - p0) with A = [R t]. The displacement is formed from
+// differences, so it is exactly zero for a stationary pair however the query rounded positions.
+static void TransformToCollider(
     entt::registry const& reg,
     entt::entity collider,
     TransformRT const& worldFromColliding,
-    TransformRT const& worldFromCollider,
-    Span<Real3 const> positionsInColliding,
+    TransformRT const& worldFromCollidingStageStart,
+    TransformRT const& worldFromColliderStageStart,
+    Span<Real3 const> samples,
+    Span<Real3 const> samplesStageStart,
+    Span<int const> sampleIndices,
     Span<int const> /* colliderFeatureIndices */,
+    Span<Real3 const> posColliding,
+    DynamicArray<Real3>& /* positionsBuffer */,
     DynamicArray<int>& outIndices,
-    DynamicArray<Real3>& outContacts) {
+    DynamicArray<Real3>& outPosCollidingStageStart) {
+  MOCHI_ASSERT_VERBOSE(
+      (reg.any_of<TagRigidActor, TagStaticActor>(collider)),
+      "TransformToCollider must only be called for rigid colliders.");
+  MOCHI_ASSERT_VERBOSE(
+      posColliding.size() == sampleIndices.size(), "Expected one current position per contact.");
+  VMatrix4x4r const colliderFromCollidingMatT = ComputeColliderFromCollidingMatT(
+      worldFromColliding, GetRootTransform<TimeStep::Current>(reg, collider));
+  VMatrix4x4r const deltaMatT = colliderFromCollidingMatT -
+      ComputeColliderFromCollidingMatT(worldFromCollidingStageStart, worldFromColliderStageStart);
+  // Rigid colliding actors share one sample array between time slices, so their samples don't move.
+  bool const samplesMove = samples.data() != samplesStageStart.data();
+  int const numContacts = isize(sampleIndices);
+  outIndices.resize_noinit(numContacts);
+  std::iota(outIndices.begin(), outIndices.end(), 0);
+  outPosCollidingStageStart.resize_noinit(numContacts);
+  for (int i = 0; i < numContacts; ++i) {
+    int const sampleIdx = sampleIndices[i];
+    Real3 const& sampleStageStart = samplesStageStart[sampleIdx];
+    Vec4r displacement = DotVecMat4x4(ToSimd(sampleStageStart, 1_r), deltaMatT);
+    if (samplesMove) {
+      displacement +=
+          DotVecMat3x3(ToSimd(samples[sampleIdx] - sampleStageStart), colliderFromCollidingMatT);
+    }
+    outPosCollidingStageStart[i] = posColliding[i] - ToReal3(displacement);
+  }
+}
+
+static void MapToCollider(
+    entt::registry const& reg,
+    entt::entity collider,
+    TransformRT const& /* worldFromColliding */,
+    TransformRT const& worldFromCollidingStageStart,
+    TransformRT const& worldFromColliderStageStart,
+    Span<Real3 const> /* samples */,
+    Span<Real3 const> samplesStageStart,
+    Span<int const> sampleIndices,
+    Span<int const> /* colliderFeatureIndices */,
+    Span<Real3 const> /* posColliding */,
+    DynamicArray<Real3>& positionsBuffer,
+    DynamicArray<int>& outIndices,
+    DynamicArray<Real3>& outPosCollidingStageStart) {
   // The SDF frame may be different than the Collider frame, e.g. they may differ by the rigid
   // transform for ROM colliders.
-  TransformRT worldFromSdf = worldFromCollider;
+  TransformRT worldFromSdf = worldFromColliderStageStart;
   if (reg.all_of<TagRomActor>(collider)) {
-    if (auto rigidTransform = rom::GetRigidTransform<kTimeStep>(reg, collider)) {
+    if (auto rigidTransform = rom::GetRigidTransform<TimeStep::StageStart>(reg, collider)) {
       worldFromSdf *= rigidTransform.value();
     }
   }
-  auto collidingFromSdf = Invert(worldFromColliding) * worldFromSdf;
+  auto collidingFromSdf = Invert(worldFromCollidingStageStart) * worldFromSdf;
+
+  // The query takes contiguous points.
+  positionsBuffer.clear();
+  positionsBuffer.reserve(sampleIndices.size());
+  for (auto const& i : sampleIndices) {
+    positionsBuffer.push_back(samplesStageStart[i]);
+  }
 
   // Get collider shape and mapping
   auto const& sdfCollider = reg.get<CSdfCollider>(collider);
-  auto const& map = reg.get<CSdfMapping<kTimeStep> const>(collider);
+  auto const& map = reg.get<CSdfMapping<TimeStep::StageStart> const>(collider);
 
   // Create a MappedSdfCollider
   MappedSdfCollider mappedCollider{.shape = sdfCollider.shape.get(), .mapping = map.get()};
@@ -790,13 +836,13 @@ static void MapToCollider(
   // Run the query
   bool isSdfGradUnitary{}; // unused
   FindPointContactsMapped(
-      positionsInColliding,
+      positionsBuffer,
       &mappedCollider,
       detectionParams,
       collidingFromSdf,
       colliderBounds,
       outIndices,
-      outContacts,
+      outPosCollidingStageStart,
       /*outSdf*/ nullptr,
       isSdfGradUnitary,
       /*outNDofs*/ nullptr,
@@ -807,19 +853,23 @@ static void MapToCollider(
 // Points-only query for point-cloud colliders. This is a lightweight wrapper that extracts collider
 // data from the registry and delegates to ComputePointCloudContactDetectionFields with null
 // optional outputs.
-template <TimeStep kTimeStep>
 static void QueryPointCloudPointsOnly(
     entt::registry const& reg,
     entt::entity collider,
-    TransformRT const& worldFromColliding,
-    TransformRT const& worldFromCollider,
-    Span<Real3 const> positionsInColliding,
+    TransformRT const& /* worldFromColliding */,
+    TransformRT const& worldFromCollidingStageStart,
+    TransformRT const& worldFromColliderStageStart,
+    Span<Real3 const> /* samples */,
+    Span<Real3 const> samplesStageStart,
+    Span<int const> sampleIndices,
     Span<int const> colliderFeatureIndices,
+    Span<Real3 const> /* posColliding */,
+    DynamicArray<Real3>& /* positionsBuffer */,
     DynamicArray<int>& outIndices,
-    DynamicArray<Real3>& outPosColliding) {
+    DynamicArray<Real3>& outPosCollidingStageStart) {
   int const totalContacts = isize(colliderFeatureIndices);
   MOCHI_ASSERT_VERBOSE(
-      isize(positionsInColliding) == totalContacts,
+      isize(sampleIndices) == totalContacts,
       "Size mismatch between colliding samples and collider nodes.");
   if (totalContacts == 0) {
     return;
@@ -828,23 +878,24 @@ static void QueryPointCloudPointsOnly(
   // Get collider-side data from registry.
   auto const& colliderDiscretization = reg.get<CColliderPointCloudDiscretization>(collider);
   ColumnVectorView<real const> colliderDisplacements =
-      reg.get<CFinalDisplacementRef<kTimeStep>>(collider).value;
+      reg.get<CFinalDisplacementRef<TimeStep::StageStart>>(collider).value;
 
   // Populate outIndices with identity mapping.
   outIndices.resize_noinit(totalContacts);
   std::iota(outIndices.begin(), outIndices.end(), 0);
 
-  // Call ComputePointCloudContactDetectionFields with null optional outputs.
+  // Call ComputePointCloudContactDetectionFields with null optional outputs. It reads the samples
+  // through sampleIndices, so they need not be gathered.
   ComputePointCloudContactDetectionFields(
       colliderDiscretization,
       colliderDisplacements,
-      worldFromCollider,
-      positionsInColliding,
-      worldFromColliding,
-      outIndices,
+      worldFromColliderStageStart,
+      samplesStageStart,
+      worldFromCollidingStageStart,
+      sampleIndices,
       colliderFeatureIndices,
       /*radius=*/0_r,
-      outPosColliding,
+      outPosCollidingStageStart,
       /*outSdfInfo=*/nullptr,
       /*outNdofs=*/nullptr,
       /*outColliderIntegrationWeights=*/nullptr,
@@ -853,18 +904,18 @@ static void QueryPointCloudPointsOnly(
 }
 
 /*
-  Get the query function pointer for partial collision detection (points only)
+  Get the query function pointer for stage-start contact positions (points only). Unsuffixed
+  arguments are current values.
 */
-template <TimeStep kTimeStep>
 static auto GetQueryFuncForPointsOnly(entt::registry const& reg, entt::entity collider) {
   auto const colliderType = reg.get<CColliderInfo const>(collider).type;
   // MappedSdfCollider requires a special function. Point-cloud colliders use their own query.
-  // Other colliders just use a transform function.
+  // Other colliders are rigid and just use a transform function.
   if (colliderType == ColliderType::PointCloud) {
-    return &QueryPointCloudPointsOnly<kTimeStep>;
+    return &QueryPointCloudPointsOnly;
   }
-  auto const* map = reg.try_get<CSdfMapping<kTimeStep> const>(collider);
-  return map ? &MapToCollider<kTimeStep> : &TransformToCollider;
+  auto const* map = reg.try_get<CSdfMapping<TimeStep::StageStart> const>(collider);
+  return map ? &MapToCollider : &TransformToCollider;
 }
 
 /*
@@ -1231,22 +1282,16 @@ static void EvalStageStartContactWithSingleCollider(
     entt::entity colliding,
     bool explicitNormals,
     ContactSamples const& contactSamples,
+    ContactSamples const& contactSamplesStageStart,
     TransformRT const& worldFromColliding,
+    TransformRT const& worldFromCollidingStageStart,
     entt::entity collider,
     ContactDetectionResult& outResult) {
   MOCHI_PROFILE_SCOPE();
   MOCHI_ASSERT_VERBOSE(!outResult.sampleIndices.empty(), "Expected at least one collision.");
 
   // Get the transform of the collider.
-  auto const& worldFromCollider = GetRootTransform<TimeStep::StageStart>(reg, collider);
-
-  // List of sample points to be tested.
-  auto& positionsInColliding = outResult.culledPositionsBuffer;
-  positionsInColliding.clear();
-  positionsInColliding.reserve(outResult.sampleIndices.size());
-  for (auto const& i : outResult.sampleIndices) {
-    positionsInColliding.push_back(contactSamples.positions[i]);
-  }
+  auto const& worldFromColliderStageStart = GetRootTransform<TimeStep::StageStart>(reg, collider);
 
   // Output container for indices. Do not pass outResult.sampleIndices, because the query expects
   // an empty container.
@@ -1256,11 +1301,19 @@ static void EvalStageStartContactWithSingleCollider(
   // If explicitNormals, evaluate contact points, SDF and Jacobians; otherwise evaluate contact
   // points only.
   if (explicitNormals) {
+    // List of sample points to be tested.
+    auto& positionsInColliding = outResult.culledPositionsBuffer;
+    positionsInColliding.clear();
+    positionsInColliding.reserve(outResult.sampleIndices.size());
+    for (auto const& i : outResult.sampleIndices) {
+      positionsInColliding.push_back(contactSamplesStageStart.positions[i]);
+    }
+
     // Initialize outResult.jacColliderFromWorldStageStart assuming a rigid collider. This will be
     // overwritten for deformable colliders.
     outResult.jacColliderFromWorldStageStart.resize_noinit(1);
     outResult.jacColliderFromWorldStageStart[0] =
-        ToVMatrix3x3Transpose(worldFromCollider.GetRotation());
+        ToVMatrix3x3Transpose(worldFromColliderStageStart.GetRotation());
 
     // Set infinite tolerance and collider bounds.
     ContactDetectionParams detectionParams;
@@ -1273,8 +1326,8 @@ static void EvalStageStartContactWithSingleCollider(
         collider,
         colliding,
         colliderBounds,
-        worldFromColliding,
-        worldFromCollider,
+        worldFromCollidingStageStart,
+        worldFromColliderStageStart,
         positionsInColliding,
         outResult.sampleIndices,
         detectionParams,
@@ -1292,14 +1345,19 @@ static void EvalStageStartContactWithSingleCollider(
     MOCHI_ASSERT_VERBOSE(
         isSdfGradUnitary == outResult.isSdfGradUnitary, "Inconsistent isSdfGradUnitary flags");
   } else {
-    auto queryFunc = GetQueryFuncForPointsOnly<TimeStep::StageStart>(reg, collider);
+    auto queryFunc = GetQueryFuncForPointsOnly(reg, collider);
     queryFunc(
         reg,
         collider,
         worldFromColliding,
-        worldFromCollider,
-        positionsInColliding,
+        worldFromCollidingStageStart,
+        worldFromColliderStageStart,
+        contactSamples.positions,
+        contactSamplesStageStart.positions,
+        outResult.sampleIndices,
         outResult.colliderFeatureIndices,
+        outResult.posColliding,
+        outResult.culledPositionsBuffer,
         outIndices,
         outResult.posCollidingStageStart);
   }
@@ -1481,7 +1539,9 @@ static void DetectCollisionsWithPotentialColliders(
             reg,
             colliding,
             explicitNormals,
+            samplesTimeStep,
             samplesStageStart,
+            worldFromColliding,
             worldFromCollidingStageStart,
             potentialColliders[c],
             *resultPerCollider[c]);

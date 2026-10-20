@@ -18,6 +18,7 @@
 
 #include <mochi_core/contact/contact_utils.h>
 #include <mochi_core/geometry/model_data.h>
+#include <mochi_core/utils/array_utils.h>
 #include <mochi_core/utils/batch_types.h>
 #include <mochi_core/utils/matrix_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
@@ -509,12 +510,13 @@ void GridSdf::FindPointContactsImpl(
           Load<OutputV>(&outputQueue.gradientsInGridSpace[2][i])};
 
       // The caller expects results in actor-space.
-      auto const pointsInActorSpace =
-          DotVecMat(pointsInGridSpace, actorFromGridLinearBatchT) + actorFromGridTranslationBatch;
+      auto const pointsInActorSpace = TransformPointsBatch(
+          pointsInGridSpace, actorFromGridLinearBatchT, actorFromGridTranslationBatch);
 
       // Rotate gradients using the transpose of the rotation matrix on the right (the transpose is
       // the inverse in this case).
-      auto const gradientsInActorSpace = DotVecMat(gradientsInGridSpace, actorFromGridRotBatchT);
+      auto const gradientsInActorSpace =
+          RotateVectorsBatch(gradientsInGridSpace, actorFromGridRotBatchT);
       OutputV const distances =
           Load<OutputV>(&outputQueue.distancesInGridSpace[i]) * _actorFromGridScale;
 
@@ -536,9 +538,10 @@ void GridSdf::FindPointContactsImpl(
           Load<OutputV>(&outputQueue.gradientsInGridSpace[1][i], tailSize),
           Load<OutputV>(&outputQueue.gradientsInGridSpace[2][i], tailSize)};
 
-      auto const pointsInActorSpace =
-          DotVecMat(pointsInGridSpace, actorFromGridLinearBatchT) + actorFromGridTranslationBatch;
-      auto const gradientsInActorSpace = DotVecMat(gradientsInGridSpace, actorFromGridRotBatchT);
+      auto const pointsInActorSpace = TransformPointsBatch(
+          pointsInGridSpace, actorFromGridLinearBatchT, actorFromGridTranslationBatch);
+      auto const gradientsInActorSpace =
+          RotateVectorsBatch(gradientsInGridSpace, actorFromGridRotBatchT);
       OutputV const distances =
           Load<OutputV>(&outputQueue.distancesInGridSpace[i], tailSize) * _actorFromGridScale;
 
@@ -668,8 +671,8 @@ void GridSdf::FindPointContactsImpl(
     }
 
     // AABB culling in grid space.
-    DistanceV3 const pointsInGridSpace =
-        DotVecMat(pointsInPointSpace, gridFromPointsLinearBatchT) + gridFromPointsTranslationBatch;
+    DistanceV3 const pointsInGridSpace = TransformPointsBatch(
+        pointsInPointSpace, gridFromPointsLinearBatchT, gridFromPointsTranslationBatch);
     DistanceV hitMask = (pointsInGridSpace[0] >= boundsInGridSpaceMin[0]) &
         (pointsInGridSpace[0] <= boundsInGridSpaceMax[0]) &
         (pointsInGridSpace[1] >= boundsInGridSpaceMin[1]) &

@@ -972,8 +972,7 @@ void mochi::FindPointContactsT<Plane>(
     auto offset = iDst - iBuf;
     for (size_t j = 0; j < iBuf; j += V::kSize) {
       V3 pt{Load<V>(&bufPoints[0][j]), Load<V>(&bufPoints[1][j]), Load<V>(&bufPoints[2][j])};
-      pt = DotVecMat(pt, rotT) + trans;
-      StoreTransposed(&outContacts[offset + j][0], pt);
+      StoreTransposed(&outContacts[offset + j][0], TransformPointsBatch(pt, rotT, trans));
     }
     iBuf = 0;
   };
@@ -1088,7 +1087,7 @@ void mochi::FindPointContactsT<Sphere>(
     auto offset = iDst - iBuf;
     for (size_t j = 0; j < iBuf; j += V::kSize) {
       V3 pt{Load<V>(&bufPoints[0][j]), Load<V>(&bufPoints[1][j]), Load<V>(&bufPoints[2][j])};
-      pt = DotVecMat(pt, rotT) + trans; // Transform to output space
+      pt = TransformPointsBatch(pt, rotT, trans); // Transform to output space
       StoreTransposed(&outContacts[offset + j][0], pt);
 
       V3 rayFromCenter = pt - Broadcast3<V>(sphereCenterInOutputSpace); // Ray in output space
@@ -1192,18 +1191,16 @@ void mochi::FindPointContactsT<Obb>(
   // Compute transformation to the box local space
   auto const pointsFromBox = colliderTransformed.GetTransform();
   auto const pointsFromBoxMatT = ToVMatrix4x4Transpose(pointsFromBox);
-  V3x3 const boxFromPointsRot = Broadcast3x3<V>(pointsFromBoxMatT); // 3x3 transpose is the inverse
+  // Transposed inverse rotation, which is the rotation itself.
+  V3x3 const boxFromPointsRotT = Broadcast3x3<V>(Transpose4x4(pointsFromBoxMatT));
   V3 const boxFromPointsTrans = Broadcast3<V>(-pointsFromBoxMatT[3]); // Inverse translation
 
   // Compute transformation from box local space to the output space.
   auto const colliderFromPoints = Invert(pointsFromCollider);
-  auto const colliderFromBoxMat =
-      Dot4x4(ToVMatrix4x4(colliderFromPoints), Transpose4x4(pointsFromBoxMatT));
-  V3x3 const colliderFromBoxRot = Broadcast3x3<V>(colliderFromBoxMat);
-  V3 const colliderFromBoxTrans{
-      V{colliderFromBoxMat[0][3]},
-      V{colliderFromBoxMat[1][3]},
-      V{colliderFromBoxMat[2][3]}}; // 4th col
+  auto const colliderFromBoxMatT =
+      Transpose4x4(Dot4x4(ToVMatrix4x4(colliderFromPoints), Transpose4x4(pointsFromBoxMatT)));
+  V3x3 const colliderFromBoxRotT = Broadcast3x3<V>(colliderFromBoxMatT);
+  V3 const colliderFromBoxTrans = Broadcast3<V>(colliderFromBoxMatT[3]);
 
   // Tolerance used to avoid divide-by-near-zero when normalizing the gradient vector.
   auto constexpr kDistanceEpsilon = 10_r * std::numeric_limits<real>::epsilon();
@@ -1271,20 +1268,20 @@ void mochi::FindPointContactsT<Obb>(
           Select(sd < kDistanceEpsilon, projNormal[2], surfaceDelta[2] * sdInv)};
 
       // Apply the output rotation to the normal
-      normal = DotMatVec(colliderFromBoxRot, normal);
+      normal = RotateVectorsBatch(normal, colliderFromBoxRotT);
       StoreTransposed(&outSdf.grad[offset + j][0], normal);
 
       // Apply the output transform to the position
-      V3 outPos = DotMatVec(colliderFromBoxRot, localPos) + colliderFromBoxTrans;
+      V3 outPos = TransformPointsBatch(localPos, colliderFromBoxRotT, colliderFromBoxTrans);
       StoreTransposed(&outContacts[offset + j][0], outPos);
     }
     iBuf = 0;
   };
 
   Vec4r halfExtPlusTol = colliderTransformed.VGetHalfExtents() + params.tolerance;
-  auto process = [&](V3 const& pt) {
+  auto process = [&](V3 const& pt) MOCHI_FORCE_INLINE_LAMBDA {
     // Transform to the local space of the box.
-    V3 localPos = DotMatVec(boxFromPointsRot, pt + boxFromPointsTrans);
+    V3 localPos = RotateVectorsBatch(pt + boxFromPointsTrans, boxFromPointsRotT);
     // In local-space, the box is an AABB with center at the origin. Points will be included in the
     // output if they are within that AABB, after padding by the contact tolerance. Points at the
     // extreme corners may return a signed distance greater than tolerance, but that is considered

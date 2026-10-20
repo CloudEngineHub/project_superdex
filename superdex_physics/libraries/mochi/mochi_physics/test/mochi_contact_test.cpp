@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -454,6 +455,159 @@ TEST(MochiContact, SetupActiveCollisionNormalsCachesLinearElementNormal) {
           tetMesh, volumeDiscretization, ActorBoundaryElementType::P1Q3));
   runTest(CFemSurfaceDiscretization::Create(ActorBoundaryElementType::P1Q3, surfaceMesh));
 }
+
+// Rigid colliders whose actor frame is at the world origin, while their contact surface is near
+// z = 32 m, where single-precision rounding is large. The flat colliders' top face is at y = 0.
+enum class FarCollider { Plane, Box, Mesh, GridSdf, Sphere };
+
+class FarColliderContactTest : public test::MochiSceneTestBase,
+                               public ::testing::WithParamInterface<FarCollider> {
+ protected:
+  void CreateFarCollider() {
+    RigidActorParams params;
+    params.isStatic = true;
+    switch (GetParam()) {
+      case FarCollider::Plane:
+        params.shape = _mochiContext->CreatePlaneShape(Real3{0_r, 1_r, 0_r}, 0_r, ExpectOK{});
+        break;
+      case FarCollider::Sphere:
+        params.shape = _mochiContext->CreateSphereShape(Real3{0_r, -1_r, 32_r}, 1_r, ExpectOK{});
+        break;
+      case FarCollider::Box:
+      case FarCollider::Mesh:
+      case FarCollider::GridSdf: {
+        auto [positions, triangles] = test::CreateMinimalTriMeshUnitCube(Real3{2_r, 1_r, 2_r});
+        for (auto& position : positions) {
+          position += Real3{-1_r, -1_r, 31_r};
+        }
+        params.shape = _mochiContext->CreateTriMeshShape(
+            Flatten(MakeSpan(positions)), Flatten(MakeSpan(triangles)), ExpectOK{});
+        params.colliderType = GetParam() == FarCollider::Box ? ColliderType::Box
+            : GetParam() == FarCollider::Mesh                ? ColliderType::Mesh
+                                                             : ColliderType::Sdf;
+        params.sdf.resolutionMode = GridSdfResolutionMode::Explicit;
+        params.sdf.resolutionDelta = Real3{0.05_r, 0.05_r, 0.05_r};
+      } break;
+    }
+    ASSERT_NE(_scene->CreateRigidActor(params, ExpectOK{}), nullptr);
+  }
+
+  // Creates a dynamic cube with 0.5 m sides, centered at the origin of its actor frame.
+  Actor* CreateCube(TransformRT const& worldFromCube) {
+    auto [coordinates, connectivity] =
+        test::CreateMinimalTetMeshUnitCube(Real3{0.5_r, 0.5_r, 0.5_r});
+    for (auto& coordinate : coordinates) {
+      coordinate -= Real3{0.25_r, 0.25_r, 0.25_r};
+    }
+    RigidActorParams params;
+    params.shape = _mochiContext->CreateTetMeshShape(
+        Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), ExpectOK{});
+    params.worldFromLocal = worldFromCube;
+    return _scene->CreateRigidActor(params, ExpectOK{});
+  }
+};
+
+// Friction treats any difference between current and stage-start contact positions as slip, so a
+// stationary pair must produce identical positions on both sides. With implicit normals, stage
+// start subtracts each contact's displacement; with explicit normals, it repeats the query.
+TEST_P(FarColliderContactTest, StationaryContactPositionsMatchStageStart) {
+  CreateFarCollider();
+  Actor* cube = CreateCube(
+      TransformRT{
+          Quaternion::FromRotationVector(Real3{0.31_r, -0.58_r, 0.24_r}),
+          Real3{0.1_r, 0.2_r, 32.1_r}});
+  ASSERT_NE(cube, nullptr);
+
+  for (bool explicitNormals : {false, true}) {
+    SCOPED_TRACE(explicitNormals ? "explicit normals" : "implicit normals");
+    SolverParams solverParams = _scene->GetSolverParams();
+    solverParams.experimentalEval.explicitNormals = explicitNormals;
+    _scene->SetSolverParams(solverParams, ExpectOK{});
+
+    auto& reg = GetRegistry();
+    reg.ctx<CSceneTime>().Advance(0.001);
+    PreStepEcs(reg);
+    for (auto [island] : reg.view<TagIsland>().each()) {
+      CollisionDetectionPipeline<TimeStep::Current>(reg, reg.get<CIslandDescendants const>(island));
+    }
+
+    int numContacts = 0;
+    int numMismatches = 0;
+    for (auto const& collision :
+         reg.get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const>(GetEntity(cube))) {
+      auto const& result = collision.collisionResult;
+      ASSERT_EQ(result.posColliding.size(), result.posCollidingStageStart.size());
+      for (int i = 0; i < isize(result.posColliding); ++i) {
+        ++numContacts;
+        numMismatches +=
+            std::memcmp(
+                &result.posColliding[i], &result.posCollidingStageStart[i], sizeof(Real3)) != 0;
+      }
+    }
+    EXPECT_GT(numContacts, 0);
+    EXPECT_EQ(numMismatches, 0) << numMismatches << " of " << numContacts << " contacts differ";
+  }
+}
+
+static std::string FarColliderName(::testing::TestParamInfo<FarCollider> const& info) {
+  constexpr std::array kNames{"Plane", "Box", "Mesh", "GridSdf", "Sphere"};
+  return kNames[static_cast<int>(info.param)];
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllColliders,
+    FarColliderContactTest,
+    ::testing::Values(
+        FarCollider::Plane,
+        FarCollider::Box,
+        FarCollider::Mesh,
+        FarCollider::GridSdf,
+        FarCollider::Sphere),
+    FarColliderName);
+
+class FarGroundRestingTest : public FarColliderContactTest {};
+
+// Cubes resting on stationary ground must not slide. Friction would read any difference between
+// current and stage-start contact positions as slip.
+TEST_P(FarGroundRestingTest, CubesDoNotSlide) {
+  CreateFarCollider();
+  // Separated cubes on the top face, with orientations that slide when positions differ.
+  struct Placement {
+    real yaw;
+    real x;
+    real z;
+  };
+  Placement const placements[] = {
+      {0.37_r, -0.5_r, 31.5_r},
+      {1.13_r, 0.5_r, 31.5_r},
+      {2.29_r, -0.5_r, 32.5_r},
+      {-0.71_r, 0.5_r, 32.5_r}};
+  DynamicArray<Actor*> cubes;
+  DynamicArray<Real3> starts;
+  for (auto const& [yaw, x, z] : placements) {
+    Actor* cube = CreateCube(TransformRT{Quaternion::RotationY(yaw), Real3{x, 0.25_r, z}});
+    ASSERT_NE(cube, nullptr);
+    cubes.push_back(cube);
+    starts.push_back(cube->GetRootTransform().GetTranslation());
+  }
+  for (int step = 0; step < 500; ++step) {
+    _scene->Step(0.001_r);
+  }
+  for (int i = 0; i < isize(cubes); ++i) {
+    Real3 const displacement = cubes[i]->GetRootTransform().GetTranslation() - starts[i];
+    EXPECT_LT(Norm(Real3{displacement[0], 0_r, displacement[2]}), 1e-4_r) << "cube " << i;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FlatColliders,
+    FarGroundRestingTest,
+    ::testing::Values(
+        FarCollider::Plane,
+        FarCollider::Box,
+        FarCollider::Mesh,
+        FarCollider::GridSdf),
+    FarColliderName);
 
 namespace {
 struct TestParams {
@@ -2390,6 +2544,62 @@ class MochiSoftSoftContact : public MochiContactTestBase {
     pos.value[localDof] += eps;
   }
 };
+
+class MochiMappedColliderStageStartTest : public MochiSoftSoftContact {};
+
+TEST_P(MochiMappedColliderStageStartTest, ImplicitPositionsMatchFullQuery) {
+  InitializeScene(
+      /*coulombCoefficient=*/0_r,
+      /*viscousCoefficient=*/0_r,
+      /*dampingCoefficient=*/0_r);
+  InitState();
+  PreStep();
+
+  auto getStageStartContacts = [&](bool explicitNormals) {
+    auto solverParams = _scene->GetSolverParams();
+    solverParams.experimentalEval.explicitNormals = explicitNormals;
+    _scene->SetSolverParams(solverParams, test::ExpectOK{});
+
+    auto& reg = GetRegistry();
+    entt::entity const island = reg.get<CIslandMemberInfo const>(_colliding).island;
+    CollisionDetectionPipeline<TimeStep::Current>(reg, reg.get<CIslandDescendants const>(island));
+
+    DynamicArray<int> sampleIndices;
+    DynamicArray<Real3> positions;
+    auto appendContacts = [&](auto const& collisions) {
+      for (auto const& collision : collisions) {
+        if (collision.colliderEntity != _collider) {
+          continue;
+        }
+        auto const& result = collision.collisionResult;
+        Append(sampleIndices, MakeConstSpan(result.sampleIndices));
+        Append(positions, MakeConstSpan(result.posCollidingStageStart));
+      }
+    };
+    if (auto const* collisions =
+            reg.try_get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const>(
+                _colliding)) {
+      appendContacts(*collisions);
+    }
+    if (auto const* collisions =
+            reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const>(_colliding)) {
+      appendContacts(*collisions);
+    }
+    EXPECT_FALSE(sampleIndices.empty());
+    EXPECT_EQ(sampleIndices.size(), positions.size());
+    return std::pair{std::move(sampleIndices), std::move(positions)};
+  };
+
+  auto const [expectedIndices, expectedPositions] = getStageStartContacts(true);
+  auto const [actualIndices, actualPositions] = getStageStartContacts(false);
+  EXPECT_SPAN_EQ(expectedIndices, actualIndices);
+  EXPECT_SPAN_EQ(expectedPositions, actualPositions);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    NoFriction,
+    MochiMappedColliderStageStartTest,
+    ::testing::Values(TestParams{}));
 
 TEST_P(MochiSoftSoftContact, ContactAssembly) {
   RunTest();

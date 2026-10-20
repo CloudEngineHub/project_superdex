@@ -294,6 +294,59 @@ TEST_P(MochiPointCloudColliderTest, SpatialHashTablePopulationAndContactIndexQue
   EXPECT_EQ(0, hashTable.GetNumPoints());
 }
 
+TEST_P(MochiPointCloudColliderTest, ContactFieldsAcceptNonIdentityPointIndices) {
+  auto const colliderDiscretization = MakeColliderDiscretization(GetParam());
+  ColumnVector<real> const colliderDisplacements =
+      ColumnVector<real>::Zero(kSpaceDim3 * isize(_coordinates));
+  TransformRT const worldFromCollider{
+      Quaternion::FromRotationVector(Real3{0.1_r, -0.2_r, 0.3_r}), Real3{0.4_r, -0.5_r, 0.6_r}};
+  TransformRT const worldFromColliding{
+      Quaternion::FromRotationVector(Real3{-0.3_r, 0.2_r, 0.1_r}), Real3{-0.2_r, 0.3_r, -0.4_r}};
+  DynamicArray<Real3> const samples{
+      Real3{0.1_r, 0.2_r, 0.3_r}, Real3{1.1_r, 1.2_r, 1.3_r}, Real3{-0.1_r, -0.2_r, -0.3_r}};
+  std::array<int, 2> const pointIndices{2, 0};
+  std::array<int, 2> const colliderPointIndices{
+      0, colliderDiscretization.GetNumColliderPoints() - 1};
+
+  DynamicArray<Real3> actualPositions;
+  ComputePointCloudContactDetectionFields(
+      colliderDiscretization,
+      AsConstView(colliderDisplacements),
+      worldFromCollider,
+      samples,
+      worldFromColliding,
+      pointIndices,
+      colliderPointIndices,
+      /*radius=*/0_r,
+      actualPositions,
+      /*outSdfInfo=*/nullptr,
+      /*outNdofs=*/nullptr,
+      /*outColliderIntegrationWeights=*/nullptr,
+      /*outJacColliderFromWorld=*/nullptr,
+      /*outJacWorldFromDofs=*/nullptr);
+
+  DynamicArray<Real3> const gatheredSamples{samples[2], samples[0]};
+  std::array<int, 2> const identityIndices{0, 1};
+  DynamicArray<Real3> expectedPositions;
+  ComputePointCloudContactDetectionFields(
+      colliderDiscretization,
+      AsConstView(colliderDisplacements),
+      worldFromCollider,
+      gatheredSamples,
+      worldFromColliding,
+      identityIndices,
+      colliderPointIndices,
+      /*radius=*/0_r,
+      expectedPositions,
+      /*outSdfInfo=*/nullptr,
+      /*outNdofs=*/nullptr,
+      /*outColliderIntegrationWeights=*/nullptr,
+      /*outJacColliderFromWorld=*/nullptr,
+      /*outJacWorldFromDofs=*/nullptr);
+
+  EXPECT_SPAN_EQ(expectedPositions, actualPositions);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     ColliderPointTypes,
     MochiPointCloudColliderTest,
