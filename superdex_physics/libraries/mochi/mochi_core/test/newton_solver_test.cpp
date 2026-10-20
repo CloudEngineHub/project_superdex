@@ -309,7 +309,7 @@ TEST(NewtonSolver, SmoothLocalMinimum) {
         EXPECT_TRUE(result.convergence == ConvergenceStatus::Converged);
         if (params.lineSearch.type == LineSearchType::None ||
             params.lineSearch.type == LineSearchType::ResidualNorm) {
-          // kNone and kResidualNorm do not update the objective
+          // None and ResidualNorm do not update the objective
           EXPECT_NEAR(result.merit, 0_r, kAbsTol);
         } else {
           EXPECT_NEAR(result.merit, obj, kAbsTol);
