@@ -626,6 +626,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("actor_b").sig("...") = mochi::RigidSphericalJointConstraintParams{}.actorB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RigidSphericalJointConstraintParams const& self) { return mochi::RigidSphericalJointConstraintParams(self); })
     .def("__deepcopy__", [](mochi::RigidSphericalJointConstraintParams const& self, nb::dict) { return mochi::RigidSphericalJointConstraintParams(self); })
     .def_prop_rw("local_pos_a", [](mochi::RigidSphericalJointConstraintParams& self) -> mochi::Real3& { return self.localPosA; }, [](mochi::RigidSphericalJointConstraintParams& self, nb::object val) { self.localPosA = nb::cast<mochi::Real3>(val); }, "Joint position [m] for rigid actor A in actor A's local frame.")
@@ -658,6 +660,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("min").sig("...") = mochi::RigidPrismaticJointConstraintParams{}.min
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RigidPrismaticJointConstraintParams const& self) { return mochi::RigidPrismaticJointConstraintParams(self); })
     .def("__deepcopy__", [](mochi::RigidPrismaticJointConstraintParams const& self, nb::dict) { return mochi::RigidPrismaticJointConstraintParams(self); })
     .def_prop_rw("free_axis", [](mochi::RigidPrismaticJointConstraintParams& self) -> mochi::Real3& { return self.freeAxis; }, [](mochi::RigidPrismaticJointConstraintParams& self, nb::object val) { self.freeAxis = nb::cast<mochi::Real3>(val); }, "Axis of free translation, specified in the world frame at constraint creation\ntime.\n\nNote:\n    The axis is captured at creation and thereafter rigidly attached to actor A:\n    it rotates with actor A rather than remaining fixed in world space.\n\nNote:\n    Must be non-zero and finite.\n\nNote:\n    Its magnitude is ignored (normalized internally).")
@@ -691,6 +695,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("find_closest") = mochi::DeformableNodeToDeformableNodeConstraintParams{}.findClosest
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::DeformableNodeToDeformableNodeConstraintParams const& self) { return mochi::DeformableNodeToDeformableNodeConstraintParams(self); })
     .def("__deepcopy__", [](mochi::DeformableNodeToDeformableNodeConstraintParams const& self, nb::dict) { return mochi::DeformableNodeToDeformableNodeConstraintParams(self); })
     .def_rw("node_index_a", &mochi::DeformableNodeToDeformableNodeConstraintParams::nodeIndexA, "Node index in deformable actor A's reference simulation mesh, as returned by\n:meth:`~superdex.physics.Actor.get_mesh`. Ignored if\n:attr:`~superdex.physics.DeformableNodeToDeformableNodeConstraintParams.find_closest`\nis true; otherwise it must identify a node in that mesh.")
@@ -722,6 +728,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("element_index") = mochi::RodElementRotationToRigidConstraintParams{}.elementIndex
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RodElementRotationToRigidConstraintParams const& self) { return mochi::RodElementRotationToRigidConstraintParams(self); })
     .def("__deepcopy__", [](mochi::RodElementRotationToRigidConstraintParams const& self, nb::dict) { return mochi::RodElementRotationToRigidConstraintParams(self); })
     .def_prop_rw("ref_frame_rot_vec", [](mochi::RodElementRotationToRigidConstraintParams& self) -> mochi::Real3& { return self.refFrameRotVec; }, [](mochi::RodElementRotationToRigidConstraintParams& self, nb::object val) { self.refFrameRotVec = nb::cast<mochi::Real3>(val); }, "Joint reference-frame orientation in world coordinates at constraint creation,\nexpressed as a rotation vector [rad].\n\nNote:\n    After creation, the frame remains fixed relative to the rigid actor.")
@@ -756,6 +764,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("fix_to_deformable_pos") = mochi::DeformableNodeToRigidConstraintParams{}.fixToDeformablePos
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::DeformableNodeToRigidConstraintParams const& self) { return mochi::DeformableNodeToRigidConstraintParams(self); })
     .def("__deepcopy__", [](mochi::DeformableNodeToRigidConstraintParams const& self, nb::dict) { return mochi::DeformableNodeToRigidConstraintParams(self); })
     .def_prop_rw("rigid_local_pos", [](mochi::DeformableNodeToRigidConstraintParams& self) -> mochi::Real3& { return self.rigidLocalPos; }, [](mochi::DeformableNodeToRigidConstraintParams& self, nb::object val) { self.rigidLocalPos = nb::cast<mochi::Real3>(val); }, "Coupling position [m] in rigid actor's local frame.\n\nNote:\n    When\n    :attr:`~superdex.physics.DeformableNodeToRigidConstraintParams.fix_to_deformable_pos`\n    is true, this field is ignored and the coupling position is auto-computed\n    based on the deformable node's initial position in the rigid actor's frame.\n\nNote:\n    When\n    :attr:`~superdex.physics.DeformableNodeToRigidConstraintParams.find_closest`\n    is also true, this field is still used as the search point that selects\n    which deformable node is picked.")
@@ -794,6 +804,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("range_around_rest") = mochi::JointRotationRangeConstraintParams{}.rangeAroundRest
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::JointRotationRangeConstraintParams const& self) { return mochi::JointRotationRangeConstraintParams(self); })
     .def("__deepcopy__", [](mochi::JointRotationRangeConstraintParams const& self, nb::dict) { return mochi::JointRotationRangeConstraintParams(self); })
     .def_prop_rw("ref_frame_rot_vec", [](mochi::JointRotationRangeConstraintParams& self) -> mochi::Real3& { return self.refFrameRotVec; }, [](mochi::JointRotationRangeConstraintParams& self, nb::object val) { self.refFrameRotVec = nb::cast<mochi::Real3>(val); }, "Joint reference frame specified as a rotation vector [rad] with respect to world\nframe.")
@@ -825,6 +837,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("actor").sig("...") = mochi::RigidPivotPositionConstraintParams{}.actor
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RigidPivotPositionConstraintParams const& self) { return mochi::RigidPivotPositionConstraintParams(self); })
     .def("__deepcopy__", [](mochi::RigidPivotPositionConstraintParams const& self, nb::dict) { return mochi::RigidPivotPositionConstraintParams(self); })
     .def_prop_rw("target_position", [](mochi::RigidPivotPositionConstraintParams& self) -> mochi::Real3& { return self.targetPosition; }, [](mochi::RigidPivotPositionConstraintParams& self, nb::object val) { self.targetPosition = nb::cast<mochi::Real3>(val); }, "Target position in world frame [m].")
@@ -852,6 +866,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("actor").sig("...") = mochi::RigidPivotToRigidTargetConstraintParams{}.actor
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RigidPivotToRigidTargetConstraintParams const& self) { return mochi::RigidPivotToRigidTargetConstraintParams(self); })
     .def("__deepcopy__", [](mochi::RigidPivotToRigidTargetConstraintParams const& self, nb::dict) { return mochi::RigidPivotToRigidTargetConstraintParams(self); })
     .def_rw("target_transform", &mochi::RigidPivotToRigidTargetConstraintParams::targetTransform, "Target center-of-mass transform.")
@@ -879,6 +895,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("actor").sig("...") = mochi::RigidPivotRotationConstraintParams{}.actor
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::RigidPivotRotationConstraintParams const& self) { return mochi::RigidPivotRotationConstraintParams(self); })
     .def("__deepcopy__", [](mochi::RigidPivotRotationConstraintParams const& self, nb::dict) { return mochi::RigidPivotRotationConstraintParams(self); })
     .def_prop_rw("target_rotation", [](mochi::RigidPivotRotationConstraintParams& self) -> mochi::Real3& { return self.targetRotation; }, [](mochi::RigidPivotRotationConstraintParams& self, nb::object val) { self.targetRotation = nb::cast<mochi::Real3>(val); }, "Target rotation in world coordinates, as a rotation vector [rad].")
@@ -935,6 +953,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("actor_b").sig("...") = mochi::JointRotationTrackingConstraintParams{}.actorB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::JointRotationTrackingConstraintParams const& self) { return mochi::JointRotationTrackingConstraintParams(self); })
     .def("__deepcopy__", [](mochi::JointRotationTrackingConstraintParams const& self, nb::dict) { return mochi::JointRotationTrackingConstraintParams(self); })
     .def_prop_rw("ref_frame_rot_vec", [](mochi::JointRotationTrackingConstraintParams& self) -> mochi::Real3& { return self.refFrameRotVec; }, [](mochi::JointRotationTrackingConstraintParams& self, nb::object val) { self.refFrameRotVec = nb::cast<mochi::Real3>(val); }, "Joint reference-frame orientation in world coordinates at constraint creation,\nexpressed as a rotation vector [rad].\n\nNote:\n    After creation, the frame remains fixed relative to actor A.")
@@ -964,6 +984,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("target_value") = mochi::ArticulatedSingleDofTargetConstraintParams{}.targetValue
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ArticulatedSingleDofTargetConstraintParams const& self) { return mochi::ArticulatedSingleDofTargetConstraintParams(self); })
     .def("__deepcopy__", [](mochi::ArticulatedSingleDofTargetConstraintParams const& self, nb::dict) { return mochi::ArticulatedSingleDofTargetConstraintParams(self); })
     .def_rw("actor", &mochi::ArticulatedSingleDofTargetConstraintParams::actor, "Actor handle identifying the articulated actor.")
@@ -992,6 +1014,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("target").sig("...") = mochi::Articulated3dRotationTargetConstraintParams{}.target
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::Articulated3dRotationTargetConstraintParams const& self) { return mochi::Articulated3dRotationTargetConstraintParams(self); })
     .def("__deepcopy__", [](mochi::Articulated3dRotationTargetConstraintParams const& self, nb::dict) { return mochi::Articulated3dRotationTargetConstraintParams(self); })
     .def_rw("actor", &mochi::Articulated3dRotationTargetConstraintParams::actor, "Actor handle identifying the articulated actor.")
@@ -1023,6 +1047,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("max_value") = mochi::ArticulatedSingleDofRangeConstraintParams{}.maxValue
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ArticulatedSingleDofRangeConstraintParams const& self) { return mochi::ArticulatedSingleDofRangeConstraintParams(self); })
     .def("__deepcopy__", [](mochi::ArticulatedSingleDofRangeConstraintParams const& self, nb::dict) { return mochi::ArticulatedSingleDofRangeConstraintParams(self); })
     .def_rw("actor", &mochi::ArticulatedSingleDofRangeConstraintParams::actor, "Actor handle identifying the articulated actor.")
@@ -1054,6 +1080,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
       , nb::arg("max_values").sig("...") = mochi::Articulated3dRotationRangeConstraintParams{}.maxValues
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::Articulated3dRotationRangeConstraintParams const& self) { return mochi::Articulated3dRotationRangeConstraintParams(self); })
     .def("__deepcopy__", [](mochi::Articulated3dRotationRangeConstraintParams const& self, nb::dict) { return mochi::Articulated3dRotationRangeConstraintParams(self); })
     .def_rw("actor", &mochi::Articulated3dRotationRangeConstraintParams::actor, "Actor handle identifying the articulated actor.")

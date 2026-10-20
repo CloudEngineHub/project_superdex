@@ -1634,7 +1634,10 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
   }
   {
     mochi::SolverParams params{};
+    MOCHI_ASSERT((params.nonLinearSolver == mochi::NonLinearSolverParams{}), "DSL default value for SolverParams::nonLinearSolver doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.linearSolver == mochi::LinearSolverParams{}), "DSL default value for SolverParams::linearSolver doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.integrationMethod == mochi::IntegrationMethod::Default), "DSL default value for SolverParams::integrationMethod doesn't match C++ default. DSL says Default, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.experimentalEval == mochi::ExperimentalEvalParams{}), "DSL default value for SolverParams::experimentalEval doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::RecenteringParams params{};
@@ -1648,6 +1651,11 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT((params.strategy == mochi::BoundarySubsamplingStrategy::UniformProbability), "DSL default value for BoundarySubsamplingParams::strategy doesn't match C++ default. DSL says UniformProbability, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
+    mochi::StepInfo params{};
+    MOCHI_ASSERT((params.scene == nullptr), "DSL default value for StepInfo::scene doesn't match C++ default. DSL says nullptr, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.timeStepSec, 0.0, "DSL default value for StepInfo::timeStepSec doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
     mochi::RigidActorParams params{};
     MOCHI_ASSERT((params.colliderType == mochi::ColliderType::Auto), "DSL default value for RigidActorParams::colliderType doesn't match C++ default. DSL says Auto, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.isStatic == bool(false)), "DSL default value for RigidActorParams::isStatic doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
@@ -1656,6 +1664,7 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
   }
   {
     mochi::SoftActorParams params{};
+    MOCHI_ASSERT((params.material == mochi::SoftMaterialParams{}), "DSL default value for SoftActorParams::material doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.hasGravity == bool(true)), "DSL default value for SoftActorParams::hasGravity doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.hasInertia == bool(true)), "DSL default value for SoftActorParams::hasInertia doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.hasStress == bool(true)), "DSL default value for SoftActorParams::hasStress doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
@@ -1684,6 +1693,7 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     mochi::ArticulatedCycleJointParams params{};
     MOCHI_ASSERT((params.parentLink == int(-1)), "DSL default value for ArticulatedCycleJointParams::parentLink doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.childLink == int(-1)), "DSL default value for ArticulatedCycleJointParams::childLink doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.jointFromChildLink == mochi::TransformRT{}), "DSL default value for ArticulatedCycleJointParams::jointFromChildLink doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.stiffness, 50000.0_r, "DSL default value for ArticulatedCycleJointParams::stiffness doesn't match C++ default. DSL says 50000, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
@@ -1700,44 +1710,100 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT_EQ(params.saturation, -1.0_r, "DSL default value for ConstraintParams::saturation doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
+    mochi::RigidSphericalJointConstraintParams params{};
+    MOCHI_ASSERT((params.localPosA == mochi::Real3{}), "DSL default value for RigidSphericalJointConstraintParams::localPosA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.localPosB == mochi::Real3{}), "DSL default value for RigidSphericalJointConstraintParams::localPosB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorA == mochi::ActorHandle{}), "DSL default value for RigidSphericalJointConstraintParams::actorA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorB == mochi::ActorHandle{}), "DSL default value for RigidSphericalJointConstraintParams::actorB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::RigidPrismaticJointConstraintParams params{};
+    MOCHI_ASSERT((params.freeAxis == mochi::Real3{}), "DSL default value for RigidPrismaticJointConstraintParams::freeAxis doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorA == mochi::ActorHandle{}), "DSL default value for RigidPrismaticJointConstraintParams::actorA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorB == mochi::ActorHandle{}), "DSL default value for RigidPrismaticJointConstraintParams::actorB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.max == std::optional<mochi::real>{}), "DSL default value for RigidPrismaticJointConstraintParams::max doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.min == std::optional<mochi::real>{}), "DSL default value for RigidPrismaticJointConstraintParams::min doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
     mochi::DeformableNodeToDeformableNodeConstraintParams params{};
     MOCHI_ASSERT((params.nodeIndexA == int(-1)), "DSL default value for DeformableNodeToDeformableNodeConstraintParams::nodeIndexA doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.nodeIndexB == int(-1)), "DSL default value for DeformableNodeToDeformableNodeConstraintParams::nodeIndexB doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorA == mochi::ActorHandle{}), "DSL default value for DeformableNodeToDeformableNodeConstraintParams::actorA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorB == mochi::ActorHandle{}), "DSL default value for DeformableNodeToDeformableNodeConstraintParams::actorB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.findClosest == bool(false)), "DSL default value for DeformableNodeToDeformableNodeConstraintParams::findClosest doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::RodElementRotationToRigidConstraintParams params{};
+    MOCHI_ASSERT((params.refFrameRotVec == mochi::Real3{}), "DSL default value for RodElementRotationToRigidConstraintParams::refFrameRotVec doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.rigidActor == mochi::ActorHandle{}), "DSL default value for RodElementRotationToRigidConstraintParams::rigidActor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.rodActor == mochi::ActorHandle{}), "DSL default value for RodElementRotationToRigidConstraintParams::rodActor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.elementIndex == int(0)), "DSL default value for RodElementRotationToRigidConstraintParams::elementIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::DeformableNodeToRigidConstraintParams params{};
+    MOCHI_ASSERT((params.rigidLocalPos == mochi::Real3{}), "DSL default value for DeformableNodeToRigidConstraintParams::rigidLocalPos doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.deformableNodeIndex == int(-1)), "DSL default value for DeformableNodeToRigidConstraintParams::deformableNodeIndex doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.rigidActor == mochi::ActorHandle{}), "DSL default value for DeformableNodeToRigidConstraintParams::rigidActor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.deformableActor == mochi::ActorHandle{}), "DSL default value for DeformableNodeToRigidConstraintParams::deformableActor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.findClosest == bool(false)), "DSL default value for DeformableNodeToRigidConstraintParams::findClosest doesn't match C++ default. DSL says false, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.fixToDeformablePos == bool(true)), "DSL default value for DeformableNodeToRigidConstraintParams::fixToDeformablePos doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::JointRotationRangeConstraintParams params{};
+    MOCHI_ASSERT((params.refFrameRotVec == mochi::Real3{}), "DSL default value for JointRotationRangeConstraintParams::refFrameRotVec doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.angleRangeX == mochi::kMinus2PiPlus2Pi), "DSL default value for JointRotationRangeConstraintParams::angleRangeX doesn't match C++ default. DSL says kMinus2PiPlus2Pi, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.angleRangeY == mochi::kMinus2PiPlus2Pi), "DSL default value for JointRotationRangeConstraintParams::angleRangeY doesn't match C++ default. DSL says kMinus2PiPlus2Pi, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.angleRangeZ == mochi::kMinus2PiPlus2Pi), "DSL default value for JointRotationRangeConstraintParams::angleRangeZ doesn't match C++ default. DSL says kMinus2PiPlus2Pi, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorA == mochi::ActorHandle{}), "DSL default value for JointRotationRangeConstraintParams::actorA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorB == mochi::ActorHandle{}), "DSL default value for JointRotationRangeConstraintParams::actorB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.rangeAroundRest == bool(true)), "DSL default value for JointRotationRangeConstraintParams::rangeAroundRest doesn't match C++ default. DSL says true, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::RigidPivotPositionConstraintParams params{};
+    MOCHI_ASSERT((params.targetPosition == mochi::Real3{}), "DSL default value for RigidPivotPositionConstraintParams::targetPosition doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.localPosition == mochi::Real3{}), "DSL default value for RigidPivotPositionConstraintParams::localPosition doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for RigidPivotPositionConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::RigidPivotToRigidTargetConstraintParams params{};
+    MOCHI_ASSERT((params.targetTransform == mochi::TransformRT{}), "DSL default value for RigidPivotToRigidTargetConstraintParams::targetTransform doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.localPosition == mochi::Real3{}), "DSL default value for RigidPivotToRigidTargetConstraintParams::localPosition doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for RigidPivotToRigidTargetConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::RigidPivotRotationConstraintParams params{};
+    MOCHI_ASSERT((params.targetRotation == mochi::Real3{}), "DSL default value for RigidPivotRotationConstraintParams::targetRotation doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.localRotation == mochi::Real3{}), "DSL default value for RigidPivotRotationConstraintParams::localRotation doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for RigidPivotRotationConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::DeformableNodePositionConstraintParams params{};
     MOCHI_ASSERT((params.nodeIndex == int(-1)), "DSL default value for DeformableNodePositionConstraintParams::nodeIndex doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.position == mochi::Real3{}), "DSL default value for DeformableNodePositionConstraintParams::position doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for DeformableNodePositionConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::JointRotationTrackingConstraintParams params{};
+    MOCHI_ASSERT((params.refFrameRotVec == mochi::Real3{}), "DSL default value for JointRotationTrackingConstraintParams::refFrameRotVec doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorA == mochi::ActorHandle{}), "DSL default value for JointRotationTrackingConstraintParams::actorA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorB == mochi::ActorHandle{}), "DSL default value for JointRotationTrackingConstraintParams::actorB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::ArticulatedSingleDofTargetConstraintParams params{};
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for ArticulatedSingleDofTargetConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.jointIndex == int(0)), "DSL default value for ArticulatedSingleDofTargetConstraintParams::jointIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.dofIndex == int(0)), "DSL default value for ArticulatedSingleDofTargetConstraintParams::dofIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.targetValue, 0.0_r, "DSL default value for ArticulatedSingleDofTargetConstraintParams::targetValue doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::Articulated3dRotationTargetConstraintParams params{};
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for Articulated3dRotationTargetConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.jointIndex == int(0)), "DSL default value for Articulated3dRotationTargetConstraintParams::jointIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.target == mochi::Quaternion{}), "DSL default value for Articulated3dRotationTargetConstraintParams::target doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::ArticulatedSingleDofRangeConstraintParams params{};
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for ArticulatedSingleDofRangeConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.jointIndex == int(0)), "DSL default value for ArticulatedSingleDofRangeConstraintParams::jointIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.dofIndex == int(0)), "DSL default value for ArticulatedSingleDofRangeConstraintParams::dofIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.minValue, 0.0_r, "DSL default value for ArticulatedSingleDofRangeConstraintParams::minValue doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
@@ -1745,11 +1811,35 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
   }
   {
     mochi::Articulated3dRotationRangeConstraintParams params{};
+    MOCHI_ASSERT((params.actor == mochi::ActorHandle{}), "DSL default value for Articulated3dRotationRangeConstraintParams::actor doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.jointIndex == int(0)), "DSL default value for Articulated3dRotationRangeConstraintParams::jointIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.minValues == mochi::Real3{}), "DSL default value for Articulated3dRotationRangeConstraintParams::minValues doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.maxValues == mochi::Real3{}), "DSL default value for Articulated3dRotationRangeConstraintParams::maxValues doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::ContactPoint params{};
+    MOCHI_ASSERT((params.actorA == mochi::ActorHandle{}), "DSL default value for ContactPoint::actorA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.actorB == mochi::ActorHandle{}), "DSL default value for ContactPoint::actorB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.distance, 0.0_r, "DSL default value for ContactPoint::distance doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.posA == mochi::Real3{}), "DSL default value for ContactPoint::posA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.posB == mochi::Real3{}), "DSL default value for ContactPoint::posB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.normal == mochi::Real3{}), "DSL default value for ContactPoint::normal doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.force == mochi::Real3{}), "DSL default value for ContactPoint::force doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.pointVelocityA == mochi::Real3{}), "DSL default value for ContactPoint::pointVelocityA doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.pointVelocityB == mochi::Real3{}), "DSL default value for ContactPoint::pointVelocityB doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.sampleIndex == int(0)), "DSL default value for ContactPoint::sampleIndex doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.intWeight, 0.0_r, "DSL default value for ContactPoint::intWeight doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT((params.elementIndex == int(-1)), "DSL default value for ContactPoint::elementIndex doesn't match C++ default. DSL says -1, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.parametricCoords == mochi::Real3{}), "DSL default value for ContactPoint::parametricCoords doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::NodeContactForce params{};
+    MOCHI_ASSERT((params.index == int(0)), "DSL default value for NodeContactForce::index doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.force == mochi::Real3{}), "DSL default value for NodeContactForce::force doesn't match C++ default. DSL says {}, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::SdfDistances params{};
+    MOCHI_ASSERT_EQ(params.maxSdfFarDistanceEvaluation, 0.0_r, "DSL default value for SdfDistances::maxSdfFarDistanceEvaluation doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::AsyncStepParams params{};
@@ -1757,6 +1847,21 @@ MOCHI_API void mochi::CheckPhysicsDslDefaultValues() {
     MOCHI_ASSERT_EQ(params.fixedTimeStepSeconds, 0.01, "DSL default value for AsyncStepParams::fixedTimeStepSeconds doesn't match C++ default. DSL says 0.01, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.dynamicTimeStepMinSeconds, 0.001, "DSL default value for AsyncStepParams::dynamicTimeStepMinSeconds doesn't match C++ default. DSL says 0.001, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
     MOCHI_ASSERT_EQ(params.dynamicTimeStepMaxSeconds, 0.01, "DSL default value for AsyncStepParams::dynamicTimeStepMaxSeconds doesn't match C++ default. DSL says 0.01, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::PerformanceStats params{};
+    MOCHI_ASSERT_EQ(params.totalStepDurationSec, 0.0, "DSL default value for PerformanceStats::totalStepDurationSec doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.solveStepDurationSec, 0.0, "DSL default value for PerformanceStats::solveStepDurationSec doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.preStepCallbacksDurationSec, 0.0, "DSL default value for PerformanceStats::preStepCallbacksDurationSec doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.postStepCallbacksDurationSec, 0.0, "DSL default value for PerformanceStats::postStepCallbacksDurationSec doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.recordingStepDurationSec, 0.0, "DSL default value for PerformanceStats::recordingStepDurationSec doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+  }
+  {
+    mochi::SolverStats params{};
+    MOCHI_ASSERT((params.maxNonLinearIters == int(0)), "DSL default value for SolverStats::maxNonLinearIters doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT_EQ(params.residualNorm, 0.0, "DSL default value for SolverStats::residualNorm doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.maxLineSearchIters == int(0)), "DSL default value for SolverStats::maxLineSearchIters doesn't match C++ default. DSL says 0, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
+    MOCHI_ASSERT((params.convergenceStatus == mochi::ConvergenceStatus::None), "DSL default value for SolverStats::convergenceStatus doesn't match C++ default. DSL says None, C++ has a different value. Please check the default value, then run mochi_gen_py to regenerate this file.")
   }
   {
     mochi::RecordingParams params{};

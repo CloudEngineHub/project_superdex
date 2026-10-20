@@ -76,7 +76,7 @@ enum ArticulatedJointType [from_mochi_core] {
 //
 // @details Cycle joints create closed loops in the kinematic chain, allowing topologies beyond
 // simple trees.
-struct ArticulatedCycleJoint [from_mochi_core, equality] {
+struct ArticulatedCycleJoint [from_mochi_core, equality(default)] {
   // @brief Child link index.
   int child = 0;
   // @brief Parent link index.
@@ -99,7 +99,7 @@ enum RoutingElementType [from_mochi_core] {
 // localPosition; a @ref RoutingElementType::LinearJoint uses @ref index (a joint index) and @ref
 // coefficient. Order matters: a segment forms only between adjacent waypoints, so a linear-joint
 // element between two waypoints leaves a gap.
-struct RoutingElement [from_mochi_core, equality] {
+struct RoutingElement [from_mochi_core, equality(default)] {
   // @brief Selects the interpretation of the remaining fields.
   RoutingElementType type = Waypoint;
   // @brief Link index for a waypoint, or joint index for a linear-joint element.
@@ -117,7 +117,7 @@ struct RoutingElement [from_mochi_core, equality] {
 // @brief Blending data for one source shape within a soft skinned mesh.
 //
 // @see BlendingDataView
-struct BlendingData [from_mochi_core, no_capi, equality] {
+struct BlendingData [from_mochi_core, no_capi, equality(default)] {
   // @brief Copy from @ref BlendingDataView.
   //
   // @param[in] src Source data.
@@ -139,7 +139,7 @@ struct BlendingData [from_mochi_core, no_capi, equality] {
 // @brief Non-owning view of blending data for one source shape within a soft skinned mesh.
 //
 // @see BlendingData
-struct BlendingDataView [from_mochi_core, no_capi, equality] {
+struct BlendingDataView [from_mochi_core, no_capi, equality(default)] {
   // @brief Implicit conversion from @ref BlendingData.
   //
   // @param[in] src Source data.
@@ -155,7 +155,7 @@ struct BlendingDataView [from_mochi_core, no_capi, equality] {
 // @brief Skinning data for a SuperDex mesh.
 //
 // @see SkinningDataView
-struct SkinningData [from_mochi_core, no_capi, equality] {
+struct SkinningData [from_mochi_core, no_capi, equality(default)] {
   // @brief Copy from @ref SkinningDataView.
   //
   // @param[in] src Source data.
@@ -171,7 +171,7 @@ struct SkinningData [from_mochi_core, no_capi, equality] {
 // @brief Non-owning view of skinning data for a SuperDex mesh.
 //
 // @see SkinningData
-struct SkinningDataView [from_mochi_core, no_capi, equality] {
+struct SkinningDataView [from_mochi_core, no_capi, equality(default)] {
   // @brief Implicit conversion from @ref SkinningData.
   //
   // @param[in] src Source data.
@@ -187,7 +187,7 @@ struct SkinningDataView [from_mochi_core, no_capi, equality] {
 // @brief Mesh data for a SuperDex actor or model file.
 //
 // @see MeshDataView
-struct MeshData [from_mochi_core, no_capi, equality] {
+struct MeshData [from_mochi_core, no_capi, equality(default)] {
   // @brief Copy from @ref MeshDataView.
   //
   // @param[in] src Source data.
@@ -220,7 +220,7 @@ struct MeshData [from_mochi_core, no_capi, equality] {
 // @brief Non-owning view of mesh data for a SuperDex actor or model file.
 //
 // @see MeshData
-struct MeshDataView [from_mochi_core, no_capi, equality] {
+struct MeshDataView [from_mochi_core, no_capi, equality(default)] {
   // @brief Implicit conversion from @ref MeshData.
   //
   // @param[in] src Source data.
@@ -254,7 +254,7 @@ struct MeshDataView [from_mochi_core, no_capi, equality] {
 // @brief Data for a precomputed signed-distance-field grid.
 //
 // @see GridSdfDataView
-struct GridSdfData [from_mochi_core, no_capi, equality] {
+struct GridSdfData [from_mochi_core, no_capi, equality(default)] {
   // @brief Copy from @ref GridSdfDataView.
   //
   // @param[in] src Source data.
@@ -290,7 +290,7 @@ struct GridSdfData [from_mochi_core, no_capi, equality] {
 // @brief Non-owning view of data for a precomputed signed-distance-field grid.
 //
 // @see GridSdfData
-struct GridSdfDataView [from_mochi_core, no_capi, equality] {
+struct GridSdfDataView [from_mochi_core, no_capi, equality(default)] {
   // @brief Implicit conversion from @ref GridSdfData.
   //
   // @param[in] src Source data.
@@ -324,7 +324,7 @@ struct GridSdfDataView [from_mochi_core, no_capi, equality] {
 }
 
 // @brief Oriented box represented by center, half extents, and rotation.
-struct Box [from_mochi_core, equality] {
+struct Box [from_mochi_core, equality(default)] {
   // @brief Center position [m].
   Real3 center [units("m")];
   // @brief Half-size along each local axis [m].
@@ -334,7 +334,7 @@ struct Box [from_mochi_core, equality] {
 }
 
 // @brief Plane represented by a unit normal and signed distance from the origin.
-struct Plane [from_mochi_core, equality] {
+struct Plane [from_mochi_core, equality(default)] {
   // @brief Unit normal vector.
   Real3 normal = kReal3YAxis;
   // @brief Signed distance from the origin [m].
@@ -342,7 +342,7 @@ struct Plane [from_mochi_core, equality] {
 }
 
 // @brief Sphere represented by center and radius.
-struct Sphere [from_mochi_core, equality] {
+struct Sphere [from_mochi_core, equality(default)] {
   // @brief Center position [m].
   Real3 center [units("m")];
   // @brief Radius [m].
@@ -352,7 +352,7 @@ struct Sphere [from_mochi_core, equality] {
 // @brief Contents of a SuperDex model file.
 //
 // @see ModelDataView
-struct ModelData [from_mochi_core, no_capi, equality] {
+struct ModelData [from_mochi_core, no_capi, equality(default)] {
   // @brief Copy from @ref ModelDataView.
   //
   // @param[in] src Source data.
@@ -396,7 +396,7 @@ struct ModelData [from_mochi_core, no_capi, equality] {
 // @brief Non-owning view of the contents of a SuperDex model file.
 //
 // @see ModelData
-struct ModelDataView [from_mochi_core, no_capi, equality] {
+struct ModelDataView [from_mochi_core, no_capi, equality(default)] {
   // @brief Implicit conversion from @ref ModelData.
   //
   // @param[in] src Source data.
@@ -669,7 +669,7 @@ enum MeshFileType [from_mochi_core] {
 // @details A GridSdf represents the SDF to a closed surface mesh as a 3D grid where each vertex
 // stores the signed distance to the surface mesh. The SDF grid resolution and bounds are controlled
 // by these parameters.
-struct GridSdfParams [from_mochi_core] {
+struct GridSdfParams [equality(default), from_mochi_core] {
   // @brief Defines the mesh feature used as reference measurement for computing the voxel size.
   //
   // @see resolutionDelta
@@ -711,7 +711,7 @@ struct GridSdfParams [from_mochi_core] {
 }
 
 // @brief Parameters for a linear elastic material model.
-struct LinearElasticMaterialParams [from_mochi_core] {
+struct LinearElasticMaterialParams [equality(default), from_mochi_core] {
   // @brief Young's modulus [Pa]. Must be positive.
   real youngsModulus [units("Pa")] = 1e5;
 
@@ -722,7 +722,7 @@ struct LinearElasticMaterialParams [from_mochi_core] {
 }
 
 // @brief Parameters for the St. Venant-Kirchhoff material model.
-struct StVenantKirchhoffMaterialParams [from_mochi_core] {
+struct StVenantKirchhoffMaterialParams [equality(default), from_mochi_core] {
   // @brief Young's modulus [Pa]. Must be positive.
   real youngsModulus [units("Pa")] = 1e5;
 
@@ -754,7 +754,7 @@ struct NeoHookeanMaterialParams [from_mochi_core] {
 }
 
 // @brief Parameters for the active anisotropic ARAP material component.
-struct ActiveAnisoArapMaterialParams [from_mochi_core] {
+struct ActiveAnisoArapMaterialParams [equality(default), from_mochi_core] {
   // @brief Anisotropic stiffness (α) along fiber direction [Pa].
   //
   // @note Must not be negative.
@@ -799,7 +799,7 @@ struct ActiveAnisoArapMaterialParams [from_mochi_core] {
 }
 
 // @brief Parameters for a material combining passive Neo-Hookean and active anisotropic terms.
-struct ActiveNeoHookeanMaterialParams [from_mochi_core] {
+struct ActiveNeoHookeanMaterialParams [equality(default), from_mochi_core] {
   // @brief Passive isotropic hyperelastic component parameters (Neo-Hookean).
   //
   // @see NeoHookeanMaterialParams
@@ -812,7 +812,7 @@ struct ActiveNeoHookeanMaterialParams [from_mochi_core] {
 }
 
 // @brief Parameters for an as-rigid-as-possible material model.
-struct ArapMaterialParams [from_mochi_core] {
+struct ArapMaterialParams [equality(default), from_mochi_core] {
   // @brief ARAP stiffness parameter (μ) [Pa].
   //
   // @note Must be greater than zero.
@@ -825,7 +825,7 @@ struct ArapMaterialParams [from_mochi_core] {
 }
 
 // @brief Parameters for an active ARAP material targeting a preferred shape tensor.
-struct ActiveShapeTargetingArapMaterialParams [from_mochi_core] {
+struct ActiveShapeTargetingArapMaterialParams [equality(default), from_mochi_core] {
   // @brief ARAP stiffness parameter (μ) [Pa].
   //
   // @note Must be greater than zero.
@@ -846,7 +846,7 @@ struct ActiveShapeTargetingArapMaterialParams [from_mochi_core] {
 }
 
 // @brief Parameters for a homogeneous soft material.
-struct SoftMaterialParams [from_mochi_core] {
+struct SoftMaterialParams [equality(default), from_mochi_core] {
   // @brief Material constitutive model.
   SoftMaterialType type = NeoHookean;
 
@@ -912,7 +912,7 @@ struct SoftMaterialParams [from_mochi_core] {
 // @brief Per-element soft material data for heterogeneous materials.
 //
 // @see PerElementSoftMaterialDataView
-struct PerElementSoftMaterialData [from_mochi_core, equality, no_capi] {
+struct PerElementSoftMaterialData [from_mochi_core, equality(default), no_capi] {
   // @brief Copy from @ref PerElementSoftMaterialDataView.
   //
   // @param[in] src Source data.
@@ -967,7 +967,7 @@ struct PerElementSoftMaterialData [from_mochi_core, equality, no_capi] {
 // @brief Non-owning view of per-element soft material data.
 //
 // @see PerElementSoftMaterialData
-struct PerElementSoftMaterialDataView [from_mochi_core, equality, no_capi] {
+struct PerElementSoftMaterialDataView [from_mochi_core, equality(default), no_capi] {
   // @brief Implicit conversion from @ref PerElementSoftMaterialData.
   //
   // @param[in] src Source data.
@@ -1093,7 +1093,7 @@ enum ColliderType [from_mochi_core] {
 //     except if the collider is static in which case the colliding's values are used.
 //
 // @see Scene::SetContactPairParamsOverride
-struct ContactParams [from_mochi_core] {
+struct ContactParams [equality(default), from_mochi_core] {
   // @brief Construct ContactParams with all parameters explicitly specified.
   //
   // @param[in] penaltyCoefficient See @ref penaltyCoefficient.
@@ -1281,7 +1281,7 @@ struct ContactParams [from_mochi_core] {
 //   and the magnitude is @ref coulomb. Here @code |v| @endcode is the magnitude of the relative
 //   (linear or angular) velocity. This causes friction to decrease smoothly from the peak static
 //   value to @ref coulomb at high velocities.
-struct ArticulatedJointFrictionParams [from_mochi_core, equality] {
+struct ArticulatedJointFrictionParams [from_mochi_core, equality(default)] {
   // @brief Viscous friction coefficient [N·s/m or N·m·s/rad].
   //
   // @note Default is zero (no viscous friction).
@@ -1324,7 +1324,7 @@ struct ArticulatedJointFrictionParams [from_mochi_core, equality] {
 }
 
 // @brief Degree-of-freedom layout information for one articulated joint.
-struct ArticulatedDofInfo [from_mochi_core] {
+struct ArticulatedDofInfo [equality(default), from_mochi_core] {
   // @brief Offset of this joint's DoFs in the flattened DoF array.
   int offset = -1;
   // @brief Number of translational DoFs for this joint.
@@ -1369,7 +1369,7 @@ enum LogChannel [from_mochi_core] {
 // @note When a flag is `false`, the solver will try first with the true Hessian for that pathway.
 // If the Newton iteration fails to improve, all flags are set to `true` and the iteration is
 // retried with fitted Hessians for all pathways.
-struct SaturationHessianParams [from_mochi_core] {
+struct SaturationHessianParams [equality(default), from_mochi_core] {
   // @brief Use fitted Hessian for contact-friction saturation.
   bool contactFriction = true;
   // @brief Use fitted Hessian for joint-friction saturation.
@@ -1411,7 +1411,7 @@ enum CoulombFrictionModel [from_mochi_core] {
 //
 // @warning This is an experimental feature. It may be changed or removed in the future. Use at
 // your own risk.
-struct ExperimentalEvalParams [from_mochi_core] {
+struct ExperimentalEvalParams [equality(default), from_mochi_core] {
   // @brief Use explicit normals (from stage-start kinematics) for the evaluation of friction.
   //
   // @details Whether to treat the colliding and collider normals explicitly (using stage-start
@@ -1633,7 +1633,7 @@ enum LinearToleranceStrategy [from_mochi_core] {
 }
 
 // @brief Parameters for non-linear implicit solves.
-struct NonLinearSolverParams [from_mochi_core] {
+struct NonLinearSolverParams [equality(default), from_mochi_core] {
   // @brief Non-linear solver type.
   NonLinearSolverType solverType = Default;
   // @brief Every how many non-linear iterations to assemble the dresidual matrix.
@@ -1921,7 +1921,7 @@ enum LinearSolverConvergenceNorm [from_mochi_core] {
 }
 
 // @brief Parameters for linear solves.
-struct LinearSolverParams [from_mochi_core] {
+struct LinearSolverParams [equality(default), from_mochi_core] {
   // @brief Linear solver type.
   LinearSolverType solverType = Default;
   // @brief Preconditioner type.
@@ -2103,7 +2103,7 @@ enum CoordinateSpaceAxes [from_mochi_core] {
 }
 
 // @brief Coordinate-axis convention and linear unit scale.
-struct CoordinateSpace [from_mochi_core, equality] {
+struct CoordinateSpace [from_mochi_core, equality(default)] {
   // @brief Semantic direction of the positive X, Y, and Z axes.
   CoordinateSpaceAxes axes = CoordinateSpaceAxes::Default;
 

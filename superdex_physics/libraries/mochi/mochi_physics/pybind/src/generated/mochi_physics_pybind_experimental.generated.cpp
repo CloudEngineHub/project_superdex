@@ -115,6 +115,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("allow_compressive_force") = mochi::experimental::DisplacementControlActuatorParams{}.allowCompressiveForce
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::experimental::DisplacementControlActuatorParams const& self) { return mochi::experimental::DisplacementControlActuatorParams(self); })
     .def("__deepcopy__", [](mochi::experimental::DisplacementControlActuatorParams const& self, nb::dict) { return mochi::experimental::DisplacementControlActuatorParams(self); })
     .def_rw("target_displacement", &mochi::experimental::DisplacementControlActuatorParams::targetDisplacement)
@@ -311,6 +313,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("use_recentering") = mochi::experimental::ExperimentalSoftActorParams{}.useRecentering
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::experimental::ExperimentalSoftActorParams const& self) { return mochi::experimental::ExperimentalSoftActorParams(self); })
     .def("__deepcopy__", [](mochi::experimental::ExperimentalSoftActorParams const& self, nb::dict) { return mochi::experimental::ExperimentalSoftActorParams(self); })
     .def_rw("collider_type", &mochi::experimental::ExperimentalSoftActorParams::colliderType)
@@ -329,6 +333,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("soft_params").sig("...") = mochi::experimental::ExperimentalSoftSkinnedActorParams{}.softParams
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::experimental::ExperimentalSoftSkinnedActorParams const& self) { return mochi::experimental::ExperimentalSoftSkinnedActorParams(self); })
     .def("__deepcopy__", [](mochi::experimental::ExperimentalSoftSkinnedActorParams const& self, nb::dict) { return mochi::experimental::ExperimentalSoftSkinnedActorParams(self); })
     .def_prop_rw("soft_params", [](mochi::experimental::ExperimentalSoftSkinnedActorParams& self) -> mochi::DynamicArray<mochi::experimental::ExperimentalSoftActorParams>& { return self.softParams; }, [](mochi::experimental::ExperimentalSoftSkinnedActorParams& self, nb::object val) { self.softParams = nb::cast<mochi::DynamicArray<mochi::experimental::ExperimentalSoftActorParams>>(val); })
@@ -356,6 +362,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("stiffness_damping_coefficient") = mochi::experimental::RodMaterialParams{}.stiffnessDampingCoefficient
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::experimental::RodMaterialParams const& self) { return mochi::experimental::RodMaterialParams(self); })
     .def("__deepcopy__", [](mochi::experimental::RodMaterialParams const& self, nb::dict) { return mochi::experimental::RodMaterialParams(self); })
     .def_rw("linear_density", &mochi::experimental::RodMaterialParams::linearDensity)
@@ -387,6 +395,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
       , nb::arg("collider_segment_element_type").sig("...") = mochi::experimental::PointCloudColliderParams{}.colliderSegmentElementType
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::experimental::PointCloudColliderParams const& self) { return mochi::experimental::PointCloudColliderParams(self); })
     .def("__deepcopy__", [](mochi::experimental::PointCloudColliderParams const& self, nb::dict) { return mochi::experimental::PointCloudColliderParams(self); })
     .def_rw("radius", &mochi::experimental::PointCloudColliderParams::radius)

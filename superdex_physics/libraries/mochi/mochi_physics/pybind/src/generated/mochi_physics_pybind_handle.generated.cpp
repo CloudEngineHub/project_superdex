@@ -86,6 +86,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::SceneHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::SceneHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::SceneHandle>{}(self)); })
     .def("__copy__", [](mochi::SceneHandle const& self) { return mochi::SceneHandle(self); })
     .def("__deepcopy__", [](mochi::SceneHandle const& self, nb::dict) { return mochi::SceneHandle(self); })
   ;
@@ -100,6 +101,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::ActorHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::ActorHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::ActorHandle>{}(self)); })
     .def("__copy__", [](mochi::ActorHandle const& self) { return mochi::ActorHandle(self); })
     .def("__deepcopy__", [](mochi::ActorHandle const& self, nb::dict) { return mochi::ActorHandle(self); })
   ;
@@ -114,6 +116,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::ShapeHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::ShapeHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::ShapeHandle>{}(self)); })
     .def("__copy__", [](mochi::ShapeHandle const& self) { return mochi::ShapeHandle(self); })
     .def("__deepcopy__", [](mochi::ShapeHandle const& self, nb::dict) { return mochi::ShapeHandle(self); })
   ;
@@ -128,6 +131,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::CallbackHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::CallbackHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::CallbackHandle>{}(self)); })
     .def("__copy__", [](mochi::CallbackHandle const& self) { return mochi::CallbackHandle(self); })
     .def("__deepcopy__", [](mochi::CallbackHandle const& self, nb::dict) { return mochi::CallbackHandle(self); })
   ;
@@ -142,6 +146,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::ConstraintHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::ConstraintHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::ConstraintHandle>{}(self)); })
     .def("__copy__", [](mochi::ConstraintHandle const& self) { return mochi::ConstraintHandle(self); })
     .def("__deepcopy__", [](mochi::ConstraintHandle const& self, nb::dict) { return mochi::ConstraintHandle(self); })
   ;
@@ -156,6 +161,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::StateHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::StateHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::StateHandle>{}(self)); })
     .def("__copy__", [](mochi::StateHandle const& self) { return mochi::StateHandle(self); })
     .def("__deepcopy__", [](mochi::StateHandle const& self, nb::dict) { return mochi::StateHandle(self); })
   ;
@@ -170,6 +176,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsHandle([[maybe_unused]] nb::module_& 
       , nb::arg("value") = mochi::QueryHandle{}.value
     )
     .def(nb::init<>())
+    .def("__hash__", [](mochi::QueryHandle const& self) { return static_cast<Py_ssize_t>(std::hash<mochi::QueryHandle>{}(self)); })
     .def("__copy__", [](mochi::QueryHandle const& self) { return mochi::QueryHandle(self); })
     .def("__deepcopy__", [](mochi::QueryHandle const& self, nb::dict) { return mochi::QueryHandle(self); })
   ;

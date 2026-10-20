@@ -870,6 +870,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("min_grid_resolution").sig("...") = mochi::GridSdfParams{}.minGridResolution
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::GridSdfParams const& self) { return mochi::GridSdfParams(self); })
     .def("__deepcopy__", [](mochi::GridSdfParams const& self, nb::dict) { return mochi::GridSdfParams(self); })
     .def_rw("resolution_mode", &mochi::GridSdfParams::resolutionMode, "Defines the mesh feature used as reference measurement for computing the voxel\nsize.\n\nSee Also:\n    :attr:`~superdex.physics.GridSdfParams.resolution_delta`")
@@ -890,6 +892,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("poisson_ratio") = mochi::LinearElasticMaterialParams{}.poissonRatio
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::LinearElasticMaterialParams const& self) { return mochi::LinearElasticMaterialParams(self); })
     .def("__deepcopy__", [](mochi::LinearElasticMaterialParams const& self, nb::dict) { return mochi::LinearElasticMaterialParams(self); })
     .def_rw("youngs_modulus", &mochi::LinearElasticMaterialParams::youngsModulus, "Young's modulus [Pa]. Must be positive.")
@@ -910,6 +914,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("psd_strategy") = mochi::StVenantKirchhoffMaterialParams{}.psdStrategy
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::StVenantKirchhoffMaterialParams const& self) { return mochi::StVenantKirchhoffMaterialParams(self); })
     .def("__deepcopy__", [](mochi::StVenantKirchhoffMaterialParams const& self, nb::dict) { return mochi::StVenantKirchhoffMaterialParams(self); })
     .def_rw("youngs_modulus", &mochi::StVenantKirchhoffMaterialParams::youngsModulus, "Young's modulus [Pa]. Must be positive.")
@@ -954,6 +960,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("psd_strategy") = mochi::ActiveAnisoArapMaterialParams{}.psdStrategy
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ActiveAnisoArapMaterialParams const& self) { return mochi::ActiveAnisoArapMaterialParams(self); })
     .def("__deepcopy__", [](mochi::ActiveAnisoArapMaterialParams const& self, nb::dict) { return mochi::ActiveAnisoArapMaterialParams(self); })
     .def_rw("alpha", &mochi::ActiveAnisoArapMaterialParams::alpha, "Anisotropic stiffness (α) along fiber direction [Pa].\n\nNote:\n    Must not be negative.")
@@ -985,6 +993,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("active_anisotropic").sig("...") = mochi::ActiveNeoHookeanMaterialParams{}.activeAnisotropic
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ActiveNeoHookeanMaterialParams const& self) { return mochi::ActiveNeoHookeanMaterialParams(self); })
     .def("__deepcopy__", [](mochi::ActiveNeoHookeanMaterialParams const& self, nb::dict) { return mochi::ActiveNeoHookeanMaterialParams(self); })
     .def_rw("passive_isotropic", &mochi::ActiveNeoHookeanMaterialParams::passiveIsotropic, "Passive isotropic hyperelastic component parameters (Neo-Hookean).\n\nSee Also:\n    :class:`~superdex.physics.NeoHookeanMaterialParams`")
@@ -1003,6 +1013,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("psd_strategy") = mochi::ArapMaterialParams{}.psdStrategy
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ArapMaterialParams const& self) { return mochi::ArapMaterialParams(self); })
     .def("__deepcopy__", [](mochi::ArapMaterialParams const& self, nb::dict) { return mochi::ArapMaterialParams(self); })
     .def_rw("stiffness", &mochi::ArapMaterialParams::stiffness, "ARAP stiffness parameter (μ) [Pa].\n\nNote:\n    Must be greater than zero.")
@@ -1023,6 +1035,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("psd_strategy") = mochi::ActiveShapeTargetingArapMaterialParams{}.psdStrategy
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ActiveShapeTargetingArapMaterialParams const& self) { return mochi::ActiveShapeTargetingArapMaterialParams(self); })
     .def("__deepcopy__", [](mochi::ActiveShapeTargetingArapMaterialParams const& self, nb::dict) { return mochi::ActiveShapeTargetingArapMaterialParams(self); })
     .def_rw("stiffness", &mochi::ActiveShapeTargetingArapMaterialParams::stiffness, "ARAP stiffness parameter (μ) [Pa].\n\nNote:\n    Must be greater than zero.")
@@ -1060,6 +1074,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("stiffness_damping_include_geometric_term") = mochi::SoftMaterialParams{}.stiffnessDampingIncludeGeometricTerm
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::SoftMaterialParams const& self) { return mochi::SoftMaterialParams(self); })
     .def("__deepcopy__", [](mochi::SoftMaterialParams const& self, nb::dict) { return mochi::SoftMaterialParams(self); })
     .def_rw("type", &mochi::SoftMaterialParams::type, "Material constitutive model.")
@@ -1208,6 +1224,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("colliding_penalty_length_scale") = mochi::ContactParams{}.collidingPenaltyLengthScale
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ContactParams const& self) { return mochi::ContactParams(self); })
     .def("__deepcopy__", [](mochi::ContactParams const& self, nb::dict) { return mochi::ContactParams(self); })
     .def_rw("penalty_coefficient", &mochi::ContactParams::penaltyCoefficient, "Stiffness of the contact penalty force [Pa/m].\n\nNote:\n    Must be finite and strictly positive.\n\nNote:\n    Higher penalties create stiffer contacts and reduce penetration.\n\nNote:\n    Arbitrarily large penalties may degrade stability.\n\nNote:\n    The default penalty is appropriate for actors with default density. For\n    actors with much higher/lower density than the default density, the penalty\n    coefficient may need to be increased/decreased accordingly.\n\nNote:\n    Without an actor-pair override for this field, the value used in a collision\n    is the geometric mean of the colliding and collider's coefficients. The\n    exception is if the collider is static, in which case the colliding's\n    penalty is used.\n\nNote:\n    The penalty coefficient is additionally scaled by length-scale corrections\n    when the colliding or collider integrates contact over a non-2D manifold\n    (e.g., rod, shell). See\n    :attr:`~superdex.physics.ContactParams.colliding_penalty_length_scale`.")
@@ -1272,6 +1290,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("rot_size") = mochi::ArticulatedDofInfo{}.rotSize
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ArticulatedDofInfo const& self) { return mochi::ArticulatedDofInfo(self); })
     .def("__deepcopy__", [](mochi::ArticulatedDofInfo const& self, nb::dict) { return mochi::ArticulatedDofInfo(self); })
     .def_rw("offset", &mochi::ArticulatedDofInfo::offset, "Offset of this joint's DoFs in the flattened DoF array.")
@@ -1302,6 +1322,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("constraint_saturation") = mochi::SaturationHessianParams{}.constraintSaturation
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::SaturationHessianParams const& self) { return mochi::SaturationHessianParams(self); })
     .def("__deepcopy__", [](mochi::SaturationHessianParams const& self, nb::dict) { return mochi::SaturationHessianParams(self); })
     .def_rw("contact_friction", &mochi::SaturationHessianParams::contactFriction, "Use fitted Hessian for contact-friction saturation.")
@@ -1338,6 +1360,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("consistency_res_norm_step") = mochi::ExperimentalEvalParams{}.consistencyResNormStep
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::ExperimentalEvalParams const& self) { return mochi::ExperimentalEvalParams(self); })
     .def("__deepcopy__", [](mochi::ExperimentalEvalParams const& self, nb::dict) { return mochi::ExperimentalEvalParams(self); })
     .def_rw("explicit_normals", &mochi::ExperimentalEvalParams::explicitNormals, "Use explicit normals (from stage-start kinematics) for the evaluation of\nfriction.\n\nWhether to treat the colliding and collider normals explicitly (using\nstage-start kinematics) or implicitly (using current kinematics) for the\nevaluation of alignment and the friction plane.\n\nNote:\n    The SDF gradient for the normal collision force is always implicit.\n\nNote:\n    explicitNormals = true and implicitNormalForceForDissipation = false\n    produces contact residuals that are the exact gradients of the contact\n    merit. This improves convergence guarantees of the Newton solve, but may be\n    less stable due to the explicit treatment.\n\nNote:\n    A differentiable scene requires explicitNormals = true.")
@@ -1399,6 +1423,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("verbosity") = mochi::NonLinearSolverParams{}.verbosity
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::NonLinearSolverParams const& self) { return mochi::NonLinearSolverParams(self); })
     .def("__deepcopy__", [](mochi::NonLinearSolverParams const& self, nb::dict) { return mochi::NonLinearSolverParams(self); })
     .def_rw("solver_type", &mochi::NonLinearSolverParams::solverType, "Non-linear solver type.")
@@ -1452,6 +1478,8 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
       , nb::arg("verbosity") = mochi::LinearSolverParams{}.verbosity
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::LinearSolverParams const& self) { return mochi::LinearSolverParams(self); })
     .def("__deepcopy__", [](mochi::LinearSolverParams const& self, nb::dict) { return mochi::LinearSolverParams(self); })
     .def_rw("solver_type", &mochi::LinearSolverParams::solverType, "Linear solver type.")

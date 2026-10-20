@@ -42,7 +42,9 @@ struct SceneParams {
   std::optional<Real3> gravity = std::nullopt;
   std::optional<SolverParams> solver = std::nullopt;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(SceneParams const&) const = default;
+#endif
 };
 
 struct ActorContactEntry {
@@ -50,14 +52,18 @@ struct ActorContactEntry {
   DynamicArray<DynamicString> actors;
   bool includeNestedActors = true;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ActorContactEntry const&) const = default;
+#endif
 };
 
 struct LayerContactEntry {
   bool enable = true;
   DynamicArray<DynamicString> layers;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(LayerContactEntry const&) const = default;
+#endif
 };
 
 struct ContactFilter {
@@ -67,14 +73,18 @@ struct ContactFilter {
   std::optional<DynamicArray<LayerContactEntry>> layerContactAsymmetric{};
   std::optional<DynamicArray<LayerContactEntry>> layerContactSymmetric{};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ContactFilter const&) const = default;
+#endif
 };
 
 struct ContactPairParamsOverrideEntry {
   DynamicArray<DynamicString> actors;
   ContactPairParamsOverride paramsOverride;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ContactPairParamsOverrideEntry const&) const = default;
+#endif
 };
 
 struct RigidActorPrefab : public RigidActorParams {
@@ -89,6 +99,10 @@ struct RigidActorPrefab : public RigidActorParams {
   Real3 renderModelScale = {1_r, 1_r, 1_r};
   Quaternion renderModelRotation;
   Real3 renderModelTranslation = {};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidActorPrefab const&) const = default;
+#endif
 };
 
 struct SoftActorPrefab : public SoftActorParams {
@@ -109,10 +123,16 @@ struct SoftActorPrefab : public SoftActorParams {
   Quaternion renderModelRotation;
   Real3 renderModelTranslation = {};
   std::optional<DynamicArray<real>> nodeDisplacements;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(SoftActorPrefab const&) const = default;
+#endif
 };
 
 struct ArticulatedJointPrefab : ArticulatedJointParams {
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ArticulatedJointPrefab const&) const = default;
+#endif
 };
 
 struct ArticulatedLinkPrefab : ArticulatedLinkParams {
@@ -125,7 +145,9 @@ struct ArticulatedLinkPrefab : ArticulatedLinkParams {
   Quaternion renderModelRotation;
   Real3 renderModelTranslation = {};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ArticulatedLinkPrefab const&) const = default;
+#endif
 };
 
 struct ArticulatedSkinPrefab : ArticulatedSkinParams {
@@ -141,7 +163,9 @@ struct ArticulatedSkinPrefab : ArticulatedSkinParams {
   Quaternion renderModelRotation;
   Real3 renderModelTranslation = {};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ArticulatedSkinPrefab const&) const = default;
+#endif
 };
 
 struct ArticulatedActorPrefab {
@@ -157,7 +181,9 @@ struct ArticulatedActorPrefab {
   std::optional<DynamicArray<real>> jointVelocities;
   std::optional<DynamicArray<real>> jointPose;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ArticulatedActorPrefab const&) const = default;
+#endif
 };
 
 struct SoftSkinnedActorPrefab {
@@ -170,7 +196,9 @@ struct SoftSkinnedActorPrefab {
   bool hasInertia = false;
   bool hasStress = false;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(SoftSkinnedActorPrefab const&) const = default;
+#endif
 };
 
 struct ActorLists {
@@ -180,76 +208,132 @@ struct ActorLists {
   DynamicArray<SoftActorPrefab> soft{};
   DynamicArray<SoftSkinnedActorPrefab> softSkinned{};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ActorLists const&) const = default;
+#endif
 };
 
 struct RigidSphericalJointConstraintPrefab : public RigidSphericalJointConstraintParams {
   DynamicString actorNameA{};
   DynamicString actorNameB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidSphericalJointConstraintPrefab const&) const = default;
+#endif
 };
 
 struct RigidPrismaticJointConstraintPrefab : public RigidPrismaticJointConstraintParams {
   DynamicString actorNameA{};
   DynamicString actorNameB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPrismaticJointConstraintPrefab const&) const = default;
+#endif
 };
 
 struct DeformableNodeToDeformableNodeConstraintPrefab
     : public DeformableNodeToDeformableNodeConstraintParams {
   DynamicString actorNameA{};
   DynamicString actorNameB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(DeformableNodeToDeformableNodeConstraintPrefab const&) const = default;
+#endif
 };
 
 struct DeformableNodeToRigidConstraintPrefab : public DeformableNodeToRigidConstraintParams {
   DynamicString rigidActorName{};
   DynamicString deformableActorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(DeformableNodeToRigidConstraintPrefab const&) const = default;
+#endif
 };
 
 struct JointRotationRangeConstraintPrefab : public JointRotationRangeConstraintParams {
   DynamicString actorNameA{};
   DynamicString actorNameB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(JointRotationRangeConstraintPrefab const&) const = default;
+#endif
 };
 
 struct RigidPivotPositionConstraintPrefab : public RigidPivotPositionConstraintParams {
   DynamicString actorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPivotPositionConstraintPrefab const&) const = default;
+#endif
 };
 
 struct RigidPivotToRigidTargetConstraintPrefab : public RigidPivotToRigidTargetConstraintParams {
   DynamicString actorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPivotToRigidTargetConstraintPrefab const&) const = default;
+#endif
 };
 
 struct RigidPivotRotationConstraintPrefab : public RigidPivotRotationConstraintParams {
   DynamicString actorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPivotRotationConstraintPrefab const&) const = default;
+#endif
 };
 
 struct DeformableNodePositionConstraintPrefab : public DeformableNodePositionConstraintParams {
   DynamicString actorName{};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(DeformableNodePositionConstraintPrefab const&) const = default;
+#endif
 };
 
 struct JointRotationTrackingConstraintPrefab : public JointRotationTrackingConstraintParams {
   DynamicString actorNameA{};
   DynamicString actorNameB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(JointRotationTrackingConstraintPrefab const&) const = default;
+#endif
 };
 
 struct ArticulatedSingleDofTargetConstraintPrefab
     : public ArticulatedSingleDofTargetConstraintParams {
   DynamicString actorName;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(ArticulatedSingleDofTargetConstraintPrefab const&) const = default;
+#endif
 };
 
 struct Articulated3dRotationTargetConstraintPrefab
     : public Articulated3dRotationTargetConstraintParams {
   DynamicString actorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(Articulated3dRotationTargetConstraintPrefab const&) const = default;
+#endif
 };
 
 struct ArticulatedSingleDofRangeConstraintPrefab
     : public ArticulatedSingleDofRangeConstraintParams {
   DynamicString actorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(ArticulatedSingleDofRangeConstraintPrefab const&) const = default;
+#endif
 };
 
 struct Articulated3dRotationRangeConstraintPrefab
     : public Articulated3dRotationRangeConstraintParams {
   DynamicString actorName{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(Articulated3dRotationRangeConstraintPrefab const&) const = default;
+#endif
 };
 
 /////////////////
@@ -271,7 +355,9 @@ struct ConstraintLists {
   DynamicArray<DeformableNodeToRigidConstraintPrefab> deformableNodeToRigid{};
   DynamicArray<DeformableNodeToDeformableNodeConstraintPrefab> deformableNodeToDeformableNode{};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ConstraintLists const&) const = default;
+#endif
 };
 
 struct PoseControllerPrefab {
@@ -281,7 +367,9 @@ struct PoseControllerPrefab {
   DynamicArray<PoseTrackingParams> linkRotTracking{};
   DynamicArray<PoseTrackingParams> jointTracking{};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(PoseControllerPrefab const&) const = default;
+#endif
 };
 
 struct ScenePrefab;
@@ -297,7 +385,9 @@ struct PrefabReference {
   // Loaded prefab. Runtime state, not serialized.
   PrefabHandle prefab{};
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(PrefabReference const&) const = default;
+#endif
 };
 
 struct ScenePrefab {
@@ -312,7 +402,9 @@ struct ScenePrefab {
   std::optional<DynamicArray<ContactPairParamsOverrideEntry>> contactPairParamsOverrides =
       std::nullopt;
 
+#if MOCHI_LANGUAGE_CPP20
   bool operator==(ScenePrefab const&) const = default;
+#endif
 };
 
 /***********************************************************************************************

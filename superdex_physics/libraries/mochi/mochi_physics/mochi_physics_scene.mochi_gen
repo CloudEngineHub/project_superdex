@@ -26,12 +26,12 @@ class Scene [no_init, no_destruct] {
   // @brief Get the @ref Context that owns this scene.
   //
   // @return Pointer to the @ref Context that owns this scene.
-  fn GetContext() -> Context* [pure, virtual, overloaded, no_python];
+  fn GetContext() -> Context* [pure, virtual, overloaded, no_python, nodiscard];
 
   // @brief Get read-only access to the @ref Context that owns this scene.
   //
   // @return Const pointer to the @ref Context that owns this scene.
-  fn GetContext() -> Context const* [pure, virtual, const, overloaded, no_python];
+  fn GetContext() -> Context const* [pure, virtual, const, overloaded, no_python, nodiscard];
 
   // @brief Get the scene handle.
   //
@@ -46,14 +46,14 @@ class Scene [no_init, no_destruct] {
   // @brief Get the name of the scene.
   //
   // @return Name of the scene.
-  fn GetName() -> char const* [pure, virtual, const];
+  fn GetName() -> char const* [pure, virtual, const, nodiscard];
 
   // @brief Get the gravity vector in world frame.
   //
   // @return Gravity vector [m/s^2] in world frame.
   //
   // @see SetGravity
-  fn GetGravity() -> Real3 [pure, virtual, const, units("m/s^2")];
+  fn GetGravity() -> Real3 [pure, virtual, const, units("m/s^2"), nodiscard];
 
   // @brief Set the gravity vector in world frame.
   //
@@ -67,7 +67,7 @@ class Scene [no_init, no_destruct] {
   // @return Current solver parameters.
   //
   // @see SetSolverParams
-  fn GetSolverParams() -> SolverParams [pure, virtual, const];
+  fn GetSolverParams() -> SolverParams [pure, virtual, const, nodiscard];
 
   // @brief Set the solver parameters.
   //
@@ -108,28 +108,28 @@ class Scene [no_init, no_destruct] {
   // @note @ref RestoreState and @ref RestoreStateFromBytes restore this value from the captured state.
   // @note Calling @ref Step with a zero time step (e.g. to refresh queries without advancing the
   // simulation) does not update this value (i.e. it retains the value from the last positive time step).
-  fn GetLastTimeStep() -> double [pure, virtual, const, units("s")];
+  fn GetLastTimeStep() -> double [pure, virtual, const, units("s"), nodiscard];
 
   // @brief Returns the total simulation time [s] in the scene.
   //
   // @return The total simulation time [s].
   //
   // @note May not match the real-time that has elapsed.
-  fn GetTotalSimulationTime() -> double [pure, virtual, const, units("s")];
+  fn GetTotalSimulationTime() -> double [pure, virtual, const, units("s"), nodiscard];
 
   // @brief Get solver convergence metrics from the last simulation step.
   //
   // @return The @ref SolverStats from the last simulation step.
   //
   // @see SolverStats, Actor::GetConvergenceStatus
-  fn GetSolverStats() -> SolverStats [pure, virtual, const];
+  fn GetSolverStats() -> SolverStats [pure, virtual, const, nodiscard];
 
   // @brief Get timing and profiling metrics from the last simulation step.
   //
   // @return The @ref PerformanceStats from the last simulation step.
   //
   // @see PerformanceStats
-  fn GetPerformanceStats() -> PerformanceStats [pure, virtual, const];
+  fn GetPerformanceStats() -> PerformanceStats [pure, virtual, const, nodiscard];
 
   // @brief Enables/disables forcing all actors in the scene to be in a single simulation island.
   //
@@ -151,7 +151,7 @@ class Scene [no_init, no_destruct] {
   // @return True if all actors are forced into a single simulation island.
   //
   // @see SetForceSingleIsland
-  fn GetForceSingleIsland() -> bool [pure, virtual, const];
+  fn GetForceSingleIsland() -> bool [pure, virtual, const, nodiscard];
 
   // @brief Capture the simulation state that changes from step to step for later restoration.
   //
@@ -164,7 +164,7 @@ class Scene [no_init, no_destruct] {
   // @warning Not supported for scenes with ROM actors.
   //
   // @see RestoreState, ReleaseState, ReleaseAllStates, CaptureStateToFile, CaptureStateToBytes
-  fn CaptureState() -> StateHandle [pure, virtual, mochi_error];
+  fn CaptureState() -> StateHandle [pure, virtual, mochi_error, nodiscard];
 
   // @brief Restore captured simulation state. Optionally release the @ref StateHandle at the same
   // time.
@@ -238,7 +238,7 @@ class Scene [no_init, no_destruct] {
   // @param[in] stateB Second StateHandle to compare
   //
   // @return True if both states are valid and identical.
-  fn IsEqualState(StateHandle stateA, StateHandle stateB) -> bool [pure, virtual, const];
+  fn IsEqualState(StateHandle stateA, StateHandle stateB) -> bool [pure, virtual, const, nodiscard];
 
   // @brief Captures a snapshot of the state of a @ref Scene, similar to @ref Scene::CaptureState,
   // then writes the data to a JSON file for manual inspection.
@@ -336,7 +336,7 @@ class Scene [no_init, no_destruct] {
   // in this scene.
   //
   // @see Actor, ActorHandle, DestroyActor, Actor::GetHandle
-  fn GetActor(ActorHandle actor) -> Actor* [pure, virtual, overloaded, nullable];
+  fn GetActor(ActorHandle actor) -> Actor* [pure, virtual, overloaded, nullable, nodiscard];
 
   // @brief Get a const pointer to the @ref Actor associated with an @ref ActorHandle.
   //
@@ -346,7 +346,7 @@ class Scene [no_init, no_destruct] {
   // actor in this scene.
   //
   // @see Actor, ActorHandle, DestroyActor, Actor::GetHandle
-  fn GetActor(ActorHandle actor) -> Actor const* [pure, virtual, const, overloaded, no_python, nullable];
+  fn GetActor(ActorHandle actor) -> Actor const* [pure, virtual, const, overloaded, no_python, nullable, nodiscard];
 
   // @brief Get the number of actors in the scene, including nested link actors and nested soft
   // actors.
@@ -355,7 +355,7 @@ class Scene [no_init, no_destruct] {
   //
   // @note To count only top-level actors, iterate with @ref ForEachActor and skip actors for
   // which @ref Actor::IsNestedLinkActor or @ref Actor::IsNestedSoftActor returns true.
-  fn GetNumActors() -> int [pure, virtual, const];
+  fn GetNumActors() -> int [pure, virtual, const, nodiscard];
 
   // @brief Get @ref Actor pointers for all the actors in the scene.
   //
@@ -558,7 +558,7 @@ class Scene [no_init, no_destruct] {
   // constraint in this scene.
   //
   // @see Constraint, ConstraintHandle, DestroyConstraint, Constraint::GetHandle
-  fn GetConstraint(ConstraintHandle constraint) -> Constraint* [pure, virtual, overloaded, nullable];
+  fn GetConstraint(ConstraintHandle constraint) -> Constraint* [pure, virtual, overloaded, nullable, nodiscard];
 
   // @brief Get the const @ref Constraint pointer associated with a @ref ConstraintHandle.
   //
@@ -568,7 +568,7 @@ class Scene [no_init, no_destruct] {
   // identify a constraint in this scene.
   //
   // @see Constraint, ConstraintHandle, DestroyConstraint, Constraint::GetHandle
-  fn GetConstraint(ConstraintHandle constraint) -> Constraint const* [pure, virtual, const, overloaded, no_python, nullable];
+  fn GetConstraint(ConstraintHandle constraint) -> Constraint const* [pure, virtual, const, overloaded, no_python, nullable, nodiscard];
 
   // @brief Destroy a constraint and remove it from the scene.
   //
@@ -607,7 +607,7 @@ class Scene [no_init, no_destruct] {
   //
   // @note Includes constraints created implicitly by @ref CreateArticulatedActor (e.g. articulated
   // joint limits).
-  fn GetNumConstraints() -> int [pure, virtual, const];
+  fn GetNumConstraints() -> int [pure, virtual, const, nodiscard];
 
   // @brief Iterate over all the constraints in the scene using a callback.
   //
@@ -635,14 +635,14 @@ class Scene [no_init, no_destruct] {
   // @return Reference to the @ref DebugDraw interface.
   //
   // @see DebugDraw
-  fn GetDebugDraw() -> DebugDraw& [pure, virtual, overloaded];
+  fn GetDebugDraw() -> DebugDraw& [pure, virtual, overloaded, nodiscard];
 
   // @brief Get a const reference to the debug draw interface for this scene.
   //
   // @return Const reference to the @ref DebugDraw interface.
   //
   // @see DebugDraw
-  fn GetDebugDraw() -> DebugDraw const& [pure, virtual, const, overloaded, no_python];
+  fn GetDebugDraw() -> DebugDraw const& [pure, virtual, const, overloaded, no_python, nodiscard];
 
   // @brief This gives the debugger a chance to process messages that require reading or writing
   // scene state.
@@ -662,7 +662,7 @@ class Scene [no_init, no_destruct] {
   // @note A recording write failure does not end the recording session.
   //
   // @see StartRecording, StopRecording
-  fn IsRecording() -> bool [pure, virtual, const];
+  fn IsRecording() -> bool [pure, virtual, const, nodiscard];
 
   // @brief Create or replace the specified file and start recording the scene to an HDF5 file.
   //
@@ -737,7 +737,7 @@ class Scene [no_init, no_destruct] {
   // @ref EnableActorContactAsymmetric or @ref EnableActorContactSymmetric.
   //
   // @see EnableLayerContactAsymmetric, EnableLayerContactSymmetric
-  fn IsLayerContactEnabled(StringView layerA, StringView layerB) -> bool [pure, virtual, const];
+  fn IsLayerContactEnabled(StringView layerA, StringView layerB) -> bool [pure, virtual, const, nodiscard];
 
   // @brief Get the number of unique contact layer names in the scene.
   //
@@ -746,7 +746,7 @@ class Scene [no_init, no_destruct] {
   // @note The count may include layer names not currently assigned to an actor.
   //
   // @see EnumerateContactLayerNames
-  fn GetNumContactLayers() -> int [pure, virtual, const];
+  fn GetNumContactLayers() -> int [pure, virtual, const, nodiscard];
 
   // @brief Enumerate all unique contact layer names in the scene.
   //
@@ -833,7 +833,7 @@ class Scene [no_init, no_destruct] {
   // @return True if the exact pair has a stored override.
   //
   // @see GetContactPairParamsOverride
-  fn HasContactPairParamsOverride(ActorHandle actorA, ActorHandle actorB) -> bool [pure, virtual, const, mochi_error];
+  fn HasContactPairParamsOverride(ActorHandle actorA, ActorHandle actorB) -> bool [pure, virtual, const, mochi_error, nodiscard];
 
   // @brief Get the parameter override for the exact unordered actor pair.
   //
@@ -844,7 +844,7 @@ class Scene [no_init, no_destruct] {
   // @note Reports an error when a valid pair has no stored override.
   //
   // @see SetContactPairParamsOverride, HasContactPairParamsOverride
-  fn GetContactPairParamsOverride(ActorHandle actorA, ActorHandle actorB) -> ContactPairParamsOverride [pure, virtual, const, mochi_error];
+  fn GetContactPairParamsOverride(ActorHandle actorA, ActorHandle actorB) -> ContactPairParamsOverride [pure, virtual, const, mochi_error, nodiscard];
 
   # Step Callbacks
   // @brief Default priority for callback ordering. Lower values execute earlier (higher priority).
@@ -866,7 +866,7 @@ class Scene [no_init, no_destruct] {
   // @note Callbacks should not modify scene structure (add/remove actors/constraints).
   //
   // @see CancelCallback, RegisterPostStepCallback
-  fn RegisterPreStepCallback(StringView debugName, Function<void, StepInfo const&> callback, int priority = kDefaultCallbackPriority) -> CallbackHandle [pure, virtual];
+  fn RegisterPreStepCallback(StringView debugName, Function<void, StepInfo const&> callback, int priority = kDefaultCallbackPriority) -> CallbackHandle [pure, virtual, nodiscard];
 
   // @brief Register a callback to execute after each simulation step.
   //
@@ -884,7 +884,7 @@ class Scene [no_init, no_destruct] {
   // @note Callbacks should not modify scene structure (add/remove actors/constraints).
   //
   // @see CancelCallback, RegisterPreStepCallback
-  fn RegisterPostStepCallback(StringView debugName, Function<void, StepInfo const&> callback, int priority = kDefaultCallbackPriority) -> CallbackHandle [pure, virtual];
+  fn RegisterPostStepCallback(StringView debugName, Function<void, StepInfo const&> callback, int priority = kDefaultCallbackPriority) -> CallbackHandle [pure, virtual, nodiscard];
 
   // @brief Cancel a previously registered callback.
   //

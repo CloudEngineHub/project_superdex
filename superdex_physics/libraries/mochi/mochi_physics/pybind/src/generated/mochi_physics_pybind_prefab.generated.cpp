@@ -91,6 +91,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("solver").sig("...") = mochi::prefab::SceneParams{}.solver
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::SceneParams const& self) { return mochi::prefab::SceneParams(self); })
     .def("__deepcopy__", [](mochi::prefab::SceneParams const& self, nb::dict) { return mochi::prefab::SceneParams(self); })
     .def_prop_rw("comment", [](mochi::prefab::SceneParams& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::SceneParams& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -163,6 +165,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("render_model_translation").sig("...") = mochi::prefab::RigidActorPrefab{}.renderModelTranslation
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::RigidActorPrefab const& self) { return mochi::prefab::RigidActorPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::RigidActorPrefab const& self, nb::dict) { return mochi::prefab::RigidActorPrefab(self); })
     .def_prop_rw("comment", [](mochi::prefab::RigidActorPrefab& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::RigidActorPrefab& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -242,6 +246,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("node_displacements").sig("...") = mochi::prefab::SoftActorPrefab{}.nodeDisplacements
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::SoftActorPrefab const& self) { return mochi::prefab::SoftActorPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::SoftActorPrefab const& self, nb::dict) { return mochi::prefab::SoftActorPrefab(self); })
     .def_prop_rw("comment", [](mochi::prefab::SoftActorPrefab& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::SoftActorPrefab& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -475,6 +481,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("has_stress") = mochi::prefab::SoftSkinnedActorPrefab{}.hasStress
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::SoftSkinnedActorPrefab const& self) { return mochi::prefab::SoftSkinnedActorPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::SoftSkinnedActorPrefab const& self, nb::dict) { return mochi::prefab::SoftSkinnedActorPrefab(self); })
     .def_prop_rw("comment", [](mochi::prefab::SoftSkinnedActorPrefab& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::SoftSkinnedActorPrefab& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -505,6 +513,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("soft_skinned").sig("...") = mochi::prefab::ActorLists{}.softSkinned
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::ActorLists const& self) { return mochi::prefab::ActorLists(self); })
     .def("__deepcopy__", [](mochi::prefab::ActorLists const& self, nb::dict) { return mochi::prefab::ActorLists(self); })
     .def_prop_rw("comment", [](mochi::prefab::ActorLists& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::ActorLists& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -540,6 +550,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name_b") = mochi::prefab::RigidSphericalJointConstraintPrefab{}.actorNameB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::RigidSphericalJointConstraintPrefab const& self) { return mochi::prefab::RigidSphericalJointConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::RigidSphericalJointConstraintPrefab const& self, nb::dict) { return mochi::prefab::RigidSphericalJointConstraintPrefab(self); })
     .def_rw("actor_name_a", &mochi::prefab::RigidSphericalJointConstraintPrefab::actorNameA, "Name or hierarchy path identifying rigid actor A.")
@@ -574,6 +586,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name_b") = mochi::prefab::RigidPrismaticJointConstraintPrefab{}.actorNameB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::RigidPrismaticJointConstraintPrefab const& self) { return mochi::prefab::RigidPrismaticJointConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::RigidPrismaticJointConstraintPrefab const& self, nb::dict) { return mochi::prefab::RigidPrismaticJointConstraintPrefab(self); })
     .def_rw("actor_name_a", &mochi::prefab::RigidPrismaticJointConstraintPrefab::actorNameA, "Name or hierarchy path identifying rigid actor A.")
@@ -608,6 +622,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name_b") = mochi::prefab::DeformableNodeToDeformableNodeConstraintPrefab{}.actorNameB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::DeformableNodeToDeformableNodeConstraintPrefab const& self) { return mochi::prefab::DeformableNodeToDeformableNodeConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::DeformableNodeToDeformableNodeConstraintPrefab const& self, nb::dict) { return mochi::prefab::DeformableNodeToDeformableNodeConstraintPrefab(self); })
     .def_rw("actor_name_a", &mochi::prefab::DeformableNodeToDeformableNodeConstraintPrefab::actorNameA, "Name or hierarchy path identifying deformable actor A.")
@@ -644,6 +660,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("deformable_actor_name") = mochi::prefab::DeformableNodeToRigidConstraintPrefab{}.deformableActorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::DeformableNodeToRigidConstraintPrefab const& self) { return mochi::prefab::DeformableNodeToRigidConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::DeformableNodeToRigidConstraintPrefab const& self, nb::dict) { return mochi::prefab::DeformableNodeToRigidConstraintPrefab(self); })
     .def_rw("rigid_actor_name", &mochi::prefab::DeformableNodeToRigidConstraintPrefab::rigidActorName, "Name or hierarchy path identifying the rigid actor.")
@@ -682,6 +700,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name_b") = mochi::prefab::JointRotationRangeConstraintPrefab{}.actorNameB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::JointRotationRangeConstraintPrefab const& self) { return mochi::prefab::JointRotationRangeConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::JointRotationRangeConstraintPrefab const& self, nb::dict) { return mochi::prefab::JointRotationRangeConstraintPrefab(self); })
     .def_rw("actor_name_a", &mochi::prefab::JointRotationRangeConstraintPrefab::actorNameA, "Name or hierarchy path identifying rigid actor A.")
@@ -710,6 +730,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::RigidPivotPositionConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::RigidPivotPositionConstraintPrefab const& self) { return mochi::prefab::RigidPivotPositionConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::RigidPivotPositionConstraintPrefab const& self, nb::dict) { return mochi::prefab::RigidPivotPositionConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::RigidPivotPositionConstraintPrefab::actorName, "Name or hierarchy path identifying the rigid actor.")
@@ -737,6 +759,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::RigidPivotToRigidTargetConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::RigidPivotToRigidTargetConstraintPrefab const& self) { return mochi::prefab::RigidPivotToRigidTargetConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::RigidPivotToRigidTargetConstraintPrefab const& self, nb::dict) { return mochi::prefab::RigidPivotToRigidTargetConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::RigidPivotToRigidTargetConstraintPrefab::actorName, "Name or hierarchy path identifying the rigid actor.")
@@ -764,6 +788,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::RigidPivotRotationConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::RigidPivotRotationConstraintPrefab const& self) { return mochi::prefab::RigidPivotRotationConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::RigidPivotRotationConstraintPrefab const& self, nb::dict) { return mochi::prefab::RigidPivotRotationConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::RigidPivotRotationConstraintPrefab::actorName, "Name or hierarchy path identifying the rigid actor.")
@@ -791,6 +817,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::DeformableNodePositionConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::DeformableNodePositionConstraintPrefab const& self) { return mochi::prefab::DeformableNodePositionConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::DeformableNodePositionConstraintPrefab const& self, nb::dict) { return mochi::prefab::DeformableNodePositionConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::DeformableNodePositionConstraintPrefab::actorName, "Name or hierarchy path identifying the deformable actor.")
@@ -820,6 +848,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name_b") = mochi::prefab::JointRotationTrackingConstraintPrefab{}.actorNameB
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::JointRotationTrackingConstraintPrefab const& self) { return mochi::prefab::JointRotationTrackingConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::JointRotationTrackingConstraintPrefab const& self, nb::dict) { return mochi::prefab::JointRotationTrackingConstraintPrefab(self); })
     .def_rw("actor_name_a", &mochi::prefab::JointRotationTrackingConstraintPrefab::actorNameA, "Name or hierarchy path identifying rigid actor A.")
@@ -850,6 +880,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab const& self) { return mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab const& self, nb::dict) { return mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::ArticulatedSingleDofTargetConstraintPrefab::actorName, "Name or hierarchy path identifying the articulated actor.")
@@ -877,6 +909,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::Articulated3dRotationTargetConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::Articulated3dRotationTargetConstraintPrefab const& self) { return mochi::prefab::Articulated3dRotationTargetConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::Articulated3dRotationTargetConstraintPrefab const& self, nb::dict) { return mochi::prefab::Articulated3dRotationTargetConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::Articulated3dRotationTargetConstraintPrefab::actorName, "Name or hierarchy path identifying the articulated actor.")
@@ -908,6 +942,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab const& self) { return mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab const& self, nb::dict) { return mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::ArticulatedSingleDofRangeConstraintPrefab::actorName, "Name or hierarchy path identifying the articulated actor.")
@@ -937,6 +973,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("actor_name") = mochi::prefab::Articulated3dRotationRangeConstraintPrefab{}.actorName
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::Articulated3dRotationRangeConstraintPrefab const& self) { return mochi::prefab::Articulated3dRotationRangeConstraintPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::Articulated3dRotationRangeConstraintPrefab const& self, nb::dict) { return mochi::prefab::Articulated3dRotationRangeConstraintPrefab(self); })
     .def_rw("actor_name", &mochi::prefab::Articulated3dRotationRangeConstraintPrefab::actorName, "Name or hierarchy path identifying the articulated actor.")
@@ -980,6 +1018,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("deformable_node_to_deformable_node").sig("...") = mochi::prefab::ConstraintLists{}.deformableNodeToDeformableNode
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::ConstraintLists const& self) { return mochi::prefab::ConstraintLists(self); })
     .def("__deepcopy__", [](mochi::prefab::ConstraintLists const& self, nb::dict) { return mochi::prefab::ConstraintLists(self); })
     .def_prop_rw("comment", [](mochi::prefab::ConstraintLists& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::ConstraintLists& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -1017,6 +1057,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("joint_tracking").sig("...") = mochi::prefab::PoseControllerPrefab{}.jointTracking
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::PoseControllerPrefab const& self) { return mochi::prefab::PoseControllerPrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::PoseControllerPrefab const& self, nb::dict) { return mochi::prefab::PoseControllerPrefab(self); })
     .def_prop_rw("comment", [](mochi::prefab::PoseControllerPrefab& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::PoseControllerPrefab& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -1046,6 +1088,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("translation").sig("...") = mochi::prefab::PrefabReference{}.translation
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::PrefabReference const& self) { return mochi::prefab::PrefabReference(self); })
     .def("__deepcopy__", [](mochi::prefab::PrefabReference const& self, nb::dict) { return mochi::prefab::PrefabReference(self); })
     .def_prop_rw("comment", [](mochi::prefab::PrefabReference& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::PrefabReference& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))
@@ -1172,6 +1216,8 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , nb::arg("contact_pair_params_overrides").sig("...") = mochi::prefab::ScenePrefab{}.contactPairParamsOverrides
     )
     .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
     .def("__copy__", [](mochi::prefab::ScenePrefab const& self) { return mochi::prefab::ScenePrefab(self); })
     .def("__deepcopy__", [](mochi::prefab::ScenePrefab const& self, nb::dict) { return mochi::prefab::ScenePrefab(self); })
     .def_prop_rw("comment", [](mochi::prefab::ScenePrefab& self) -> std::optional<mochi::DynamicString>& { return self.comment; }, [](mochi::prefab::ScenePrefab& self, nb::handle val) { self.comment = val.is_none() ? std::optional<mochi::DynamicString>{} : nb::cast<std::optional<mochi::DynamicString>>(val); }, "Optional serialized comment.", nb::for_setter(nb::arg("value").none()))

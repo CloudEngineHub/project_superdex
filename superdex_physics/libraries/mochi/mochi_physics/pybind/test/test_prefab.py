@@ -25,6 +25,47 @@ class TestPrefab(MochiTestBase):
             mochi.prefab.ExportParams(export_current_pose=True).export_current_pose
         )
 
+    def test_constraint_params_equality_includes_derived_fields(self):
+        original = mochi.RigidSphericalJointConstraintParams()
+        changed = mochi.RigidSphericalJointConstraintParams()
+        self.assertEqual(original, changed)
+
+        changed.local_pos_a = [1, 2, 3]
+        self.assertNotEqual(original, changed)
+
+        changed = mochi.RigidSphericalJointConstraintParams()
+        changed.stiffness += 1
+        self.assertNotEqual(original, changed)
+
+    def test_constraint_prefab_equality_includes_actor_names(self):
+        original = mochi.prefab.RigidSphericalJointConstraintPrefab()
+        changed = mochi.prefab.RigidSphericalJointConstraintPrefab()
+        self.assertEqual(original, changed)
+
+        changed.actor_name_a = "Different"
+        self.assertNotEqual(original, changed)
+
+        changed = mochi.prefab.RigidSphericalJointConstraintPrefab()
+        changed.local_pos_a = [1, 0, 0]
+        self.assertNotEqual(original, changed)
+
+    def test_actor_prefab_equality_includes_translation(self):
+        for prefab_type in (
+            mochi.prefab.RigidActorPrefab,
+            mochi.prefab.SoftActorPrefab,
+        ):
+            with self.subTest(prefab=prefab_type.__name__):
+                original = prefab_type()
+                changed = prefab_type()
+                self.assertEqual(original, changed)
+
+                changed.translation = [1, 2, 3]
+                self.assertNotEqual(original, changed)
+
+                changed = prefab_type()
+                changed.name = "Different"
+                self.assertNotEqual(original, changed)
+
     @requires_internal_assets
     def test_add_to_scene_returns_result(self):
         """Verify that add_to_scene returns an AddToSceneResult with actors and constraints."""

@@ -309,6 +309,10 @@ struct RigidSphericalJointConstraintParams : public ConstraintParams {
   ActorHandle actorA{};
 
   ActorHandle actorB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidSphericalJointConstraintParams const&) const = default;
+#endif
 };
 
 struct RigidPrismaticJointConstraintParams : public ConstraintParams {
@@ -321,6 +325,10 @@ struct RigidPrismaticJointConstraintParams : public ConstraintParams {
   std::optional<real> max{};
 
   std::optional<real> min{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPrismaticJointConstraintParams const&) const = default;
+#endif
 };
 
 struct DeformableNodeToDeformableNodeConstraintParams : public ConstraintParams {
@@ -333,6 +341,10 @@ struct DeformableNodeToDeformableNodeConstraintParams : public ConstraintParams 
   ActorHandle actorB{};
 
   bool findClosest = false;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(DeformableNodeToDeformableNodeConstraintParams const&) const = default;
+#endif
 };
 
 struct RodElementRotationToRigidConstraintParams : public ConstraintParams {
@@ -343,6 +355,10 @@ struct RodElementRotationToRigidConstraintParams : public ConstraintParams {
   ActorHandle rodActor{};
 
   int elementIndex = 0;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RodElementRotationToRigidConstraintParams const&) const = default;
+#endif
 };
 
 struct DeformableNodeToRigidConstraintParams : public ConstraintParams {
@@ -357,6 +373,10 @@ struct DeformableNodeToRigidConstraintParams : public ConstraintParams {
   bool findClosest = false;
 
   bool fixToDeformablePos = true;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(DeformableNodeToRigidConstraintParams const&) const = default;
+#endif
 };
 
 struct JointRotationRangeConstraintParams : public ConstraintParams {
@@ -373,6 +393,10 @@ struct JointRotationRangeConstraintParams : public ConstraintParams {
   ActorHandle actorB{};
 
   bool rangeAroundRest = true;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(JointRotationRangeConstraintParams const&) const = default;
+#endif
 };
 
 struct RigidPivotPositionConstraintParams : public ConstraintParams {
@@ -381,6 +405,10 @@ struct RigidPivotPositionConstraintParams : public ConstraintParams {
   Real3 localPosition{};
 
   ActorHandle actor{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPivotPositionConstraintParams const&) const = default;
+#endif
 };
 
 struct RigidPivotToRigidTargetConstraintParams : public ConstraintParams {
@@ -389,6 +417,10 @@ struct RigidPivotToRigidTargetConstraintParams : public ConstraintParams {
   Real3 localPosition{};
 
   ActorHandle actor{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPivotToRigidTargetConstraintParams const&) const = default;
+#endif
 };
 
 struct RigidPivotRotationConstraintParams : public ConstraintParams {
@@ -397,6 +429,10 @@ struct RigidPivotRotationConstraintParams : public ConstraintParams {
   Real3 localRotation{};
 
   ActorHandle actor{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RigidPivotRotationConstraintParams const&) const = default;
+#endif
 };
 
 struct DeformableNodePositionConstraintParams : public ConstraintParams {
@@ -417,6 +453,10 @@ struct JointRotationTrackingConstraintParams : public ConstraintParams {
   ActorHandle actorA{};
 
   ActorHandle actorB{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(JointRotationTrackingConstraintParams const&) const = default;
+#endif
 };
 
 struct ArticulatedSingleDofTargetConstraintParams : public ConstraintParams {
@@ -427,6 +467,10 @@ struct ArticulatedSingleDofTargetConstraintParams : public ConstraintParams {
   int dofIndex = 0;
 
   real targetValue = 0_r;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(ArticulatedSingleDofTargetConstraintParams const&) const = default;
+#endif
 };
 
 struct Articulated3dRotationTargetConstraintParams : public ConstraintParams {
@@ -435,6 +479,10 @@ struct Articulated3dRotationTargetConstraintParams : public ConstraintParams {
   int jointIndex = 0;
 
   Quaternion target{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(Articulated3dRotationTargetConstraintParams const&) const = default;
+#endif
 };
 
 struct ArticulatedSingleDofRangeConstraintParams : public ConstraintParams {
@@ -447,6 +495,10 @@ struct ArticulatedSingleDofRangeConstraintParams : public ConstraintParams {
   real minValue = 0_r;
 
   real maxValue = 0_r;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(ArticulatedSingleDofRangeConstraintParams const&) const = default;
+#endif
 };
 
 struct Articulated3dRotationRangeConstraintParams : public ConstraintParams {
@@ -457,6 +509,10 @@ struct Articulated3dRotationRangeConstraintParams : public ConstraintParams {
   Real3 minValues{};
 
   Real3 maxValues{};
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(Articulated3dRotationRangeConstraintParams const&) const = default;
+#endif
 };
 
 struct ContactPoint {

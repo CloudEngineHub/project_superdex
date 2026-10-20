@@ -13,13 +13,13 @@
 # limitations under the License.
 
 // @brief Simulation solver configuration parameters.
-struct SolverParams [equality] {
+struct SolverParams [equality(default)] {
 
   // @brief Nonlinear solver settings.
-  NonLinearSolverParams nonLinearSolver;
+  NonLinearSolverParams nonLinearSolver = {};
 
   // @brief Linear solver settings.
-  LinearSolverParams linearSolver;
+  LinearSolverParams linearSolver = {};
 
   // @brief Time integration method.
   IntegrationMethod integrationMethod = Default;
@@ -28,7 +28,7 @@ struct SolverParams [equality] {
   //
   // @warning This is an experimental feature. It may be changed or removed in the future. Use at
   // your own risk.
-  ExperimentalEvalParams experimentalEval;
+  ExperimentalEvalParams experimentalEval = {};
 }
 
 // @brief Parameters controlling recentering behavior for standalone soft actors.
@@ -44,7 +44,7 @@ struct SolverParams [equality] {
 // and local-space displacements reflect only deformation, not global rotation or translation.
 //
 // @see Actor::GetRecenteringParams, Actor::SetRecenteringParams
-struct RecenteringParams [equality] {
+struct RecenteringParams [equality(default)] {
 
   // @brief Whether recentering is enabled.
   bool useRecentering = true;
@@ -66,7 +66,7 @@ struct RecenteringParams [equality] {
 //
 // @details Subsampling reduces the number of boundary sample points used for contact and other
 // boundary integrals, which can improve performance at the cost of accuracy.
-struct BoundarySubsamplingParams [equality] {
+struct BoundarySubsamplingParams [equality(default)] {
 
   // @brief Subsampling density in the range [0, 1].
   //
@@ -84,7 +84,7 @@ struct BoundarySubsamplingParams [equality] {
 //
 // @note Present fields have the same validity requirements as the corresponding @ref ContactParams
 // fields. A present zero is a value subject to those requirements, not an absent field.
-struct ContactPairParamsOverride [equality] {
+struct ContactPairParamsOverride [equality(default)] {
 
   // @brief Pair penalty coefficient [Pa/m] before role-dependent dimensional corrections.
   //
@@ -210,10 +210,10 @@ struct ArticulatedShapeInfo [no_capi] {
 // @see Scene::RegisterPreStepCallback, Scene::RegisterPostStepCallback
 struct StepInfo {
   // @brief Pointer to the @ref Scene being stepped.
-  Scene* scene;
+  Scene* scene = nullptr;
 
   // @brief Time step size [s] for this simulation step.
-  double timeStepSec [units("s")];
+  double timeStepSec [units("s")] = 0;
 }
 
 // @brief Parameters to create a rigid body actor.
@@ -224,7 +224,7 @@ struct StepInfo {
 // @note Articulated links are created from @ref ArticulatedLinkParams instead.
 //
 // @see Scene::CreateRigidActor, ArticulatedActorParams
-struct RigidActorParams [equality] {
+struct RigidActorParams [equality(default)] {
 
   // @brief Optional actor name. Uniqueness of names is not enforced.
   String name;
@@ -376,7 +376,7 @@ struct RigidActorParams [equality] {
 //
 // @see Scene::CreateSoftActor, experimental::CreateSoftActor,
 // experimental::ExperimentalSoftActorParams
-struct SoftActorParams [equality] {
+struct SoftActorParams [equality(default)] {
 
   // @brief Optional actor name. Uniqueness of names is not enforced.
   //
@@ -423,7 +423,7 @@ struct SoftActorParams [equality] {
   // experimental::SetSoftMaterialParamsField.
   //
   // @see Actor::SetSoftMaterialParams, experimental::SetSoftMaterialParamsField
-  SoftMaterialParams material;
+  SoftMaterialParams material = {};
 
   // @brief Contact mechanics parameters.
   //
@@ -485,7 +485,7 @@ struct SoftActorParams [equality] {
 // @ref ArticulatedActorParams::cycles.
 //
 // @see ArticulatedActorParams, ArticulatedLinkParams, ArticulatedJointType
-struct ArticulatedJointParams [equality] {
+struct ArticulatedJointParams [equality(default)] {
   // @brief Joint name. Must be unique among joints of the same articulated actor.
   //
   // @note If left empty, a unique default name (e.g., "joint_0", "joint_1", ...) is assigned
@@ -565,7 +565,7 @@ struct ArticulatedJointParams [equality] {
 // creation time come from the articulated body, not from per-link fields.
 //
 // @see ArticulatedActorParams, ArticulatedJointParams, RigidActorParams
-struct ArticulatedLinkParams [equality] {
+struct ArticulatedLinkParams [equality(default)] {
   // @brief Link local name.
   //
   // @note Must be unique among links of the same articulated actor. For soft-skinned actors, it
@@ -691,7 +691,7 @@ struct ArticulatedLinkParams [equality] {
 // points are not tested against it.
 //
 // @see ArticulatedActorParams::skin
-struct ArticulatedSkinParams [equality] {
+struct ArticulatedSkinParams [equality(default)] {
   // @brief Shape handle defining the skinned triangular or tetrahedral mesh.
   //
   // @note Actor creation fails if the shape is not a triangular or tetrahedral mesh shape with
@@ -747,7 +747,7 @@ struct ArticulatedSkinParams [equality] {
 // stiffness).
 //
 // @see ArticulatedActorParams::cycles, ArticulatedCycleJoint
-struct ArticulatedCycleJointParams [equality] {
+struct ArticulatedCycleJointParams [equality(default)] {
   // @brief Parent link index.
   int parentLink = -1;
 
@@ -759,7 +759,7 @@ struct ArticulatedCycleJointParams [equality] {
   // @note A cycle joint is implemented using a spherical joint constraint. The @ref jointFromChildLink
   // translation defines the pivot point, in the child link's local frame. Rotation is currently unused,
   // but it could affect joint limits in the future.
-  TransformRT jointFromChildLink;
+  TransformRT jointFromChildLink = {};
 
   // @brief Stiffness [N/m] for the cycle joint constraint.
   real stiffness = 50000;
@@ -776,7 +776,7 @@ struct ArticulatedCycleJointParams [equality] {
 // disable contact for specific pairs of links, see @ref Scene::EnableActorContactSymmetric.
 //
 // @see Scene::CreateArticulatedActor
-struct ArticulatedActorParams [equality] {
+struct ArticulatedActorParams [equality(default)] {
   // @brief Name of the articulated actor.
   //
   // @note Uniqueness of names is not enforced.
@@ -926,7 +926,7 @@ struct SoftSkinnedActorParams {
 // constraints, solver, etc.) to ensure all units remain consistent.
 //
 // @see ConstraintType
-struct ConstraintParams [equality] {
+struct ConstraintParams [equality(default)] {
 
   // @brief Constraint stiffness coefficient. [N/m] for translation constraints, [N·m/rad] for
   // rotation constraints. Must be non-negative and finite.
@@ -948,19 +948,19 @@ struct ConstraintParams [equality] {
 // @brief Parameters for creating a spherical joint between two rigid actors.
 //
 // @see Scene::CreateRigidSphericalJointConstraint, ConstraintType::RigidSphericalJoint
-struct RigidSphericalJointConstraintParams(ConstraintParams) {
+struct RigidSphericalJointConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Joint position [m] for rigid actor A in actor A's local frame.
-  Real3 localPosA [units("m")];
+  Real3 localPosA [units("m")] = {};
 
   // @brief Joint position [m] for rigid actor B in actor B's local frame.
-  Real3 localPosB [units("m")];
+  Real3 localPosB [units("m")] = {};
 
   // @brief Actor handle identifying rigid actor A.
-  ActorHandle actorA;
+  ActorHandle actorA = {};
 
   // @brief Actor handle identifying rigid actor B.
-  ActorHandle actorB;
+  ActorHandle actorB = {};
 }
 
 // @brief Parameters for creating a prismatic joint between two rigid actors.
@@ -972,7 +972,7 @@ struct RigidSphericalJointConstraintParams(ConstraintParams) {
 //
 // @see Scene::CreateRigidPrismaticJointConstraint, ConstraintType::RigidPrismaticJoint,
 // JointRotationTrackingConstraintParams
-struct RigidPrismaticJointConstraintParams(ConstraintParams) {
+struct RigidPrismaticJointConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Axis of free translation, specified in the world frame at constraint creation time.
   //
@@ -980,19 +980,19 @@ struct RigidPrismaticJointConstraintParams(ConstraintParams) {
   // with actor A rather than remaining fixed in world space.
   // @note Must be non-zero and finite.
   // @note Its magnitude is ignored (normalized internally).
-  Real3 freeAxis;
+  Real3 freeAxis = {};
 
   // @brief Actor handle identifying rigid actor A.
-  ActorHandle actorA;
+  ActorHandle actorA = {};
 
   // @brief Actor handle identifying rigid actor B.
-  ActorHandle actorB;
+  ActorHandle actorB = {};
 
   // @brief Maximum translation [m] relative to rest position. Empty means unbounded.
-  Optional<real> max [units("m")];
+  Optional<real> max [units("m")] = {};
 
   // @brief Minimum translation [m] relative to rest position. Empty means unbounded.
-  Optional<real> min [units("m")];
+  Optional<real> min [units("m")] = {};
 }
 
 // @brief Parameters for creating a constraint coupling a node in a deformable actor to a node in
@@ -1000,7 +1000,7 @@ struct RigidPrismaticJointConstraintParams(ConstraintParams) {
 //
 // @see Scene::CreateDeformableNodeToDeformableNodeConstraint,
 // ConstraintType::DeformableNodeToDeformableNode
-struct DeformableNodeToDeformableNodeConstraintParams(ConstraintParams) {
+struct DeformableNodeToDeformableNodeConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Node index in deformable actor A's reference simulation mesh, as returned by @ref
   // Actor::GetMesh. Ignored if @ref findClosest is true; otherwise it must identify a node in that
@@ -1013,10 +1013,10 @@ struct DeformableNodeToDeformableNodeConstraintParams(ConstraintParams) {
   int nodeIndexB = -1;
 
   // @brief Actor handle identifying deformable actor A.
-  ActorHandle actorA;
+  ActorHandle actorA = {};
 
   // @brief Actor handle identifying deformable actor B.
-  ActorHandle actorB;
+  ActorHandle actorB = {};
 
   // @brief Whether to automatically select a boundary node on each actor.
   //
@@ -1036,19 +1036,19 @@ struct DeformableNodeToDeformableNodeConstraintParams(ConstraintParams) {
 //
 // @see Scene::CreateRodElementRotationToRigidConstraint, ConstraintType::RodElementRotationToRigid,
 // Constraint::SetTargetRotation
-struct RodElementRotationToRigidConstraintParams(ConstraintParams) {
+struct RodElementRotationToRigidConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Joint reference-frame orientation in world coordinates at constraint creation,
   // expressed as a rotation vector [rad].
   //
   // @note After creation, the frame remains fixed relative to the rigid actor.
-  Real3 refFrameRotVec [units("rad")];
+  Real3 refFrameRotVec [units("rad")] = {};
 
   // @brief Actor handle identifying rigid actor.
-  ActorHandle rigidActor;
+  ActorHandle rigidActor = {};
 
   // @brief Actor handle identifying rod actor.
-  ActorHandle rodActor;
+  ActorHandle rodActor = {};
 
   // @brief Index of the element in the rod actor.
   int elementIndex = 0;
@@ -1057,7 +1057,7 @@ struct RodElementRotationToRigidConstraintParams(ConstraintParams) {
 // @brief Parameters for creating a constraint coupling a deformable node to a rigid actor.
 //
 // @see Scene::CreateDeformableNodeToRigidConstraint, ConstraintType::DeformableNodeToRigid
-struct DeformableNodeToRigidConstraintParams(ConstraintParams) {
+struct DeformableNodeToRigidConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Coupling position [m] in rigid actor's local frame.
   //
@@ -1065,7 +1065,7 @@ struct DeformableNodeToRigidConstraintParams(ConstraintParams) {
   // is auto-computed based on the deformable node's initial position in the rigid actor's frame.
   // @note When @ref findClosest is also true, this field is still used as the search point that
   // selects which deformable node is picked.
-  Real3 rigidLocalPos [units("m")];
+  Real3 rigidLocalPos [units("m")] = {};
 
   // @brief Node index in the deformable actor's reference simulation mesh, as returned by @ref
   // Actor::GetMesh. Ignored if @ref findClosest is true; otherwise it must identify a node in that
@@ -1073,10 +1073,10 @@ struct DeformableNodeToRigidConstraintParams(ConstraintParams) {
   int deformableNodeIndex = -1;
 
   // @brief Actor handle identifying the rigid actor.
-  ActorHandle rigidActor;
+  ActorHandle rigidActor = {};
 
   // @brief Actor handle identifying the deformable actor.
-  ActorHandle deformableActor;
+  ActorHandle deformableActor = {};
 
   // @brief Whether to automatically select a boundary node of the deformable actor.
   //
@@ -1105,10 +1105,10 @@ struct DeformableNodeToRigidConstraintParams(ConstraintParams) {
 // range.
 //
 // @see Scene::CreateJointRotationRangeConstraint, ConstraintType::JointRotationRange
-struct JointRotationRangeConstraintParams(ConstraintParams) {
+struct JointRotationRangeConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Joint reference frame specified as a rotation vector [rad] with respect to world frame.
-  Real3 refFrameRotVec [units("rad")];
+  Real3 refFrameRotVec [units("rad")] = {};
 
   // @brief Allowed range [min, max] [rad] for the X component of the relative rotation vector
   // (axis-angle), expressed in the joint reference frame.
@@ -1123,10 +1123,10 @@ struct JointRotationRangeConstraintParams(ConstraintParams) {
   Real2 angleRangeZ [units("rad")] = kMinus2PiPlus2Pi;
 
   // @brief Actor handle identifying rigid actor A.
-  ActorHandle actorA;
+  ActorHandle actorA = {};
 
   // @brief Actor handle identifying rigid actor B.
-  ActorHandle actorB;
+  ActorHandle actorB = {};
 
   // @brief When true, angle limits are relative to the actors' relative rotation at constraint
   // creation time. When false, limits are absolute in the joint reference frame.
@@ -1139,16 +1139,16 @@ struct JointRotationRangeConstraintParams(ConstraintParams) {
 // referred to as "pivot") to a specific target position in world coordinates.
 //
 // @see Scene::CreateRigidPivotPositionConstraint, ConstraintType::RigidPivotPosition
-struct RigidPivotPositionConstraintParams(ConstraintParams) {
+struct RigidPivotPositionConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Target position in world frame [m].
-  Real3 targetPosition [units("m")];
+  Real3 targetPosition [units("m")] = {};
 
   // @brief Pivot point in rigid actor's local frame [m].
-  Real3 localPosition [units("m")];
+  Real3 localPosition [units("m")] = {};
 
   // @brief Actor handle identifying the rigid actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 }
 
 // @brief Parameters for creating a constraint on a rigid actor's pivot point. The target is
@@ -1159,16 +1159,16 @@ struct RigidPivotPositionConstraintParams(ConstraintParams) {
 // transform.
 //
 // @see Scene::CreateRigidPivotToRigidTargetConstraint, ConstraintType::RigidPivotToRigidTarget
-struct RigidPivotToRigidTargetConstraintParams(ConstraintParams) {
+struct RigidPivotToRigidTargetConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Target center-of-mass transform.
-  TransformRT targetTransform;
+  TransformRT targetTransform = {};
 
   // @brief Pivot point in rigid actor's local frame [m].
-  Real3 localPosition [units("m")];
+  Real3 localPosition [units("m")] = {};
 
   // @brief Actor handle identifying the rigid actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 }
 
 // @brief Parameters for creating a rotation constraint on a rigid actor's pivot frame.
@@ -1177,32 +1177,32 @@ struct RigidPivotToRigidTargetConstraintParams(ConstraintParams) {
 // referred to as "pivot") to a specific target rotation in world coordinates.
 //
 // @see Scene::CreateRigidPivotRotationConstraint, ConstraintType::RigidPivotRotation
-struct RigidPivotRotationConstraintParams(ConstraintParams) {
+struct RigidPivotRotationConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Target rotation in world coordinates, as a rotation vector [rad].
-  Real3 targetRotation [units("rad")];
+  Real3 targetRotation [units("rad")] = {};
 
   // @brief Pivot frame in rigid actor's local coordinates, as a rotation vector [rad].
-  Real3 localRotation [units("rad")];
+  Real3 localRotation [units("rad")] = {};
 
   // @brief Actor handle identifying the rigid actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 }
 
 // @brief Parameters for creating a position constraint on a deformable actor node.
 //
 // @see Scene::CreateDeformableNodePositionConstraint, ConstraintType::DeformableNodePosition
-struct DeformableNodePositionConstraintParams(ConstraintParams) [equality] {
+struct DeformableNodePositionConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Node index in the deformable actor's reference simulation mesh, as returned by @ref
   // Actor::GetMesh. Must identify a node in that mesh.
   int nodeIndex = -1;
 
   // @brief Target position for the node in world frame [m].
-  Real3 position [units("m")];
+  Real3 position [units("m")] = {};
 
   // @brief Actor handle identifying the deformable actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 }
 
 // @brief Parameters for creating a joint rotation tracking constraint between two rigid actors.
@@ -1217,19 +1217,19 @@ struct DeformableNodePositionConstraintParams(ConstraintParams) [equality] {
 //
 // @see Scene::CreateJointRotationTrackingConstraint, ConstraintType::JointRotationTracking,
 // RigidPrismaticJointConstraintParams, Constraint::SetTargetRotation
-struct JointRotationTrackingConstraintParams(ConstraintParams) {
+struct JointRotationTrackingConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Joint reference-frame orientation in world coordinates at constraint creation,
   // expressed as a rotation vector [rad].
   //
   // @note After creation, the frame remains fixed relative to actor A.
-  Real3 refFrameRotVec [units("rad")];
+  Real3 refFrameRotVec [units("rad")] = {};
 
   // @brief Actor handle identifying rigid actor A.
-  ActorHandle actorA;
+  ActorHandle actorA = {};
 
   // @brief Actor handle identifying rigid actor B.
-  ActorHandle actorB;
+  ActorHandle actorB = {};
 }
 
 // @brief Parameters for creating a target constraint on a single articulated DoF.
@@ -1243,10 +1243,10 @@ struct JointRotationTrackingConstraintParams(ConstraintParams) {
 //
 // @see Scene::CreateArticulatedSingleDofTargetConstraint,
 // ConstraintType::ArticulatedSingleDofTarget
-struct ArticulatedSingleDofTargetConstraintParams(ConstraintParams) {
+struct ArticulatedSingleDofTargetConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Actor handle identifying the articulated actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 
   // @brief Index of the joint in the articulated actor.
   int jointIndex = 0;
@@ -1272,10 +1272,10 @@ struct ArticulatedSingleDofTargetConstraintParams(ConstraintParams) {
 //
 // @see Scene::CreateArticulated3dRotationTargetConstraint,
 // ConstraintType::Articulated3dRotationTarget
-struct Articulated3dRotationTargetConstraintParams(ConstraintParams) {
+struct Articulated3dRotationTargetConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Actor handle identifying the articulated actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 
   // @brief Index of the joint in the articulated actor.
   int jointIndex = 0;
@@ -1284,7 +1284,7 @@ struct Articulated3dRotationTargetConstraintParams(ConstraintParams) {
   // frame as a quaternion [x, y, z, w]. The identity quaternion corresponds to the rest orientation.
   //
   // @note Must be finite and non-zero. Normalized before use.
-  Quaternion target;
+  Quaternion target = {};
 }
 
 // @brief Parameters for creating a range constraint on a single articulated DoF.
@@ -1297,10 +1297,10 @@ struct Articulated3dRotationTargetConstraintParams(ConstraintParams) {
 // Articulated3dRotationRangeConstraintParams.
 //
 // @see Scene::CreateArticulatedSingleDofRangeConstraint, ConstraintType::ArticulatedSingleDofRange
-struct ArticulatedSingleDofRangeConstraintParams(ConstraintParams) {
+struct ArticulatedSingleDofRangeConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Actor handle identifying the articulated actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 
   // @brief Index of the joint in the articulated actor.
   int jointIndex = 0;
@@ -1325,19 +1325,19 @@ struct ArticulatedSingleDofRangeConstraintParams(ConstraintParams) {
 //
 // @see Scene::CreateArticulated3dRotationRangeConstraint,
 // ConstraintType::Articulated3dRotationRange
-struct Articulated3dRotationRangeConstraintParams(ConstraintParams) {
+struct Articulated3dRotationRangeConstraintParams(ConstraintParams) [equality(default)] {
 
   // @brief Actor handle identifying the articulated actor.
-  ActorHandle actor;
+  ActorHandle actor = {};
 
   // @brief Index of the joint in the articulated actor.
   int jointIndex = 0;
 
   // @brief Minimum allowed value [rad] for each component of the joint-local rotation vector.
-  Real3 minValues [units("rad")];
+  Real3 minValues [units("rad")] = {};
 
   // @brief Maximum allowed value [rad] for each component of the joint-local rotation vector.
-  Real3 maxValues [units("rad")];
+  Real3 maxValues [units("rad")] = {};
 }
 
 // @brief Information about a contact point between two actors.
@@ -1358,7 +1358,7 @@ struct ContactPoint {
   // as either @ref actorA or @ref actorB in this struct, depending on the direction of the contact
   // test.
   // @note May be the same as @ref actorB in the case of self-contact.
-  ActorHandle actorA;
+  ActorHandle actorA = {};
 
   // @brief Handle of the collider actor.
   //
@@ -1366,34 +1366,34 @@ struct ContactPoint {
   // as either @ref actorA or @ref actorB in this struct, depending on the direction of the contact
   // test.
   // @note May be the same as @ref actorA in the case of self-contact.
-  ActorHandle actorB;
+  ActorHandle actorB = {};
 
   // @brief Signed separation distance [m] between @ref posA (on @ref actorA) and the closest point
   // on the surface of @ref actorB. Negative if the point is inside (i.e. actors overlap).
-  real distance [units("m")];
+  real distance [units("m")] = 0;
 
   // @brief Contact position [m] on @ref actorA in world frame.
-  Real3 posA [units("m")];
+  Real3 posA [units("m")] = {};
 
   // @brief Approximate contact position [m] on @ref actorB in world frame.
   //
   // @note Equivalent to (posA - normal * distance).
-  Real3 posB [units("m")];
+  Real3 posB [units("m")] = {};
 
   // @brief Contact normal in world frame pointing away from @ref actorB. Unit length.
-  Real3 normal;
+  Real3 normal = {};
 
   // @brief Contact force [N] applied to @ref actorA from @ref actorB in world frame.
-  Real3 force [units("N")];
+  Real3 force [units("N")] = {};
 
   // @brief Velocity [m/s] of the contact point on @ref actorA in world frame.
-  Real3 pointVelocityA [units("m/s")];
+  Real3 pointVelocityA [units("m/s")] = {};
 
   // @brief Velocity [m/s] of the contact point on @ref actorB in world frame.
-  Real3 pointVelocityB [units("m/s")];
+  Real3 pointVelocityB [units("m/s")] = {};
 
   // @brief Sample point index of @ref actorA.
-  int sampleIndex;
+  int sampleIndex = 0;
 
   // @brief Quadrature integration weight of the sample point on the colliding
   // manifold of @ref actorA.
@@ -1406,7 +1406,7 @@ struct ContactPoint {
   // sample point. For rod centerline contact, represents the arc length.
   // @note Useful for contact area/length estimation and other post-processing.
   // @note @ref force is already weighted by this value.
-  real intWeight;
+  real intWeight = 0;
 
   // @brief Index of the triangle of @ref actorA in @ref Actor::GetSurfaceMesh, or in @ref
   // Actor::GetContactSkinMesh when contact uses the contact skin.
@@ -1423,7 +1423,7 @@ struct ContactPoint {
   // @note Allows interpolation of functions defined on triangle vertices.
   // @note For rod actors, this field is not populated and is reported as {0, 0, 0}. Use @ref
   // sampleIndex to identify the contact location.
-  Real3 parametricCoords;
+  Real3 parametricCoords = {};
 }
 
 // @brief Contact force applied to a specific node.
@@ -1436,10 +1436,10 @@ struct NodeContactForce {
 
   // @brief Index of the node in the node list returned by @ref Actor::GetMesh, or by @ref
   // Actor::GetContactSkinMesh when contact uses the contact skin.
-  int index;
+  int index = 0;
 
   // @brief Contact force [N] applied to the node.
-  Real3 force [units("N")];
+  Real3 force [units("N")] = {};
 }
 
 // @brief SDF distance information for active contact sample points.
@@ -1469,7 +1469,7 @@ struct SdfDistances {
   // @brief Maximum distance [m] at which SDF evaluation was performed.
   //
   // @note Non-zero only if the actor has far SDF evaluation enabled.
-  real maxSdfFarDistanceEvaluation [units("m")];
+  real maxSdfFarDistanceEvaluation [units("m")] = 0;
 }
 
 // @brief Parameters controlling the stepping behavior of an @ref AsyncScene.
@@ -1533,48 +1533,48 @@ struct AsyncStepParams [no_capi, no_python] {
 // @brief Timing and profiling metrics from the last simulation step.
 //
 // @see Scene::GetPerformanceStats
-struct PerformanceStats [equality] {
+struct PerformanceStats [equality(default)] {
 
   // @brief Total wall-clock time [s] spent in the last call to @ref Scene::Step, excluding time
   // spent in the remote physics debugger.
   //
   // @note Includes time spent in user-defined pre-step and post-step callbacks.
-  double totalStepDurationSec [units("s")];
+  double totalStepDurationSec [units("s")] = 0;
 
   // @brief Wall-clock time [s] spent solving physics in the last call to @ref Scene::Step.
   //
   // @note Does not include time spent in user-defined pre-step and post-step callbacks.
-  double solveStepDurationSec [units("s")];
+  double solveStepDurationSec [units("s")] = 0;
 
   // @brief Wall-clock time [s] spent executing user-defined pre-step callbacks in the last call to
   // @ref Scene::Step.
-  double preStepCallbacksDurationSec [units("s")];
+  double preStepCallbacksDurationSec [units("s")] = 0;
 
   // @brief Wall-clock time [s] spent executing user-defined post-step callbacks in the last call to
   // @ref Scene::Step.
-  double postStepCallbacksDurationSec [units("s")];
+  double postStepCallbacksDurationSec [units("s")] = 0;
 
   // @brief Wall-clock time [s] spent on recording in the last call to @ref Scene::Step.
-  double recordingStepDurationSec [units("s")];
+  double recordingStepDurationSec [units("s")] = 0;
 }
 
 // @brief Solver convergence metrics from the last simulation step.
 //
 // @see Scene::GetSolverStats
-struct SolverStats [equality] {
+struct SolverStats [equality(default)] {
 
   // @brief Maximum number of non-linear solver iterations across all awake islands and integration
   // stages in the last call to @ref Scene::Step.
-  int maxNonLinearIters;
+  int maxNonLinearIters = 0;
 
   // @brief Aggregate residual norm across all awake islands and integration stages in the last call
   // to @ref Scene::Step. Computed as the root mean square across integration stages of the L2 norm
   // of per-island residual norms.
-  double residualNorm;
+  double residualNorm = 0;
 
   // @brief Maximum number of line-search iterations per Newton solve across all awake islands and
   // integration stages in the last call to @ref Scene::Step.
-  int maxLineSearchIters;
+  int maxLineSearchIters = 0;
 
   // @brief Aggregate convergence status of the scene in the last call to @ref Scene::Step.
   //
@@ -1592,7 +1592,7 @@ struct SolverStats [equality] {
   // stricter than the scene requires.
   //
   // @see ConvergenceStatus, Actor::GetConvergenceStatus
-  ConvergenceStatus convergenceStatus;
+  ConvergenceStatus convergenceStatus = None;
 }
 
 // @brief Parameters controlling what data gets included in a scene recording.
@@ -1648,7 +1648,7 @@ struct RecordingParams {
 //
 // @see Actor::GetArticulatedPoseControllerParams, Actor::SetArticulatedPoseControllerParams,
 // PoseControllerParams
-struct PoseTrackingParams [equality] {
+struct PoseTrackingParams [equality(default)] {
 
   // @brief Constraint stiffness.
   //
@@ -1690,7 +1690,7 @@ struct PoseControllerParams {
   // PoseTrackingParams (zero gains).
   //
   // @param[in] numLinks Number of links the controller will track.
-  ctor PoseControllerParams(int numLinks) [overloaded];
+  ctor PoseControllerParams(int numLinks);
 
   // @brief Tracking parameters for link position constraints.
   DynamicArray<PoseTrackingParams> linkPosTracking;
@@ -1721,7 +1721,7 @@ struct PoseConstraintInfo {
 }
 
 // @brief Sphere primitives for debug visualization.
-struct DebugDrawSpheres [equality] {
+struct DebugDrawSpheres [equality(default)] {
 
   // @brief Sphere center positions [m] in world frame.
   Span<Real3 const> positions;
@@ -1739,7 +1739,7 @@ struct DebugDrawSpheres [equality] {
 // line segment (positions[0]–positions[1] is the first segment, positions[2]–positions[3]
 // is the second, and so on). The total number of line segments is half the size of @ref
 // positions.
-struct DebugDrawLineVertices [equality] {
+struct DebugDrawLineVertices [equality(default)] {
 
   // @brief Line vertex positions [m] in world frame.
   Span<Real3 const> positions;
@@ -1752,7 +1752,7 @@ struct DebugDrawLineVertices [equality] {
 //
 // @details Contains all geometric primitives to be rendered by the client's rendering system. Data
 // is valid until the next call to @ref DebugDraw::GatherData or @ref Scene modification.
-struct DebugDrawData [equality] {
+struct DebugDrawData [equality(default)] {
 
   // @brief Line primitives.
   DebugDrawLineVertices lineVertices;

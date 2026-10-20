@@ -72,6 +72,57 @@ static Real6 PointPairInertia(real totalMass, Real3 const& r) {
       totalMass * (r[0] * r[0] + r[1] * r[1])};
 }
 
+#if MOCHI_LANGUAGE_CPP20
+TEST(Prefab, ConstraintParams_EqualityIncludesDerivedFields) {
+  RigidSphericalJointConstraintParams const params;
+  auto changed = params;
+  ASSERT_EQ(params, changed);
+
+  changed.localPosA = {1_r, 2_r, 3_r};
+  EXPECT_EQ(
+      static_cast<ConstraintParams const&>(params), static_cast<ConstraintParams const&>(changed));
+  EXPECT_NE(params, changed);
+
+  changed = params;
+  changed.stiffness += 1_r;
+  EXPECT_NE(params, changed);
+}
+
+TEST(Prefab, ConstraintPrefab_EqualityIncludesActorNames) {
+  prefab::RigidSphericalJointConstraintPrefab const joint;
+  auto changed = joint;
+  ASSERT_EQ(joint, changed);
+
+  changed.actorNameA = "Different";
+  EXPECT_EQ(
+      static_cast<RigidSphericalJointConstraintParams const&>(joint),
+      static_cast<RigidSphericalJointConstraintParams const&>(changed));
+  EXPECT_NE(joint, changed);
+
+  changed = joint;
+  changed.localPosA = {1_r, 0_r, 0_r};
+  EXPECT_NE(joint, changed);
+}
+
+TEST(Prefab, Scene_EqualityIncludesDerivedActorFields) {
+  prefab::ScenePrefab original;
+  original.actors.rigid.push_back().name = "Actor";
+  auto changed = original;
+  ASSERT_EQ(original, changed);
+
+  changed.actors.rigid[0].translation = {1_r, 2_r, 3_r};
+  EXPECT_EQ(
+      static_cast<RigidActorParams const&>(original.actors.rigid[0]),
+      static_cast<RigidActorParams const&>(changed.actors.rigid[0]));
+  EXPECT_NE(original.actors, changed.actors);
+  EXPECT_NE(original, changed);
+
+  changed = original;
+  changed.actors.rigid[0].name = "Different";
+  EXPECT_NE(original, changed);
+}
+#endif
+
 TEST(Prefab, ArticulatedActor_Serialization) {
   // One articulated actor with non-default settings. Does not attempt to cover every field of the
   // nested rigid actors nor contact params, since those have sufficient coverage in other tests.

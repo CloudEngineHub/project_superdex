@@ -45,7 +45,7 @@ enum bots::LinkTransformSpace {
 constant real bots::kEffortUnbounded = -1.0;
 
 // @brief Parameters describing a single joint in a bot.
-struct bots::BotJointPrefab(prefab::ArticulatedJointPrefab) [equality, no_reflection] {
+struct bots::BotJointPrefab(prefab::ArticulatedJointPrefab) [equality(default), no_reflection] {
   // @brief Maximum effort magnitude that may be applied to actuate this joint
   // [N·m for revolute, N for prismatic]. Interpreted by regime: a negative value (default
   // @ref kEffortUnbounded) is unbounded; 0 is non-actuated (no effort can be applied, though the
@@ -56,7 +56,7 @@ struct bots::BotJointPrefab(prefab::ArticulatedJointPrefab) [equality, no_reflec
 }
 
 // @brief Parameters describing a single sensor in a bot.
-struct bots::BotSensorPrefab [equality, no_reflection] {
+struct bots::BotSensorPrefab [equality(default), no_reflection] {
   // @brief Registered sensor type (e.g., "SENSOR_CAMERA").
   String type;
   // @brief Human-readable, findable identifier for this sensor instance.
@@ -76,7 +76,7 @@ struct bots::BotSensorPrefab [equality, no_reflection] {
 }
 
 // @brief Parameters describing a single actuator in a bot.
-struct bots::BotActuatorPrefab [equality, no_reflection] {
+struct bots::BotActuatorPrefab [equality(default), no_reflection] {
   // @brief Registered actuator type.
   String type;
   // @brief Human-readable, findable identifier for this actuator instance.
@@ -86,7 +86,7 @@ struct bots::BotActuatorPrefab [equality, no_reflection] {
 }
 
 // @brief Parameters describing a single link (body) in a bot.
-struct bots::BotLinkPrefab(prefab::ArticulatedLinkPrefab) [equality, no_reflection] {
+struct bots::BotLinkPrefab(prefab::ArticulatedLinkPrefab) [equality(default), no_reflection] {
   // @brief Sensors attached to this link. Optional; may be empty.
   DynamicArray<bots::BotSensorPrefab> sensors [no_serialize_defaults];
   // @brief Actuators attached to this link. Optional; may be empty.
@@ -126,7 +126,7 @@ struct bots::BotContactOverride [no_reflection] {
 // @details Holds fields shared by transmission-like actuators that couple joint DOFs
 // via a displacement-control actuator. Provides the display name and inherits actuator tuning
 // parameters from mochi::experimental::DisplacementControlActuatorParams.
-struct bots::BotTransmissionPrefab(experimental::DisplacementControlActuatorParams) [equality, no_reflection] {
+struct bots::BotTransmissionPrefab(experimental::DisplacementControlActuatorParams) [equality(default), no_reflection] {
   // @brief Human-readable label (used by the editor UI; not consumed by the runtime API).
   String name;
 }
@@ -142,7 +142,7 @@ struct bots::BotTransmissionPrefab(experimental::DisplacementControlActuatorPara
 // @ref BotTransmissionPrefab which inherits
 // mochi::experimental::DisplacementControlActuatorParams so that one
 // displacement-control actuator can be configured alongside each transmission.
-struct bots::BotLinearTransmissionPrefab(bots::BotTransmissionPrefab) [equality, no_reflection] {
+struct bots::BotLinearTransmissionPrefab(bots::BotTransmissionPrefab) [equality(default), no_reflection] {
   // @brief Indices into @ref BotPrefab::joints identifying which joints the
   // transmission traverses.
   DynamicArray<int> jointIndices;
@@ -166,7 +166,7 @@ struct bots::BotLinearTransmissionPrefab(bots::BotTransmissionPrefab) [equality,
 // tendon. The remaining fields are inherited from @ref BotTransmissionPrefab which inherits
 // mochi::experimental::DisplacementControlActuatorParams so that one
 // displacement-control actuator can be configured alongside each tendon.
-struct bots::BotSpatialTendonPrefab(bots::BotTransmissionPrefab) [equality, no_reflection] {
+struct bots::BotSpatialTendonPrefab(bots::BotTransmissionPrefab) [equality(default), no_reflection] {
   // @brief Ordered routing elements defining the tendon path. Must contain at least
   // one element, and every waypoint must be adjacent to another waypoint.
   DynamicArray<RoutingElement> routingElements;

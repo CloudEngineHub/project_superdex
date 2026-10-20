@@ -17,7 +17,7 @@ namespace experimental;
 // @brief [Experimental] Parameters defining a Reduced-Order Model (ROM) actor.
 //
 // @warning ROMs are experimental and may change or be removed without warning.
-struct experimental::RomParams [no_cpp_definition, no_reflection, no_capi, no_python] {}
+struct experimental::RomParams [equality(default), no_cpp_definition, no_reflection, no_capi, no_python] {}
 
 // @brief Load and instantiate a scene prefab with a uniform ROM override.
 //
@@ -139,7 +139,7 @@ struct experimental::SpatialTendonParams [no_reflection] {
   DynamicArray<RoutingElement> routingElements;
 }
 
-struct experimental::DisplacementControlActuatorParams {
+struct experimental::DisplacementControlActuatorParams [equality(default)] {
   real targetDisplacement [no_serialize_defaults] = 0;
   real stiffness [no_serialize_defaults] = 1e9;
   real damping [no_serialize_defaults] = 0;
@@ -398,7 +398,7 @@ fn experimental::CreateNewtonEulerTerms(Actor* robot, Context* context) -> exper
 fn experimental::DestroyNewtonEulerTerms(experimental::NewtonEulerTerms* newtonEulerTerms [nullable], Context* context) -> void [mochi_error];
 fn experimental::IsValidNewtonEulerTerms(experimental::NewtonEulerTerms const* newtonEulerTerms [nullable], Context* context) -> bool [mochi_error];
 
-struct experimental::ExperimentalSoftActorParams [no_reflection] {
+struct experimental::ExperimentalSoftActorParams [equality(default), no_reflection] {
   ColliderType colliderType = None;
 
   GridSdfParams sdf;
@@ -410,11 +410,11 @@ struct experimental::ExperimentalSoftActorParams [no_reflection] {
 
 fn experimental::CreateSoftActor(Scene* scene, SoftActorParams const& params, experimental::ExperimentalSoftActorParams const& experimentalParams) -> Actor* [export, mochi_error, nullable];
 
-struct experimental::ExperimentalSoftSkinnedActorParams [no_reflection] {
+struct experimental::ExperimentalSoftSkinnedActorParams [equality(default), no_reflection] {
   DynamicArray<experimental::ExperimentalSoftActorParams> softParams;
 }
 
-struct experimental::RodMaterialParams {
+struct experimental::RodMaterialParams [equality(default)] {
   real linearDensity [units("kg/m")] = 1e-1;
   real linearRotationalInertia [units("kg*m")] = 1e-6;
   real axialStiffness [units("N")] = 1e2;
@@ -424,7 +424,7 @@ struct experimental::RodMaterialParams {
   real stiffnessDampingCoefficient [units("s")] = 0;
 }
 
-struct experimental::PointCloudColliderParams {
+struct experimental::PointCloudColliderParams [equality(default)] {
   real radius [units("m")] = 0.01;
   real selfContactExclusionRatio = 1.5;
   real spatialHashLoadFactor = 0.0625;
@@ -624,7 +624,7 @@ fn experimental::EffectiveCoefficientOfRestitution(real normalViscousDampingCoef
 // @note Sleeping is not supported in differentiable scenes.
 //
 // @see experimental::GetSleepParams, experimental::SetSleepParams
-struct experimental::SleepParams [equality, no_reflection] {
+struct experimental::SleepParams [equality(default), no_reflection] {
 
   // @brief Whether islands are allowed to sleep.
   bool canSleep = false;
