@@ -22,6 +22,7 @@
 
 SR_WARNING_PUSH()
 SR_WARNING_IGNORE_MSVC(4459) // declaration of 'last' hides global declaration
+SR_WARNING_IGNORE_MSVC(4706) // assignment within conditional expression
 #include <picojson/picojson.h> // picojson (third-party)
 SR_WARNING_POP()
 
@@ -2435,7 +2436,7 @@ bool operator==(MapSortedKeys const& a, MapSortedKeys const& b) {
 }
 
 TEST(SReflect, Serde_MapSortedKeys) {
-  constexpr size_t kCount = 5;
+  constexpr int kCount = 5;
 
   // Initial version
   MapSortedKeys v;
@@ -2577,12 +2578,12 @@ struct DoNotSerializeDefaults_Struct {
   std::string str = "hello";
   int value = 123;
   DoNotSerializeDefaults_Nested nested;
-  DoNotSerializeDefaults_Nested nestedOurDefaults = {"Bob", {911}};
+  DoNotSerializeDefaults_Nested nestedOurDefaults = {"Bob", {911}, {}, {}};
   std::array<std::string, 2> arrayOfStr = {"one", "two"};
   std::vector<std::string> vectorOfStr;
   std::array<DoNotSerializeDefaults_Nested, 2> arrayOfNested = {
-      DoNotSerializeDefaults_Nested{"Fred", {42}},
-      DoNotSerializeDefaults_Nested{"Fred's friend", {43}}};
+      DoNotSerializeDefaults_Nested{"Fred", {42}, {}, {}},
+      DoNotSerializeDefaults_Nested{"Fred's friend", {43}, {}, {}}};
   std::vector<DoNotSerializeDefaults_Nested> vectorOfNested;
 
   bool operator==(DoNotSerializeDefaults_Struct const& other) const {
@@ -2606,8 +2607,8 @@ struct DoNotSerializeDefaults_Struct {
 };
 
 struct DoNotSerializeDefaults_PerField {
-  DoNotSerializeDefaults_Nested nested1 = {"Billy", {11}};
-  DoNotSerializeDefaults_Nested nested2 = {"Bilbo", {111}};
+  DoNotSerializeDefaults_Nested nested1 = {"Billy", {11}, {}, {}};
+  DoNotSerializeDefaults_Nested nested2 = {"Bilbo", {111}, {}, {}};
 
   bool operator==(DoNotSerializeDefaults_PerField const& other) const {
     return nested1 == other.nested1 && nested2 == other.nested2;
@@ -2723,11 +2724,12 @@ TEST(SReflect, SRA_DoNotSerializeDefaults_Struct) {
   // Non-default within a std::vector of nested structs (defaults come from
   // DoNotSerializeDefaults_Nested)
   obj = {};
-  obj.vectorOfNested.emplace_back(DoNotSerializeDefaults_Nested{"Nancy", {}}); // Non-default name
   obj.vectorOfNested.emplace_back(
-      DoNotSerializeDefaults_Nested{"nested", {555}}); // Non-default deeper.magic
+      DoNotSerializeDefaults_Nested{"Nancy", {}, {}, {}}); // Non-default name
   obj.vectorOfNested.emplace_back(
-      DoNotSerializeDefaults_Nested{"George", {666}}); // Non-default both
+      DoNotSerializeDefaults_Nested{"nested", {555}, {}, {}}); // Non-default deeper.magic
+  obj.vectorOfNested.emplace_back(
+      DoNotSerializeDefaults_Nested{"George", {666}, {}, {}}); // Non-default both
   ExpectJsonRoundTrip(
       obj,
       R"({"vectorOfNested":[{"name":"Nancy"},{"deeper":{"magic":555}},{"deeper":{"magic":666},"name":"George"}]})");
@@ -3102,9 +3104,8 @@ class TestMatrix {
   bool operator==(TestMatrix const& rhs) const {
     return (layout._numRows == rhs.layout._numRows) &&
         (layout._numColumns == rhs.layout._numColumns) &&
-        (layout._leadingDim == rhs.layout._leadingDim ||
-         !(layout._leadingDim *
-           rhs.layout._leadingDim)) && // Allow inequality if leading dim is auto-calculated
+        (layout._leadingDim == rhs.layout._leadingDim || layout._leadingDim == 0 ||
+         rhs.layout._leadingDim == 0) && // Allow inequality if leading dim is auto-calculated
         (data == rhs.data);
   }
 };
@@ -3829,13 +3830,13 @@ static void TestMatrixRoundTrip() {
       m1.data = src.data;
       if constexpr (kIsRowMajor) {
         m1.layout._leadingDim = m1.layout._numColumns + 1;
-        for (int r = 0; r < m1.layout._numRows; ++r) {
+        for (size_t r = 0; r < m1.layout._numRows; ++r) {
           // Insert a 42 after each row, as padding.
           m1.data.insert(m1.data.begin() + m1.layout._numColumns + r * m1.layout._leadingDim, 42);
         }
       } else {
         m1.layout._leadingDim = m1.layout._numRows + 1;
-        for (int c = 0; c < m1.layout._numColumns; ++c) {
+        for (size_t c = 0; c < m1.layout._numColumns; ++c) {
           // Insert a 42 after each column, as padding.
           m1.data.insert(m1.data.begin() + m1.layout._numRows + c * m1.layout._leadingDim, 42);
         }

@@ -22,6 +22,7 @@
 
 SR_WARNING_PUSH()
 SR_WARNING_IGNORE_MSVC(4459) // declaration of 'last' hides global declaration
+SR_WARNING_IGNORE_MSVC(4706) // assignment within conditional expression
 #include <picojson/picojson.h> // picojson (third-party)
 SR_WARNING_POP()
 
@@ -3022,7 +3023,7 @@ EnumTypeInfo* detail::MakeEnum(
 static char const* MakeCStyleArrayName(char const* typeName, size_t arraySize) {
   char buffer[kMaxTypeNameLen];
   const int len = snprintf(buffer, sizeof(buffer), "%s[%zu]", typeName, arraySize);
-  SR_ASSERT(len > 0 && len < sizeof(buffer), "Type name is too long");
+  SR_ASSERT(len > 0 && static_cast<size_t>(len) < sizeof(buffer), "Type name is too long");
   char* formattedName = new char[len + 1];
   strncpy(formattedName, buffer, size_t(len + 1));
   return formattedName;
@@ -3037,7 +3038,7 @@ static char const* MakeTemplateArrayName(
       ? snprintf(
             buffer, sizeof(buffer), "%s<%s,%zu>", outerName, innerName, arraySizeOrZeroIfDynamic)
       : snprintf(buffer, sizeof(buffer), "%s<%s>", outerName, innerName);
-  SR_ASSERT(len > 0 && len < sizeof(buffer), "Type name is too long");
+  SR_ASSERT(len > 0 && static_cast<size_t>(len) < sizeof(buffer), "Type name is too long");
   char* formattedName = new char[len + 1];
   strncpy(formattedName, buffer, size_t(len + 1));
   return formattedName;
@@ -3147,7 +3148,7 @@ char const* detail::MakeTypeName(
     char const* f) {
   char buffer[kMaxTypeNameLen];
   int len = snprintf(buffer, sizeof(buffer), "%s%s%s%s%s%s", a, b, c, d, e, f);
-  SR_ASSERT(len > 0 && len < sizeof(buffer), "Type name is too long");
+  SR_ASSERT(len > 0 && static_cast<size_t>(len) < sizeof(buffer), "Type name is too long");
   char* newName = new char[len + 1];
   strncpy(newName, buffer, size_t(len + 1));
   return newName;
