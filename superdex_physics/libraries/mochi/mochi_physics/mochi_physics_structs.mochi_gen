@@ -22,7 +22,7 @@ struct SolverParams [equality(default)] {
   LinearSolverParams linearSolver = {};
 
   // @brief Time integration method.
-  IntegrationMethod integrationMethod = Default;
+  IntegrationMethod integrationMethod = IntegrationMethod::Default;
 
   // @brief [Experimental] Evaluation settings common to the full scene.
   //
@@ -74,7 +74,7 @@ struct BoundarySubsamplingParams [equality(default)] {
   real subsamplingDensity = 1;
 
   // @brief Strategy for determining which sample points to use.
-  BoundarySubsamplingStrategy strategy = UniformProbability;
+  BoundarySubsamplingStrategy strategy = BoundarySubsamplingStrategy::UniformProbability;
 }
 
 // @brief Optional contact-response parameter replacements for an unordered actor pair.
@@ -259,7 +259,7 @@ struct RigidActorParams [equality(default)] {
   // actor detects contact with other actors.
   //
   // @see ColliderType
-  ColliderType colliderType = Auto;
+  ColliderType colliderType = ColliderType::Auto;
 
   // @brief If true, actor will be static (fixed in space). If false, actor will be dynamic.
   bool isStatic = false;
@@ -337,7 +337,7 @@ struct RigidActorParams [equality(default)] {
   // @note Affects accuracy and performance of contact and boundary integrals.
   //
   // @see ActorBoundaryElementType
-  ActorBoundaryElementType boundaryElementType = Default;
+  ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
 
   // @brief Optional subsampling for boundary integrals such as contact.
   //
@@ -474,7 +474,7 @@ struct SoftActorParams [equality(default)] {
   // @ref useContactSkin is true.
   //
   // @see ActorBoundaryElementType
-  ActorBoundaryElementType boundaryElementType = Default;
+  ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
 }
 
 // @brief Parameters describing a single joint within an articulated actor.
@@ -499,7 +499,7 @@ struct ArticulatedJointParams [equality(default)] {
   // ArticulatedActorParams::cycles for cycle joints.
   // @note Static links can be modeled using a @ref ArticulatedJointType::Hard joint whose parent is
   // either -1 or another static link.
-  ArticulatedJointType type = Invalid;
+  ArticulatedJointType type = ArticulatedJointType::Invalid;
 
   // @brief Rotation and translation of the joint with respect to the parent link.
   TransformRT parentLinkFromJoint;
@@ -613,7 +613,7 @@ struct ArticulatedLinkParams [equality(default)] {
   //
   // @note Determines how OTHER actors detect contact with this actor. It does not affect
   // how this actor detects contact with other actors.
-  ColliderType colliderType = Auto;
+  ColliderType colliderType = ColliderType::Auto;
 
   // @brief Contact mechanics parameters.
   ContactParams contact;
@@ -672,7 +672,7 @@ struct ArticulatedLinkParams [equality(default)] {
   // @brief Finite element type for boundary discretization.
   //
   // @note Affects accuracy and performance of contact and boundary integrals.
-  ActorBoundaryElementType boundaryElementType = Default;
+  ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
 
   // @brief Optional subsampling for boundary integrals such as contact.
   //
@@ -715,7 +715,7 @@ struct ArticulatedSkinParams [equality(default)] {
   // @brief Finite element type for boundary discretization.
   //
   // @note Affects accuracy and performance of contact and boundary integrals.
-  ActorBoundaryElementType boundaryElementType = Default;
+  ActorBoundaryElementType boundaryElementType = ActorBoundaryElementType::Default;
 
   // @brief Optional subsampling for boundary integrals such as contact.
   //
@@ -1592,7 +1592,7 @@ struct SolverStats [equality(default)] {
   // stricter than the scene requires.
   //
   // @see ConvergenceStatus, Actor::GetConvergenceStatus
-  ConvergenceStatus convergenceStatus = None;
+  ConvergenceStatus convergenceStatus = ConvergenceStatus::None;
 }
 
 // @brief Parameters controlling what data gets included in a scene recording.
@@ -1711,7 +1711,7 @@ struct PoseConstraintInfo {
   ConstraintHandle handle;
 
   // @brief Type of constraint.
-  PoseConstraintType type = Invalid;
+  PoseConstraintType type = PoseConstraintType::Invalid;
 
   // @brief Index of the target link in the articulated body.
   int link = -1;

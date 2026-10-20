@@ -201,7 +201,7 @@ struct experimental::IKSolverParams [no_reflection] {
   // @brief Verbosity level passed to the Newton solver.
   //
   // @see NonLinearSolverParams::verbosity
-  VerbosityLevel verbosity = Warning;
+  VerbosityLevel verbosity = VerbosityLevel::Warning;
 
   // @brief Absolute residual-norm tolerance for Newton solver convergence.
   //
@@ -399,7 +399,7 @@ fn experimental::DestroyNewtonEulerTerms(experimental::NewtonEulerTerms* newtonE
 fn experimental::IsValidNewtonEulerTerms(experimental::NewtonEulerTerms const* newtonEulerTerms [nullable], Context* context) -> bool [mochi_error];
 
 struct experimental::ExperimentalSoftActorParams [equality(default), no_reflection] {
-  ColliderType colliderType = None;
+  ColliderType colliderType = ColliderType::None;
 
   GridSdfParams sdf;
 
@@ -463,13 +463,13 @@ struct experimental::RodActorParams {
   ContactParams contact;
 
   // @brief Element type controlling the number of contact samples per segment.
-  ActorSegmentElementType contactElementType = Default;
+  ActorSegmentElementType contactElementType = ActorSegmentElementType::Default;
 
   // @brief Rod material properties.
   experimental::RodMaterialParams material;
 
   // @brief Collider type. Set to PointCloud to enable point-cloud contact.
-  ColliderType colliderType = None;
+  ColliderType colliderType = ColliderType::None;
 
   // @brief Geometric and logical properties of the point-cloud collider.
   experimental::PointCloudColliderParams pointCloudCollider;
@@ -489,7 +489,7 @@ struct experimental::RodActorParams {
   // @brief Triangle element type for contact-skin quadrature.
   //
   // @note @ref RodActorParams::contactElementType controls centerline sampling instead.
-  ActorBoundaryElementType contactSkinElementType = Default;
+  ActorBoundaryElementType contactSkinElementType = ActorBoundaryElementType::Default;
 }
 
 fn experimental::CreateRodActor(Scene* scene, experimental::RodActorParams const& params) -> Actor* [mochi_error, nullable];
@@ -532,7 +532,7 @@ struct experimental::ShellActorParams {
   //
   // @note Currently, the only supported values are PointCloud (participates in point-cloud
   // contact) and None (no contact).
-  ColliderType colliderType = PointCloud;
+  ColliderType colliderType = ColliderType::PointCloud;
 
   // @brief Contact mechanics properties.
   ContactParams contact;
@@ -545,7 +545,7 @@ struct experimental::ShellActorParams {
 
   // @brief Element type controlling the number of contact samples per triangle on the selected
   // contact mesh.
-  ActorBoundaryElementType contactElementType = Default;
+  ActorBoundaryElementType contactElementType = ActorBoundaryElementType::Default;
 
   // @brief Use the shape's authored contact skin for colliding contact samples.
   //

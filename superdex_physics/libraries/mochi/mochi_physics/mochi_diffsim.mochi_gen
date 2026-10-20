@@ -21,7 +21,7 @@ constant real kDefaultBackPropagationEpsFiniteDiff; # Fwd. declared because valu
 struct diffsim::BackPropagationSolverParams [no_reflection] {
 
   // @brief Verbosity level of the back-propagation solver's logging.
-  VerbosityLevel verbosity = Warning;
+  VerbosityLevel verbosity = VerbosityLevel::Warning;
 
   // @brief Use a Newton solver for the outer adjoint solve instead of the default Krylov solver.
   bool useNewtonOuterSolver = false;
@@ -37,7 +37,7 @@ struct diffsim::BackPropagationSolverParams [no_reflection] {
 
   # TODO(T273020090): Enable NonLinearSolverConvergenceMode::PerActorWeighted.
   // @brief Convergence-checking mode for the outer solver.
-  NonLinearSolverConvergenceMode outerSolverConvergenceMode = Global;
+  NonLinearSolverConvergenceMode outerSolverConvergenceMode = NonLinearSolverConvergenceMode::Global;
 
   // @brief Absolute convergence tolerance for the inner (linear) solver.
   real innerSolverAbsTol = 1e-10;

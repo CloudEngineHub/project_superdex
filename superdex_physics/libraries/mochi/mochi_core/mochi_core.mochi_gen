@@ -101,7 +101,7 @@ enum RoutingElementType [from_mochi_core] {
 // element between two waypoints leaves a gap.
 struct RoutingElement [from_mochi_core, equality(default)] {
   // @brief Selects the interpretation of the remaining fields.
-  RoutingElementType type = Waypoint;
+  RoutingElementType type = RoutingElementType::Waypoint;
   // @brief Link index for a waypoint, or joint index for a linear-joint element.
   int index = 0;
   // @brief Waypoint position in the link's local frame, the same frame in which the link's mesh
@@ -673,7 +673,7 @@ struct GridSdfParams [equality(default), from_mochi_core] {
   // @brief Defines the mesh feature used as reference measurement for computing the voxel size.
   //
   // @see resolutionDelta
-  GridSdfResolutionMode resolutionMode = MeanEdge;
+  GridSdfResolutionMode resolutionMode = GridSdfResolutionMode::MeanEdge;
   // @brief The maximum voxel size will be @ref resolutionDelta times the reference measurement
   // computed using @ref resolutionMode.
   //
@@ -734,7 +734,7 @@ struct StVenantKirchhoffMaterialParams [equality(default), from_mochi_core] {
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = Projection;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::Projection;
 }
 
 // @brief Parameters for the Smith stable Neo-Hookean material model.
@@ -750,7 +750,7 @@ struct NeoHookeanMaterialParams [from_mochi_core] {
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = Projection;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::Projection;
 }
 
 // @brief Parameters for the active anisotropic ARAP material component.
@@ -773,7 +773,7 @@ struct ActiveAnisoArapMaterialParams [equality(default), from_mochi_core] {
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = Projection;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::Projection;
 
   // @brief Returns the azimuthal angle (θ) [rad] from the stored fiber direction.
   //
@@ -821,7 +821,7 @@ struct ArapMaterialParams [equality(default), from_mochi_core] {
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = Projection;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::Projection;
 }
 
 // @brief Parameters for an active ARAP material targeting a preferred shape tensor.
@@ -842,13 +842,13 @@ struct ActiveShapeTargetingArapMaterialParams [equality(default), from_mochi_cor
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = Projection;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::Projection;
 }
 
 // @brief Parameters for a homogeneous soft material.
 struct SoftMaterialParams [equality(default), from_mochi_core] {
   // @brief Material constitutive model.
-  SoftMaterialType type = NeoHookean;
+  SoftMaterialType type = SoftMaterialType::NeoHookean;
 
   // @brief Parameters for the Neo-Hookean material model.
   NeoHookeanMaterialParams neoHookean [previously_known_as("stableNeoHookean")];
@@ -919,12 +919,12 @@ struct PerElementSoftMaterialData [from_mochi_core, equality(default), no_capi] 
   ctor PerElementSoftMaterialData(PerElementSoftMaterialDataView const& src) [overloaded];
 
   // @brief Material constitutive model.
-  SoftMaterialType type = NeoHookean;
+  SoftMaterialType type = SoftMaterialType::NeoHookean;
 
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = MaterialDefault;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::MaterialDefault;
 
   // @brief Young's modulus [Pa]. 1 per element.
   DynamicArray<real> youngsModulus [units("Pa")];
@@ -974,12 +974,12 @@ struct PerElementSoftMaterialDataView [from_mochi_core, equality(default), no_ca
   ctor PerElementSoftMaterialDataView(PerElementSoftMaterialData const& src [keep_alive]) [overloaded, implicit];
 
   // @brief Material constitutive model.
-  SoftMaterialType type = NeoHookean;
+  SoftMaterialType type = SoftMaterialType::NeoHookean;
 
   // @brief Strategy for ensuring positive semi-definite Hessian matrices.
   //
   // @see MaterialPsdStrategy
-  MaterialPsdStrategy psdStrategy = MaterialDefault;
+  MaterialPsdStrategy psdStrategy = MaterialPsdStrategy::MaterialDefault;
 
   // @brief Young's modulus [Pa]. 1 per element.
   Span<real const> youngsModulus;
@@ -1461,7 +1461,7 @@ struct ExperimentalEvalParams [equality(default), from_mochi_core] {
   //
   // @details C1Regularized (default) preserves existing behavior exactly. CinfRegularized is an
   // additional model that can be selected at runtime without affecting C1Regularized users.
-  CoulombFrictionModel frictionModel = Default;
+  CoulombFrictionModel frictionModel = CoulombFrictionModel::Default;
   // @brief Validate that the residual is the gradient of the objective by a directional
   // finite-difference consistency check.
   //
@@ -1635,7 +1635,7 @@ enum LinearToleranceStrategy [from_mochi_core] {
 // @brief Parameters for non-linear implicit solves.
 struct NonLinearSolverParams [equality(default), from_mochi_core] {
   // @brief Non-linear solver type.
-  NonLinearSolverType solverType = Default;
+  NonLinearSolverType solverType = NonLinearSolverType::Default;
   // @brief Every how many non-linear iterations to assemble the dresidual matrix.
   //
   // @note For Newton's method, set to >1 to reuse the dresidual across iterations.
@@ -1654,7 +1654,7 @@ struct NonLinearSolverParams [equality(default), from_mochi_core] {
   // @brief Convergence monitoring mode.
   //
   // @note Applies to @ref absTol and @ref relTol.
-  NonLinearSolverConvergenceMode convergenceMode = Default;
+  NonLinearSolverConvergenceMode convergenceMode = NonLinearSolverConvergenceMode::Default;
   // @brief Absolute residual norm tolerance for convergence.
   real absTol = 1e-3;
   // @brief Relative residual norm tolerance for convergence, relative to the initial residual.
@@ -1673,7 +1673,7 @@ struct NonLinearSolverParams [equality(default), from_mochi_core] {
 
   # Retries
   // @brief Positive Semi-Definite (PSD) projection mode for the dresidual matrix.
-  PsdProjectionMode psdProjMode = Default;
+  PsdProjectionMode psdProjMode = PsdProjectionMode::Default;
 
   # Explosion Control
   // @brief Enable heuristic explosion prevention.
@@ -1715,15 +1715,15 @@ struct NonLinearSolverParams [equality(default), from_mochi_core] {
   // @note Only applies to @ref LineSearchType::Simple.
   real lineSearchMaxRelIncrease = 0.0;
   // @brief Line search type.
-  LineSearchType lineSearchType = Default;
+  LineSearchType lineSearchType = LineSearchType::Default;
 
   # Linear tolerance strategy
   // @brief Strategy for adaptive linear solver tolerance (forcing term).
-  LinearToleranceStrategy linearToleranceStrategy = Default;
+  LinearToleranceStrategy linearToleranceStrategy = LinearToleranceStrategy::Default;
 
   # Other
   // @brief Verbosity level for logging output.
-  VerbosityLevel verbosity = Warning;
+  VerbosityLevel verbosity = VerbosityLevel::Warning;
 }
 
 // @brief Linear solver algorithm.
@@ -1923,15 +1923,15 @@ enum LinearSolverConvergenceNorm [from_mochi_core] {
 // @brief Parameters for linear solves.
 struct LinearSolverParams [equality(default), from_mochi_core] {
   // @brief Linear solver type.
-  LinearSolverType solverType = Default;
+  LinearSolverType solverType = LinearSolverType::Default;
   // @brief Preconditioner type.
   //
   // @note Applies only to iterative solvers.
-  PreconditionerType preconditionerType = Default;
+  PreconditionerType preconditionerType = PreconditionerType::Default;
   // @brief Norm used for the stopping criteria.
   //
   // @note Applies only to the solvers documented in @ref LinearSolverConvergenceNorm.
-  LinearSolverConvergenceNorm normType = Default;
+  LinearSolverConvergenceNorm normType = LinearSolverConvergenceNorm::Default;
   // @brief Absolute residual norm tolerance for convergence.
   //
   // @note Applies only to iterative solvers.
@@ -1968,7 +1968,7 @@ struct LinearSolverParams [equality(default), from_mochi_core] {
   // LinearSolverType::CudaCG, @ref LinearSolverType::AugmentedCG).
   bool abortIfNotSpd = false;
   // @brief Verbosity level for logging output.
-  VerbosityLevel verbosity = Warning;
+  VerbosityLevel verbosity = VerbosityLevel::Warning;
 }
 
 // @brief Time-integration method.
