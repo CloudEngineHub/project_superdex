@@ -225,8 +225,8 @@ struct CTransmissions : public NoCopy {
 /**
   Link-space (full-DoF) residual of an articulated actor, projected to its reduced DoFs after
   assembly. The residual is valid only if isActive. Producers accumulate into it through
-  AddLinkResidual(), and its consumer, articulated::compound::ProjectFullResidual, reads it if
-  active and then deactivates it.
+  AddLinkResidual() or AddTriple(), and its consumer, articulated::compound::ProjectFullResidual,
+  reads it if active and then deactivates it.
 */
 struct ArticulatedLinkResidual : NoCopy {
   explicit ArticulatedLinkResidual(int fullDofs) : residual(fullDofs) {}
@@ -234,15 +234,27 @@ struct ArticulatedLinkResidual : NoCopy {
   // Adds the residual of a link at its offset in the full DoFs, zeroing the residual on the first
   // write after deactivation.
   void AddLinkResidual(int linkDofOffset, ColumnVectorView<real const, RigidSize::kDAll> linkRes) {
-    if (!isActive) {
-      residual.SetZero();
-      isActive = true;
-    }
+    Activate();
     residual.Slice<RigidSize::kDAll>(linkDofOffset, RigidSize::kDAll) += linkRes;
+  }
+
+  // Adds a value to the aligned triple of full DoFs that starts at fullDof, zeroing the residual on
+  // the first write after deactivation.
+  void AddTriple(int fullDof, ColumnVectorView<real const, 3> value) {
+    Activate();
+    residual.Slice<3>(fullDof, 3) += value;
   }
 
   ColumnVector<real> residual;
   bool isActive = false;
+
+ private:
+  void Activate() {
+    if (!isActive) {
+      residual.SetZero();
+      isActive = true;
+    }
+  }
 };
 
 // On an articulated actor. Written by sync contact.
@@ -252,6 +264,12 @@ struct CArticulatedSyncContactLinkResidual : ArticulatedLinkResidual {
 
 // On a skinned contact entity. Written by its async contact.
 struct CArticulatedAsyncContactLinkResidual : ArticulatedLinkResidual {
+  using ArticulatedLinkResidual::ArticulatedLinkResidual;
+};
+
+// On an articulated actor. Written by the constraints of its outer compound, i.e., constraints
+// between its links and other actors.
+struct CArticulatedConstraintLinkResidual : ArticulatedLinkResidual {
   using ArticulatedLinkResidual::ArticulatedLinkResidual;
 };
 
@@ -728,11 +746,11 @@ void EntityAssemble(
     CActorDiffInputInfo const* diffInputInfo,
     CActorSnle& outCompoundSnle);
 
-// Adds the active link-space contact residuals of the articulated actor (sync, and async of the
-// actor and its nested soft actors) to its full residual, projects it to the reduced DoFs, and adds
-// it to the reduced residual. For state grad targets only. Must run after contact and articulated
-// assembly. As their only consumer, it deactivates the link-space residuals, whether projected or
-// not.
+// Adds the active link-space residuals of the articulated actor (sync contact, constraints of its
+// outer compound, and async contact of the actor and its nested soft actors) to its full residual,
+// projects it to the reduced DoFs, and adds it to the reduced residual. For state grad targets
+// only. Must run after contact, constraint and articulated assembly. As their only consumer, it
+// deactivates the link-space residuals, whether projected or not.
 void ProjectFullResidual(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,
@@ -745,6 +763,7 @@ void ProjectFullResidual(
     CBlendedComposition const* blendedComposition,
     CArticulatedAsyncContactLinkResidual* asyncContactLinkResidual,
     CArticulatedSyncContactLinkResidual& syncContactLinkResidual,
+    CArticulatedConstraintLinkResidual& constraintLinkResidual,
     CActorSnle& outCompoundSnle);
 
 /*

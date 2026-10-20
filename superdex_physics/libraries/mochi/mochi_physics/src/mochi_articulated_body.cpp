@@ -1689,9 +1689,10 @@ void mochi::articulated::compound::InitArticulatedBodyActor(
   // solve. Skip the SNLE machinery entirely instead of running it as a chain of no-ops on a 0x0
   // problem.
   if (reducedDofsDim != 0) {
-    // Storage for assembly of the compound's SNLE problem, and for its link-space contact residual.
+    // Storage for assembly of the compound's SNLE problem, and for its link-space residuals.
     reg.emplace<CActorSnle>(e, Matrix<real>::Zero(reducedDofsDim, reducedDofsDim), fullDofsDim);
     reg.emplace<CArticulatedSyncContactLinkResidual>(e, fullDofsDim);
+    reg.emplace<CArticulatedConstraintLinkResidual>(e, fullDofsDim);
 
     // Non-linear solver convergence weights (lazily initialized).
     reg.emplace<CActorConvergenceWeights>(e);
@@ -2783,6 +2784,7 @@ void articulated::compound::ProjectFullResidual(
     CBlendedComposition const* blendedComposition,
     CArticulatedAsyncContactLinkResidual* asyncContactLinkResidual,
     CArticulatedSyncContactLinkResidual& syncContactLinkResidual,
+    CArticulatedConstraintLinkResidual& constraintLinkResidual,
     CActorSnle& outCompoundSnle) {
   MOCHI_PROFILE_SCOPE();
   bool const project = params.assemRes &&
@@ -2808,6 +2810,7 @@ void articulated::compound::ProjectFullResidual(
   if (asyncContactLinkResidual) {
     consume(*asyncContactLinkResidual);
   }
+  consume(constraintLinkResidual);
   if (blendedComposition) {
     for (entt::entity const soft : blendedComposition->soft) {
       if (auto* softContact = reg.try_get<CArticulatedAsyncContactLinkResidual>(soft)) {
@@ -3544,6 +3547,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CArticulatedSkinningData>(reg);
   ecs::RegisterComponent<CArticulatedAsyncContactLinkResidual>(reg);
   ecs::RegisterComponent<CArticulatedSyncContactLinkResidual>(reg);
+  ecs::RegisterComponent<CArticulatedConstraintLinkResidual>(reg);
   ecs::RegisterComponent<CBoneHandles>(reg);
   ecs::RegisterComponent<CIntegrationArticulatedReducedPose>(reg);
   ecs::RegisterComponent<CIntegrationArticulatedJointVels>(reg);
