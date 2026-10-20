@@ -761,7 +761,7 @@ static void TransformToCollider(
     Span<int const> /* colliderFeatureIndices */,
     Span<Real3 const> posColliding,
     DynamicArray<Real3>& /* positionsBuffer */,
-    DynamicArray<int>& outIndices,
+    DynamicArray<int>& /* outIndices */,
     DynamicArray<Real3>& outPosCollidingStageStart) {
   MOCHI_ASSERT_VERBOSE(
       (reg.any_of<TagRigidActor, TagStaticActor>(collider)),
@@ -775,8 +775,6 @@ static void TransformToCollider(
   // Rigid colliding actors share one sample array between time slices, so their samples don't move.
   bool const samplesMove = samples.data() != samplesStageStart.data();
   int const numContacts = isize(sampleIndices);
-  outIndices.resize_noinit(numContacts);
-  std::iota(outIndices.begin(), outIndices.end(), 0);
   outPosCollidingStageStart.resize_noinit(numContacts);
   for (int i = 0; i < numContacts; ++i) {
     int const sampleIdx = sampleIndices[i];
@@ -865,7 +863,7 @@ static void QueryPointCloudPointsOnly(
     Span<int const> colliderFeatureIndices,
     Span<Real3 const> /* posColliding */,
     DynamicArray<Real3>& /* positionsBuffer */,
-    DynamicArray<int>& outIndices,
+    DynamicArray<int>& /* outIndices */,
     DynamicArray<Real3>& outPosCollidingStageStart) {
   int const totalContacts = isize(colliderFeatureIndices);
   MOCHI_ASSERT_VERBOSE(
@@ -879,10 +877,6 @@ static void QueryPointCloudPointsOnly(
   auto const& colliderDiscretization = reg.get<CColliderPointCloudDiscretization>(collider);
   ColumnVectorView<real const> colliderDisplacements =
       reg.get<CFinalDisplacementRef<TimeStep::StageStart>>(collider).value;
-
-  // Populate outIndices with identity mapping.
-  outIndices.resize_noinit(totalContacts);
-  std::iota(outIndices.begin(), outIndices.end(), 0);
 
   // Call ComputePointCloudContactDetectionFields with null optional outputs. It reads the samples
   // through sampleIndices, so they need not be gathered.
@@ -1294,7 +1288,7 @@ static void EvalStageStartContactWithSingleCollider(
   auto const& worldFromColliderStageStart = GetRootTransform<TimeStep::StageStart>(reg, collider);
 
   // Output container for indices. Do not pass outResult.sampleIndices, because the query expects
-  // an empty container.
+  // an empty container. Branches that output every contact may leave it empty.
   auto& outIndices = outResult.culledIndicesBuffer;
   outIndices.clear();
 
@@ -1362,8 +1356,9 @@ static void EvalStageStartContactWithSingleCollider(
         outResult.posCollidingStageStart);
   }
 
-  // If needed, fill any missing results.
-  if (outIndices.size() != outResult.sampleIndices.size()) {
+  // If needed, fill any missing results. Queries that miss contacts list the ones they output in
+  // outIndices.
+  if (outResult.posCollidingStageStart.size() != outResult.sampleIndices.size()) {
     MOCHI_ASSERT_VERBOSE(outResult.ndofs > 0, "Only mapped colliders may miss results");
     MOCHI_ASSERT_VERBOSE(
         outResult.posCollidingStageStart.size() == outIndices.size(),
