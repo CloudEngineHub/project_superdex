@@ -49,7 +49,9 @@ def sweep_action(
 ) -> npt.NDArray[float]:
     """Generate a sweeping sinusoidal action that cycles through action dimensions.
     This function creates an action where only one dimension is active at a time,
-    cycling through all dimensions with a sinusoidal value over time."""
+    cycling through all dimensions with a sinusoidal value over time.
+
+    The website env previews use this sampler. Render them again if you change it."""
     time = mochi_env._step_count * mochi_env._control_dt
     action_shape = env.action_space.shape
     period_length = 4.0
