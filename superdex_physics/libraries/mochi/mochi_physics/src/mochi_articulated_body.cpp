@@ -2816,6 +2816,9 @@ void articulated::compound::ProjectFullResidual(
       if (auto* softContact = reg.try_get<CArticulatedAsyncContactLinkResidual>(soft)) {
         consume(*softContact);
       }
+      if (auto* softBody = reg.try_get<CArticulatedSkinnedBodyLinkResidual>(soft)) {
+        consume(*softBody);
+      }
     }
   }
   if (!project) {
@@ -3548,6 +3551,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CArticulatedAsyncContactLinkResidual>(reg);
   ecs::RegisterComponent<CArticulatedSyncContactLinkResidual>(reg);
   ecs::RegisterComponent<CArticulatedConstraintLinkResidual>(reg);
+  ecs::RegisterComponent<CArticulatedSkinnedBodyLinkResidual>(reg);
   ecs::RegisterComponent<CBoneHandles>(reg);
   ecs::RegisterComponent<CIntegrationArticulatedReducedPose>(reg);
   ecs::RegisterComponent<CIntegrationArticulatedJointVels>(reg);

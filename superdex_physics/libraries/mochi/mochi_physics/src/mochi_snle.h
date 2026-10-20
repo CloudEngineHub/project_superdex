@@ -219,13 +219,15 @@ struct CSkinnedContactSnle : InteractionSnle {
   the soft and articulated actors. For performance reasons, only the off-diagonal sub-dresiduals
   (soft-articulated, articulated-soft) are stored in this component. The diagonal sub-dresiduals
   (soft-soft, articulated-articulated) are stored in the actor dresidual of the underlying soft and
-  articulated actors.
+  articulated actors. The residual holds the soft entry only. The articulated one is stored in link
+  space in CArticulatedSkinnedBodyLinkResidual.
 */
 struct CSkinnedInteractionSnle : InteractionSnle {
   using InteractionSnle::InteractionSnle;
 
   // Actor index in residual and dresidual vectors. For the dresidual, the index refers to the
-  // off-diagonal submatrix whose rows (NOT columns) correspond to the actor.
+  // off-diagonal submatrix whose rows (NOT columns) correspond to the actor. kArticulatedIdx only
+  // applies to the dresidual.
   static constexpr int kSoftIdx = 0;
   static constexpr int kArticulatedIdx = 1;
 };

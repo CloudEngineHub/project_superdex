@@ -273,6 +273,11 @@ struct CArticulatedConstraintLinkResidual : ArticulatedLinkResidual {
   using ArticulatedLinkResidual::ArticulatedLinkResidual;
 };
 
+// On a nested soft actor. Written by the assembly of its posed body energy.
+struct CArticulatedSkinnedBodyLinkResidual : ArticulatedLinkResidual {
+  using ArticulatedLinkResidual::ArticulatedLinkResidual;
+};
+
 // Emplace data to process a skinned mesh.
 void InitSkinnedMesh(
     entt::registry& reg,
@@ -747,10 +752,11 @@ void EntityAssemble(
     CActorSnle& outCompoundSnle);
 
 // Adds the active link-space residuals of the articulated actor (sync contact, constraints of its
-// outer compound, and async contact of the actor and its nested soft actors) to its full residual,
-// projects it to the reduced DoFs, and adds it to the reduced residual. For state grad targets
-// only. Must run after contact, constraint and articulated assembly. As their only consumer, it
-// deactivates the link-space residuals, whether projected or not.
+// outer compound, async contact of the actor, and async contact and posed body energy of its nested
+// soft actors) to its full residual, projects it to the reduced DoFs, and adds it to the reduced
+// residual. For state grad targets only. Must run after contact, constraint, articulated and nested
+// soft actor assembly. As their only consumer, it deactivates the link-space residuals, whether
+// projected or not.
 void ProjectFullResidual(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,

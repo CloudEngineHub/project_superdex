@@ -112,6 +112,7 @@ void EntityAssembleBody(
     CSoftSkinnedAssemblyScratchMemory& scratchMemory,
     CActorSnle& outSoftSnle,
     CSoftSkinnedUnposedSnle& outSoftSkinnedSnle,
+    CArticulatedSkinnedBodyLinkResidual& outLinkResidual,
     CSkinnedInteractionSnle& outInteractionSnle);
 
 void InitSkinnedActor(

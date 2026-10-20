@@ -1944,7 +1944,8 @@ class MochiSoftSkinnedStaticContact : public MochiContactTestBase {
   static constexpr int kRomSoftDofs = 1;
 
   // PartiallyBlendedFom blends only the nodes with x < 0.5, so that the partitions of the samples
-  // on the face x = 1 have no soft actor.
+  // on the face x = 1 have no soft actor. PosedFom assembles posed gravity and stress for the
+  // nested soft actor, through skinned::EntityAssembleBody.
   using Mode = ThreeBoneSoftSkinnedMode;
 
   entt::entity _articulated = entt::null;
@@ -2074,6 +2075,22 @@ TEST_P(MochiSoftSkinnedStaticContact, ContactAssembly) {
 INSTANTIATE_TEST_SUITE_P(
     MultipleBones,
     MochiSoftSkinnedStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+class MochiPosedSoftSkinnedStaticContact : public MochiSoftSkinnedStaticContact {
+ public:
+  MochiPosedSoftSkinnedStaticContact() : MochiSoftSkinnedStaticContact(Mode::PosedFom) {}
+};
+
+TEST_P(MochiPosedSoftSkinnedStaticContact, ContactAssembly) {
+  RunTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiPosedSoftSkinnedStaticContact,
     ::testing::Values(
         TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });

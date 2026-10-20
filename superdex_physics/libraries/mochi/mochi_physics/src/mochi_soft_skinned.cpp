@@ -76,6 +76,7 @@ void skinned::EntityAssembleBody(
     CSoftSkinnedAssemblyScratchMemory& scratchMemory,
     CActorSnle& outSoftSnle,
     CSoftSkinnedUnposedSnle& outSoftSkinnedSnle,
+    CArticulatedSkinnedBodyLinkResidual& outLinkResidual,
     CSkinnedInteractionSnle& outInteractionSnle) {
   MOCHI_PROFILE_SCOPE();
 
@@ -118,17 +119,19 @@ void skinned::EntityAssembleBody(
 
   // Transform the terms to the soft skinned actor
   auto softOffset = dofOffset.dofsOffset;
-  auto articulated = composition.articulated;
-  auto artOffset = reg.get<CDofOffset const>(articulated).dofsOffset;
-  auto const& Jart = jacobianArticulated.dJoints;
 
   if (params.assemObj) {
     outInteractionSnle.objective = outSoftSkinnedSnle.objective;
   }
 
+  static_assert(kSoftIdx == 0 && kArticulatedIdx == 1, "Update residual/dresidual access below");
+
   if (params.assemRes) {
     MOCHI_PROFILE_SCOPE_N("Project soft skinned Residual");
-    MOCHI_ASSERT(outInteractionSnle.residuals.size() == 2, "Expected 2 residuals.");
+    MOCHI_ASSERT(outInteractionSnle.residuals.size() == 1, "Expected 1 residual.");
+    MOCHI_ASSERT_VERBOSE(
+        params.gradTarget == GradTarget::Current || params.gradTarget == GradTarget::Previous,
+        "The posed body energy of nested soft actors requires a state grad target.");
 
     // Transform the soft-actor residual by the skinning Jacobian
     outInteractionSnle.residuals[kSoftIdx].first = softOffset;
@@ -136,9 +139,12 @@ void skinned::EntityAssembleBody(
     jacobianSoft.TransposeMultiply(
         AsConstView(outSoftSkinnedSnle.fullResidual), AsView(outSoftResidual));
 
-    outInteractionSnle.residuals[kArticulatedIdx].first = artOffset;
-    auto& outArtResidual = outInteractionSnle.residuals[kArticulatedIdx].second;
-    outArtResidual = Jart.Transpose() * outSoftSkinnedSnle.fullResidual;
+    // Transform the soft-actor residual to link space by the skinning Jacobian wrt bones.
+    // articulated::compound::ProjectFullResidual projects it to the joint DoFs, which is equivalent
+    // to Jart^T r, since Jart = dBones * J.
+    jacobianArticulated.dBones.TransposeApply(
+        AsConstView(outSoftSkinnedSnle.fullResidual), AsView(outLinkResidual.residual));
+    outLinkResidual.isActive = true;
   }
 
   if (params.assemDRes) {
@@ -161,6 +167,9 @@ void skinned::EntityAssembleBody(
         (std::holds_alternative<BlockSparseMatrix<real, 3>>(outSoftSkinnedSnle.fullDResidual)),
         "Expected block sparse dresidual.");
     auto const& A = std::get<BlockSparseMatrix<real, 3>>(outSoftSkinnedSnle.fullDResidual);
+    auto articulated = composition.articulated;
+    auto artOffset = reg.get<CDofOffset const>(articulated).dofsOffset;
+    auto const& Jart = jacobianArticulated.dJoints;
 
     MOCHI_ASSERT(outInteractionSnle.dresiduals.size() == 2, "Expected 2 dresiduals.");
     MOCHI_ASSERT(
@@ -316,14 +325,16 @@ InitEnergyTerms(entt::registry& reg, entt::entity e, SoftSkinnedActorParams cons
   auto& softSnle = reg.emplace<CSoftSkinnedUnposedSnle>(e, std::move(softDres));
   softSnle.useInSolver = false;
 
-  // SNLE data for the soft actor terms transformed to the full DoFs.
+  // SNLE data for the soft actor terms transformed to the full DoFs. The residual holds the soft
+  // entry only: the articulated one is in CArticulatedSkinnedBodyLinkResidual, in link space.
   int softDofs = reg.get<CActorDofInfo const>(e).dofsSize;
   auto articulated = reg.get<CSkinnedComposition const>(e).articulated;
   int artDofs = reg.get<CActorDofInfo const>(articulated).dofsSize;
   auto& actorSnle = reg.emplace<CSkinnedInteractionSnle>(e);
-  actorSnle.residuals.resize(2);
+  actorSnle.residuals.resize(1);
   actorSnle.residuals[kSoftIdx].second = ColumnVector<real>::Zero(softDofs);
-  actorSnle.residuals[kArticulatedIdx].second = ColumnVector<real>::Zero(artDofs);
+  reg.emplace<CArticulatedSkinnedBodyLinkResidual>(
+      e, reg.get<CArticulatedProps const>(articulated).fullDofsDim);
 
   // Offsets will be populated in skinned::EntityAssembleBody based on island composition.
   int constexpr kDummyOffset = 0;

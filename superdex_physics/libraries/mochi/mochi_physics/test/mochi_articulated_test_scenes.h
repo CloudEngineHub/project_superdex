@@ -65,7 +65,15 @@ Actor* CreateThreeBoneSkinnedActor(
 // - BlendedFom, BlendedRom: the soft actor does not collide. Instead, the articulated actor has a
 //   colliding skin blended with it.
 // - PartiallyBlendedFom: like BlendedFom, but only the skin nodes with x < 0.5 are blended.
-enum class ThreeBoneSoftSkinnedMode { Fom, Rom, BlendedFom, BlendedRom, PartiallyBlendedFom };
+// - PosedFom: like Fom, but with posed (world-space) gravity and stress of the soft actor.
+enum class ThreeBoneSoftSkinnedMode {
+  Fom,
+  Rom,
+  BlendedFom,
+  BlendedRom,
+  PartiallyBlendedFom,
+  PosedFom
+};
 
 [[nodiscard]] inline bool UsesRom(ThreeBoneSoftSkinnedMode mode) {
   return mode == ThreeBoneSoftSkinnedMode::Rom || mode == ThreeBoneSoftSkinnedMode::BlendedRom;

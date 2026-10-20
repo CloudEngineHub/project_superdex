@@ -162,7 +162,10 @@ Actor* CreateThreeBoneSoftSkinnedActor(
     real coulombCoefficient,
     real viscousCoefficient,
     real dampingCoefficient) {
+  bool const isPosed = mode == ThreeBoneSoftSkinnedMode::PosedFom;
   SoftSkinnedActorParams params;
+  params.hasGravity = isPosed;
+  params.hasStress = isPosed;
   params.skeletonParams = MakeThreeBoneSkeletonParams(context);
   params.skeletonParams.worldFromRoot = worldFromRoot;
   if (UsesBlendedSurface(mode)) {
@@ -187,7 +190,7 @@ Actor* CreateThreeBoneSoftSkinnedActor(
   softParams.layer = UsesBlendedSurface(mode) ? "" : "Colliding";
   softParams.hasGravity = false;
   softParams.hasInertia = false;
-  softParams.hasStress = true;
+  softParams.hasStress = !isPosed;
   softParams.material.neoHookean.youngsModulus = 1e-10_r;
   softParams.contact.coulombFrictionCoefficient = coulombCoefficient;
   softParams.contact.viscousFrictionCoefficient = viscousCoefficient;
