@@ -1513,21 +1513,21 @@ import superdex.robotics as sdr
     + MODULE_ORIGIN_AUDIT
     + """
 
-reported = physics.uses_double_precision()
+reported = sdp.uses_double_precision()
 assert reported == expect_double, f"expected double={expect_double}, got {reported}"
 
 # create_context() calls mochi::CheckContext(), which fails unless robotics resolved the same
 # physics Context this process initialized. The two extensions live in different wheels and must
 # still share one g_context.
-physics.initialize(num_worker_threads=0)
+sdp.initialize(num_worker_threads=0)
 try:
-    context = robotics.create_context()
+    context = sdr.create_context()
     assert context is not None, "create_context() returned None"
-    assert robotics.create_context() is context, "create_context() is not idempotent"
+    assert sdr.create_context() is context, "create_context() is not idempotent"
 finally:
-    physics.shutdown()
+    sdp.shutdown()
 
-print("smoke ok:", "fp64" if reported else "fp32", physics.__file__)
+print("smoke ok:", "fp64" if reported else "fp32", sdp.__file__)
 """
 )
 
