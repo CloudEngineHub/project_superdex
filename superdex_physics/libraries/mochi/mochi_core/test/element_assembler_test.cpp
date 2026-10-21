@@ -37,7 +37,6 @@
 #include <mochi_core/utils/rand_utils.h>
 #include <mochi_core/utils/simd.h>
 #include <mochi_core/utils/span.h>
-#include <mochi_core/utils/sparsity_utils.h>
 #include <mochi_core/utils/task_scheduler.h>
 
 #include <algorithm>
@@ -301,8 +300,7 @@ static void VerifyOneBatchSize(
     ManualGlobalAssembly const& g) {
   double obj = 0.0;
   auto res = ColumnVector<real>::Zero(numGlobalDofs);
-  auto dres = ToBlockSparseMatrix<kShapeFields>(MakeSparseMatrix(l2g));
-  dres.SetZero();
+  auto dres = BlockSparseMatrix<real, kShapeFields>(numGlobalDofs / kShapeFields, nbs.GetNToN());
 
   AssembleObjResDRes<ShapeElement, kShapeFields, kBatchSize>(
       l2g,
@@ -564,8 +562,7 @@ TEST(ElementAssembler, SyntheticDeterminism) {
   TaskScheduler scheduler(Min(8, TaskScheduler::GetNumSupportedLogicalProcessors()));
 
   auto assembleDRes = [&]() {
-    auto dres = ToBlockSparseMatrix<kShapeFields>(MakeSparseMatrix(l2g));
-    dres.SetZero();
+    auto dres = BlockSparseMatrix<real, kShapeFields>(numGlobalDofs / kShapeFields, nbs.GetNToN());
     AssembleObjResDRes<ShapeElement, kShapeFields, 8>(
         l2g,
         nbs,
@@ -605,8 +602,8 @@ TEST(ElementAssembler, NoSolutionOverloadMatchesZeroSolution) {
       // Reference: gather overload with an explicit zero solution.
       double objRef = 0.0;
       auto resRef = ColumnVector<real>::Zero(numGlobalDofs);
-      auto dresRef = ToBlockSparseMatrix<kShapeFields>(MakeSparseMatrix(l2g));
-      dresRef.SetZero();
+      auto dresRef =
+          BlockSparseMatrix<real, kShapeFields>(numGlobalDofs / kShapeFields, nbs.GetNToN());
       AssembleObjResDRes<ShapeElement, kShapeFields, kBatchSize>(
           l2g,
           nbs,
@@ -623,8 +620,8 @@ TEST(ElementAssembler, NoSolutionOverloadMatchesZeroSolution) {
       // No-solution overload (no global solution argument).
       double objNo = 0.0;
       auto resNo = ColumnVector<real>::Zero(numGlobalDofs);
-      auto dresNo = ToBlockSparseMatrix<kShapeFields>(MakeSparseMatrix(l2g));
-      dresNo.SetZero();
+      auto dresNo =
+          BlockSparseMatrix<real, kShapeFields>(numGlobalDofs / kShapeFields, nbs.GetNToN());
       AssembleObjResDRes<ShapeElement, kShapeFields, kBatchSize>(
           l2g,
           nbs,
@@ -948,7 +945,7 @@ TEST(ElementAssembler, PhysicalInvariantsAndPsd) {
   };
 
   // --- Volume stress: residual force balance and PSD-projection consistency ---
-  auto const dresPattern = ToBlockSparseMatrix<kFields>(MakeSparseMatrix(l2g));
+  auto const dresPattern = BlockSparseMatrix<real, kFields>(numGlobalDofs / kFields, nbs.GetNToN());
 
   auto resNoPsd = ColumnVector<real>::Zero(numGlobalDofs);
   auto dresNoPsd = dresPattern;

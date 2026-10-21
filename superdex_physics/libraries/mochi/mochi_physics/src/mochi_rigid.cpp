@@ -1076,9 +1076,6 @@ static void InitRigidActor_Dynamic(
   dofInfo.poseSize = RigidSize::kAll;
   dofInfo.dofsSize = RigidSize::kDAll;
 
-  // Sparsity pattern
-  reg.emplace<CFullSparsityPattern>(e, MakeDenseSparsityGraph(dofInfo.dofsSize, dofInfo.dofsSize));
-
   // Per-actor SNLE data
   reg.emplace<CActorSnle>(
       e,

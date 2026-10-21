@@ -48,8 +48,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CLocal2GlobalMap>(reg);
   ecs::RegisterComponent<CBoundaryLocal2GlobalMap>(reg);
   ecs::RegisterComponent<CContactLocal2GlobalMap>(reg);
-  ecs::RegisterComponent<CFullSparsityPattern>(reg);
-  ecs::RegisterComponent<CReducedSparsityPattern>(reg);
   ecs::RegisterComponent<CFemVolumeDiscretizationP1Q1>(reg);
   ecs::RegisterComponent<CFemBoundaryDiscretizationP1Q1_1>(reg);
   ecs::RegisterComponent<CFemBoundaryDiscretizationP1Q1_3>(reg);

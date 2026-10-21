@@ -293,7 +293,7 @@ void EntityPostLastStage(
 // Update CDirichletBC based on CDofPositionsBC (if any)
 static void UpdateDirichletBC(
     CRootTransform const& root,
-    CFullSparsityPattern const& fullSparsity,
+    CActorSnle const& actorSnle,
     CDofPositionsBC const* inWorldBC,
     CDirichletBC<real>& outLocalBC,
     CPolylineMesh const& mesh) {
@@ -343,7 +343,7 @@ static void UpdateDirichletBC(
     outLocalBC.poseIndices.push_back(numDofs - 1);
     outLocalBC.poseValues.push_back(0_r);
     AppendColValueIndexCache(
-        fullSparsity.graph,
+        AsConstView(actorSnle.fullDResidual),
         MakeSingletonConstSpan(outLocalBC.dofIndices.back()),
         outLocalBC.colValueIndices);
   }
@@ -1466,34 +1466,16 @@ void mochi::InitRodActor(
   l2g->InitializeStencilIndices(stencilGraph);
   l2g->InitializePaddedIndices(fem::kNumRodStencilNodes * kNumDofsPerNode);
 
-  // Build sparsity from the raw/unpadded L2G indices.
-  auto& fullSparsity = reg.emplace<CFullSparsityPattern>(e, MakeSparsityGraph(*l2g, totalDofs));
-
   // Nodal based structure for FEM assembly. Uses padded stencil connectivity so every element
   // exposes fem::kNumRodStencilNodes nodes to the FEM assembler, while sparse indices are computed
   // from the original (unpadded) N-to-N graph to preserve the correct DResidual sparsity pattern.
   auto const& nbs = reg.emplace<CNodalBasedStructure>(
       e, BuildPaddedNodalBasedStructure<fem::kNumRodStencilNodes>(connectivity, stencilGraph));
 
-  // DResidual matrix
-  int const numRows = isize(fullSparsity.graph.GetPointers()) - 1;
-  int const numCols = numRows;
-  int const numNonZeros = fullSparsity.graph.NumTargets();
-  DynamicArray<real> values(numNonZeros, 0_r);
-  auto blockStructure = BlockedStructure<kNumDofsPerNode>(
-      numCols,
-      MakeConstSpan(fullSparsity.graph.GetPointers()),
-      MakeConstSpan(fullSparsity.graph.GetTargets()));
-  BlockSparseMatrix<real, kNumDofsPerNode> actorDRes(
-      blockStructure.nBlockCols,
-      std::move(blockStructure.ptr),
-      std::move(blockStructure.ndIndices),
-      std::move(values));
-
   // Actor SNLE data
   reg.emplace<CActorSnle>(
       e,
-      std::move(actorDRes),
+      BlockSparseMatrix<real, kNumDofsPerNode>(numNodes, nbs.GetNToN()),
       // Use ILU0 actor preconditioner (O(n) and exact for rods).
       // NOTE: IC0 is also O(n) and exact, but (a) performance is slightly worse for pentadiagonal
       // systems and (b) it may break down with AssemblyParams::psdDRes = false.

@@ -389,10 +389,11 @@ TEST_F(MochiActorBC, AddBoundaryConditionConstrainedNodesAtRest) {
 
   // Expected DoF indices for constrained nodes {0, 2, 4, 6}: 3 DoFs per node
   int const expectedDofIndices[] = {0, 1, 2, 6, 7, 8, 12, 13, 14, 18, 19, 20};
-  int const expectedNodeOneThenConstrainedDofIndices[] = {
-      3, 4, 5, 0, 1, 2, 6, 7, 8, 12, 13, 14, 18, 19, 20};
-  int const expectedConstrainedThenNodeOneDofIndices[] = {
-      0, 1, 2, 6, 7, 8, 12, 13, 14, 18, 19, 20, 3, 4, 5};
+  int const expectedPermanentDofIndices[] = {0, 1, 2, 0, 1, 2, 6, 7, 8, 12, 13, 14, 18, 19, 20};
+  int const expectedNodeOneThenPermanentDofIndices[] = {
+      3, 4, 5, 0, 1, 2, 0, 1, 2, 6, 7, 8, 12, 13, 14, 18, 19, 20};
+  int const expectedPermanentThenNodeOneDofIndices[] = {
+      0, 1, 2, 0, 1, 2, 6, 7, 8, 12, 13, 14, 18, 19, 20, 3, 4, 5};
 
   auto restPositionWorld = [&](int nodeIdx) {
     return params.worldFromLocal.TransformPoint(coordinates[nodeIdx]);
@@ -449,21 +450,23 @@ TEST_F(MochiActorBC, AddBoundaryConditionConstrainedNodesAtRest) {
       MakeSingletonConstSpan(nonPermanentNode),
       restPositionWorld(nonPermanentNode),
       test::ExpectOK{});
+  actor->AddBoundaryConditionNodesWorldPermanent(
+      MakeSingletonConstSpan(0), restPositionWorld(0), test::ExpectOK{});
   actor->AddBoundaryConditionConstrainedNodesAtRestPermanent(test::ExpectOK{});
-  expectBoundaryConditionDofs(MakeConstSpan(expectedNodeOneThenConstrainedDofIndices));
+  expectBoundaryConditionDofs(MakeConstSpan(expectedNodeOneThenPermanentDofIndices));
 
   actor->ClearBoundaryConditions();
-  expectBoundaryConditionDofs(MakeConstSpan(expectedDofIndices));
+  expectBoundaryConditionDofs(MakeConstSpan(expectedPermanentDofIndices));
 
-  // Permanent followed by non-permanent: clear should still remove only the second batch.
+  // Permanent followed by non-permanent: clear should still remove only the last batch.
   actor->AddBoundaryConditionNodesWorld(
       MakeSingletonConstSpan(nonPermanentNode),
       restPositionWorld(nonPermanentNode),
       test::ExpectOK{});
-  expectBoundaryConditionDofs(MakeConstSpan(expectedConstrainedThenNodeOneDofIndices));
+  expectBoundaryConditionDofs(MakeConstSpan(expectedPermanentThenNodeOneDofIndices));
 
   actor->ClearBoundaryConditions();
-  expectBoundaryConditionDofs(MakeConstSpan(expectedDofIndices));
+  expectBoundaryConditionDofs(MakeConstSpan(expectedPermanentDofIndices));
 
   simulateAndVerifyConstraints();
 }

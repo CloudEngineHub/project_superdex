@@ -21,14 +21,10 @@
 #include <mochi_core/linear_algebra/krylov_interop.h>
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/linear_algebra/utils/assembly.h>
-#include <mochi_core/linear_algebra/utils/matrix_conversions.h>
 #include <mochi_core/utils/local_to_global_map.h>
 #include <mochi_core/utils/profile.h>
-#include <mochi_core/utils/sparsity_utils.h>
 #include <mochi_physics/src/mochi_deformable.h>
 #include <mochi_physics/src/mochi_rod.h>
-
-#include <utility>
 
 using namespace mochi;
 
@@ -114,16 +110,7 @@ static void RodElementAssemblerBenchmark(
 
   double merit = 0.0;
   auto res = ColumnVector<real>::Zero(numGlobalDofs);
-  auto const sparsityGraph = MakeSparsityGraph(l2g, numGlobalDofs);
-  int const numCols = isize(sparsityGraph.GetPointers()) - 1;
-  DynamicArray<real> values(sparsityGraph.NumTargets(), 0_r);
-  auto blockStructure = BlockedStructure<kNumDofsPerNode>(SparseMatrixView<real const>(
-      numCols, sparsityGraph.GetPointers(), sparsityGraph.GetTargets(), MakeSpan(values)));
-  BlockSparseMatrix<real, kNumDofsPerNode> dres(
-      blockStructure.nBlockCols,
-      std::move(blockStructure.ptr),
-      std::move(blockStructure.ndIndices),
-      std::move(values));
+  auto dres = BlockSparseMatrix<real, kNumDofsPerNode>(numNodes, nbs.GetNToN());
   MOCHI_ASSERT(res.Rows() == sol.Rows());
   MOCHI_ASSERT(dres.Rows() == sol.Rows());
 

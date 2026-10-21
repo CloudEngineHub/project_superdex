@@ -327,24 +327,8 @@ void mochi::InitSoftActor(
   l2g = &reg.emplace<CLocal2GlobalMap>(e);
   l2g->InitializeFromMeshAndBasis(&actorTetMesh, basis, 3);
 
-  // Sparsity pattern.
-  auto& fullSparsity = reg.emplace<CFullSparsityPattern>(e, MakeSparsityGraph(*l2g, actorMeshDofs));
-
-  // DResidual Matrix
-  int const numRows = isize(fullSparsity.graph.GetPointers()) - 1;
-  int const numCols = numRows; // Symmetrical
-  DynamicArray<real> values(fullSparsity.graph.NumTargets());
-  auto actorDResFullSparse = SparseMatrixView<real const>(
-      numCols, fullSparsity.graph.GetPointers(), fullSparsity.graph.GetTargets(), MakeSpan(values));
-  auto blockStructure = BlockedStructure<3>(actorDResFullSparse);
-  BlockSparseMatrix<real, 3> actorDRes(
-      blockStructure.nBlockCols,
-      std::move(blockStructure.ptr),
-      std::move(blockStructure.ndIndices),
-      std::move(values));
-
   // Actor SNLE data.
-  reg.emplace<CActorSnle>(e, std::move(actorDRes));
+  reg.emplace<CActorSnle>(e, BlockSparseMatrix<real, 3>(actorTetMesh.GetNumNodes(), nbs.GetNToN()));
 
   // Non-linear solver convergence weights (lazily initialized).
   reg.emplace<CActorConvergenceWeights>(e);

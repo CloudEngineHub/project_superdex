@@ -21,13 +21,11 @@
 #include <mochi_core/geometry/tetrahedral_mesh.h>
 #include <mochi_core/linear_algebra/krylov_interop.h>
 #include <mochi_core/linear_algebra/matrix.h>
-#include <mochi_core/linear_algebra/utils/matrix_conversions.h>
 #include <mochi_core/materials/batched_smith_neo_hookean.h>
 #include <mochi_core/materials/material_params.h>
 #include <mochi_core/materials/reference_material_stiffness.h>
 #include <mochi_core/utils/local_to_global_map.h>
 #include <mochi_core/utils/profile.h>
-#include <mochi_core/utils/sparsity_utils.h>
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/src/mochi_soft.h>
 
@@ -135,8 +133,7 @@ static void ElementAssemblerBenchmark(
 
   double merit = 0.0;
   auto res = ColumnVector<real>::Zero(numGlobalDofs);
-  auto dres = ToBlockSparseMatrix<3>(MakeSparseMatrix(l2g));
-  dres.SetZero();
+  auto dres = BlockSparseMatrix<real, 3>(tetMesh->GetNumNodes(), nbs.GetNToN());
   MOCHI_ASSERT(res.Rows() == sol.Rows());
   MOCHI_ASSERT(dres.Rows() == sol.Rows());
 

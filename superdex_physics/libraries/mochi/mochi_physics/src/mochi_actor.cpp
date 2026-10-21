@@ -2083,9 +2083,14 @@ class ActorInterfaceImpl : public ActorInterface {
       bc.poseValues.insert(bc.poseValues.end(), poseValues.begin(), poseValues.end());
       bc.dofValues.insert(bc.dofValues.end(), dofValuesWorld.begin(), dofValuesWorld.end());
 
-      // Append cache for efficient column zeroing in sparse and block sparse actor matrices.
-      if (auto const* fullSparsity = reg.try_get<CFullSparsityPattern const>(e)) {
-        AppendColValueIndexCache(fullSparsity->graph, dofIndices, bc.colValueIndices);
+      // Append cache for efficient column zeroing in sparse and block sparse actor matrices. It
+      // indexes the dresidual the solver uses, the reduced one for articulated actors.
+      if (auto const* actorSnle = reg.try_get<CActorSnle const>(e)) {
+        AppendColValueIndexCache(
+            AsConstView(
+                actorSnle->UseReduced() ? actorSnle->reducedDResidual : actorSnle->fullDResidual),
+            dofIndices,
+            bc.colValueIndices);
       }
 
       if (isPermanent) {

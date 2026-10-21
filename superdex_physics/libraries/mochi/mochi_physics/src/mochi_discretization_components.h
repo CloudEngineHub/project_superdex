@@ -137,30 +137,6 @@ struct CBoundaryLocal2GlobalMap final : public Local2GlobalMap, public NoCopy {
 struct CContactLocal2GlobalMap final : public Local2GlobalMap, public NoCopy {};
 
 /*
-  Stores the sparsity pattern for the full DOF system matrix of a simulated actor
-*/
-struct CFullSparsityPattern final : public NoCopy {
-  MOCHI_DECLARE_MOVE(CFullSparsityPattern);
-
-  CFullSparsityPattern() = default;
-  explicit CFullSparsityPattern(Graph<int, int> graphIn) : graph(std::move(graphIn)) {}
-
-  Graph<int, int> graph;
-};
-
-/*
-  Stores the sparsity pattern for the reduced DOF system matrix of a simulated actor
-*/
-struct CReducedSparsityPattern final : public NoCopy {
-  MOCHI_DECLARE_MOVE(CReducedSparsityPattern);
-
-  CReducedSparsityPattern() = default;
-  explicit CReducedSparsityPattern(Graph<int, int> graphIn) : graph(std::move(graphIn)) {}
-
-  Graph<int, int> graph;
-};
-
-/*
   Stores the FEM discretization of a simulated actor.
 */
 template <typename ElementT_>

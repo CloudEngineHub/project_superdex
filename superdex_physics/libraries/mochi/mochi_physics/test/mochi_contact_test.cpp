@@ -19,6 +19,7 @@
 
 #include <mochi_core/geometry/tetrahedral_mesh.h>
 #include <mochi_core/geometry/triangular_mesh.h>
+#include <mochi_core/linear_algebra/utils/matrix_conversions.h>
 #include <mochi_core/utils/quaternion_utils.h>
 #include <mochi_core/utils/rand_utils.h>
 #include <mochi_core/utils/rigid_body_utils.h>
@@ -932,7 +933,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     _objective = 0.0;
     _residual.Reset(_numDofs);
     _residual.SetZero();
-    _dresidual.Reset(MakeDenseSparsityGraph(_numDofs, _numDofs));
+    _dresidual = ToSparseMatrix(Matrix<real>::Zero(_numDofs, _numDofs));
   }
 
   void InitActors(Actor* collidingActor, Actor* colliderActor) {

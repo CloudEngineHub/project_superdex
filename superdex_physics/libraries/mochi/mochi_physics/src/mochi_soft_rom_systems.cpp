@@ -1118,7 +1118,6 @@ static void SelectActiveBasis(
     CRomCommonProperties& currentRomProps,
     CActorDofInfo& dofInfo,
     CRomJacobian& romJac,
-    CReducedSparsityPattern& reducedSpPattern,
     CActorSnle& actorSnle) {
   MOCHI_PROFILE_SCOPE();
 
@@ -1152,7 +1151,6 @@ static void SelectActiveBasis(
     currentAmpl.value.Resize(currentRomProps.value.baseDim);
     dofInfo.poseSize = reducedPoseDim;
     dofInfo.dofsSize = reducedDofsDim;
-    reducedSpPattern.graph = MakeDenseSparsityGraph(reducedDofsDim, reducedDofsDim);
     romJac.value = CRomJacobian::DenseT::Zero(outputDim, reducedDofsDim);
     actorSnle.reducedResidual.Reset(ColumnVector<real>::Zero(reducedDofsDim));
     MOCHI_ASSERT(

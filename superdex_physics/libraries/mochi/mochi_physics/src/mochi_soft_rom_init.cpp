@@ -612,9 +612,6 @@ void mochi::rom::InitSoftActorRom(
   // -------------------------------------------------------------------
   // 3. more storage things
   // -------------------------------------------------------------------
-  reg.emplace_or_replace<CReducedSparsityPattern>(
-      e, MakeDenseSparsityGraph(romProperties.reducedDofsDim, romProperties.reducedDofsDim));
-
   // Enabled reduced SNLE.
   reg.get<CActorSnle>(e).EnableReduced(
       Matrix<real>::Zero(romProperties.reducedDofsDim, romProperties.reducedDofsDim));

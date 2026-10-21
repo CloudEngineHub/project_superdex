@@ -249,36 +249,14 @@ void mochi::InitShellActor(
       e, BuildPaddedNodalBasedStructure<shell::kNumStencilNodes>(bendingEToN, bendingStencil));
 
   // L2G stores the raw bending connectivity plus stencil positions. Padded indices give the FEM
-  // assembler a uniform shell::kNumStencilNodes * kSpaceDim3 stride. Physical sparsity is still
-  // built from the raw connectivity.
+  // assembler a uniform shell::kNumStencilNodes * kSpaceDim3 stride.
   auto& l2g = reg.emplace<CLocal2GlobalMap>(e);
   l2g.InitializeFromElementNodeConnectivity(bendingEToN, kSpaceDim3);
   l2g.InitializeStencilIndices(bendingStencil);
   l2g.InitializePaddedIndices(shell::kNumStencilNodes * kSpaceDim3);
 
-  auto& fullSparsity = reg.emplace<CFullSparsityPattern>(e, MakeSparsityGraph(l2g, actorMeshDofs));
-
-  // DResidual Matrix
-  BlockSparseMatrix<real, 3> actorDRes;
-  {
-    int const numRows = isize(fullSparsity.graph.GetPointers()) - 1;
-    int const numCols = numRows; // Symmetrical
-    DynamicArray<real> values(fullSparsity.graph.NumTargets());
-    auto actorDResFullSparse = SparseMatrixView<real const>(
-        numCols,
-        fullSparsity.graph.GetPointers(),
-        fullSparsity.graph.GetTargets(),
-        MakeSpan(values));
-    auto blockStructure = BlockedStructure<3>(actorDResFullSparse);
-    actorDRes.Reset(
-        blockStructure.nBlockCols,
-        std::move(blockStructure.ptr),
-        std::move(blockStructure.ndIndices),
-        std::move(values));
-  }
-
   // Actor SNLE data.
-  reg.emplace<CActorSnle>(e, std::move(actorDRes));
+  reg.emplace<CActorSnle>(e, BlockSparseMatrix<real, 3>(actorTriMesh.GetNumNodes(), nbs.GetNToN()));
 
   // Non-linear solver convergence weights (lazily initialized).
   reg.emplace<CActorConvergenceWeights>(e);

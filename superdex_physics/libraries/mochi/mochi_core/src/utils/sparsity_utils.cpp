@@ -15,7 +15,6 @@
  */
 
 #include <mochi_core/linear_algebra/krylov_interop.h>
-#include <mochi_core/linear_algebra/utils/matrix_conversions.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/profile.h>
 #include <mochi_core/utils/span.h>
@@ -126,45 +125,6 @@ static void SortAndUniqueEachValidRow(
 }
 
 //
-// overload accepting Local2GlobalMap
-//
-Graph<int, int> mochi::MakeSparsityGraph(
-    Local2GlobalMap const& map,
-    std::optional<int> numRowsOpt) {
-  MOCHI_PROFILE_SCOPE();
-
-  auto const maxRangeValueFoundFromMapPlusOne = map.GetGlobalRange().Max() + 1;
-  std::vector<std::vector<int>> M(maxRangeValueFoundFromMapPlusOne, std::vector<int>{});
-  for (int e = 0; e < map.GetNumElements(); ++e) {
-    auto indices = map.GetGlobalIndices(e);
-    for (int ii = 0; ii < isize(indices); ++ii) {
-      int const row = indices[ii];
-      auto& vec = M[row];
-      for (int j : indices) {
-        vec.emplace_back(j);
-      }
-    }
-  }
-
-  // since here M was filled with only the values needed, so the number
-  // of usable entries per row is just the size of each row
-  std::vector<int> usableCountPerRow;
-  usableCountPerRow.reserve(M.size());
-  for (auto const& row : M) {
-    usableCountPerRow.push_back(isize(row));
-  }
-
-  int numGraphRows = isize(M);
-  if (numRowsOpt) {
-    MOCHI_ASSERT(numRowsOpt.value() >= numGraphRows, "Input rows don't match coordinates");
-    numGraphRows = numRowsOpt.value();
-  }
-
-  SortAndUniqueEachValidRow(M, usableCountPerRow);
-  return CreateCSRGraphFromSortedAndUniquedMatrix(numGraphRows, M, usableCountPerRow);
-}
-
-//
 // overloads accepting r-value ref of vector of vectors
 //
 
@@ -248,21 +208,6 @@ Graph<int, int> mochi::MakeSparsityGraph(
 //
 // other functions
 //
-
-Graph<int, int> mochi::MakeDenseSparsityGraph(int rows, int cols) {
-  MOCHI_ASSERT_VERBOSE(rows >= 0 && cols >= 0, "Matrix dimensions must be non-negative.");
-  DynamicArray<int> pointers;
-  DynamicArray<int> indices;
-  if (rows > 0) {
-    pointers.resize(rows + 1);
-    indices.resize(rows * cols);
-    for (int r = 0; r < rows; ++r) {
-      pointers[r + 1] = (r + 1) * cols;
-      std::iota(indices.begin() + r * cols, indices.begin() + r * cols + cols, 0);
-    }
-  }
-  return Graph<int, int>{std::move(pointers), std::move(indices)};
-}
 
 void mochi::SetZeroOnRows(
     SparseMatrixView<real> mat,
@@ -418,6 +363,27 @@ void mochi::SetZeroOnRows(
   std::visit([&](auto& mat) { SetZeroOnRows(mat, rowIndices, rowOffset, diagonalValue); }, anyMat);
 }
 
+// Appends the value indices of column c of a block sparse matrix with a symmetric block pattern.
+template <typename MatType>
+static MOCHI_FORCE_INLINE void
+AppendColValueIndices(MatType const& mat, int c, DynamicArray<int>& valueIndices) {
+  constexpr int kBlockSize = MatType::kBlockSize;
+  int const bc = c / kBlockSize;
+  int const ci = c % kBlockSize;
+  // By symmetry, the block rows with a block in block column bc are the block columns of block
+  // row bc.
+  for (int const br : mat.Indices(bc)) {
+    auto const brIndices = mat.Indices(br);
+    auto const dist = static_cast<int>(std::ranges::find(brIndices, bc) - brIndices.begin());
+    MOCHI_ASSERT_VERBOSE(dist != isize(brIndices), "Sparsity pattern is not symmetric.");
+    // A block row stores its scalar rows one after another, each spanning all of its blocks.
+    int const brValuesBegin = kBlockSize * kBlockSize * mat.Pointers()[br];
+    for (int ri = 0; ri < kBlockSize; ++ri) {
+      valueIndices.push_back(brValuesBegin + kBlockSize * (ri * isize(brIndices) + dist) + ci);
+    }
+  }
+}
+
 #if MOCHI_ASSERT_VERBOSE_ENABLED
 template <typename Mat, typename SymPair>
 static void AssertSymmetricPairConsistency(Mat const& mat, SymPair const& symPair) {
@@ -439,31 +405,12 @@ static void AssertValueIndicesCacheConsistency(
     Span<int const> colIndices,
     int colOffset,
     Span<int const> valueIndicesCache) {
-  constexpr int kBlockSize = MatType::kBlockSize;
-  auto const blockPointers = mat.Pointers();
-  auto const blockIndices = mat.Indices();
-  int const numCols = mat.Cols();
-
   DynamicArray<int> expectedCache;
   expectedCache.reserve(valueIndicesCache.size());
   for (int const c : colIndices) {
     int const adjustedCol = c + colOffset;
-    if (adjustedCol < 0 || adjustedCol >= numCols) {
-      continue;
-    }
-    int const bc = adjustedCol / kBlockSize;
-    int const ci = adjustedCol % kBlockSize;
-    for (int ptr = blockPointers[bc]; ptr < blockPointers[bc + 1]; ++ptr) {
-      int const br = blockIndices[ptr];
-      // Find block (br, bc) in block-row br's index list to recover its value offset.
-      auto const brIndices = mat.Indices(br);
-      int const dist =
-          static_cast<int>(std::find(brIndices.begin(), brIndices.end(), bc) - brIndices.begin());
-      MOCHI_ASSERT_VERBOSE(dist != isize(brIndices), "Sparsity pattern is not symmetric.");
-      int const brValuesBegin = kBlockSize * kBlockSize * blockPointers[br];
-      for (int ri = 0; ri < kBlockSize; ++ri) {
-        expectedCache.push_back(brValuesBegin + kBlockSize * (ri * isize(brIndices) + dist) + ci);
-      }
+    if (adjustedCol >= 0 && adjustedCol < mat.Cols()) {
+      AppendColValueIndices(mat, adjustedCol, expectedCache);
     }
   }
 
@@ -472,6 +419,56 @@ static void AssertValueIndicesCacheConsistency(
   MOCHI_ASSERT_VERBOSE(expectedSet == providedSet, "Inconsistent value indices cache.");
 }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
+
+template <typename MatType>
+static void AppendBlockColValueIndexCache(
+    MatType const& mat,
+    Span<int const> newColIndices,
+    DynamicArray<int>& valueIndicesCache) {
+  auto const initialSize = valueIndicesCache.size();
+  for (int const c : newColIndices) {
+    MOCHI_ASSERT_VERBOSE(c >= 0 && c < mat.Cols(), "Column index out of range.");
+    AppendColValueIndices(mat, c, valueIndicesCache);
+  }
+
+  // Sort new indices for better memory access during lookup.
+  ParallelSort(valueIndicesCache.begin() + initialSize, valueIndicesCache.end());
+}
+
+// One overload per AnyMatrixView type, so that a new type fails to compile until it gets one.
+static void AppendColValueIndexCacheImpl(
+    BlockSparseMatrixView<real const, 3> mat,
+    Span<int const> newColIndices,
+    DynamicArray<int>& valueIndicesCache) {
+  AppendBlockColValueIndexCache(mat, newColIndices, valueIndicesCache);
+}
+static void AppendColValueIndexCacheImpl(
+    BlockSparseMatrixView<real const, 4> mat,
+    Span<int const> newColIndices,
+    DynamicArray<int>& valueIndicesCache) {
+  AppendBlockColValueIndexCache(mat, newColIndices, valueIndicesCache);
+}
+static void AppendColValueIndexCacheImpl(
+    SparseMatrixView<real const> mat,
+    Span<int const> newColIndices,
+    DynamicArray<int>& valueIndicesCache) {
+  AppendBlockColValueIndexCache(mat, newColIndices, valueIndicesCache);
+}
+// Dense matrices zero their columns without a cache.
+static void AppendColValueIndexCacheImpl(
+    MatrixView<real const> /*mat*/,
+    Span<int const> /*newColIndices*/,
+    DynamicArray<int>& /*valueIndicesCache*/) {}
+
+void mochi::AppendColValueIndexCache(
+    AnyMatrixView<real const> mat,
+    Span<int const> newColIndices,
+    DynamicArray<int>& valueIndicesCache) {
+  MOCHI_PROFILE_SCOPE();
+  std::visit(
+      [&](auto const& m) { AppendColValueIndexCacheImpl(m, newColIndices, valueIndicesCache); },
+      mat);
+}
 
 static void SetZeroIndexed(Span<real> values, Span<int const> indices, std::string_view taskName) {
   constexpr int kMinValuesPerTask = 50000; // 50 μs @ 1G values per second.
@@ -493,8 +490,7 @@ void mochi::SetZeroOnCols(
     // Fast path: use precomputed cache of value indices.
 #if MOCHI_ASSERT_VERBOSE_ENABLED
     // Verify cache is correct.
-    AssertValueIndicesCacheConsistency(
-        AsBlockSparseMatrixConstView(mat), colIndices, colOffset, valueIndicesCache);
+    AssertValueIndicesCacheConsistency(mat, colIndices, colOffset, valueIndicesCache);
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
 
     SetZeroIndexed(mat.Values(), valueIndicesCache, "SetZeroOnCols_SparseMatrix");
