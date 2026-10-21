@@ -39,7 +39,6 @@
 #include <mochi_physics/mochi_physics_experimental.h>
 
 #include <memory>
-#include <type_traits>
 #include <utility>
 
 #include <entt/entity/view.hpp>
@@ -189,15 +188,15 @@ static void EmplaceSoftActorRigidPivotAndRecentering(
     entt::registry& reg,
     entt::entity e,
     TetrahedralMesh const& solverMesh,
-    CFemVolumeDiscretizationP1Q1 const& femLowVolDisc) {
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc) {
   Real3 rigidPivotPos = {};
   int rigidPivotEleIdx = -1;
 
   bool pivotFound = solverMesh.GetRigidPivot(rigidPivotEleIdx, rigidPivotPos);
   MOCHI_ASSERT(pivotFound, "No recentering pivot; something went wrong");
   MOCHI_ASSERT(rigidPivotEleIdx >= 0);
-  MOCHI_ASSERT(rigidPivotEleIdx < (int)femLowVolDisc.femElements.size());
-  auto const& pivotElement = femLowVolDisc.femElements[rigidPivotEleIdx];
+  MOCHI_ASSERT(rigidPivotEleIdx < isize(femVolDisc.femElements));
+  auto const& pivotElement = femVolDisc.femElements[rigidPivotEleIdx];
   auto const& rigidTransformEvalPoint =
       reg.emplace_or_replace<CRigidTransformEvalPoint>(e, pivotElement, rigidPivotPos);
   MOCHI_ASSERT(
@@ -345,29 +344,26 @@ void mochi::InitSoftActor(
       std::move(values));
 
   // Actor SNLE data.
-  auto const& actorSnle = reg.emplace<CActorSnle>(e, std::move(actorDRes));
+  reg.emplace<CActorSnle>(e, std::move(actorDRes));
 
   // Non-linear solver convergence weights (lazily initialized).
   reg.emplace<CActorConvergenceWeights>(e);
 
-  // Volume discretizations
-  auto& femLowVolDisc = reg.emplace<CFemVolumeDiscretizationP1Q1>(e);
-  auto& femHighVolDisc = reg.emplace<CFemVolumeDiscretizationP1Q4>(e);
+  // Volume discretization
+  auto& femVolDisc = reg.emplace<CFemVolumeDiscretizationP1Q1>(e);
   {
-    femLowVolDisc.femElements.reserve(actorTetMesh.GetNumElements());
-    femHighVolDisc.femElements.reserve(actorTetMesh.GetNumElements());
+    femVolDisc.femElements.reserve(actorTetMesh.GetNumElements());
     auto const meshCoords = actorTetMesh.GetNodeCoordinates();
     auto const meshConnec = actorTetMesh.GetElementConnectivity();
     int const meshNumEle = actorTetMesh.GetNumElements();
     for (int i = 0; i < meshNumEle; ++i) {
-      femLowVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
-      femHighVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
+      femVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
     }
   }
 
   // Initialize recentering
   if (experimentalParams.useRecentering) {
-    EmplaceSoftActorRigidPivotAndRecentering(reg, e, actorTetMesh, femLowVolDisc);
+    EmplaceSoftActorRigidPivotAndRecentering(reg, e, actorTetMesh, femVolDisc);
   }
 
   int numCollidingSamples = 0;
@@ -388,8 +384,7 @@ void mochi::InitSoftActor(
   } else {
     auto const& boundaryDisc = reg.emplace<CFemBoundaryDiscretization>(
         e,
-        CFemBoundaryDiscretization::Create(
-            actorTetMesh, femLowVolDisc, params.boundaryElementType));
+        CFemBoundaryDiscretization::Create(actorTetMesh, femVolDisc, params.boundaryElementType));
     numCollidingSamples = boundaryDisc.GetNumQuadPoints();
 
     boundaryDisc.Visit([&](auto const& disc) {
@@ -416,27 +411,11 @@ void mochi::InitSoftActor(
   // Bounds used for collision detection.
   reg.emplace<CConservativeStepBounds>(e);
 
-  // MassMatrix (for inertia)
-  auto& massMatrix = reg.emplace<CMassMatrix>(e);
-  massMatrix.values.resize(GetNumValues(actorSnle.fullDResidual), 0_r);
-
-  // Lumped mass matrix. Computed in UpdateSoftMass.
-  auto& lumpedMass = reg.emplace<CLumpedMassMatrix>(e);
-
-  // Per-element mass matrix
-  // here, rather than hardwiring the template, we can deduce it so
-  // that if that changes this does not have to be modified
-  auto& perElemMass = reg.emplace<CPerElementMassMatrix<std::decay_t<decltype(femHighVolDisc)>>>(e);
-  perElemMass.values.resize(l2g->GetNumElements());
-
-  soft::UpdateSoftMass(
-      actorSnle,
-      *l2g,
-      nbs,
-      material,
-      femHighVolDisc,
-      fullSparsity,
-      massMatrix,
-      perElemMass,
-      lumpedMass);
+  // Lumped mass, for the convergence weights, and the mass matrix of a body with inertia but no
+  // stress. A nested soft actor with posed inertia gets the latter in skinned::InitSkinnedActor.
+  reg.emplace<CLumpedMassMatrix>(e);
+  if (params.hasInertia && !params.hasStress) {
+    reg.emplace<CMassMatrix>(e);
+  }
+  ecs::InvokeOnEntity(&soft::UpdateSoftMass, reg, e);
 }

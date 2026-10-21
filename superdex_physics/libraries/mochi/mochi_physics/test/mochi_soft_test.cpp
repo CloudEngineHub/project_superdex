@@ -35,6 +35,7 @@
 #include <array>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -238,25 +239,29 @@ TEST_F(MochiSoftActorScene, RejectsUnreferencedNodes) {
 // Soft mass damping: backward Euler velocity decay
 // ---------------------------------------------------------------------------
 
-// A free soft cube with no stress, no gravity, uniform initial velocity, and backward Euler. With
-// mass damping α, the velocity decays as v_n = v_0 / (1 + α·dt)^n.
-class MochiSoftMassDampingScene : public test::MochiSceneTestBase {
+// A free soft cube, with or without stress, with no gravity, uniform initial velocity, and backward
+// Euler. A uniform translation leaves stress inactive, so with mass damping α, the velocity decays
+// as v_n = v_0 / (1 + α·dt)^n. Without stress, the dresidual copies the stored mass matrix; with
+// stress, the element loop adds the mass.
+class MochiSoftMassDampingScene : public test::MochiSceneTestBase,
+                                  public ::testing::WithParamInterface<std::tuple<real, bool>> {
  protected:
   Actor* _actor = nullptr;
   int _numDofs = 0;
   static constexpr int kDofsPerNode = 3;
   static constexpr real kV0 = 1_r;
   static constexpr real kDt = 0.01_r;
+  static constexpr real kDensity = 2_r;
 
-  Actor* CreateDampedActor(real massDampingCoefficient) {
+  Actor* CreateDampedActor(real massDampingCoefficient, bool hasStress) {
     auto&& [coords, conn] = test::CreateMinimalTetMeshUnitCube();
     SoftActorParams params;
     params.material.type = SoftMaterialType::NeoHookean;
     params.material.neoHookean.youngsModulus = 1000_r;
-    params.material.density = 1_r;
+    params.material.density = kDensity;
     params.material.massDampingCoefficient = massDampingCoefficient;
     params.hasGravity = false;
-    params.hasStress = false; // Isolate the mass term.
+    params.hasStress = hasStress;
     params.shape = _scene->GetContext()->CreateTetMeshShape(
         Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), ErrorAssert{});
     Actor* actor = _scene->CreateSoftActor(params, ErrorAssert{});
@@ -272,8 +277,8 @@ class MochiSoftMassDampingScene : public test::MochiSceneTestBase {
     _scene->SetSolverParams(solverParams, ErrorAssert{});
   }
 
-  void InitWithDamping(real massDampingCoefficient) {
-    _actor = CreateDampedActor(massDampingCoefficient);
+  void InitWithDamping(real massDampingCoefficient, bool hasStress) {
+    _actor = CreateDampedActor(massDampingCoefficient, hasStress);
     _numDofs = _actor->GetNumDofs();
     DynamicArray<real> vel(_numDofs, 0_r);
     for (int i = 0; i < _numDofs; i += kDofsPerNode) {
@@ -283,43 +288,41 @@ class MochiSoftMassDampingScene : public test::MochiSceneTestBase {
   }
 };
 
-TEST_F(MochiSoftMassDampingScene, VelocityDecay) {
-  real constexpr kAlpha = 3_r;
+TEST_P(MochiSoftMassDampingScene, VelocityDecay) {
+  auto const [alpha, hasStress] = GetParam();
   int constexpr kNumSteps = 10;
   real constexpr kVelRtol = 1e-4_r;
-  InitWithDamping(kAlpha);
+  real constexpr kMassRtol = 1e-5_r;
+  InitWithDamping(alpha, hasStress);
+
+  // The lumped mass adds up to the density times the cube's volume (1), per DoF component.
+  auto const& lumpedMass = GetRegistry().get<CLumpedMassMatrix const>(GetEntity(_actor)).values;
+  EXPECT_NEAR_RTOL(3_r * kDensity, HSum(MakeConstSpan(lumpedMass)), kMassRtol);
 
   DynamicArray<real> prevDispl(_numDofs, 0_r);
   DynamicArray<real> currDispl(_numDofs);
   for (int step = 0; step < kNumSteps; ++step) {
     _scene->Step(kDt);
     _actor->GetDofValues({}, MakeSpan(currDispl), ErrorAssert{});
-    real const expectedVel = kV0 / Pow(1_r + kAlpha * kDt, step + 1);
+    real const expectedVel = kV0 / Pow(1_r + alpha * kDt, step + 1);
     for (int i = 0; i < _numDofs; i += kDofsPerNode) {
       real const vel = (currDispl[i] - prevDispl[i]) / kDt;
       EXPECT_NEAR_RTOL(expectedVel, vel, kVelRtol);
     }
     std::copy(currDispl.begin(), currDispl.end(), prevDispl.begin());
   }
+
+  test::ExpectUniformTranslationAssembly(_scene, _actor, kMassRtol);
+
+  // The stored mass matrix and the element loop's mass must both follow SetDensity.
+  _actor->SetDensity(2_r * kDensity, test::ExpectOK{});
+  test::ExpectUniformTranslationAssembly(_scene, _actor, kMassRtol);
 }
 
-TEST_F(MochiSoftMassDampingScene, UndampedVelocityConserved) {
-  int constexpr kNumSteps = 5;
-  real constexpr kVelRtol = 1e-4_r;
-  InitWithDamping(0_r);
-
-  DynamicArray<real> prevDispl(_numDofs, 0_r);
-  DynamicArray<real> currDispl(_numDofs);
-  for (int step = 0; step < kNumSteps; ++step) {
-    _scene->Step(kDt);
-    _actor->GetDofValues({}, MakeSpan(currDispl), ErrorAssert{});
-    for (int i = 0; i < _numDofs; i += kDofsPerNode) {
-      real const vel = (currDispl[i] - prevDispl[i]) / kDt;
-      EXPECT_NEAR_RTOL(kV0, vel, kVelRtol);
-    }
-    std::copy(currDispl.begin(), currDispl.end(), prevDispl.begin());
-  }
-}
+INSTANTIATE_TEST_SUITE_P(
+    MassDamping,
+    MochiSoftMassDampingScene,
+    ::testing::Combine(::testing::Values(0_r, 3_r), ::testing::Bool()));
 
 // ---------------------------------------------------------------------------
 // Soft stiffness damping
@@ -428,7 +431,8 @@ TEST_P(MochiSoftStiffnessDampingScene, StiffnessProportionalDecayRatio) {
 
 // A rigidly translating body has zero strain and zero strain rate, so neither the elastic stress
 // nor the stiffness damping exerts any force: it keeps translating at constant velocity, regardless
-// of the damping coefficient or material model.
+// of the damping coefficient or material model. Its body assembly, which adds the mass in the
+// element loop, must then match the closed forms in the lumped mass.
 TEST_P(MochiSoftStiffnessDampingScene, RigidTranslationUndamped) {
   real constexpr kBeta = 0.05_r;
   real constexpr kV0 = 0.5_r;
@@ -459,6 +463,8 @@ TEST_P(MochiSoftStiffnessDampingScene, RigidTranslationUndamped) {
       EXPECT_NEAR_TOL(0_r, displ[i], kAbsTol);
     }
   }
+
+  test::ExpectUniformTranslationAssembly(_scene, actor, kRtol);
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -225,15 +225,14 @@ void mochi::soft::AssembleBodyImpl(
     bool hasStress,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
-    CFemVolumeDiscretizationP1Q1 const& femLowVolDisc,
-    CFemVolumeDiscretizationP1Q4 const& femHighVolDisc,
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc,
     TransformRT const& worldFromLocal,
     CSoftMaterialParams const& materialParams,
     CTimeIntegratorState const& intState,
     ColumnVectorView<real const> currDispl,
     ColumnVectorView<real const> stageStartDispl,
     ColumnVectorView<real const> stageStartVel,
-    CMassMatrix const& massMatrix,
+    CMassMatrix const* massMatrix,
     ActorSnle& outSnle,
     CActiveVolumeElements const* activeVolElems) {
   MOCHI_PROFILE_SCOPE();
@@ -243,12 +242,9 @@ void mochi::soft::AssembleBodyImpl(
       hasGravity || hasInertia || hasStress,
       "AssembleBodyImpl expects at least one body term. No-term cases must be filtered by the caller.");
 
-  // Damping scales. Mass damping requires inertia; stiffness damping requires stress. Mass damping
-  // is folded into the mass-matrix dresidual scale (alongside inertia), so it needs no per-element
-  // dresidual assembly.
+  // Damping scales. Mass damping requires inertia; stiffness damping requires stress.
   auto const dampingScales =
       soft::ComputeSoftDampingScales(materialParams, intState.dtStage, hasInertia, hasStress);
-  real const massScale = dampingScales.massScale;
   real const massDampingScale = dampingScales.massDampingScale;
   real const stiffnessDampingFactor = dampingScales.stiffnessDampingFactor;
   bool const includeStiffnessDampingGeometricTerm =
@@ -268,18 +264,24 @@ void mochi::soft::AssembleBodyImpl(
     // bandwidth, which is true in most architectures.
     // TODO: Limit max threads to the number of threads that saturate memory bandwidth.
     auto const numValues = GetNumValues(outSnle.fullDResidual);
+    // With inertia but no stress, the dresidual is the stored mass matrix scaled by
+    // 1/dt² + massDampingScale. It is copied rather than added element by element; the element loop
+    // runs only for the rest.
+    bool const copyMass = hasInertia && !hasStress;
+    real const massScale = 1_r / Sqr(intState.dtStage) + massDampingScale;
+    Span<real const> const massValues =
+        massMatrix ? MakeConstSpan(massMatrix->values) : Span<real const>{};
+    MOCHI_ASSERT(
+        !copyMass || isize(massValues) == numValues,
+        "A body with inertia but no stress needs a mass matrix of the dresidual's size.");
     constexpr int kMinValuesPerTask = 150000;
     ParallelForRange(
         "InitSoftDResidual", 0, numValues, kMinValuesPerTask, INT_MAX, [&](int rBegin, int rEnd) {
           MOCHI_ASSERT_VERBOSE(rBegin >= 0 && rBegin <= rEnd && rEnd <= numValues);
           ColumnVectorView<real> dresValues = AsView(GetValues(outSnle.fullDResidual));
-          if (massScale != 0_r) {
-            // Initialize the dresidual matrix by scaling the mass matrix (inertia + mass damping),
-            // instead of clearing it to zero. This eliminates the need to assemble the dresidual of
-            // the inertia and mass damping terms for each element.
-            MOCHI_ASSERT(dresValues.size() == massMatrix.values.size(), "Size mismatch.");
+          if (copyMass) {
             dresValues.MiddleRows(rBegin, rEnd - rBegin) =
-                massScale * AsView(MakeSpan(massMatrix.values)).MiddleRows(rBegin, rEnd - rBegin);
+                massScale * AsView(massValues).MiddleRows(rBegin, rEnd - rBegin);
           } else {
             dresValues.MiddleRows(rBegin, rEnd - rBegin).SetZero();
           }
@@ -287,9 +289,15 @@ void mochi::soft::AssembleBodyImpl(
   }
 
   AssemblyParams bodyParams = params;
-  bodyParams.assemDRes &= hasStress; // Only stress contributes to DRes
+  bodyParams.assemDRes &= hasStress; // Without stress, the dresidual is complete above.
   if (!bodyParams.assemObj && !bodyParams.assemRes && !bodyParams.assemDRes) {
     return;
+  }
+
+  // The elements gather the predicted target u₀ + dt·v₀, computed once per assembly.
+  ColumnVector<real> predTarget;
+  if (hasInertia && (bodyParams.assemObj || bodyParams.assemRes)) {
+    predTarget = stageStartDispl + intState.dtStage * stageStartVel;
   }
 
   AssemblyActiveSubset activeSubset = activeVolElems
@@ -304,8 +312,7 @@ void mochi::soft::AssembleBodyImpl(
       materialParams, [&]<typename ParamsT>(auto const& perElem) {
         auto batchedConstitutive = materials::MakeBatchedConstitutiveResponse<ParamsT>(perElem);
         auto bodyOp = MakeBatchedBodyOp(
-            MakeConstSpan(femLowVolDisc.femElements),
-            MakeConstSpan(femHighVolDisc.femElements),
+            MakeConstSpan(femVolDisc.femElements),
             batchedConstitutive,
             materialParams.referenceMaterialStiffness,
             hasStress,
@@ -313,8 +320,8 @@ void mochi::soft::AssembleBodyImpl(
             hasInertia,
             gravity,
             materialParams.density,
+            predTarget.GetConstSpan(),
             stageStartDispl.GetConstSpan(),
-            stageStartVel.GetConstSpan(),
             intState.dtStage,
             massDampingScale,
             stiffnessDampingFactor,
@@ -347,15 +354,14 @@ void mochi::soft::AssembleBody(
     CSkinnedEnergy const& skinnedEnergy,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
-    CFemVolumeDiscretizationP1Q1 const& femLowVolDisc,
-    CFemVolumeDiscretizationP1Q4 const& femHighVolDisc,
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc,
     CRootTransform const& rootTransform,
     CSoftMaterialParams const& materialParams,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Current> const& currDispl,
     CDisplacementSlice<real, TimeStep::StageStart> const& stageStartDispl,
     CVelocitySlice<real, TimeStep::StageStart> const& stageStartVel,
-    CMassMatrix const& massMatrix,
+    CMassMatrix const* massMatrix,
     CRomProjectionStrategy const* romProjectionStrategy,
     CActorSnle& outActorSnle,
     CActiveVolumeElements const* activeVolElems) {
@@ -388,8 +394,7 @@ void mochi::soft::AssembleBody(
       hasStress,
       l2g,
       nbs,
-      femLowVolDisc,
-      femHighVolDisc,
+      femVolDisc,
       rootTransform.worldFromLocal,
       materialParams,
       intState,
@@ -902,69 +907,65 @@ bool mochi::soft::IsMaterialParamsFieldCompatible(
 }
 
 void mochi::soft::UpdateSoftMass(
-    CActorSnle const& actorSnle,
+    CTetrahedralMesh const& mesh,
+    CSoftMaterialParams const& material,
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
-    CSoftMaterialParams const& material,
-    CFemVolumeDiscretizationP1Q4 const& femHighVolDisc,
-    CFullSparsityPattern const& sparsity,
-    CMassMatrix& outMassMatrix,
-    CPerElementMassMatrix<CFemVolumeDiscretizationP1Q4>& outPerElemMass,
+    CActorSnle const& actorSnle,
     CLumpedMassMatrix& outLumpedMass,
+    CMassMatrix* outMassMatrix,
     CActiveVolumeElements const* activeVolElems) {
   MOCHI_PROFILE_SCOPE();
-
-  // Wrap the mass matrix values in a BlockSparseMatrixView.
-  MOCHI_ASSERT_VERBOSE(
-      (std::holds_alternative<BlockSparseMatrix<real, 3>>(actorSnle.fullDResidual)),
-      "Expected block sparse actor matrix.");
-  auto const& dresidual = std::get<BlockSparseMatrix<real, 3>>(actorSnle.fullDResidual);
-  BlockSparseMatrixView<real, 3> outMassMatrixBSp(
-      dresidual.BlockCols(), dresidual.Pointers(), dresidual.Indices(), outMassMatrix.values);
-
-  // Initialize to zero.
-  outPerElemMass.values.resize_noinit(femHighVolDisc.femElements.size());
-  deformable::SetZeroMassMatrix(outMassMatrixBSp, MakeSpan(outPerElemMass.values));
-
   MOCHI_ASSERT(
       !activeVolElems || !activeVolElems->empty(), "Active volume elements must not be empty.");
   Span<int const> activeVolIndices =
       activeVolElems ? activeVolElems->ViewIndices() : Span<int const>{};
   Span<real const> activeVolWeights =
       activeVolElems ? activeVolElems->ViewWeights() : Span<real const>{};
-
-  // we need to first recompute the per-element mass matrices since this is used
-  // below for assembling the global mass matrix
-  fem::ComputeMassMatrixPerElement(
-      MakeConstSpan(femHighVolDisc.femElements),
+  outLumpedMass.values.resize_noinit(kSpaceDim3 * mesh.mesh->GetNumNodes());
+  fem::ComputeLumpedMass(
+      MakeConstSpan(femVolDisc.femElements),
       material.density,
-      MakeSpan(outPerElemMass.values),
       activeVolIndices,
-      activeVolWeights);
+      activeVolWeights,
+      MakeSpan(outLumpedMass.values));
+  if (!outMassMatrix) {
+    return;
+  }
 
-  //
-  // here we only request to assemble the DRes because we want
-  // to assemble the mass matrix
-  //
+  // The mass the element loop adds to the dresidual, from the same elements and weights, at unit
+  // time scale.
+  auto const& dresidual = std::get<BlockSparseMatrix<real, 3>>(actorSnle.fullDResidual);
+  outMassMatrix->values.resize_noinit(GetNumValues(actorSnle.fullDResidual));
+  BlockSparseMatrixView<real, 3> massMatrix(
+      dresidual.BlockCols(), dresidual.Pointers(), dresidual.Indices(), outMassMatrix->values);
+  massMatrix.SetZero();
+  constexpr int kBatchSize = kDefaultFemBatchSize;
+  auto const massOp = [&](NdArray<int, kBatchSize> const& elemIndices,
+                          Span<int const> /*indicesFlat*/,
+                          BatchDouble<kBatchSize>* /*outEnergy*/,
+                          fem::BatchElementVector<kBatchSize, SoftStencilElement>* /*outRes*/,
+                          fem::BatchElementMatrix<kBatchSize, SoftStencilElement>* outDRes,
+                          bool /*projectPsd*/) {
+    return fem::AddMassToDRes<kBatchSize, SoftStencilElement>(
+        elemIndices,
+        MakeConstSpan(femVolDisc.femElements),
+        material.density,
+        *outDRes,
+        activeVolWeights);
+  };
   AssemblyParams params{.assemObj = false, .assemRes = false, .assemDRes = true, .psdDRes = false};
-
   AssemblyActiveSubset activeSubset = activeVolElems
       ? AssemblyActiveSubset{activeVolIndices, activeVolElems->ViewIsActive()}
       : AssemblyActiveSubset{};
-
-  // Assemble the global mass matrix from precomputed per-element mass matrices.
-  auto const massMatrixOp = deformable::MakeAddMassMatrixToDResOp<SoftStencilElement>(
-      MakeConstSpan(outPerElemMass.values));
   AssembleObjResDRes<SoftStencilElement>(
       l2g,
       nbs,
-      massMatrixOp,
+      massOp,
       AssemblyResults<real>{
-          .outObj = nullptr, .outRes = {}, .outDRes = outMassMatrixBSp, .params = params},
+          .outObj = nullptr, .outRes = {}, .outDRes = massMatrix, .params = params},
       activeSubset);
-
-  // Compute lumped mass matrix.
-  deformable::ComputeLumpedMassMatrix(sparsity, outMassMatrix, outLumpedMass);
 }
 
 void mochi::soft::RecenterSolutionUsingRigidTransformEval(
@@ -1137,7 +1138,7 @@ void mochi::SetNodeVelocitiesLocal(
 
 static void AssembleElasticEnergy(
     ColumnVectorView<real const> currSol,
-    soft::FemInfo const& femVolLow,
+    soft::FemInfo const& femVolDisc,
     CSoftMaterialParams const& materialParams,
     Local2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
@@ -1162,7 +1163,7 @@ static void AssembleElasticEnergy(
         auto batchedConstitutive = materials::MakeBatchedConstitutiveResponse<ParamsT>(perElem);
 
         auto const stressEnergyOp = MakeBatchedStressEnergyOp(
-            MakeConstSpan(femVolLow.femElements), batchedConstitutive, activeVolWeights);
+            MakeConstSpan(femVolDisc.femElements), batchedConstitutive, activeVolWeights);
 
         AssembleObjResDRes<soft::SoftStencilElement>(
             l2g,
@@ -1179,7 +1180,7 @@ void soft::UpdateQueryElasticEnergy(
     ecs::RequiredTag<TagSoftActor>,
     ecs::OptionalTag<TagUseStress> hasStressTag,
     CStressDisplacementRef const& currDisp,
-    FemInfo const& femVolLow,
+    FemInfo const& femVolDisc,
     CSoftMaterialParams const& material,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
@@ -1193,11 +1194,11 @@ void soft::UpdateQueryElasticEnergy(
   if (!outQuery.isEnergyAtRestInitialized) {
     auto zero = ColumnVector<real>::Zero(currDisp.value.Rows());
     AssembleElasticEnergy(
-        zero, femVolLow, material, l2g, nbs, outQuery.energyAtRest, activeVolElems);
+        zero, femVolDisc, material, l2g, nbs, outQuery.energyAtRest, activeVolElems);
     outQuery.isEnergyAtRestInitialized = true;
   }
   AssembleElasticEnergy(
-      currDisp.value, femVolLow, material, l2g, nbs, outQuery.energy, activeVolElems);
+      currDisp.value, femVolDisc, material, l2g, nbs, outQuery.energy, activeVolElems);
 }
 
 void soft::UpdateQueryElementsDeformationGradient(

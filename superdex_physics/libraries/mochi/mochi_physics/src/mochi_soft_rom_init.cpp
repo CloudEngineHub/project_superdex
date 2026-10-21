@@ -113,14 +113,14 @@ static std::pair<int, int> EmplaceRigidTransform(
 
   Real3 rigidPivotPos = {};
   int rigidPivotEleIdx = -1;
-  auto const& femLowVolDisc = reg.get<CFemVolumeDiscretizationP1Q1 const>(e);
+  auto const& femVolDisc = reg.get<CFemVolumeDiscretizationP1Q1 const>(e);
   bool const grp = mesh.GetRigidPivot(rigidPivotEleIdx, rigidPivotPos);
   MOCHI_ASSERT(grp);
   MOCHI_ASSERT(rigidPivotEleIdx >= 0);
-  MOCHI_ASSERT(rigidPivotEleIdx < isize(femLowVolDisc.femElements));
+  MOCHI_ASSERT(rigidPivotEleIdx < isize(femVolDisc.femElements));
   reg.emplace_or_replace<CMeshPivot>(e, rigidPivotPos);
 
-  auto const& pivotElement = femLowVolDisc.femElements[rigidPivotEleIdx];
+  auto const& pivotElement = femVolDisc.femElements[rigidPivotEleIdx];
   auto const& evalPt =
       reg.emplace_or_replace<CRigidTransformEvalPoint>(e, pivotElement, rigidPivotPos);
   MOCHI_ASSERT(
@@ -459,34 +459,12 @@ static void InitializeHyperReductionIfApplicable(
   reg.emplace<CActiveUniqueNodes>(e, tetMeshShape->GetMesh(), activeVolElems, activeBdFaces);
 
   /*
-   * IMPORTANT: updating the mass matrix needs to be done
+   * IMPORTANT: updating the soft mass needs to be done
    * AFTER emplacing active elements which internally store their weights,
    * and the same soft mass updating must be done every time the active
    * elements are changed
    */
-  auto const& actorSnle = reg.get<CActorSnle const>(e);
-  auto const& material = reg.get<CSoftMaterialParams const>(e);
-  auto& femHighVolDisc = reg.get<CFemVolumeDiscretizationP1Q4>(e);
-  auto const& l2g = reg.get<CLocal2GlobalMap const>(e);
-  auto const& nbs = reg.get<CNodalBasedStructure const>(e);
-  auto& massMatrix = reg.get<CMassMatrix>(e);
-  auto const& sparsity = reg.get<CFullSparsityPattern const>(e);
-  // rather than hardwiring the template, we can deduce it so it is more generic
-  auto& perElemMass =
-      reg.get<CPerElementMassMatrix<std::remove_cvref_t<decltype(femHighVolDisc)>>>(e);
-  auto& lumpedMass = reg.get<CLumpedMassMatrix>(e);
-
-  soft::UpdateSoftMass(
-      actorSnle,
-      l2g,
-      nbs,
-      material,
-      femHighVolDisc,
-      sparsity,
-      massMatrix,
-      perElemMass,
-      lumpedMass,
-      &activeVolElems);
+  ecs::InvokeOnEntity(&soft::UpdateSoftMass, reg, e);
 
   /*
    * if applicable, emplace the dynamic sample mesh strategy

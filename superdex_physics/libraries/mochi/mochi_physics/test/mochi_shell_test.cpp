@@ -15,6 +15,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/defer.h>
 #include <mochi_physics/src/mochi_linear_contact_skin.h>
 #include <mochi_physics/src/mochi_point_cloud_contact.h>
@@ -509,12 +510,14 @@ TEST_F(MochiShellCollapseBarrierScene, BarrierEnergyUnderEquibiaxialCompression)
 
 // Creates a flat shell with zero stiffness, no gravity, uniform initial velocity, and backward
 // Euler integration. With mass damping α, the velocity should decay as v_n = v_0 / (1 + α·dt)^n.
-class MochiShellMassDampingScene : public test::MochiSceneTestBase {
+class MochiShellMassDampingScene : public test::MochiSceneTestBase,
+                                   public ::testing::WithParamInterface<real> {
  protected:
   Actor* _actor = nullptr;
   int _numDofs = 0;
   static constexpr int kDofsPerNode = 3;
   static constexpr real kV0 = 1_r;
+  static constexpr real kDensity = 2_r;
 
   Actor* CreateDampedShellActor(real massDampingCoefficient) {
     auto&& [coords, conn] = test::CreateMinimalTriMeshUnitCube();
@@ -523,7 +526,7 @@ class MochiShellMassDampingScene : public test::MochiSceneTestBase {
     params.material.membraneMu = 1e-10_r; // Near-zero but valid (must be > 0).
     params.material.bendingAlpha = 0_r;
     params.material.bendingBeta = 1e-10_r; // Near-zero but valid (must be > 0).
-    params.material.density = 1_r;
+    params.material.density = kDensity;
     params.material.massDampingCoefficient = massDampingCoefficient;
     params.hasGravity = false;
     params.colliderType = ColliderType::None;
@@ -552,12 +555,17 @@ class MochiShellMassDampingScene : public test::MochiSceneTestBase {
   }
 };
 
-TEST_F(MochiShellMassDampingScene, VelocityDecay) {
-  real constexpr kAlpha = 3_r;
+TEST_P(MochiShellMassDampingScene, VelocityDecay) {
+  real const alpha = GetParam();
   real constexpr kDt = 0.01_r;
   int constexpr kNumSteps = 10;
   real constexpr kVelRtol = 1e-4_r;
-  InitWithDamping(kAlpha);
+  real constexpr kMassRtol = 1e-5_r;
+  InitWithDamping(alpha);
+
+  // The lumped mass adds up to the density times the cube's area (6), per DoF component.
+  auto const& lumpedMass = GetRegistry().get<CLumpedMassMatrix const>(GetEntity(_actor)).values;
+  EXPECT_NEAR_RTOL(3_r * kDensity * 6_r, HSum(MakeConstSpan(lumpedMass)), kMassRtol);
 
   // Step and track displacement to compute velocity via finite differences.
   DynamicArray<real> prevDispl(_numDofs, 0_r);
@@ -567,34 +575,19 @@ TEST_F(MochiShellMassDampingScene, VelocityDecay) {
     _actor->GetDofValues({}, MakeSpan(currDispl), ErrorAssert{});
 
     // Velocity = (d_curr - d_prev) / dt.
-    real const expectedVel = kV0 / std::pow(1_r + kAlpha * kDt, step + 1);
+    real const expectedVel = kV0 / Pow(1_r + alpha * kDt, step + 1);
     for (int i = 0; i < _numDofs; i += kDofsPerNode) {
       real const vel = (currDispl[i] - prevDispl[i]) / kDt;
       EXPECT_NEAR_RTOL(expectedVel, vel, kVelRtol);
     }
     std::copy(currDispl.begin(), currDispl.end(), prevDispl.begin());
   }
+
+  // The near-zero stiffness adds nothing measurable.
+  test::ExpectUniformTranslationAssembly(_scene, _actor, kMassRtol);
 }
 
-TEST_F(MochiShellMassDampingScene, UndampedVelocityConserved) {
-  real constexpr kDt = 0.01_r;
-  int constexpr kNumSteps = 5;
-  real constexpr kVelRtol = 1e-4_r;
-  InitWithDamping(0_r); // No damping.
-
-  DynamicArray<real> prevDispl(_numDofs, 0_r);
-  DynamicArray<real> currDispl(_numDofs);
-  for (int step = 0; step < kNumSteps; ++step) {
-    _scene->Step(kDt);
-    _actor->GetDofValues({}, MakeSpan(currDispl), ErrorAssert{});
-
-    for (int i = 0; i < _numDofs; i += kDofsPerNode) {
-      real const vel = (currDispl[i] - prevDispl[i]) / kDt;
-      EXPECT_NEAR_RTOL(kV0, vel, kVelRtol);
-    }
-    std::copy(currDispl.begin(), currDispl.end(), prevDispl.begin());
-  }
-}
+INSTANTIATE_TEST_SUITE_P(MassDamping, MochiShellMassDampingScene, ::testing::Values(0_r, 3_r));
 
 // ---------------------------------------------------------------------------
 // Stiffness damping: rigid translation invariance

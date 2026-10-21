@@ -177,25 +177,21 @@ void mochi::shell::AssembleBody(
     ecs::OptionalTag<TagUseGravity> hasGravityTag,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
-    CFemSurfaceDiscretizationP1Q1 const& femLowVolDisc,
-    CFemSurfaceDiscretizationP1Q3 const& femHighVolDisc,
+    CFemSurfaceDiscretizationP1Q1 const& femSurfDisc,
     CRootTransform const& rootTransform,
     CShellMaterialParams const& materialParams,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Current> const& currDispl,
     CDisplacementSlice<real, TimeStep::StageStart> const& stageStartDispl,
     CVelocitySlice<real, TimeStep::StageStart> const& stageStartVel,
-    CMassMatrix const& massMatrix,
     CExternalForces const& externalForces,
     CActorSnle& outActorSnle) {
   bool const hasGravity = hasGravityTag;
 
-  real const dtfi2 = 1_r / Sqr(intState.dtStage);
   bool const hasMassDamping = materialParams.massDampingCoefficient > 0_r;
   bool const hasStiffnessDamping = materialParams.stiffnessDampingCoefficient > 0_r;
   real const massDampingScale =
       hasMassDamping ? materialParams.massDampingCoefficient / intState.dtStage : 0_r;
-  real const massScale = dtfi2 + massDampingScale;
   real const stiffnessDampingFactor =
       hasStiffnessDamping ? materialParams.stiffnessDampingCoefficient / intState.dtStage : 0_r;
 
@@ -213,17 +209,7 @@ void mochi::shell::AssembleBody(
     ParallelForRange(
         "InitShellDResidual", 0, numValues, kMinValuesPerTask, INT_MAX, [&](int rBegin, int rEnd) {
           MOCHI_ASSERT_VERBOSE(rBegin >= 0 && rBegin <= rEnd && rEnd <= numValues);
-          ColumnVectorView<real> dresValues = AsView(GetValues(outActorSnle.fullDResidual));
-          if (massScale != 0_r) {
-            // Initialize the dresidual matrix by scaling the mass matrix (inertia + mass damping),
-            // instead of clearing it to zero. This eliminates the need to assemble the dresidual
-            // of the inertia and mass damping terms for each element.
-            MOCHI_ASSERT(dresValues.size() == massMatrix.values.size(), "Size mismatch.");
-            dresValues.MiddleRows(rBegin, rEnd - rBegin) =
-                massScale * AsView(MakeSpan(massMatrix.values)).MiddleRows(rBegin, rEnd - rBegin);
-          } else {
-            dresValues.MiddleRows(rBegin, rEnd - rBegin).SetZero();
-          }
+          AsView(GetValues(outActorSnle.fullDResidual)).MiddleRows(rBegin, rEnd - rBegin).SetZero();
         });
   }
 
@@ -231,10 +217,15 @@ void mochi::shell::AssembleBody(
     auto const gravity =
         ToReal3(rootTransform.worldFromLocal.TransformDirectionInverse(sceneGravity->accel));
 
+    // The elements gather the predicted target u₀ + dt·v₀, computed once per assembly.
+    ColumnVector<real> predTarget;
+    if (params.assemObj || params.assemRes) {
+      predTarget = stageStartDispl.value + intState.dtStage * stageStartVel.value;
+    }
+
     auto bodyOp = MakeBatchedBodyOp(
         l2g,
-        MakeConstSpan(femLowVolDisc.femElements),
-        MakeConstSpan(femHighVolDisc.femElements),
+        MakeConstSpan(femSurfDisc.femElements),
         hasGravity,
         materialParams.membraneLambda,
         materialParams.membraneMu,
@@ -243,9 +234,8 @@ void mochi::shell::AssembleBody(
         2_r * materialParams.membraneCollapseBarrierScale * materialParams.membraneMu,
         gravity,
         materialParams.density,
-        dtfi2,
+        predTarget.GetConstSpan(),
         stageStartDispl.value.GetConstSpan(),
-        stageStartVel.value.GetConstSpan(),
         intState.dtStage,
         massDampingScale,
         stiffnessDampingFactor);

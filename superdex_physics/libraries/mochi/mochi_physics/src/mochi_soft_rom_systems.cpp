@@ -142,15 +142,13 @@ void mochi::rom::AssembleAndProjectBody(
     CSkinnedEnergy const& skinnedEnergy,
     CRomProjectionStrategy const& projectionStrategy,
     CLocal2GlobalMap const& l2g,
-    CFemVolumeDiscretizationP1Q1 const& femLowVolDisc,
-    CFemVolumeDiscretizationP1Q4 const& femHighVolDisc,
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc,
     CRootTransform const& rootTransform,
     CSoftMaterialParams const& materialParams,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Current> const& currDispl,
     CDisplacementSlice<real, TimeStep::StageStart> const& stageStartDispl,
     CVelocitySlice<real, TimeStep::StageStart> const& stageStartVel,
-    CPerElementMassMatrix<CFemVolumeDiscretizationP1Q4> const& perElemMass,
     CRomJacobian const& jacobian,
     CActorSnle& outSnle,
     CActiveVolumeElements const* activeVolElems) {
@@ -204,33 +202,16 @@ void mochi::rom::AssembleAndProjectBody(
 
   auto const dampingScales =
       soft::ComputeSoftDampingScales(materialParams, intState.dtStage, hasInertia, hasStress);
-  real const massScale = dampingScales.massScale;
   real const massDampingScale = dampingScales.massDampingScale;
   real const stiffnessDampingFactor = dampingScales.stiffnessDampingFactor;
   bool const includeStiffnessDampingGeometricTerm =
       dampingScales.includeStiffnessDampingGeometricTerm;
-  // Perform assembly and projection.
-  auto initEleDResFn = [&](auto&& eleDRes, int globalEleIdx) -> bool {
-    // Initialize the element dresidual to the scaled element mass matrix (inertia + mass damping)
-    // if applicable, and to zero otherwise.
-    if (massScale != 0_r) {
-      auto const& elementMass = perElemMass.values[globalEleIdx];
-      int constexpr kNumElemDofs =
-          CPerElementMassMatrix<CFemVolumeDiscretizationP1Q4>::kNumElemDofs;
-      RowMatrixView<real const, kNumElemDofs, kNumElemDofs> matView(&elementMass[0][0]);
 
-      static_assert(
-          krylov::details::MatTraits<decltype(eleDRes)>::kMajorDir ==
-              krylov::details::MatTraits<decltype(matView)>::kMajorDir,
-          "Expected same storage direction for performance reasons.");
-
-      eleDRes = massScale * matView;
-      return true;
-    } else {
-      eleDRes.SetZero();
-      return false;
-    }
-  };
+  // The elements gather the predicted target u₀ + dt·v₀, computed once per assembly.
+  ColumnVector<real> predTarget;
+  if (hasInertia && (bodyParams.assemObj || bodyParams.assemRes)) {
+    predTarget = stageStartDispl.value + intState.dtStage * stageStartVel.value;
+  }
 
   MOCHI_ASSERT_VERBOSE(
       !activeVolElems || !activeVolElems->empty(), "Active volume elements must not be empty.");
@@ -247,8 +228,7 @@ void mochi::rom::AssembleAndProjectBody(
       materialParams, [&]<typename ParamsT>(auto const& perElem) {
         auto batchedConstitutive = materials::MakeBatchedConstitutiveResponse<ParamsT>(perElem);
         auto bodyOp = soft::MakeBatchedBodyOp(
-            MakeConstSpan(femLowVolDisc.femElements),
-            MakeConstSpan(femHighVolDisc.femElements),
+            MakeConstSpan(femVolDisc.femElements),
             batchedConstitutive,
             materialParams.referenceMaterialStiffness,
             hasStress,
@@ -256,8 +236,8 @@ void mochi::rom::AssembleAndProjectBody(
             hasInertia,
             gravity,
             materialParams.density,
+            predTarget.GetConstSpan(),
             stageStartDispl.value.GetConstSpan(),
-            stageStartVel.value.GetConstSpan(),
             intState.dtStage,
             massDampingScale,
             stiffnessDampingFactor,
@@ -268,7 +248,6 @@ void mochi::rom::AssembleAndProjectBody(
             l2g,
             bodyOp,
             activeSubset,
-            initEleDResFn,
             AsConstView(currDispl.value),
             AsConstView(*jacobian.template TryGet<CRomJacobian::DenseT>()),
             outSnle.objective,
@@ -336,11 +315,6 @@ void mochi::rom::AssembleAndProjectAsyncContact(
     return;
   }
 
-  auto initEleDResFn = [](auto&& eleDRes, int /*globalEleIdx*/) -> bool {
-    eleDRes.SetZero();
-    return false;
-  };
-
   femBoundaryDisc.Visit([&](auto const& disc) {
     using DiscT = std::decay_t<decltype(disc)>;
     using ElementT = typename DiscT::ElementT;
@@ -356,7 +330,6 @@ void mochi::rom::AssembleAndProjectAsyncContact(
         bdL2g,
         boundaryOp,
         bdActiveSubset,
-        initEleDResFn,
         AsConstView(*jacobian.template TryGet<CRomJacobian::DenseT>()),
         outSnle.objective,
         AsView(outSnle.reducedResidual),
@@ -561,30 +534,6 @@ static void MoveSampleMeshToCache(
   sampleMeshCache.activeNodes = std::make_unique<CActiveUniqueNodes>(std::move(an));
 }
 
-static void SoftMassUpdateRomFomSwitching(
-    CActorSnle const& actorSnle,
-    CSoftMaterialParams const& material,
-    CFemVolumeDiscretizationP1Q4 const& femHighVolDisc,
-    CLocal2GlobalMap const& l2g,
-    CNodalBasedStructure const& nbs,
-    CFullSparsityPattern const& sparsity,
-    CMassMatrix& massMatrix,
-    CPerElementMassMatrix<CFemVolumeDiscretizationP1Q4>& perElemMass,
-    CLumpedMassMatrix& lumpedMass,
-    CActiveVolumeElements* ave = nullptr) {
-  soft::UpdateSoftMass(
-      actorSnle,
-      l2g,
-      nbs,
-      material,
-      femHighVolDisc,
-      sparsity,
-      massMatrix,
-      perElemMass,
-      lumpedMass,
-      ave);
-}
-
 /// @brief Update components to switch from ROM to FOM.
 static void RomToFomImpl(entt::registry& reg, entt::entity e) {
   reg.remove<TagRomActor>(e);
@@ -608,8 +557,8 @@ static void RomToFomImpl(entt::registry& reg, entt::entity e) {
     // Second, remove sample mesh components.
     reg.remove<CActiveVolumeElements, CActiveBoundaryFaces, CActiveUniqueNodes>(e);
 
-    // Finally, update the mass matrix after the sample mesh has been removed.
-    mochi::ecs::InvokeOnEntity(&SoftMassUpdateRomFomSwitching, reg, e);
+    // Finally, update the soft mass after the sample mesh has been removed.
+    mochi::ecs::InvokeOnEntity(&soft::UpdateSoftMass, reg, e);
   }
 }
 
@@ -634,8 +583,8 @@ static void FomToRomImpl(entt::registry& reg, entt::entity e) {
     reg.emplace<CActiveBoundaryFaces>(e, std::move(*sampleMeshToRestore->activeBoundaryFaces));
     reg.emplace<CActiveUniqueNodes>(e, std::move(*sampleMeshToRestore->activeNodes));
 
-    // Then, update the mass matrix after the sample mesh has been emplaced.
-    mochi::ecs::InvokeOnEntity(&SoftMassUpdateRomFomSwitching, reg, e);
+    // Then, update the soft mass after the sample mesh has been emplaced.
+    mochi::ecs::InvokeOnEntity(&soft::UpdateSoftMass, reg, e);
   }
 }
 

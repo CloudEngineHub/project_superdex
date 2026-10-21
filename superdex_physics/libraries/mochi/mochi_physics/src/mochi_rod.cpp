@@ -1750,9 +1750,7 @@ static void AddExternalForces(
     if (hasMassDamping) {
       // Mass-proportional damping C = α·M, added as a second inertia term whose target is the
       // stage-start position with zero velocity extrapolation. This contributes residual
-      // (α/dt)·M·(x − d_stageStart), the matching energy, and the diagonal (α/dt)·M. Unlike
-      // shell (which folds inertia + mass damping into a precomputed global mass matrix), rods
-      // have no such matrix, so this call also emits the DResidual diagonal.
+      // (α/dt)·M·(x − d_stageStart), the matching energy, and the diagonal (α/dt)·M.
       // Reuse the leading kNumRodFields DoFs (stencil node 0) of the shared stage-start gather
       // above instead of re-reading them from memory.
       NdArray<V, fem::kNumRodFields> massDampingTarget MOCHI_NO_INIT;
@@ -1854,7 +1852,6 @@ void AssembleBody(
         "InitRodDResidual", 0, numValues, kMinValuesPerTask, INT_MAX, [&](int rBegin, int rEnd) {
           MOCHI_ASSERT_VERBOSE(rBegin >= 0 && rBegin <= rEnd && rEnd <= numValues);
           ColumnVectorView<real> dresValues = AsView(GetValues(outActorSnle.fullDResidual));
-          // For rods, we don't pre-scale with mass matrix, so just zero it out
           dresValues.MiddleRows(rBegin, rEnd - rBegin).SetZero();
         });
   }

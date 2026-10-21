@@ -30,7 +30,6 @@
 #include <array>
 #include <cstdint>
 #include <type_traits>
-#include <utility>
 #include <variant>
 
 namespace mochi {
@@ -157,59 +156,6 @@ namespace mochi {
  */
 
 namespace details {
-
-/**
- * @brief Gather batch element solution from the global solution vector.
- *
- * @tparam ElementT    Element type
- * @tparam kNumFields  Number of fields per node
- * @tparam kBatchSize  Number of elements per batch
- * @param[in]  globalSol         Global solution vector
- * @param[in]  indicesFlat       Flat local-to-global DoF indices
- * @param[in]  globalElemIndices Per-batch-lane element indices (padded to kBatchSize)
- * @param[out] outBatchElemSol   Batch element displacement vector
- */
-template <class ElementT, int kNumFields, int kBatchSize>
-MOCHI_FORCE_INLINE void GatherBatchElementSolution(
-    ColumnVectorView<real const> globalSol,
-    Span<int const> indicesFlat,
-    NdArray<int, kBatchSize> const& globalElemIndices,
-    fem::BatchElementVector<kBatchSize, ElementT, kNumFields>& outBatchElemSol) {
-  using V = BatchReal<kBatchSize>;
-  static_assert(ElementT::kSpaceDim == 3, "GatherBatchElementSolution requires kSpaceDim == 3");
-  static_assert(kNumFields <= 4, "GatherBatchElementSolution requires kNumFields <= 4");
-  constexpr int kNumNodes = ElementT::kNumDofs;
-  constexpr int kNumEleDofs = kNumNodes * kNumFields;
-
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-  for (int b = 0; b < kBatchSize; ++b) {
-    int const* const elemDofs = &indicesFlat[globalElemIndices[b] * kNumEleDofs];
-    for (int d = 0; d < kNumEleDofs; ++d) {
-      MOCHI_ASSERT_VERBOSE(
-          elemDofs[d] == elemDofs[d - d % kNumFields] + d % kNumFields,
-          "Per-node DoFs must be contiguous in the global vector.");
-    }
-  }
-#endif // MOCHI_ASSERT_VERBOSE_ENABLED
-
-  // Per-node DoFs are contiguous in the global vector, so each node needs one index load per lane.
-  // The lanes are expanded at compile time: MSVC otherwise does not unroll a loop over them and
-  // keeps the node pointers in memory.
-  // TODO: Consider loading each lane's node values with one vector load and transpose them in
-  // registers. Needs a LoadTransposed variant that takes one pointer per lane. See D122821232.
-  auto const gatherNode =
-      [&]<size_t... kLanes>(int nodeDof, std::index_sequence<kLanes...>) MOCHI_FORCE_INLINE_LAMBDA {
-        int const elemDof[] = {
-            globalElemIndices[Min(static_cast<int>(kLanes), kBatchSize - 1)] * kNumEleDofs...};
-        real const* const nodeSol[] = {&globalSol[indicesFlat[elemDof[kLanes] + nodeDof]]...};
-        for (int f = 0; f < kNumFields; ++f) {
-          outBatchElemSol[nodeDof + f] = V{nodeSol[kLanes][f]...};
-        }
-      };
-  for (int nI = 0; nI < kNumNodes; ++nI) {
-    gatherNode(nI * kNumFields, std::make_index_sequence<V::kSize>{});
-  }
-}
 
 template <class ElementT, int kNumFields, int kBatchSize, bool kGatherSolution>
 using MaybeNoDispElOpFnType = std::conditional_t<
@@ -349,8 +295,8 @@ MOCHI_FORCE_INLINE bool InvokeBatchedElOp(
     bool psdDRes) {
   if constexpr (kGatherSolution) {
     fem::BatchElementVector<kBatchSize, ElementT, kNumFields> batchDisp MOCHI_NO_INIT;
-    GatherBatchElementSolution<ElementT, kNumFields, kBatchSize>(
-        globalSol, indicesFlat, batchElemIndices, batchDisp);
+    fem::GatherBatchElementVector<kBatchSize, ElementT, kNumFields>(
+        indicesFlat, batchElemIndices, globalSol.GetConstSpan(), batchDisp);
     return batchedElOp(
         batchElemIndices, indicesFlat, batchDisp, outEnergy, outRes, outDRes, psdDRes);
   } else {
@@ -781,17 +727,11 @@ void AssembleObjResDRes(
 }
 
 namespace details {
-template <
-    class ElementT,
-    int kNumFields,
-    int kBatchSize,
-    bool kGatherSolution,
-    typename InitEleDResFn>
+template <class ElementT, int kNumFields, int kBatchSize, bool kGatherSolution>
 void AssembleAndProjectObjResDResImpl(
     Local2GlobalMap const& l2g,
     MaybeNoDispElOpFnType<ElementT, kNumFields, kBatchSize, kGatherSolution> const& batchedElOp,
     AssemblyActiveSubset const& activeSubset,
-    InitEleDResFn const& initEleDResFn,
     ColumnVectorView<real const> globalSol,
     RowMatrixView<real const> J,
     double& outObj,
@@ -927,12 +867,12 @@ void AssembleAndProjectObjResDResImpl(
           params.assemDRes ? &batchDRes : nullptr,
           params.psdDRes);
 
-      // Determine whether to add the element contribution to the output.
-      bool const addElemObj = params.assemObj && hasOutput;
-      bool const addElemRes = params.assemRes && hasOutput;
+      if (!hasOutput) {
+        continue;
+      }
 
       // Add objective.
-      if (addElemObj) {
+      if (params.assemObj) {
         auto* dstObj = assembleToOutput ? &outObj : &workerObj[iTask];
         for (int b = 0; b < actualBatchSize; ++b) {
           *dstObj += batchEnergy[b];
@@ -943,29 +883,16 @@ void AssembleAndProjectObjResDResImpl(
       for (int b = 0; b < actualBatchSize; ++b) {
         int const eleIdx = batchElemIndices[b];
 
-        // Set eleDRes via initEleDResFn, then add batch element op contribution.
-        bool nonZeroInitDRes = false;
-        if (params.assemDRes) {
-          // Initialization of the element dresidual may be different for each element, e.g. if
-          // initializing to the mass matrix.
-          nonZeroInitDRes = initEleDResFn(eleDRes, eleIdx);
-          MOCHI_ASSERT_VERBOSE(
-              nonZeroInitDRes || eleDRes.NormSqr() == 0, "Inconsistent initialization.");
-          if (hasOutput) {
-            for (int i = 0; i < kNumEleDofs; ++i) {
-              for (int j = 0; j < kNumEleDofs; ++j) {
-                eleDRes(i, j) += batchDRes[i * kNumEleDofs + j][b];
-              }
-            }
-          }
-        }
-
         // NOTE: If all the element operations have zero dresidual, the dresidual projection could
         // be skipped. This is not an important use-case as of today but could be optimized in the
         // future.
-        bool const addElemDRes = params.assemDRes && (nonZeroInitDRes || hasOutput);
+        if (params.assemDRes) {
+          for (int i = 0; i < kNumEleDofs; ++i) {
+            for (int j = 0; j < kNumEleDofs; ++j) {
+              eleDRes(i, j) = batchDRes[i * kNumEleDofs + j][b];
+            }
+          }
 
-        if (addElemDRes) {
           // If the dresidual needs to be assembled, it pays off to copy the element Jacobian to
           // consecutive memory and then project in a single & larger matrix-matrix product.
           l2g.GetElementNodes(eleIdx, nodes);
@@ -974,7 +901,7 @@ void AssembleAndProjectObjResDResImpl(
                 J.template MiddleRows<kNumFields>(kNumFields * nodes[i], kNumFields);
           }
 
-          if (addElemRes) {
+          if (params.assemRes) {
             for (int d = 0; d < kNumEleDofs; ++d) {
               eleRes[d] = batchRes[d][b];
             }
@@ -985,7 +912,7 @@ void AssembleAndProjectObjResDResImpl(
           auto dstDRes = assembleToOutput ? outDRes : AsView(workerDRes[iTask]);
           DeJe = eleDRes * Je; // Col-major = Row-major x Row-major
           dstDRes += Je.Transpose() * DeJe; // Col-major += Col-major x Col-major
-        } else if (addElemRes) {
+        } else if (params.assemRes) {
           // If the dresidual doesn't need to be assembled, it's faster to perform the residual
           // projection through a series of per-node matrix-vector products than to copy the element
           // Jacobian to consecutive memory and project in a single & larger matrix-vector product.
@@ -1020,12 +947,11 @@ void AssembleAndProjectObjResDResImpl(
 
 } // namespace details
 
-template <class ElementT, int kNumFields, int kBatchSize, typename InitEleDResFn>
+template <class ElementT, int kNumFields, int kBatchSize>
 void AssembleAndProjectObjResDRes(
     Local2GlobalMap const& l2g,
     ElOpFnType<ElementT, kNumFields, kBatchSize> const& batchedElOp,
     AssemblyActiveSubset const& activeSubset,
-    InitEleDResFn const& initEleDResFn,
     ColumnVectorView<real const> globalSol,
     RowMatrixView<real const> J,
     double& outObj,
@@ -1037,15 +963,14 @@ void AssembleAndProjectObjResDRes(
       kNumFields,
       kBatchSize,
       /*kGatherSolution*/ true>(
-      l2g, batchedElOp, activeSubset, initEleDResFn, globalSol, J, outObj, outRes, outDRes, params);
+      l2g, batchedElOp, activeSubset, globalSol, J, outObj, outRes, outDRes, params);
 }
 
-template <class ElementT, int kNumFields, int kBatchSize, typename InitEleDResFn>
+template <class ElementT, int kNumFields, int kBatchSize>
 void AssembleAndProjectObjResDRes(
     Local2GlobalMap const& l2g,
     NoDispElOpFnType<ElementT, kNumFields, kBatchSize> const& batchedElOp,
     AssemblyActiveSubset const& activeSubset,
-    InitEleDResFn const& initEleDResFn,
     RowMatrixView<real const> J,
     double& outObj,
     ColumnVectorView<real> outRes,
@@ -1059,7 +984,6 @@ void AssembleAndProjectObjResDRes(
       l2g,
       batchedElOp,
       activeSubset,
-      initEleDResFn,
       /*globalSol*/ {},
       J,
       outObj,

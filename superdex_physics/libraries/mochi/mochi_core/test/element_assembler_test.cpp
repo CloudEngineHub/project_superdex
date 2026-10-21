@@ -656,51 +656,9 @@ TEST(ElementAssembler, NoSolutionOverloadMatchesZeroSolution) {
 // Projected (ROM) assembler tests.
 //
 // Reuses the synthetic op and the manual dense oracle: the projected reduced quantities are
-// J^T r and J^T K J of the manually-assembled global residual / dresidual (with the per-element
-// initEleDResFn diagonal folded in), since Sum_e J_e^T K_e J_e = J^T (Sum_e scatter(K_e)) J.
+// J^T r and J^T K J of the manually-assembled global residual / dresidual, since
+// Sum_e J_e^T K_e J_e = J^T (Sum_e scatter(K_e)) J.
 // ================================================================================================
-
-// Mirrors the per-element dresidual initialization used by ROM assembly: a scaled diagonal.
-static auto MakeInitEleDResFn(bool includeInit) {
-  return [includeInit](auto&& eleDRes, int eleIdx) -> bool {
-    eleDRes.SetZero();
-    if (!includeInit) {
-      return false;
-    }
-    real const scale = 0.01_r * static_cast<real>(1 + eleIdx);
-    for (int i = 0; i < kShapeEleDofs; ++i) {
-      eleDRes(i, i) = scale;
-    }
-    return true;
-  };
-}
-
-// Add the initEleDResFn diagonal contribution to the manual global dense matrix.
-static void AddInitToManual(
-    ManualGlobalAssembly& g,
-    Local2GlobalMap const& l2g,
-    Span<int const> activeElements,
-    bool includeInit) {
-  if (!includeInit) {
-    return;
-  }
-  auto addElement = [&](int e) {
-    Span<int const> const gi = l2g.GetGlobalIndices(e);
-    real const scale = 0.01_r * static_cast<real>(1 + e);
-    for (int i = 0; i < isize(gi); ++i) {
-      g.dres(gi[i], gi[i]) += scale;
-    }
-  };
-  if (activeElements.empty()) {
-    for (int e = 0; e < l2g.GetNumElements(); ++e) {
-      addElement(e);
-    }
-  } else {
-    for (int e : activeElements) {
-      addElement(e);
-    }
-  }
-}
 
 template <int kBatchSize>
 static void VerifyProjectedOneBatchSize(
@@ -710,7 +668,6 @@ static void VerifyProjectedOneBatchSize(
     RowMatrix<real> const& J,
     int reducedDim,
     AssemblyActiveSubset const& subset,
-    bool includeInit,
     AssemblyParams params,
     ManualGlobalAssembly const& g) {
   double obj = 0.0;
@@ -721,7 +678,6 @@ static void VerifyProjectedOneBatchSize(
       l2g,
       MakeSyntheticOp<kBatchSize>(),
       subset,
-      MakeInitEleDResFn(includeInit),
       sol,
       AsConstView(J),
       obj,
@@ -782,16 +738,11 @@ static void RunProjectedConfig(
     int reducedDim,
     AssemblyActiveSubset const& subset,
     Span<int const> activeElements,
-    bool includeInit,
     AssemblyParams params) {
   ManualGlobalAssembly g = ManualAssemble(l2g, numGlobalDofs, sol, activeElements, params);
-  AddInitToManual(g, l2g, activeElements, includeInit && params.assemDRes);
-  VerifyProjectedOneBatchSize<1>(
-      l2g, sol, numGlobalDofs, J, reducedDim, subset, includeInit, params, g);
-  VerifyProjectedOneBatchSize<4>(
-      l2g, sol, numGlobalDofs, J, reducedDim, subset, includeInit, params, g);
-  VerifyProjectedOneBatchSize<8>(
-      l2g, sol, numGlobalDofs, J, reducedDim, subset, includeInit, params, g);
+  VerifyProjectedOneBatchSize<1>(l2g, sol, numGlobalDofs, J, reducedDim, subset, params, g);
+  VerifyProjectedOneBatchSize<4>(l2g, sol, numGlobalDofs, J, reducedDim, subset, params, g);
+  VerifyProjectedOneBatchSize<8>(l2g, sol, numGlobalDofs, J, reducedDim, subset, params, g);
 }
 
 static void RunProjectedAssemblerTests(TetrahedralMesh& mesh) {
@@ -811,33 +762,29 @@ static void RunProjectedAssemblerTests(TetrahedralMesh& mesh) {
 
     for (int numThreads : {0, 1, Min(8, TaskScheduler::GetNumSupportedLogicalProcessors())}) {
       TaskScheduler scheduler(numThreads);
-      for (bool includeInit : {false, true}) {
-        for (auto const& params : AllAssemblyModes()) {
-          // All elements (empty active subset).
+      for (auto const& params : AllAssemblyModes()) {
+        // All elements (empty active subset).
+        RunProjectedConfig(
+            l2g,
+            AsConstView(sol),
+            numGlobalDofs,
+            J,
+            reducedDim,
+            AssemblyActiveSubset{},
+            {},
+            params);
+
+        // Active-subset scenarios (including mixed-lane edge cases).
+        for (auto const& scenario : scenarios) {
           RunProjectedConfig(
               l2g,
               AsConstView(sol),
               numGlobalDofs,
               J,
               reducedDim,
-              AssemblyActiveSubset{},
-              {},
-              includeInit,
+              scenario.ActiveSubset(),
+              MakeConstSpan(scenario.indices),
               params);
-
-          // Active-subset scenarios (including mixed-lane edge cases).
-          for (auto const& scenario : scenarios) {
-            RunProjectedConfig(
-                l2g,
-                AsConstView(sol),
-                numGlobalDofs,
-                J,
-                reducedDim,
-                scenario.ActiveSubset(),
-                MakeConstSpan(scenario.indices),
-                includeInit,
-                params);
-          }
         }
       }
     }
@@ -862,7 +809,6 @@ static void VerifyProjectedNoDispMatchesZeroSolution(
       l2g,
       MakeSolutionIndependentOpWithDisp<kBatchSize>(),
       subset,
-      MakeInitEleDResFn(/*includeInit*/ true),
       zeroSol,
       AsConstView(J),
       objRef,
@@ -878,7 +824,6 @@ static void VerifyProjectedNoDispMatchesZeroSolution(
       l2g,
       MakeNoDispSolutionIndependentOp<kBatchSize>(),
       subset,
-      MakeInitEleDResFn(/*includeInit*/ true),
       AsConstView(J),
       objNo,
       AsView(redResNo),
@@ -1077,7 +1022,6 @@ TEST(ElementAssembler, PhysicalInvariantsAndPsd) {
       l2g,
       stressOp,
       AssemblyActiveSubset{},
-      MakeInitEleDResFn(false),
       AsConstView(sol),
       AsConstView(J),
       objProj,

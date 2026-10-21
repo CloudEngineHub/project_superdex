@@ -51,7 +51,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CFullSparsityPattern>(reg);
   ecs::RegisterComponent<CReducedSparsityPattern>(reg);
   ecs::RegisterComponent<CFemVolumeDiscretizationP1Q1>(reg);
-  ecs::RegisterComponent<CFemVolumeDiscretizationP1Q4>(reg);
   ecs::RegisterComponent<CFemBoundaryDiscretizationP1Q1_1>(reg);
   ecs::RegisterComponent<CFemBoundaryDiscretizationP1Q1_3>(reg);
   ecs::RegisterComponent<CFemBoundaryDiscretizationP1Q1_6>(reg);

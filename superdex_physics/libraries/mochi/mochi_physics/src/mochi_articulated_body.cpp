@@ -1315,7 +1315,7 @@ int mochi::InitDiscretizationSkinMesh(
 
   // Branch on the runtime skin-mesh type.
   if (tetShape) {
-    // Emplace low vol discretization.
+    // Emplace the volume discretization.
     // IMPORTANT: It MUST be emplaced because CFemBoundaryDiscretization references it.
     auto const& tetMesh = tetShape->GetMesh();
     auto& femVolDisc = reg.emplace<CFemVolumeDiscretizationP1Q1>(e);

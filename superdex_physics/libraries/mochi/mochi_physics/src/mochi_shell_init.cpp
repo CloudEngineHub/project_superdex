@@ -29,7 +29,6 @@
 #include "mochi_simulation.h"
 #include "mochi_snle.h"
 
-#include <mochi_core/element_operations/element_assembler.h>
 #include <mochi_core/element_operations/fem_inertia.h>
 #include <mochi_core/geometry/deep_flow_map.h>
 #include <mochi_core/geometry/geometry_utils.h>
@@ -40,86 +39,14 @@
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/error.h>
 #include <mochi_core/utils/log.h>
-#include <mochi_core/utils/profile.h>
 
 #include <memory>
-#include <type_traits>
 #include <utility>
 
 #include <entt/entity/view.hpp>
 
 using namespace mochi;
 using namespace mochi::experimental;
-
-static void UpdateMassMatrix(
-    CActorSnle const& actorSnle,
-    CLocal2GlobalMap const& l2g,
-    CNodalBasedStructure const& nbs,
-    real const& density,
-    CFemSurfaceDiscretizationP1Q3 const& femHighDisc,
-    CFullSparsityPattern const& sparsity,
-    CMassMatrix& outMassMatrix,
-    CPerElementMassMatrix<CFemSurfaceDiscretizationP1Q3>& outPerElemMass,
-    CLumpedMassMatrix& outLumpedMass,
-    CActiveVolumeElements const* activeVolElems = nullptr) {
-  MOCHI_PROFILE_SCOPE();
-
-  // Wrap the mass matrix values in a BlockSparseMatrixView for use below
-  MOCHI_ASSERT_VERBOSE(
-      (std::holds_alternative<BlockSparseMatrix<real, 3>>(actorSnle.fullDResidual)),
-      "Expected block sparse actor matrix.");
-  auto const& dresidual = std::get<BlockSparseMatrix<real, 3>>(actorSnle.fullDResidual);
-  BlockSparseMatrixView<real, 3> outMassMatrixBSp(
-      dresidual.BlockCols(), dresidual.Pointers(), dresidual.Indices(), outMassMatrix.values);
-
-  // Initialize to zero
-  outPerElemMass.values.resize_noinit(femHighDisc.femElements.size());
-  deformable::SetZeroMassMatrix(outMassMatrixBSp, MakeSpan(outPerElemMass.values));
-
-  MOCHI_ASSERT(
-      !activeVolElems || !activeVolElems->empty(), "Active volume elements must not be empty.");
-  Span<int const> activeVolIndices =
-      activeVolElems ? activeVolElems->ViewIndices() : Span<int const>{};
-  Span<real const> activeVolWeights =
-      activeVolElems ? activeVolElems->ViewWeights() : Span<real const>{};
-
-  // we need to first recompute the per-element mass matrices since this is used
-  // below for assembling the global mass matrix
-  fem::ComputeMassMatrixPerElement(
-      MakeConstSpan(femHighDisc.femElements),
-      density,
-      MakeSpan(outPerElemMass.values),
-      activeVolIndices,
-      activeVolWeights);
-
-  //
-  // here we only request to assemble the DRes because we want
-  // to assemble the mass matrix
-  //
-  AssemblyParams assemblyParams{
-      .assemObj = false, .assemRes = false, .assemDRes = true, .psdDRes = false};
-
-  AssemblyActiveSubset activeSubset = activeVolElems
-      ? AssemblyActiveSubset{activeVolIndices, activeVolElems->ViewIsActive()}
-      : AssemblyActiveSubset{};
-
-  // Assemble the global mass matrix from precomputed per-element triangle mass matrices. The shell
-  // assembler runs over the 6-node bending stencil, but inertia only uses the first 3 nodes, which
-  // are the triangle vertices. The 9x9 triangle mass matrix is written into the top-left block of
-  // the batched 18x18 element dresidual. The assembler then scatters it into the global matrix.
-  auto const massMatrixOp = deformable::MakeAddMassMatrixToDResOp<shell::ShellStencilElement>(
-      MakeConstSpan(outPerElemMass.values));
-  AssembleObjResDRes<shell::ShellStencilElement>(
-      l2g,
-      nbs,
-      massMatrixOp,
-      AssemblyResults<real>{
-          .outObj = nullptr, .outRes = {}, .outDRes = outMassMatrixBSp, .params = assemblyParams},
-      activeSubset);
-
-  // Compute lumped mass matrix.
-  deformable::ComputeLumpedMassMatrix(sparsity, outMassMatrix, outLumpedMass);
-}
 
 static void EmplaceShellActorDiscretization(
     entt::registry& reg,
@@ -351,23 +278,20 @@ void mochi::InitShellActor(
   }
 
   // Actor SNLE data.
-  auto const& actorSnle = reg.emplace<CActorSnle>(e, std::move(actorDRes));
+  reg.emplace<CActorSnle>(e, std::move(actorDRes));
 
   // Non-linear solver convergence weights (lazily initialized).
   reg.emplace<CActorConvergenceWeights>(e);
 
-  // Surface discretizations
-  auto* femLowSurfDisc = &reg.emplace<CFemSurfaceDiscretizationP1Q1>(e);
-  auto* femHighSurfDisc = &reg.emplace<CFemSurfaceDiscretizationP1Q3>(e);
+  // Surface discretization
+  auto& femSurfDisc = reg.emplace<CFemSurfaceDiscretizationP1Q1>(e);
   {
-    femLowSurfDisc->femElements.reserve(actorTriMesh.GetNumElements());
-    femHighSurfDisc->femElements.reserve(actorTriMesh.GetNumElements());
+    femSurfDisc.femElements.reserve(actorTriMesh.GetNumElements());
     auto const meshCoords = actorTriMesh.GetNodeCoordinates();
     auto const meshConnec = actorTriMesh.GetElementConnectivity();
     int const meshNumEle = actorTriMesh.GetNumElements();
     for (int i = 0; i < meshNumEle; ++i) {
-      femLowSurfDisc->femElements.emplace_back(i, meshCoords, meshConnec);
-      femHighSurfDisc->femElements.emplace_back(i, meshCoords, meshConnec);
+      femSurfDisc.femElements.emplace_back(i, meshCoords, meshConnec);
     }
   }
   TriangularMesh const& contactMesh = params.useContactSkin ? *shapeContactSkinMesh : actorTriMesh;
@@ -412,27 +336,13 @@ void mochi::InitShellActor(
   // Bounds used for collision detection.
   reg.emplace<CConservativeStepBounds>(e);
 
-  // MassMatrix (for inertia)
-  auto& massMatrix = reg.emplace<CMassMatrix>(e);
-  massMatrix.values.resize(GetNumValues(actorSnle.fullDResidual), 0_r);
-
-  // Lumped mass matrix. Computed in UpdateMassMatrix.
+  // Lumped mass, for the convergence weights.
   auto& lumpedMass = reg.emplace<CLumpedMassMatrix>(e);
-
-  // Per-element mass matrix
-  // here, rather than hardwiring the template, we can deduce it so
-  // that if that changes this does not have to be modified
-  CPerElementMassMatrix<std::remove_pointer_t<decltype(femHighSurfDisc)>> perElemMass;
-  perElemMass.values.resize(l2g.GetNumElements());
-
-  UpdateMassMatrix(
-      actorSnle,
-      l2g,
-      nbs,
+  lumpedMass.values.resize_noinit(actorMeshDofs);
+  fem::ComputeLumpedMass(
+      MakeConstSpan(femSurfDisc.femElements),
       material.density,
-      *femHighSurfDisc,
-      fullSparsity,
-      massMatrix,
-      perElemMass,
-      lumpedMass);
+      /*activeElementIndices*/ {},
+      /*perElementExtraWeight*/ {},
+      MakeSpan(lumpedMass.values));
 }

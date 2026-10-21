@@ -21,11 +21,9 @@
 #include "mochi_simulation.h"
 
 #include <mochi_core/element_operations/element_assembler.h>
-#include <mochi_core/element_operations/fem_inertia.h>
 #include <mochi_core/element_operations/fem_traction.h>
 #include <mochi_core/linear_algebra/matrix_fwd.h>
 #include <mochi_core/linear_algebra/utils/assembly.h>
-#include <mochi_core/utils/array_utils.h>
 #include <mochi_core/utils/batch_config.h>
 #include <mochi_core/utils/batch_types.h>
 #include <mochi_core/utils/simd.h>
@@ -54,26 +52,6 @@ void UpdateMaxGeometrySpeed(
     CColliderInfo const& collider,
     CContactSkinningData const* contactSkinning,
     CConservativeStepBounds& outStepBounds);
-
-template <typename BlockSparseMatViewT, typename ElemMassMatT>
-void SetZeroMassMatrix(
-    BlockSparseMatViewT& outMassMatrix,
-    Span<ElemMassMatT> outPerElemMassMatrix) {
-  outMassMatrix.SetZero();
-  Fill(outPerElemMassMatrix, ElemMassMatT{});
-}
-
-/**
- * @brief Computes the row-sum lumped mass matrix from a sparse mass matrix.
- *
- * @param[in] sparsity The sparsity pattern of the mass matrix.
- * @param[in] massMatrix The full sparse mass matrix values (must match sparsity pattern).
- * @param[out] outLumpedMassMatrix The output lumped mass matrix values.
- */
-void ComputeLumpedMassMatrix(
-    CFullSparsityPattern const& sparsity,
-    CMassMatrix const& massMatrix,
-    CLumpedMassMatrix& outLumpedMassMatrix);
 
 // (Actors with a deforming surface) Set up normals of all active collision points.
 template <bool kIsSync, typename DiscretizationT>
@@ -168,24 +146,6 @@ template <
 
     return fem::TractionWork<kBatchSize, ElementT, kNumFields>(
         elemIndices, elements, outEnergy, outRes, outDRes, batchedContactFn, bdFaceWeights);
-  };
-}
-
-/**
- * @brief Creates a batched op that adds precomputed per-element mass matrices into the dresidual.
- */
-template <class ElementT, int kBatchSize = kDefaultFemBatchSize, size_t kMassDof>
-[[nodiscard]] auto MakeAddMassMatrixToDResOp(
-    Span<NdArray<real, kMassDof, kMassDof> const> mmPerElem) {
-  return [mmPerElem](
-             NdArray<int, kBatchSize> const& elemIndices,
-             Span<int const> /*indicesFlat*/,
-             BatchDouble<kBatchSize>* /*outEnergy*/,
-             fem::BatchElementVector<kBatchSize, ElementT>* /*outRes*/,
-             fem::BatchElementMatrix<kBatchSize, ElementT>* outDRes,
-             bool /*projectPsd*/) -> bool {
-    MOCHI_ASSERT_VERBOSE(outDRes != nullptr, "outDRes must be non-null.");
-    return fem::AddMassMatrixToDRes<kBatchSize, ElementT>(elemIndices, mmPerElem, *outDRes);
   };
 }
 

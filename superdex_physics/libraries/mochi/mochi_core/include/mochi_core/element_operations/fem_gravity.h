@@ -94,7 +94,7 @@ bool GravityWork(
 
     if (evalObj) {
       // y_q = Σ_f N_f(q) * (u_f - u₀_f)  (interpolate the displacement since the stage start)
-      // TODO: Explore using the inertia target u₀ + Δt·v₀, instead of the stage start u₀, as the
+      // TODO: Explore using the predicted target u₀ + Δt·v₀, instead of the stage start u₀, as the
       // gravity energy's reference, to shrink its rounding error in moving bodies.
       V3 y MOCHI_NO_INIT; // Required to avoid memset calls (e.g. on MSVC).
       for (int d = 0; d < kSpaceDim; ++d) {

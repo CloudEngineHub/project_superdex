@@ -43,26 +43,26 @@ static std::shared_ptr<TetrahedralMesh const> LoadMeshFromAsset(std::string cons
   return tetMesh;
 }
 
-static CFemVolumeDiscretizationP1Q1 CreateFemLowVolDiscretization(TetrahedralMesh const& mesh) {
+static CFemVolumeDiscretizationP1Q1 CreateFemVolDiscretization(TetrahedralMesh const& mesh) {
   auto const meshCoords = mesh.GetNodeCoordinates();
   auto const meshConnec = mesh.GetElementConnectivity();
   int const meshNumEle = mesh.GetNumElements();
 
-  CFemVolumeDiscretizationP1Q1 femLowVolDisc;
-  femLowVolDisc.femElements.reserve(meshNumEle);
+  CFemVolumeDiscretizationP1Q1 femVolDisc;
+  femVolDisc.femElements.reserve(meshNumEle);
   for (int i = 0; i < meshNumEle; ++i) {
-    femLowVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
+    femVolDisc.femElements.emplace_back(i, meshCoords, meshConnec);
   }
-  return femLowVolDisc;
+  return femVolDisc;
 }
 
 static auto CreateTraces(
     TetrahedralMesh const& mesh,
-    CFemVolumeDiscretizationP1Q1 const& femLowVolDisc) {
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc) {
   using ET = tetrahedral::Pk3DElementTrace<tetrahedral::Pk3DElement<1, 1>, 1>;
   std::vector<ET> result;
   for (auto const& bdface : mesh.GetBoundaryFaces()) {
-    result.emplace_back(femLowVolDisc.femElements[bdface.element], bdface.faceNum);
+    result.emplace_back(femVolDisc.femElements[bdface.element], bdface.faceNum);
   }
 
   return result;
@@ -350,8 +350,8 @@ TEST(MochiDiscretization, ActiveVolumeElements3) {
 
 TEST_IF(MOCHI_USE_HDF5, MochiDiscretization, ActiveBoundaryFaces0) {
   auto mesh = LoadMeshFromAsset("duck/duck_730.mochi.h5");
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   //
   // do test
@@ -377,8 +377,8 @@ TEST_IF(MOCHI_USE_HDF5, MochiDiscretization, ActiveBoundaryFaces0) {
 
 TEST_IF(MOCHI_USE_HDF5, MochiDiscretization, ActiveBoundaryFaces1) {
   auto mesh = LoadMeshFromAsset("duck/duck_730.mochi.h5");
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   std::vector<int> active = {5, 58};
   CActiveBoundaryFaces actBdFaces(mesh, active, MakeConstSpan(tracesVec));
@@ -408,8 +408,8 @@ TEST_IF(MOCHI_USE_HDF5, MochiDiscretization, ActiveBoundaryFaces1) {
 
 TEST_IF(MOCHI_USE_HDF5, MochiDiscretization, ActiveBoundaryFaces2) {
   auto mesh = LoadMeshFromAsset("duck/duck_730.mochi.h5");
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   auto testLambda = [&mesh, &tracesVec = std::as_const(tracesVec)](
                         Span<int const> activeVec,
@@ -479,8 +479,8 @@ TEST_IF(MOCHI_USE_HDF5, MochiDiscretization, ActiveBoundaryFaces2) {
 TEST(MochiDiscretization, ActiveBoundaryFaces3) {
   auto mesh =
       std::make_shared<TetrahedralMesh>(test::CreateMinimalTetMeshUnitCube(Real3{1_r, 1_r, 1_r}));
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   std::vector<int> active = {0, 1, 6, 7, 8};
   CActiveBoundaryFaces actBdFaces(mesh, active, MakeConstSpan(tracesVec));
@@ -517,8 +517,8 @@ TEST(MochiDiscretization, ActiveBoundaryFaces3) {
 TEST(MochiDiscretization, ActiveUniqueNodes0) {
   auto mesh =
       std::make_shared<TetrahedralMesh>(test::CreateMinimalTetMeshUnitCube(Real3{1_r, 1_r, 1_r}));
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   std::vector<int> activeVols = {1, 4};
   CActiveVolumeElements actVolElems(mesh, activeVols);
@@ -538,8 +538,8 @@ TEST(MochiDiscretization, ActiveUniqueNodes0) {
 TEST(MochiDiscretization, ActiveUniqueNodes1) {
   auto mesh =
       std::make_shared<TetrahedralMesh>(test::CreateMinimalTetMeshUnitCube(Real3{1_r, 1_r, 1_r}));
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   std::vector<int> activeVols = {};
   CActiveVolumeElements actVolElems(mesh, activeVols);
@@ -559,8 +559,8 @@ TEST(MochiDiscretization, ActiveUniqueNodes1) {
 TEST(MochiDiscretization, ActiveUniqueNodes2) {
   auto mesh =
       std::make_shared<TetrahedralMesh>(test::CreateMinimalTetMeshUnitCube(Real3{1_r, 1_r, 1_r}));
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   std::vector<int> activeVols = {1, 4};
   CActiveVolumeElements actVolElems(mesh, activeVols);
@@ -580,8 +580,8 @@ TEST(MochiDiscretization, ActiveUniqueNodes2) {
 TEST(MochiDiscretization, ActiveUniqueNodes3) {
   auto mesh =
       std::make_shared<TetrahedralMesh>(test::CreateMinimalTetMeshUnitCube(Real3{1_r, 1_r, 1_r}));
-  auto femLowVolD = CreateFemLowVolDiscretization(*mesh);
-  auto tracesVec = CreateTraces(*mesh, femLowVolD);
+  auto femVolD = CreateFemVolDiscretization(*mesh);
+  auto tracesVec = CreateTraces(*mesh, femVolD);
 
   std::vector<int> activeVols = {};
   CActiveVolumeElements actVolElems(mesh, activeVols);

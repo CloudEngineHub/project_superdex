@@ -488,26 +488,6 @@ void deformable::EmplaceContactComponents(
   reg.emplace<CCollJacs<CollRole::Colliding>>(e);
 }
 
-void deformable::ComputeLumpedMassMatrix(
-    CFullSparsityPattern const& sparsity,
-    CMassMatrix const& massMatrix,
-    CLumpedMassMatrix& outLumpedMassMatrix) {
-  MOCHI_PROFILE_SCOPE();
-
-  auto const& graph = sparsity.graph;
-  MOCHI_ASSERT(
-      isize(massMatrix.values) == graph.NumTargets(),
-      "Mass matrix values size must match the number of non-zeros in the sparsity pattern.");
-
-  int const numRows = isize(graph);
-  auto const pointers = graph.GetPointers();
-  outLumpedMassMatrix.values.resize_noinit(numRows);
-  for (int row = 0; row < numRows; ++row) {
-    outLumpedMassMatrix.values[row] =
-        HSum(Span(massMatrix.values.data() + pointers[row], pointers[row + 1] - pointers[row]));
-  }
-}
-
 void mochi::deformable::RecordRigidTransformEval(
     CRigidTransformEval const& eval,
     CRecordingData& outData) {

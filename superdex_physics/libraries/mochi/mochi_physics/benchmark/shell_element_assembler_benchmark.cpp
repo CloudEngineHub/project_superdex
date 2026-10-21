@@ -105,19 +105,13 @@ static void ShellElementAssemblerBenchmark(
     mochi::DestroyContext(mochiContext);
   }
 
-  // FEM Discretizations for triangular elements
-  using SurfaceElementLow = triangular::Pk2DElement<1, 1>;
-  using SurfaceElementHigh = triangular::Pk2DElement<1, 3>; // Higher order quadrature
+  // FEM Discretization for triangular elements
+  using SurfaceElement = triangular::Pk2DElement<1, 1>;
   int const numElements = triMesh->GetNumElements();
-  std::vector<SurfaceElementLow> femLowSurfDisc;
-  std::vector<SurfaceElementHigh> femHighSurfDisc;
-  femLowSurfDisc.reserve(numElements);
-  femHighSurfDisc.reserve(numElements);
+  std::vector<SurfaceElement> femSurfDisc;
+  femSurfDisc.reserve(numElements);
   for (int i = 0; i < numElements; ++i) {
-    femLowSurfDisc.emplace_back(
-        i, triMesh->GetNodeCoordinates(), triMesh->GetElementConnectivity());
-    femHighSurfDisc.emplace_back(
-        i, triMesh->GetNodeCoordinates(), triMesh->GetElementConnectivity());
+    femSurfDisc.emplace_back(i, triMesh->GetNodeCoordinates(), triMesh->GetElementConnectivity());
   }
 
   // Nodal based structure. The FEM assembler requires a uniform kNumStencilNodes-per-element
@@ -173,17 +167,16 @@ static void ShellElementAssemblerBenchmark(
   bool const assemDRes = resultFlags & kResultDRes;
 
   // Other stuff element operations might need (arbitrary values)
-  ColumnVector<real> predGlobalDisp(numGlobalDofs);
-  ColumnVector<real> predGlobalVelo(numGlobalDofs);
-  predGlobalDisp.SetRandom(111, -1_r, 1_r);
-  predGlobalVelo.SetRandom(222, -1_r, 1_r);
+  ColumnVector<real> stageStartDispl(numGlobalDofs);
+  ColumnVector<real> predTarget(numGlobalDofs);
+  stageStartDispl.SetRandom(111, -1_r, 1_r);
+  predTarget.SetRandom(222, -1_r, 1_r);
 
   // Material / physical constants (arbitrary values).
   constexpr int kBatchSize = kDefaultFemBatchSize;
   constexpr real kShellThickness = 0.001_r; // typical shell thickness
   constexpr real kShellDensity = 1000_r * kShellThickness; // surface density
   constexpr real kDt = 0.1_r; // Arbitrary
-  constexpr real kOneOverDt2 = 1_r / Sqr(kDt);
 
   // Shell elasticity material (arbitrary values, plane-stress membrane parameters).
   constexpr real kBendingAlpha = 1e-6_r;
@@ -209,8 +202,7 @@ static void ShellElementAssemblerBenchmark(
   } else {
     batchedOp = shell::MakeBatchedBodyOp(
         l2g,
-        MakeConstSpan(femLowSurfDisc),
-        MakeConstSpan(femHighSurfDisc),
+        MakeConstSpan(femSurfDisc),
         hasGravity,
         kMembraneLambda,
         kMembraneMu,
@@ -219,9 +211,8 @@ static void ShellElementAssemblerBenchmark(
         /*membraneCollapseBarrierStiffness*/ 0_r,
         kDefaultGravity,
         kShellDensity,
-        kOneOverDt2,
-        predGlobalDisp.GetConstSpan(),
-        predGlobalVelo.GetConstSpan(),
+        predTarget.GetConstSpan(),
+        stageStartDispl.GetConstSpan(),
         kDt,
         0_r,
         0_r);

@@ -101,18 +101,13 @@ static void ElementAssemblerBenchmark(
       std::make_unique<TetrahedralMesh>(coordinates, connectivity);
   mochi::DestroyContext(mochiContext);
 
-  // FEM Discretizations
-  using VolumeElementLow = tetrahedral::Pk3DElement<1, 1>;
-  using VolumeElementHigh = tetrahedral::Pk3DElement<1, 4>;
+  // FEM Discretization
+  using VolumeElement = tetrahedral::Pk3DElement<1, 1>;
   int const numElements = tetMesh->GetNumElements();
-  std::vector<VolumeElementLow> femLowVolDisc;
-  std::vector<VolumeElementHigh> femHighVolDisc;
-  femLowVolDisc.reserve(numElements);
-  femHighVolDisc.reserve(numElements);
+  std::vector<VolumeElement> femVolDisc;
+  femVolDisc.reserve(numElements);
   for (int i = 0; i < numElements; ++i) {
-    femLowVolDisc.emplace_back(i, tetMesh->GetNodeCoordinates(), tetMesh->GetElementConnectivity());
-    femHighVolDisc.emplace_back(
-        i, tetMesh->GetNodeCoordinates(), tetMesh->GetElementConnectivity());
+    femVolDisc.emplace_back(i, tetMesh->GetNodeCoordinates(), tetMesh->GetElementConnectivity());
   }
 
   // Nodal based structure.
@@ -151,10 +146,10 @@ static void ElementAssemblerBenchmark(
   bool const assemDRes = resultFlags & kResultDRes;
 
   // Other stuff element operations might need (arbitrary values)
-  ColumnVector<real> predGlobalDisp(numGlobalDofs);
-  ColumnVector<real> predGlobalVelo(numGlobalDofs);
-  predGlobalDisp.SetRandom(111, -1_r, 1_r);
-  predGlobalVelo.SetRandom(222, -1_r, 1_r);
+  ColumnVector<real> stageStartDispl(numGlobalDofs);
+  ColumnVector<real> predTarget(numGlobalDofs);
+  stageStartDispl.SetRandom(111, -1_r, 1_r);
+  predTarget.SetRandom(222, -1_r, 1_r);
 
   constexpr real kDt = 0.1_r; // Arbitrary
 
@@ -256,8 +251,7 @@ static void ElementAssemblerBenchmark(
                      bool) -> bool { return true; };
     } else if (useNoMaterialStress) {
       batchedOp = soft::MakeBatchedBodyOp(
-          MakeConstSpan(femLowVolDisc),
-          MakeConstSpan(femHighVolDisc),
+          MakeConstSpan(femVolDisc),
           noOpConstitutive,
           referenceStiffness,
           /*hasStress*/ true,
@@ -265,8 +259,8 @@ static void ElementAssemblerBenchmark(
           (elopFlags & kElOpInertia) != 0,
           kDefaultGravity,
           kDensity,
-          predGlobalDisp.GetConstSpan(),
-          predGlobalVelo.GetConstSpan(),
+          predTarget.GetConstSpan(),
+          stageStartDispl.GetConstSpan(),
           kDt,
           /*massDampingScale*/ 0_r,
           stiffnessDampingFactor,
@@ -274,8 +268,7 @@ static void ElementAssemblerBenchmark(
           /*activeVolWeights*/ Span<real const>{});
     } else {
       batchedOp = soft::MakeBatchedBodyOp(
-          MakeConstSpan(femLowVolDisc),
-          MakeConstSpan(femHighVolDisc),
+          MakeConstSpan(femVolDisc),
           batchedConstitutive,
           referenceStiffness,
           (elopFlags & kElOpStress) != 0,
@@ -283,8 +276,8 @@ static void ElementAssemblerBenchmark(
           (elopFlags & kElOpInertia) != 0,
           kDefaultGravity,
           kDensity,
-          predGlobalDisp.GetConstSpan(),
-          predGlobalVelo.GetConstSpan(),
+          predTarget.GetConstSpan(),
+          stageStartDispl.GetConstSpan(),
           kDt,
           /*massDampingScale*/ 0_r,
           stiffnessDampingFactor,

@@ -17,10 +17,12 @@
 #include "mochi_physics_test_fixture.h"
 
 #include <mochi_core/test/mochi_test_helpers.h>
+#include <mochi_core/utils/array_utils.h>
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/mochi_physics_experimental.h>
 #include <mochi_physics/src/mochi_actor.h>
 #include <mochi_physics/src/mochi_rigid.h>
+#include <mochi_physics/src/mochi_simulation.h>
 
 #include <functional>
 #include <limits>
@@ -527,6 +529,9 @@ TEST_F(ActorMassTest, SoftActor_Api) {
   actor->SetDensity(kNewDensity, test::ExpectOK{});
   EXPECT_NEAR_RTOL(kNewMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);
   EXPECT_NEAR_RTOL(kNewDensity, actor->GetDensity(test::ExpectOK{}), kApiRelTol);
+  // The lumped mass follows: it adds up to the mass once per DoF component.
+  auto const& lumpedMass = GetRegistry().get<CLumpedMassMatrix const>(GetEntity(actor)).values;
+  EXPECT_NEAR_RTOL(3_r * kNewMass, HSum(MakeConstSpan(lumpedMass)), kApiRelTol);
 }
 
 TEST_F(ActorMassTest, ShellActor_Api) {

@@ -23,6 +23,7 @@
 #include <mochi_physics/utils/mochi_prefab.h>
 
 #include <mochi_core/articulated_body/articulated_body.h>
+#include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_physics/src/mochi_articulated_body.h>
@@ -737,7 +738,7 @@ TEST_F(ArticulatedBodyTest, SetPoseFromLinksPublishesCanonicalPose) {
 }
 
 static void Compare(MatrixView<real const> a, MatrixView<real const> b, real tol = 1e-2_r) {
-  real normMax = std::max(a.Norm(), b.Norm());
+  real normMax = Max(a.Norm(), b.Norm());
   if (normMax > 1e-6_r) {
     real normDiff = Matrix<real>(a - b).Norm();
     EXPECT_NEAR(normDiff / normMax, 0_r, tol);
@@ -856,7 +857,7 @@ class ArticulatedBodyDynamicsTest : public test::MochiSceneTestBase {
     real normVelTest = AsConstView(velTest).Norm();
     ColumnVector<real> diff = AsConstView(vel) - AsConstView(velTest);
     real normDiff = diff.Norm();
-    EXPECT_NEAR(normDiff / std::max(normVel, normVelTest), 0_r, 1.1e-2_r);
+    EXPECT_NEAR(normDiff / Max(normVel, normVelTest), 0_r, 1.1e-2_r);
 
     _scene->DestroyActor(actor->GetHandle());
   }
@@ -2898,7 +2899,9 @@ TEST_F(CreateBlendedActorTest, NonCollidingLinksRejectedWithoutBlendedSurface) {
   EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
 }
 
-class ExternalPoseResetTest : public CreateBlendedActorTest {
+// Parameterized over the body that carries inertia: unposed (false) or posed (true).
+class ExternalPoseResetTest : public CreateBlendedActorTest,
+                              public ::testing::WithParamInterface<bool> {
  protected:
   enum class Route { Links, Joints, Root };
 
@@ -2914,7 +2917,8 @@ class ExternalPoseResetTest : public CreateBlendedActorTest {
 
     auto params = MakeMinimalBlendedParams(
         CreateUnitCubeTetBlendedSkinShape(_mochiContext, DynamicString{"soft"}));
-    params.softParams[0].hasInertia = true;
+    params.hasInertia = GetParam();
+    params.softParams[0].hasInertia = !GetParam();
     params.softParams[0].hasStress = false;
     params.softParams[0].hasGravity = false;
 
@@ -3009,19 +3013,21 @@ class ExternalPoseResetTest : public CreateBlendedActorTest {
 };
 
 // Guards link-authored resets against stale dependent state and integration history.
-TEST_F(ExternalPoseResetTest, FromLinksPublishesDerivedState) {
+TEST_P(ExternalPoseResetTest, FromLinksPublishesDerivedState) {
   CheckExternalPoseReset(Route::Links);
 }
 
 // Guards joint-authored resets against stale dependent state and integration history.
-TEST_F(ExternalPoseResetTest, FromJointsPublishesDerivedState) {
+TEST_P(ExternalPoseResetTest, FromJointsPublishesDerivedState) {
   CheckExternalPoseReset(Route::Joints);
 }
 
 // Guards root-transform resets against stale dependent state and integration history.
-TEST_F(ExternalPoseResetTest, FromRootPublishesDerivedState) {
+TEST_P(ExternalPoseResetTest, FromRootPublishesDerivedState) {
   CheckExternalPoseReset(Route::Root);
 }
+
+INSTANTIATE_TEST_SUITE_P(PosedInertia, ExternalPoseResetTest, ::testing::Bool());
 
 TEST_F(CreateBlendedActorTest, NestedDisplacementSettersPublishDerivedState) {
   real constexpr kSoftWeight = 0.5_r;

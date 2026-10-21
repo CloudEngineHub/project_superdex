@@ -152,8 +152,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CExternalForces>(reg);
   ecs::RegisterComponent<CMassMatrix>(reg);
   ecs::RegisterComponent<CLumpedMassMatrix>(reg);
-  ecs::RegisterComponent<CPerElementMassMatrix<CFemVolumeDiscretizationP1Q4>>(reg);
-  ecs::RegisterComponent<CPerElementMassMatrix<CFemSurfaceDiscretizationP1Q3>>(reg);
   ecs::RegisterComponent<CSimulationParams>(reg);
   ecs::RegisterComponent<TagGlobalDofsChanged>(reg);
   ecs::RegisterComponent<TagUseContact>(reg);

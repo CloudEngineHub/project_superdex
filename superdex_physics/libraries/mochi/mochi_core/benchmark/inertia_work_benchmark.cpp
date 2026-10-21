@@ -32,13 +32,11 @@ namespace mochi_benchmark {
 
 static constexpr int kBatchSize = kDefaultFemBatchSize;
 static constexpr int kNumElements = 1024;
-// Soft actors always integrate inertia with 4-point (high) volume quadrature.
-static constexpr int kNumQuadPoints = 4;
 static constexpr real kDensity = 1000_r;
 static constexpr real kDt = 0.01_r;
 static constexpr real kInvDtSqr = 1_r / Sqr(kDt);
 
-using ElementT = tetrahedral::Pk3DElement<1, kNumQuadPoints>;
+using ElementT = tetrahedral::Pk3DElement<1, 1>;
 static constexpr int kDim = ElementT::kSpaceDim * ElementT::kNumDofs;
 
 enum class InertiaWorkMode { Objective, Residual, All };

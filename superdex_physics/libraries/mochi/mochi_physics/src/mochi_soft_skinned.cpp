@@ -58,10 +58,9 @@ void skinned::EntityAssembleBody(
     CSkinnedEnergy const& skinnedEnergy,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
-    CFemVolumeDiscretizationP1Q1 const& femLowVolDisc,
-    CFemVolumeDiscretizationP1Q4 const& femHighVolDisc,
+    CFemVolumeDiscretizationP1Q1 const& femVolDisc,
     CSoftMaterialParams const& materialParams,
-    CMassMatrix const& massMatrix,
+    CMassMatrix const* massMatrix,
     CDofOffset const& dofOffset,
     CActiveVolumeElements const* activeVolElems,
     CSkinnedComposition const& composition,
@@ -105,8 +104,7 @@ void skinned::EntityAssembleBody(
       hasPosedStress,
       l2g,
       nbs,
-      femLowVolDisc,
-      femHighVolDisc,
+      femVolDisc,
       TransformRT::Identity(),
       materialParams,
       intState,
@@ -318,6 +316,12 @@ InitEnergyTerms(entt::registry& reg, entt::entity e, SoftSkinnedActorParams cons
     auto const& dispCurr =
         reg.get<CDisplacementSlice<real, TimeStep::Current, DisplacementLayer::Skinned> const>(e);
     reg.emplace_or_replace<CStressDisplacementRef>(e, dispCurr.value);
+  }
+
+  // The posed body keeps a mass matrix if it has inertia but no stress (see CMassMatrix).
+  if (params.hasInertia && !params.hasStress) {
+    reg.emplace<CMassMatrix>(e);
+    ecs::InvokeOnEntity(&soft::UpdateSoftMass, reg, e);
   }
 
   // SNLE data for the soft actor body assembly.

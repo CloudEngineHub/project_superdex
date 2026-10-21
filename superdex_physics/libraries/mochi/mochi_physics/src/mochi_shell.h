@@ -52,21 +52,22 @@ using FemInfo = CFemSurfaceDiscretizationP1Q1;
 
 /**
  * @brief Creates a batched shell assembly operator composing stress (membrane + bending), gravity,
- * and inertia into a single ElOpFnType over the 6-node bending stencil.
+ * inertia and damping into a single ElOpFnType over the 6-node bending stencil.
  *
- * @warning Inertia contributes to the objective and residual only. This operator does NOT assemble
- * the inertia dresidual. When assembling the dresidual, the caller must first initialize it with
- * the scaled mass matrix (see @ref AssembleBody). Otherwise the inertia dresidual is missing.
+ * @note Inertia and mass damping use each triangle's mass matrix in closed form; their dresidual is
+ * that matrix scaled by 1/dt² + @p massDampingScale.
  *
- * @note Gravity and inertia operate on the 3-node triangle sub-stencil (nodes 0–2, DoFs 0–8). Their
- * 9-DoF contributions are extracted from / accumulated into the 18-DoF stencil vectors. Stress
- * (membrane + bending) operates on the full 6-node stencil.
+ * @note Gravity, inertia and mass damping operate on the 3-node triangle sub-stencil (nodes 0–2,
+ * DoFs 0–8). Their 9-DoF contributions are extracted from / accumulated into the 18-DoF stencil
+ * vectors. Stress (membrane + bending) operates on the full 6-node stencil.
+ *
+ * @param[in] predTarget Predicted target u₀ + dt·v₀ of each DoF, read for the objective and
+ * residual.
  */
-template <typename TriElementLow, typename TriElementHigh>
+template <typename TriElementT>
 [[nodiscard]] ElOpFnType<ShellStencilElement> MakeBatchedBodyOp(
     Local2GlobalMap const& l2g,
-    Span<TriElementLow const> lowElements,
-    Span<TriElementHigh const> highElements,
+    Span<TriElementT const> triElements,
     bool hasGravity,
     real membraneLambda,
     real membraneMu,
@@ -75,25 +76,21 @@ template <typename TriElementLow, typename TriElementHigh>
     real membraneCollapseBarrierStiffness,
     Real3 gravity,
     real density,
-    real dtfi2,
+    Span<real const> predTarget,
     Span<real const> stageStartDispl,
-    Span<real const> stageStartVel,
     real dtStage,
     real massDampingScale,
     real stiffnessDampingFactor) {
-  static_assert(TriElementLow::kSpaceDim == ShellTriangleElement::kSpaceDim);
-  static_assert(TriElementHigh::kSpaceDim == ShellTriangleElement::kSpaceDim);
-  static_assert(TriElementLow::kNumDofs == ShellTriangleElement::kNumDofs);
-  static_assert(TriElementHigh::kNumDofs == ShellTriangleElement::kNumDofs);
-  MOCHI_ASSERT_VERBOSE(!lowElements.empty(), "Empty shell discretization.");
+  static_assert(TriElementT::kSpaceDim == ShellTriangleElement::kSpaceDim);
+  static_assert(TriElementT::kNumDofs == ShellTriangleElement::kNumDofs);
+  MOCHI_ASSERT_VERBOSE(!triElements.empty(), "Empty shell discretization.");
   MOCHI_ASSERT_VERBOSE(
-      lowElements.size() == highElements.size(),
-      "Low/high shell discretizations must have identical element counts.");
-  MOCHI_ASSERT_VERBOSE(
-      l2g.GetNumElements() == lowElements.size(),
-      "L2G element count must match low discretization.");
+      l2g.GetNumElements() == isize(triElements),
+      "L2G element count must match the discretization.");
   constexpr int kBatchSize = kDefaultFemBatchSize;
   constexpr int kStencilDofs = fem::kBendingStencilDofs;
+  real const dtfi2 = 1_r / Sqr(dtStage);
+  real const massScale = dtfi2 + massDampingScale;
 
   return [= /*All copies are inexpensive*/, &l2g](
              NdArray<int, kBatchSize> const& elemIndices,
@@ -145,10 +142,7 @@ template <typename TriElementLow, typename TriElementHigh>
       }
     }
 
-    // --- Gravity and inertia on the 3-node triangle sub-stencil (DoFs 0-8) ---
-    //
-    // NOTE: Gravity has no DRes contribution. Inertia DRes is handled globally via the precomputed
-    // mass matrix. Mass damping's DRes is also handled globally.
+    // --- Gravity, inertia and mass damping on the 3-node triangle sub-stencil (DoFs 0-8) ---
     if (outEnergy || outRes) {
       // Nodes 0-2 (DoFs 0-8) of the bending stencil are the triangle vertices.
       auto const triDisp = MakeConstSpan(displ).subspan(0, kTriangleDofs);
@@ -159,7 +153,7 @@ template <typename TriElementLow, typename TriElementHigh>
       if (hasGravity) {
         out |= fem::GravityWork<kBatchSize>(
             elemIndices,
-            lowElements,
+            triElements,
             triDisp,
             triStageStartDisp,
             outEnergy,
@@ -168,21 +162,17 @@ template <typename TriElementLow, typename TriElementHigh>
             density);
       }
 
-      // Gather predicted target using the stride-18 padded L2G. GatherPredTarget reads only the
-      // first 3 nodes at the correct stride-18 offsets.
-      fem::BatchElementVector<kBatchSize, ShellTriangleElement> stageStartTarget;
-      fem::GatherPredTarget<
-          kBatchSize,
-          ShellTriangleElement,
-          /*kGatherVelocity*/ true,
-          fem::kSpaceDim3,
-          kStencilDofs>(
-          indicesFlat, elemIndices, stageStartDispl, stageStartVel, dtStage, stageStartTarget);
+      // Gather the predicted target with the stride-18 padded L2G. GatherBatchElementVector reads
+      // only the first 3 nodes at the stride-18 offsets.
+      fem::BatchElementVector<kBatchSize, ShellTriangleElement> predTargetBatch MOCHI_NO_INIT;
+      fem::
+          GatherBatchElementVector<kBatchSize, ShellTriangleElement, fem::kSpaceDim3, kStencilDofs>(
+              indicesFlat, elemIndices, predTarget, predTargetBatch);
       out |= fem::InertiaWork<kBatchSize>(
           elemIndices,
-          highElements,
+          triElements,
           triDisp,
-          MakeConstSpan(stageStartTarget),
+          MakeConstSpan(predTargetBatch),
           outEnergy,
           triRes,
           density,
@@ -193,7 +183,7 @@ template <typename TriElementLow, typename TriElementHigh>
         // stage-start displacement above.
         out |= fem::InertiaWork<kBatchSize>(
             elemIndices,
-            highElements,
+            triElements,
             triDisp,
             triStageStartDisp,
             outEnergy,
@@ -204,7 +194,7 @@ template <typename TriElementLow, typename TriElementHigh>
     }
 
     // --- Stress (membrane + bending) on the full 6-node stencil ---
-    Span<Real3 const> meshNodes = lowElements[0].coordinates;
+    Span<Real3 const> meshNodes = triElements[0].coordinates;
     out |= fem::ShellWork<kBatchSize>(
         stencilGlobalNodes,
         meshNodes,
@@ -221,6 +211,12 @@ template <typename TriElementLow, typename TriElementHigh>
         stiffnessDampingFactor,
         hasStiffnessDamping ? &stageStartDispBatch : nullptr);
 
+    // --- Inertia and mass-damping dresidual on the 3-node triangle sub-stencil ---
+    if (outDRes) {
+      out |= fem::AddMassToDRes<kBatchSize, ShellStencilElement>(
+          elemIndices, triElements, density * massScale, *outDRes);
+    }
+
     return out;
   };
 }
@@ -233,15 +229,13 @@ void AssembleBody(
     ecs::OptionalTag<TagUseGravity> hasGravityTag,
     CLocal2GlobalMap const& l2g,
     CNodalBasedStructure const& nbs,
-    CFemSurfaceDiscretizationP1Q1 const& femLowVolDisc,
-    CFemSurfaceDiscretizationP1Q3 const& femHighVolDisc,
+    CFemSurfaceDiscretizationP1Q1 const& femSurfDisc,
     CRootTransform const& rootTransform,
     CShellMaterialParams const& materialParams,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Current> const& currDispl,
     CDisplacementSlice<real, TimeStep::StageStart> const& stageStartDispl,
     CVelocitySlice<real, TimeStep::StageStart> const& stageStartVel,
-    CMassMatrix const& massMatrix,
     CExternalForces const& externalForces,
     CActorSnle& outActorSnle);
 

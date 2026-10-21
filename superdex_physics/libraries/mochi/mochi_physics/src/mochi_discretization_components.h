@@ -195,10 +195,9 @@ struct FemDiscretizationLite : public FemDiscretizationBase<ElementT_> {
 };
 
 /*
-  Specializations of FemDiscretization for linear tetrahedra with different quadrature rules.
+  Specialization of FemDiscretization for linear tetrahedra.
 */
 using CFemVolumeDiscretizationP1Q1 = FemDiscretization<tetrahedral::Pk3DElement<1, 1>>;
-using CFemVolumeDiscretizationP1Q4 = FemDiscretization<tetrahedral::Pk3DElement<1, 4>>;
 
 /*
   Specializations of FemDiscretization for boundary trace elements with different quadrature rules.
