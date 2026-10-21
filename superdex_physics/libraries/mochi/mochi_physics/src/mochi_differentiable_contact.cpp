@@ -131,7 +131,7 @@ static void AccumulateAsyncContactForceAdjoints(
   }
 
   ColumnVector<real, RigidSize::kDAll> grad;
-  Store(grad.data(), outGradientCom);
+  Store<RigidSize::kDTrans>(grad.data(), outGradientCom);
   Store<RigidSize::kDRot>(grad.data() + RigidSize::kDTrans, outGradientRot);
   outGrad += grad;
 }
@@ -233,9 +233,9 @@ static void AccumulateAllSyncRigidContactForceAdjoints(
 
       ColumnVector<real, RigidSize::kDAll> gradA;
       ColumnVector<real, RigidSize::kDAll> gradB;
-      Store(gradA.data(), res);
+      Store<RigidSize::kDTrans>(gradA.data(), res);
       Store<RigidSize::kDRot>(gradA.data() + RigidSize::kDTrans, skPRes - Cross3(comA - comB, res));
-      Store(gradB.data(), -res);
+      Store<RigidSize::kDTrans>(gradB.data(), -res);
       Store<RigidSize::kDRot>(gradB.data() + RigidSize::kDTrans, -skPRes);
 
       outGradA += gradA;
