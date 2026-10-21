@@ -165,7 +165,8 @@ struct CActorSnle : ActorSnle {
 };
 
 /**
-    Component storing the unposed objective, residual, and dresidual for a nested soft actor.
+  Component storing the objective, residual, and dresidual of a nested soft actor's posed body
+  energy with respect to its skinned displacements, before the skinning Jacobians project them.
 */
 struct CSoftSkinnedUnposedSnle : ActorSnle {
   using ActorSnle::ActorSnle;
@@ -215,12 +216,12 @@ struct CSkinnedContactSnle : InteractionSnle {
 };
 
 /**
-  Component storing the objective, residual, and dresidual of the unposed interaction terms between
-  the soft and articulated actors. For performance reasons, only the off-diagonal sub-dresiduals
-  (soft-articulated, articulated-soft) are stored in this component. The diagonal sub-dresiduals
-  (soft-soft, articulated-articulated) are stored in the actor dresidual of the underlying soft and
-  articulated actors. The residual holds the soft entry only. The articulated one is stored in link
-  space in CArticulatedSkinnedBodyLinkResidual.
+  Component storing the objective, residual, and dresidual of a nested soft actor's posed body
+  energy, after the skinning Jacobians project them. For performance reasons, only the off-diagonal
+  sub-dresiduals (soft-articulated, articulated-soft) are stored in this component. The diagonal
+  sub-dresiduals (soft-soft, articulated-articulated) are stored in the actor dresidual of the
+  underlying soft and articulated actors. The residual holds the soft entry only. The articulated
+  one is stored in link space in CArticulatedSkinnedBodyLinkResidual.
 */
 struct CSkinnedInteractionSnle : InteractionSnle {
   using InteractionSnle::InteractionSnle;
