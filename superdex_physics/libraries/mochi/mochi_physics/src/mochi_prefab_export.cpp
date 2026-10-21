@@ -863,6 +863,14 @@ static SoftSkinnedActorPrefab ExportSoftSkinnedActor(
   auto nestedSoftActors = actor->GetNestedSoftActors(error);
   MOCHI_ERROR_RETURN(error, {});
 
+  // The posed terms are the skeleton's, so all its nested soft actors share them.
+  MOCHI_ASSERT_VERBOSE(!nestedSoftActors.empty(), "Expected at least one nested soft actor.");
+  auto const& posedTerms =
+      registry.get<CSkinnedEnergy const>(GetEntity(registry, nestedSoftActors[0], ErrorAssert{}));
+  prefab.hasGravity = posedTerms.gravity;
+  prefab.hasInertia = posedTerms.inertia;
+  prefab.hasStress = posedTerms.stress;
+
   // Export each nested soft actor
   prefab.softParams.reserve(nestedSoftActors.size());
   for (auto softHandle : nestedSoftActors) {
@@ -889,13 +897,18 @@ static SoftSkinnedActorPrefab ExportSoftSkinnedActor(
     softPrefab.useRecentering = false;
     softPrefab.hasGravity = false;
 
+    // ExportSoftActor's flags also count the posed terms.
+    auto const& skinnedEnergy = registry.get<CSkinnedEnergy const>(softEntity);
+    MOCHI_ASSERT_VERBOSE(
+        skinnedEnergy.gravity == posedTerms.gravity &&
+            skinnedEnergy.inertia == posedTerms.inertia &&
+            skinnedEnergy.stress == posedTerms.stress,
+        "All nested soft actors must share the posed terms.");
+    softPrefab.hasInertia &= !skinnedEnergy.inertia;
+    softPrefab.hasStress &= !skinnedEnergy.stress;
+
     prefab.softParams.push_back(std::move(softPrefab));
   }
-
-  // Extract soft-specific physics flags for the soft skinned system
-  prefab.hasGravity = registry.all_of<TagUseGravity>(entity);
-  prefab.hasInertia = registry.all_of<TagUseInertia>(entity);
-  prefab.hasStress = registry.all_of<TagUseStress>(entity);
 
   // Determine enableCollidingLinks by checking if any link has TagUseContact
   auto linkActors = actor->GetNestedLinkActors(ErrorAssert{});

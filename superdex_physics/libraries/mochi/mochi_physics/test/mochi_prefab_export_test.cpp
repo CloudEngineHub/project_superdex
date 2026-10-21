@@ -912,7 +912,11 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportScene_SoftSkinnedActorWitho
   auto exportedPrefab = prefab::ShallowLoadFromFile(prefabFile.string(), ExpectOK{});
 
   ASSERT_EQ(1, isize(exportedPrefab.actors.softSkinned));
-  EXPECT_TRUE(exportedPrefab.actors.softSkinned[0].softAttachLinks.empty());
+  auto const& softSkinned = exportedPrefab.actors.softSkinned[0];
+  EXPECT_TRUE(softSkinned.softAttachLinks.empty());
+  EXPECT_TRUE(softSkinned.hasStress);
+  ASSERT_EQ(1, isize(softSkinned.softParams));
+  EXPECT_TRUE(softSkinned.softParams[0].hasInertia);
   TestRoundTrip(scene, context, prefabFile, tempDir.Path());
 }
 
@@ -932,11 +936,13 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportScene_SoftSkinnedActorEffec
        .shape = CreateUnitCubeTetMeshShape(context),
        .colliderType = ColliderType::None}};
 
+  params.hasGravity = true;
   auto makeSoft = [&](char const* name) {
     SoftActorParams soft;
     soft.name = name;
     soft.shape = CreateUnitCubeTetSoftShape(context);
     soft.hasGravity = false;
+    soft.hasInertia = false;
     return soft;
   };
   params.softParams = {makeSoft("named"), makeSoft(""), makeSoft(""), makeSoft("soft_2")};
@@ -964,7 +970,12 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportScene_SoftSkinnedActorEffec
 
   ASSERT_EQ(1, isize(exportedPrefab.actors.softSkinned));
   auto const& softSkinned = exportedPrefab.actors.softSkinned[0];
+  EXPECT_TRUE(softSkinned.hasGravity);
   ASSERT_EQ(4, isize(softSkinned.softParams));
+  for (auto const& soft : softSkinned.softParams) {
+    EXPECT_FALSE(soft.hasInertia);
+    EXPECT_TRUE(soft.hasStress);
+  }
   EXPECT_STREQ("named", softSkinned.softParams[0].name.c_str());
   EXPECT_STREQ("soft_1", softSkinned.softParams[1].name.c_str());
   EXPECT_STREQ("soft_3", softSkinned.softParams[2].name.c_str());
@@ -1287,10 +1298,13 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportContactFilter_UsesExportedN
        .shape = CreateUnitCubeTetMeshShape(context),
        .colliderType = ColliderType::None}};
 
+  params.hasInertia = true;
   auto& soft = params.softParams.push_back();
   soft.name = "soft";
   soft.shape = CreateUnitCubeTetSoftShape(context);
   soft.hasGravity = false;
+  soft.hasInertia = false;
+  soft.hasStress = false;
 
   Actor* skel = scene->CreateSoftSkinnedActor(params, ExpectOK{});
   ASSERT_NE(nullptr, skel);
@@ -1310,7 +1324,10 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportContactFilter_UsesExportedN
 
   ASSERT_EQ(1, isize(exportedPrefab.actors.softSkinned));
   auto const& exportedSoftSkinned = exportedPrefab.actors.softSkinned[0];
+  EXPECT_FALSE(exportedSoftSkinned.hasGravity);
+  EXPECT_TRUE(exportedSoftSkinned.hasInertia);
   ASSERT_EQ(1, isize(exportedSoftSkinned.softParams));
+  EXPECT_FALSE(exportedSoftSkinned.softParams[0].hasStress);
   DynamicString nestedSoftName = exportedSoftSkinned.skeletonParams.name;
   nestedSoftName += "/";
   nestedSoftName += exportedSoftSkinned.softParams[0].name;
