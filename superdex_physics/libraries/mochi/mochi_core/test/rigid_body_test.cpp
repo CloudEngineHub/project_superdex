@@ -442,3 +442,33 @@ TEST(RigidBodyInertia, SetDensityIdempotentAndLossless) {
   EXPECT_EQ(reference.GetMomentOfInertiaLocal(), inertia.GetMomentOfInertiaLocal());
   EXPECT_EQ(reference.GetSecondMomentLocal(), inertia.GetSecondMomentLocal());
 }
+
+// A rigid body without a volume has mass and inertia, but no density.
+TEST(RigidBodyInertia, WithoutVolume) {
+  Vec4r const com = {0.2_r, 0_r, 0_r};
+  VMatrix3x3r const moi = {
+      Vec4r{0.01_r, 0_r, 0_r}, Vec4r{0_r, 0.02_r, 0_r}, Vec4r{0_r, 0_r, 0.03_r}};
+
+  auto const expectInertia = [](RigidBodyInertia const& inertia,
+                                real expectedMass,
+                                Vec4r const& expectedCom,
+                                VMatrix3x3r const& expectedMoi) {
+    EXPECT_EQ(expectedMass, inertia.GetMass());
+    EXPECT_EQ(ToReal4(expectedCom), ToReal4(inertia.GetCenterOfMassLocal()));
+    EXPECT_EQ(expectedMoi, inertia.GetMomentOfInertiaLocal());
+    EXPECT_EQ(MomentOfInertiaToSecondMoment(expectedMoi), inertia.GetSecondMomentLocal());
+    EXPECT_EQ(0_r, inertia.GetVolume());
+    EXPECT_EQ(0_r, inertia.GetDensity());
+  };
+
+  RigidBodyInertia inertia(com, moi, 2_r);
+  expectInertia(inertia, 2_r, com, moi);
+
+  Vec4r const newCom = {0_r, 0.1_r, 0_r};
+  VMatrix3x3r const newMoi = moi * 3_r;
+  inertia.SetInertiaProperties(3_r, newCom, newMoi);
+  expectInertia(inertia, 3_r, newCom, newMoi);
+
+  RigidBodyInertia const massless(Vec4r{}, VMatrix3x3r{}, 0_r);
+  expectInertia(massless, 0_r, Vec4r{}, VMatrix3x3r{});
+}

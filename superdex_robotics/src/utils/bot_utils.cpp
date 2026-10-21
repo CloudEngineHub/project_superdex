@@ -929,9 +929,6 @@ void superdex::robotics::Validate(
   // Link parameter validation
   for (int i = 0; i < numLinks; ++i) {
     auto const& link = botPrefab.links[i];
-    // Mass properties only apply to links with geometry (shapeFile).
-    // Links without a shapeFile (e.g. end effector frames) have no geometry,
-    // so mass/density/COM/MOI are not applicable.
     if (!link.shapeFile.empty()) {
       bool const hasDensity = link.density.has_value();
       bool const hasMass = link.mass.has_value();
@@ -999,6 +996,21 @@ void superdex::robotics::Validate(
         MOCHI_ERROR_IF(
             link.mass.value() <= 0_r, error, "Invalid BotPrefab; see log warnings for details");
       }
+    } else if (link.mass && link.centerOfMass && link.momentOfInertia) {
+      // Mirrors mochi's ValidateLink: a shapeless link has no volume, so only a full explicit
+      // inertia applies to it (other mass properties are ignored). Its mass may be zero (a massless
+      // frame) but not negative, and the inertia must be finite.
+      bool const invalid = !IsFinite(link.mass.value()) || link.mass.value() < 0_r ||
+          !IsFinite(link.centerOfMass.value()) || !IsFinite(link.momentOfInertia.value());
+      if (invalid) {
+        REPORT_LINK_ISSUE(
+            results,
+            i,
+            "link [%d] '%s' has a negative mass or a non-finite inertia",
+            i,
+            link.name.c_str());
+      }
+      MOCHI_ERROR_IF(invalid, error, "Invalid BotPrefab; see log warnings for details");
     }
   }
 

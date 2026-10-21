@@ -497,7 +497,7 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_RETURN_IF_STATIC("SetDensity");
 
     if (auto* rigidInertia = reg.try_get<CRigidBodyInertia>(e)) {
-      // Rigid. Links without a shape have no volume, so they have no mass at any density.
+      // Rigid. Links without a shape have no volume, so density does not apply to them.
       if (rigidInertia->GetVolume() == 0_r || rigidInertia->GetDensity() == density) {
         return; // No change
       }

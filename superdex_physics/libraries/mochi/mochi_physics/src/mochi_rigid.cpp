@@ -768,6 +768,27 @@ void mochi::rigid::EntityAssemble(
   }
 }
 
+// Expands the caller-specified moment of inertia (upper triangle) into a full symmetric tensor.
+static VMatrix3x3r UserMomentOfInertia(RigidActorParams const& params, Error& error) {
+  MOCHI_ASSERT_VERBOSE(params.momentOfInertia.has_value(), "Expected a moment of inertia.");
+  Real6 const& inI = *params.momentOfInertia;
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(inI),
+      error,
+      "Unable to create dynamic rigid actor. Moment-of-inertia tensor must be finite.");
+  MOCHI_ERROR_RETURN(error, {});
+  if (!IsMomentOfInertiaValid(inI)) {
+    MOCHI_LOG_WARNING(
+        "Moment-of-inertia tensor of rigid actor \"%s\" is not physically valid: principal moments must be non-negative and satisfy the triangle inequality.",
+        params.name.c_str());
+  }
+  return VMatrix3x3r{
+      Vec4r{inI[0], inI[1], inI[2]}, // ixx, ixy, ixz
+      Vec4r{inI[1], inI[3], inI[4]}, // ixy, iyy, iyz
+      Vec4r{inI[2], inI[4], inI[5]}, // ixz, iyz, izz
+  };
+}
+
 // Called at the end of InitRigidActor if the actor is dynamic (not static)
 static void InitRigidActor_Dynamic(
     entt::registry& reg,
@@ -893,22 +914,8 @@ static void InitRigidActor_Dynamic(
     // Compute moment of inertia.
     VMatrix3x3r moi;
     if (params.momentOfInertia) {
-      Real6 const& inI = *params.momentOfInertia;
-      MOCHI_ERROR_IF_NOT(
-          IsFinite(inI),
-          error,
-          "Unable to create dynamic rigid actor. Moment-of-inertia tensor must be finite.");
+      moi = UserMomentOfInertia(params, error);
       MOCHI_ERROR_RETURN(error);
-      if (!IsMomentOfInertiaValid(inI)) {
-        MOCHI_LOG_WARNING(
-            "Moment-of-inertia tensor of rigid actor \"%s\" is not physically valid: principal moments must be non-negative and satisfy the triangle inequality.",
-            params.name.c_str());
-      }
-      moi = VMatrix3x3r{
-          Vec4r{inI[0], inI[1], inI[2]}, // ixx, ixy, ixz
-          Vec4r{inI[1], inI[3], inI[4]}, // ixy, iyy, iyz
-          Vec4r{inI[2], inI[4], inI[5]}, // ixz, iyz, izz
-      };
     } else if (boundaryMesh) {
       auto moiTwo = ComputeSecondMomentOfInertia(
           boundaryMesh->GetNodeCoordinates(),
@@ -929,11 +936,27 @@ static void InitRigidActor_Dynamic(
     if (params.hasGravity) {
       reg.emplace<TagUseGravity>(e);
     }
+  } else if (
+      params.mass.has_value() && *params.mass > 0_r && params.centerOfMass.has_value() &&
+      params.momentOfInertia.has_value()) {
+    // A shapeless articulated link with explicit inertia. It has no volume, so no density.
+    MOCHI_ERROR_IF_NOT(
+        IsFinite(*params.mass) && IsFinite(*params.centerOfMass),
+        error,
+        "Unable to create dynamic rigid actor. Mass and center of mass must be finite.");
+    MOCHI_ERROR_RETURN(error);
+    VMatrix3x3r const moi = UserMomentOfInertia(params, error);
+    MOCHI_ERROR_RETURN(error);
+    reg.emplace<CRigidBodyInertia>(e, ToSimd(*params.centerOfMass), moi, *params.mass);
+    reg.emplace<TagUseInertia>(e);
+    if (params.hasGravity) {
+      reg.emplace<TagUseGravity>(e);
+    }
   } else {
-    // This actor has no shape. It must be a dummy link in an articulated actor. Such actors have no
-    // volume, nor mass. However, systems elsewhere still expect it to have CRigidBodyInertia, even
-    // though all the values will be zero. TODO: Remove this requirement.
-    reg.emplace<CRigidBodyInertia>(e);
+    // This actor has no shape and no explicit inertia. It must be a massless dummy link in an
+    // articulated actor. Systems elsewhere still expect it to have CRigidBodyInertia, even though
+    // all the values will be zero. TODO: Remove this requirement.
+    reg.emplace<CRigidBodyInertia>(e, Vec4r{}, VMatrix3x3r{}, 0_r);
   }
 
   // Scaled time step

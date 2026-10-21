@@ -300,6 +300,42 @@ TEST_F(BotUtilsValidate, EmptyMochiShapePath) {
   Validate(bp, nullptr, ExpectOK{});
 }
 
+// 15b-2. A shapeless link may carry explicit inertia (mass + COM + MOI), or a zero mass
+TEST_F(BotUtilsValidate, ShapelessLinkInertia) {
+  auto bp = MakeValidBotPrefab(2);
+  auto& link = bp.links[1];
+  link.shapeFile = "";
+  link.mass = 1_r;
+  link.centerOfMass = Real3{0_r, 0_r, 0_r};
+  link.momentOfInertia = Real6{1_r, 0_r, 0_r, 1_r, 0_r, 1_r};
+  Validate(bp, nullptr, ExpectOK{});
+
+  link.mass = 0_r;
+  Validate(bp, nullptr, ExpectOK{});
+}
+
+// 15b-3. On a shapeless link, partial mass properties are ignored, but a non-finite inertia is not
+TEST_F(BotUtilsValidate, ShapelessLinkPartialOrInvalidInertia) {
+  auto bp = MakeValidBotPrefab(2);
+  auto& link = bp.links[1];
+  link.shapeFile = "";
+
+  link.mass = 1_r;
+  Validate(bp, nullptr, ExpectOK{});
+  link.mass = std::nullopt;
+  link.density = 100_r;
+  Validate(bp, nullptr, ExpectOK{});
+
+  link.mass = 1_r;
+  link.centerOfMass = Real3{0_r, 0_r, 0_r};
+  link.momentOfInertia = Real6{1_r, 0_r, 0_r, 1_r, 0_r, std::numeric_limits<real>::infinity()};
+  Validate(bp, nullptr, ExpectNotOK{});
+
+  link.momentOfInertia = Real6{1_r, 0_r, 0_r, 1_r, 0_r, 1_r};
+  link.mass = -1_r;
+  Validate(bp, nullptr, ExpectNotOK{});
+}
+
 // 15c. Non-empty renderModelFile passes
 TEST_F(BotUtilsValidate, ValidRenderModelFile) {
   auto bp = MakeValidBotPrefab(2);
@@ -385,13 +421,6 @@ TEST_F(BotUtilsValidate, PrismaticJointZeroAxis) {
   bp.joints[1].type = ArticulatedJointType::Prismatic;
   bp.joints[1].axis = {0_r, 0_r, 0_r};
   Validate(bp, nullptr, ExpectNotOK{});
-}
-
-// Mass properties on a link without a mochi shape are ignored (e.g. end effector frames)
-TEST_F(BotUtilsValidate, MassPropertiesIgnoredWithoutMochiShape) {
-  auto bp = MakeValidBotPrefab(2);
-  bp.links[1].mass = 1_r; // mass without COM or MOI would normally fail
-  Validate(bp, nullptr, ExpectOK{});
 }
 
 // Hard joint passes without axis/limit checks

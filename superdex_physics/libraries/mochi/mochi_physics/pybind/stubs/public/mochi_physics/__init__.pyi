@@ -5949,6 +5949,13 @@ class ArticulatedLinkParams:
         references. The link actor's :meth:`~superdex.physics.Actor.get_mesh` omits
         them.
 
+    Note:
+        May be left empty. A link without a shape has no contact and is massless
+        unless it specifies an explicit
+        :attr:`~superdex.physics.ArticulatedLinkParams.mass`,
+        :attr:`~superdex.physics.ArticulatedLinkParams.center_of_mass`, and
+        :attr:`~superdex.physics.ArticulatedLinkParams.moment_of_inertia`.
+
     See Also:
         :class:`~superdex.physics.ShapeHandle`,
         :func:`~superdex.physics.load_shape_from_file`
@@ -5990,6 +5997,11 @@ class ArticulatedLinkParams:
     Note:
         If neither is set, :const:`~superdex.physics.DEFAULT_DENSITY` is used.
 
+    Note:
+        Ignored for links without a
+        :attr:`~superdex.physics.ArticulatedLinkParams.shape`, which have no volume.
+        Use :attr:`~superdex.physics.ArticulatedLinkParams.mass` instead.
+
     See Also:
         :attr:`~superdex.physics.ArticulatedLinkParams.mass`
     """
@@ -6002,6 +6014,13 @@ class ArticulatedLinkParams:
     Note:
         If mass is set, density is computed automatically from volume (and vice
         versa).
+
+    Note:
+        A link without a :attr:`~superdex.physics.ArticulatedLinkParams.shape` is
+        massless unless it sets a positive mass together with
+        :attr:`~superdex.physics.ArticulatedLinkParams.center_of_mass` and
+        :attr:`~superdex.physics.ArticulatedLinkParams.moment_of_inertia`. Otherwise
+        its mass properties are ignored.
 
     See Also:
         :attr:`~superdex.physics.ArticulatedLinkParams.density`

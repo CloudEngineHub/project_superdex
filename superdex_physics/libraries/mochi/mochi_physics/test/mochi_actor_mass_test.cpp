@@ -675,6 +675,84 @@ TEST_F(ActorMassTest, ArticulatedLink_Api) {
   EXPECT_NEAR_RTOL(kNewLinkMass + kLinkMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);
 }
 
+// A link without a shape takes its inertia from an explicit mass, center of mass, and moment of
+// inertia. It has no volume, so it has no density.
+TEST_F(ActorMassTest, ArticulatedShapelessLinkWithInertia_Api) {
+  auto constexpr kMass = 2_r;
+  auto constexpr kCom = Real3{0.2_r, 0_r, 0_r};
+  auto constexpr kMoi = Real6{0.01_r, 0_r, 0_r, 0.02_r, 0_r, 0.03_r};
+
+  ArticulatedActorParams actorParams;
+  actorParams.joints = {
+      {.type = ArticulatedJointType::Hard},
+      {.type = ArticulatedJointType::Revolute, .axis = Real3{0_r, 0_r, 1_r}}};
+  actorParams.links = {
+      {.parentLink = -1},
+      {.parentLink = 0, .mass = kMass, .centerOfMass = kCom, .momentOfInertia = kMoi}};
+  auto* actor = _scene->CreateArticulatedActor(actorParams, test::ExpectOK{});
+  MOCHI_DEFER(_scene->DestroyActor(actor));
+  Actor* link = _scene->GetActor(actor->GetNestedLinkActors(test::ExpectOK{})[1]);
+
+  EXPECT_NEAR_RTOL(kMass, link->GetMass(test::ExpectOK{}), kApiRelTol);
+  EXPECT_NEAR_RTOL(kMass, actor->GetMass(test::ExpectOK{}), kApiRelTol);
+  EXPECT_EQ(kCom, link->GetRigidCenterOfMassLocal(test::ExpectOK{}));
+  EXPECT_EQ(kMoi, link->GetRigidMomentOfInertiaLocal(test::ExpectOK{}));
+  EXPECT_EQ(0_r, link->GetDensity(test::ExpectOK{}));
+  link->SetDensity(1000_r, test::ExpectOK{});
+  EXPECT_NEAR_RTOL(kMass, link->GetMass(test::ExpectOK{}), kApiRelTol);
+}
+
+// A pendulum whose bob has no shape swings exactly like one whose bob has a shape with the same
+// explicit inertia.
+TEST_F(ActorMassTest, ArticulatedShapelessLinkWithInertia_MatchesShapedLink) {
+  auto constexpr kScale = Real3{0.1_r, 0.1_r, 0.1_r};
+  auto constexpr kMass = 2_r;
+  auto constexpr kCom = Real3{0.3_r, 0_r, 0_r};
+  auto constexpr kMoi = Real6{0.01_r, 0_r, 0_r, 0.01_r, 0_r, 0.01_r};
+
+  auto [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube(kScale);
+  auto cubeShape = _mochiContext->CreateTetMeshShape(
+      Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), test::ExpectOK{});
+
+  auto createPendulum = [&](ShapeHandle bobShape, Real3 const& origin) {
+    ArticulatedActorParams actorParams;
+    actorParams.worldFromRoot.SetTranslation(origin);
+    actorParams.joints = {
+        {.type = ArticulatedJointType::Hard},
+        {.type = ArticulatedJointType::Revolute, .axis = Real3{0_r, 0_r, 1_r}}};
+    actorParams.links = {
+        {.parentLink = -1},
+        {.parentLink = 0,
+         .shape = bobShape,
+         .colliderType = ColliderType::None,
+         .mass = kMass,
+         .centerOfMass = kCom,
+         .momentOfInertia = kMoi}};
+    Actor* actor = _scene->CreateArticulatedActor(actorParams, test::ExpectOK{});
+    return _scene->GetActor(actor->GetNestedLinkActors(test::ExpectOK{})[1]);
+  };
+  auto constexpr kShapedOrigin = Real3{0_r, 0_r, 0_r};
+  auto constexpr kShapelessOrigin = Real3{0_r, 0_r, 5_r};
+  Actor* shapedBob = createPendulum(cubeShape, kShapedOrigin);
+  Actor* shapelessBob = createPendulum(ShapeHandle{}, kShapelessOrigin);
+
+  for (int i = 0; i < 30; ++i) {
+    _scene->Step(0.01);
+  }
+
+  TransformRT const shaped = shapedBob->GetRootTransform();
+  TransformRT const shapeless = shapelessBob->GetRootTransform();
+  Real3 swingAxis;
+  real swingAngle = 0_r;
+  shaped.GetRotation().ToAxisAngle(&swingAxis, &swingAngle);
+  EXPECT_GT(swingAngle, 0.1_r) << "The pendulum should swing under gravity.";
+  EXPECT_NEAR_TOL(shaped.GetRotation(), shapeless.GetRotation(), 1e-4_r);
+  EXPECT_NEAR_TOL(
+      shaped.GetTranslation() - kShapedOrigin,
+      shapeless.GetTranslation() - kShapelessOrigin,
+      1e-4_r);
+}
+
 TEST_IF_F(MOCHI_ENABLE_ROM_ACTORS, ActorMassTest, RomActor_Api) {
   auto constexpr kScale = Real3{0.2_r, 0.2_r, 0.2_r};
   auto constexpr kVolume = kScale[0] * kScale[1] * kScale[2];

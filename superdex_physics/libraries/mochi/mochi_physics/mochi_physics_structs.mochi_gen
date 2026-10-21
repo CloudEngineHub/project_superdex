@@ -599,6 +599,8 @@ struct ArticulatedLinkParams [equality(default)] {
   // enables link contact when @ref SoftSkinnedActorParams::enableCollidingLinks is true.
   // @note A tetrahedral or triangular mesh shape may have nodes that no element references. The
   // link actor's @ref Actor::GetMesh omits them.
+  // @note May be left empty. A link without a shape has no contact and is massless unless it
+  // specifies an explicit @ref mass, @ref centerOfMass, and @ref momentOfInertia.
   //
   // @see ShapeHandle, Context::LoadShapeFromFile
   ShapeHandle shape;
@@ -628,6 +630,7 @@ struct ArticulatedLinkParams [equality(default)] {
   // @note Specify either density or mass, but not both.
   // @note If density is set, mass is computed automatically from volume (and vice versa).
   // @note If neither is set, @ref kDefaultDensity is used.
+  // @note Ignored for links without a @ref shape, which have no volume. Use @ref mass instead.
   //
   // @see mass
   Optional<real> density [units("kg/m^3")];
@@ -636,6 +639,8 @@ struct ArticulatedLinkParams [equality(default)] {
   //
   // @note Specify either mass or density, but not both.
   // @note If mass is set, density is computed automatically from volume (and vice versa).
+  // @note A link without a @ref shape is massless unless it sets a positive mass together with
+  // @ref centerOfMass and @ref momentOfInertia. Otherwise its mass properties are ignored.
   //
   // @see density
   Optional<real> mass [units("kg")];

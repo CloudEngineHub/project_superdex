@@ -119,18 +119,36 @@ inline VMatrix3x3r RotateInertia(real M, Quaternion const& /*q*/) {
  * proportionally about that reference; center of mass is never changed by @ref SetDensity.
  * @note After @ref SetDensity, calling SetDensity again with the current density reproduces all
  * properties bit-exactly (no floating-point roundtrip loss). After @ref SetInertiaProperties,
- * the reference state is changed and density is recomputed as mass / volume.
+ * the reference state is changed and density is recomputed as mass / volume (zero without volume).
  * After @ref SetInertiaProperties, calling @ref SetInertiaProperties again with the same input
  * also reproduces all properties bit-exactly.
+ * @note @ref SetDensity requires a positive density, so it must not be called on a body without
+ * volume or mass.
  */
 class RigidBodyInertia {
  public:
-  RigidBodyInertia() = default;
-
+  /// @brief Construct a rigid body with volume, whose mass and moment of inertia scale with
+  /// density.
+  ///
+  /// @param[in] comLocal Center of mass [m] in local coordinates.
+  /// @param[in] volume Volume [m^3]. Must be positive and finite.
+  /// @param[in] moi Moment of inertia [kg m^2] at @p density, in local coordinates.
+  /// @param[in] density Density [kg/m^3]. Must be positive and finite.
   RigidBodyInertia(Vec4r const& comLocal, real volume, VMatrix3x3r const& moi, real density)
       : _volume(volume), _refMoi(moi), _refDensity(density), _comLocal(comLocal) {
     MOCHI_ASSERT_VERBOSE(_volume > 0_r && IsFinite(_volume), "Volume must be positive and finite.");
     SetDensity(density);
+  }
+
+  /// @brief Construct a rigid body without volume, from its mass and moment of inertia.
+  ///
+  /// @param[in] comLocal Center of mass [m] in local coordinates.
+  /// @param[in] moi Moment of inertia [kg m^2] in local coordinates. Must be finite.
+  /// @param[in] mass Mass [kg]. Must be non-negative and finite. Zero makes the body massless.
+  ///
+  /// @note Without volume, density is zero.
+  RigidBodyInertia(Vec4r const& comLocal, VMatrix3x3r const& moi, real mass) {
+    SetInertiaProperties(mass, comLocal, moi);
   }
 
   [[nodiscard]] Vec4r const& GetCenterOfMassLocal() const {
@@ -156,7 +174,7 @@ class RigidBodyInertia {
   /// Center of mass is not changed.
   void SetDensity(real density) {
     MOCHI_ASSERT_VERBOSE(
-        _volume > 0_r, "SetDensity called on a default-constructed RigidBodyInertia.");
+        _refDensity > 0_r, "SetDensity called on a RigidBodyInertia without volume or mass.");
     MOCHI_ASSERT_VERBOSE(
         density > 0_r && IsFinite(density), "Density must be positive and finite.");
     _density = density;
@@ -167,15 +185,13 @@ class RigidBodyInertia {
 
   /// @brief Directly set mass, center of mass, and moment of inertia. Re-anchors the density
   /// reference state so subsequent @ref SetDensity calls rescale mass and MoI proportionally about
-  /// this new state.
+  /// this new state. Without volume, density stays zero.
   void SetInertiaProperties(real mass, Vec4r const& comLocal, VMatrix3x3r const& moi) {
-    MOCHI_ASSERT_VERBOSE(
-        _volume > 0_r, "SetInertiaProperties called on a default-constructed RigidBodyInertia.");
-    MOCHI_ASSERT_VERBOSE(mass > 0_r && IsFinite(mass), "Mass must be positive and finite.");
+    MOCHI_ASSERT_VERBOSE(mass >= 0_r && IsFinite(mass), "Mass must be non-negative and finite.");
     MOCHI_ASSERT_VERBOSE(IsFinite(moi), "MoI must be finite.");
     _comLocal = comLocal;
     _mass = mass;
-    _density = _refDensity = mass / _volume;
+    _density = _refDensity = _volume > 0_r ? mass / _volume : 0_r;
     _refMoi = _moi = moi;
     _mtwo = MomentOfInertiaToSecondMoment(moi);
   }

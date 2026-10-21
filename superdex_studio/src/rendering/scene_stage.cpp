@@ -91,6 +91,11 @@ static mochi::prefab::ScenePrefab StripArticulated(mochi::prefab::ScenePrefab co
       // (BVH) instead of a cheap shapeless dummy link.
       link.shape = {};
       link.colliderType = mochi::ColliderType::None;
+      // Mass properties only apply with a shape (Mochi warns about partial ones without one).
+      link.mass.reset();
+      link.density.reset();
+      link.centerOfMass.reset();
+      link.momentOfInertia.reset();
     }
     // Drop the skin outright rather than blanking its shape: this scratch scene exists only to read
     // link transforms, and skin params without a shape are rejected at actor creation.
@@ -661,12 +666,17 @@ static void BuildBotRequests(
     return;
   }
 
-  // Strip shapes/sensors/colliders for cheap FK-only instantiation.
+  // Strip shapes/sensors/colliders for cheap FK-only instantiation, and the mass properties that
+  // only apply with a shape (Mochi warns about partial ones on a shapeless link).
   auto prefabCopy = prefab;
   for (auto& link : prefabCopy.links) {
     link.colliderType = mochi::ColliderType::None;
     link.shapeFile.clear();
     link.sensors.clear();
+    link.mass.reset();
+    link.density.reset();
+    link.centerOfMass.reset();
+    link.momentOfInertia.reset();
   }
   // The skin is not part of forward kinematics; drop it so the cheap FK-only bot does not load the
   // skin shape. When requested, it is staged separately below as a deforming dynamic mesh.

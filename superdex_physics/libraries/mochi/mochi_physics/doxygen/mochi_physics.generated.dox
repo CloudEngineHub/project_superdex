@@ -2766,6 +2766,7 @@
 /// @note A shape can be shared by multiple actors, even actors in different scenes.
 /// @note Dynamic links require a shape with a surface mesh when link contact is enabled. An articulated actor enables link contact when no skin shape is provided. A soft-skinned actor enables link contact when @ref mochi::SoftSkinnedActorParams::enableCollidingLinks "SoftSkinnedActorParams::enableCollidingLinks" is true.
 /// @note A tetrahedral or triangular mesh shape may have nodes that no element references. The link actor's @ref mochi::Actor::GetMesh "Actor::GetMesh" omits them.
+/// @note May be left empty. A link without a shape has no contact and is massless unless it specifies an explicit @ref mochi::ArticulatedLinkParams::mass "mass", @ref mochi::ArticulatedLinkParams::centerOfMass "centerOfMass", and @ref mochi::ArticulatedLinkParams::momentOfInertia "momentOfInertia".
 ///
 /// @see @ref mochi::ShapeHandle "ShapeHandle", @ref mochi::Context::LoadShapeFromFile "Context::LoadShapeFromFile"
 ///
@@ -2803,6 +2804,7 @@
 /// @note Specify either density or mass, but not both.
 /// @note If density is set, mass is computed automatically from volume (and vice versa).
 /// @note If neither is set, @ref mochi::kDefaultDensity "kDefaultDensity" is used.
+/// @note Ignored for links without a @ref mochi::ArticulatedLinkParams::shape "shape", which have no volume. Use @ref mochi::ArticulatedLinkParams::mass "mass" instead.
 ///
 /// @see @ref mochi::ArticulatedLinkParams::mass "mass"
 ///
@@ -2813,6 +2815,7 @@
 ///
 /// @note Specify either mass or density, but not both.
 /// @note If mass is set, density is computed automatically from volume (and vice versa).
+/// @note A link without a @ref mochi::ArticulatedLinkParams::shape "shape" is massless unless it sets a positive mass together with @ref mochi::ArticulatedLinkParams::centerOfMass "centerOfMass" and @ref mochi::ArticulatedLinkParams::momentOfInertia "momentOfInertia". Otherwise its mass properties are ignored.
 ///
 /// @see @ref mochi::ArticulatedLinkParams::density "density"
 ///

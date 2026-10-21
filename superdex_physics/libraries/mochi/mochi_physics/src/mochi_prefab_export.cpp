@@ -248,9 +248,9 @@ static RigidActorParams ExtractRigidActorParamsHelper(
   RigidActorParams params;
 
   // Static rigid actors must be tagged "static"; static articulated links must not.
-  // Static actors and dummy articulated links with no mesh do not have mass-related properties.
+  // Static actors and dummy articulated links with no mass do not have mass-related properties.
   bool const actorIsStatic = actor->IsStatic();
-  bool const shouldExtractPhysics = !actorIsStatic && !actor->GetSurfaceMesh().IsEmpty();
+  bool const shouldExtractPhysics = registry.all_of<TagUseInertia>(entity);
   params.isStatic = actorIsStatic && !actor->IsNestedLinkActor();
 
   if (shouldExtractPhysics) {
@@ -260,18 +260,22 @@ static RigidActorParams ExtractRigidActorParamsHelper(
     Error momentOfInertiaError;
 
     auto density = actor->GetDensity(densityError);
-    (void)actor->GetMass(massError); // Check mass is available but don't use it
+    auto mass = actor->GetMass(massError);
     auto centerOfMass = actor->GetRigidCenterOfMassLocal(centerOfMassError);
     auto momentOfInertia = actor->GetRigidMomentOfInertiaLocal(momentOfInertiaError);
 
-    // For dynamic actors with shapes, all physics properties must be available
+    // For dynamic actors with inertia, all physics properties must be available
     MOCHI_ASSERT(
         densityError.IsOK() && massError.IsOK() && centerOfMassError.IsOK() &&
             momentOfInertiaError.IsOK(),
-        "Dynamic actors with shapes should have all physics properties available");
+        "Dynamic actors with inertia should have all physics properties available");
 
-    // Use the extracted values
-    params.density = density;
+    // Bodies without volume have no density, so they export their mass.
+    if (density > 0_r) {
+      params.density = density;
+    } else {
+      params.mass = mass;
+    }
     params.centerOfMass = centerOfMass;
     params.momentOfInertia = momentOfInertia;
     params.hasGravity = registry.all_of<TagUseGravity>(entity);
@@ -351,6 +355,7 @@ static RigidActorPrefab ExportRigidActor(
   if (!prefab.isStatic) {
     prefab.hasGravity = params.hasGravity;
     prefab.density = params.density;
+    prefab.mass = params.mass;
     prefab.centerOfMass = params.centerOfMass;
     prefab.momentOfInertia = params.momentOfInertia;
   }
@@ -700,6 +705,7 @@ static ArticulatedActorPrefab ExportArticulatedActorImpl(
     link.contact = rigidParams.contact;
     link.hasGravity = rigidParams.hasGravity;
     link.density = rigidParams.density;
+    link.mass = rigidParams.mass;
     link.centerOfMass = rigidParams.centerOfMass;
     link.momentOfInertia = rigidParams.momentOfInertia;
     link.boundaryElementType = rigidParams.boundaryElementType;

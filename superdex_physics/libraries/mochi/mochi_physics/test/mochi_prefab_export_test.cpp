@@ -451,6 +451,55 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, PrefabExport, ExportActor_SingleRigid) {
   EXPECT_EQ(withParams.actors.rigid.size(), 1);
 }
 
+TEST_IF(MOCHI_USE_HDF5, PrefabExport, ExportActor_ShapelessLinkKeepsExplicitInertia) {
+  auto constexpr kMass = 2_r;
+  auto constexpr kCom = Real3{0.2_r, 0_r, 0_r};
+  auto constexpr kMoi = Real6{0.01_r, 0_r, 0_r, 0.02_r, 0_r, 0.03_r};
+  auto constexpr kTol = 1e-5_r;
+
+  auto* context = CreateContext(0);
+  MOCHI_DEFER(DestroyContext(context));
+  auto* scene = context->CreateScene("test_export_shapeless_inertia");
+  MOCHI_DEFER(context->DestroyScene(scene));
+
+  ArticulatedActorParams params;
+  params.joints = {
+      {.type = ArticulatedJointType::Hard},
+      {.type = ArticulatedJointType::Revolute, .axis = Real3{0_r, 0_r, 1_r}}};
+  params.links = {
+      {.parentLink = -1},
+      {.parentLink = 0, .mass = kMass, .centerOfMass = kCom, .momentOfInertia = kMoi}};
+  auto* actor = scene->CreateArticulatedActor(params, ExpectOK{});
+
+  auto tempDir = CreateTempDirectory("export_shapeless_inertia", ExpectOK{});
+  prefab::ExportActor(actor, "shapeless", tempDir.Path().string(), ExpectOK{});
+  std::filesystem::path const prefabFile = tempDir.Path() / "shapeless" / "shapeless.mochi_scene";
+  auto const exported = prefab::ShallowLoadFromFile(prefabFile.string(), ExpectOK{});
+  ASSERT_EQ(exported.actors.articulated.size(), 1);
+  auto const& links = exported.actors.articulated[0].links;
+  ASSERT_EQ(links.size(), 2);
+
+  // The massless root exports no mass properties; the shapeless link keeps its explicit inertia.
+  EXPECT_FALSE(links[0].mass.has_value());
+  EXPECT_FALSE(links[0].density.has_value());
+  ASSERT_TRUE(links[1].mass && links[1].centerOfMass && links[1].momentOfInertia);
+  EXPECT_FALSE(links[1].density.has_value());
+  EXPECT_NEAR_RTOL(kMass, *links[1].mass, kTol);
+  EXPECT_NEAR_TOL(kCom, *links[1].centerOfMass, kTol);
+  EXPECT_NEAR_TOL(kMoi, *links[1].momentOfInertia, kTol);
+
+  auto* reloadScene = context->CreateScene("test_reload_shapeless_inertia");
+  MOCHI_DEFER(context->DestroyScene(reloadScene));
+  auto const loadResult = prefab::AddToScene(
+      prefabFile.string(), GetAssetsDir(), reloadScene, prefab::PrefabParams{}, ExpectOK{});
+  auto const articulated = loadResult.Filter(ActorType::Articulated);
+  ASSERT_EQ(articulated.size(), 1);
+  Actor* link = reloadScene->GetActor(articulated[0]->GetNestedLinkActors(ExpectOK{})[1]);
+  EXPECT_NEAR_RTOL(kMass, link->GetMass(ExpectOK{}), kTol);
+  EXPECT_NEAR_TOL(kCom, link->GetRigidCenterOfMassLocal(ExpectOK{}), kTol);
+  EXPECT_NEAR_TOL(kMoi, link->GetRigidMomentOfInertiaLocal(ExpectOK{}), kTol);
+}
+
 TEST(PrefabExport, ExportActor_NullActorReportsError) {
   prefab::ExportActor(nullptr, "unused", "unused", ExpectNotOK{});
 }
