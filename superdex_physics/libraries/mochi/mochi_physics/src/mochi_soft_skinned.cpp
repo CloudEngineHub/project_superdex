@@ -22,6 +22,7 @@
 #include "mochi_integration.h"
 #include "mochi_island.h"
 #include "mochi_rom_jacobian.h"
+#include "mochi_soft_init.h"
 #include "mochi_soft_rom_components.h"
 
 #include <mochi_core/memory/filo_allocator.h>
@@ -561,6 +562,9 @@ void skinned::InitSkinnedActor(
   if (params.hasGravity || params.hasInertia || params.hasStress) {
     InitEnergyTerms(reg, e, params);
   }
+
+  // Both bodies' energy terms are now known.
+  WarnIfSoftDampingInactive(reg, e);
 
   // Resolve skinning so the skinned displacements reflect the actual skeleton pose rather than the
   // rest mesh.

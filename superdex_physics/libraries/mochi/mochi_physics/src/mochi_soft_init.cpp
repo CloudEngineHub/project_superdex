@@ -243,12 +243,6 @@ void mochi::InitSoftActor(
       error,
       "Soft mesh must not contain nodes that are unreferenced by its tetrahedra.");
   MOCHI_ERROR_RETURN(error);
-  if (!params.hasInertia && params.material.massDampingCoefficient > 0_r) {
-    MOCHI_LOG_WARNING("Nonzero soft mass damping inactive because hasInertia is false.");
-  }
-  if (!params.hasStress && params.material.stiffnessDampingCoefficient > 0_r) {
-    MOCHI_LOG_WARNING("Nonzero soft stiffness damping inactive because hasStress is false.");
-  }
 
   // Identification
   reg.emplace<TagSoftActor>(e);
@@ -290,6 +284,11 @@ void mochi::InitSoftActor(
   }
   // by default, no energy is evaluated on skinned positions
   reg.emplace<CSkinnedEnergy>(e);
+
+  // Nested soft actors warn in skinned::InitSkinnedActor, once both bodies' terms are known.
+  if (!isNestedSoft) {
+    WarnIfSoftDampingInactive(reg, e);
+  }
 
   EmplaceSoftActorDiscretization(reg, e, shapePtr);
   reg.emplace<CDirichletBC<real>>(e);
@@ -402,4 +401,14 @@ void mochi::InitSoftActor(
     reg.emplace<CMassMatrix>(e);
   }
   ecs::InvokeOnEntity(&soft::UpdateSoftMass, reg, e);
+}
+
+void mochi::WarnIfSoftDampingInactive(entt::registry const& reg, entt::entity e) {
+  auto const& material = reg.get<CSoftMaterialParams const>(e);
+  if (!reg.all_of<TagUseInertia>(e) && material.massDampingCoefficient > 0_r) {
+    MOCHI_LOG_WARNING("Nonzero soft mass damping inactive because hasInertia is false.");
+  }
+  if (!reg.all_of<TagUseStress>(e) && material.stiffnessDampingCoefficient > 0_r) {
+    MOCHI_LOG_WARNING("Nonzero soft stiffness damping inactive because hasStress is false.");
+  }
 }

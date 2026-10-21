@@ -39,4 +39,7 @@ void InitSoftActor(
     std::shared_ptr<DeepFlowShape const> flow,
     Error& error);
 
+// Warns about nonzero mass (stiffness) damping on a soft actor without inertia (stress).
+void WarnIfSoftDampingInactive(entt::registry const& reg, entt::entity e);
+
 } // namespace mochi
