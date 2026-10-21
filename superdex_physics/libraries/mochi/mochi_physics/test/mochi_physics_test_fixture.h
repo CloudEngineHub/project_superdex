@@ -253,7 +253,9 @@ inline void ExpectEqualContactJacSnapshots(
   EXPECT_SPAN_EQ(MakeConstSpan(expected.values), MakeConstSpan(actual.values));
 }
 
-// Checks a soft or shell actor's body assembly at a uniform translation.
+// Checks a soft or shell actor's body assembly at a uniform translation, where only inertia, mass
+// damping and gravity act. Each body with inertia or gravity is checked: a nested soft actor's
+// unposed and posed bodies separately.
 void ExpectUniformTranslationAssembly(Scene* scene, Actor* actor, real relTol);
 
 } // namespace mochi::test

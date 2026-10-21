@@ -3029,6 +3029,57 @@ TEST_P(ExternalPoseResetTest, FromRootPublishesDerivedState) {
 
 INSTANTIATE_TEST_SUITE_P(PosedInertia, ExternalPoseResetTest, ::testing::Bool());
 
+// Parameterized over the body, unposed (false) or posed (true), that carries inertia and the one
+// that carries stress. Without stress, the body with inertia copies its stored mass matrix into its
+// dresidual; with stress, its element loop adds the mass. Gravity, which only the posed body may
+// have, is always on.
+class NestedSoftInertiaTest : public CreateBlendedActorTest,
+                              public ::testing::WithParamInterface<std::tuple<bool, bool>> {};
+
+TEST_P(NestedSoftInertiaTest, UniformTranslationAssembly) {
+  auto const [posedInertia, posedStress] = GetParam();
+  real constexpr kDensity = 2_r;
+  real constexpr kRtol = 1e-5_r;
+  auto params = MakeMinimalBlendedParams(
+      CreateUnitCubeTetBlendedSkinShape(_mochiContext, DynamicString{"soft"}));
+  params.hasInertia = posedInertia;
+  params.hasGravity = true;
+  params.hasStress = posedStress;
+  params.softParams[0].hasInertia = !posedInertia;
+  params.softParams[0].hasStress = !posedStress;
+
+  auto* parent = _scene->CreateSoftSkinnedActor(params, test::ExpectOK{});
+  ASSERT_NE(nullptr, parent);
+  auto const softHandles = parent->GetNestedSoftActors(test::ExpectOK{});
+  ASSERT_EQ(1, isize(softHandles));
+  Actor* nested = _scene->GetActor(softHandles[0]);
+  // A step sets the stage time step that the checks use.
+  _scene->Step(1e-2_r);
+
+  // The stored mass matrix, the element loop's mass and the lumped mass must all follow
+  // SetSoftMaterialParams and SetDensity.
+  auto const expectMass = [&](real density) {
+    // The unit cube's lumped mass adds up to its density, per DoF component.
+    auto const& lumpedMass = GetRegistry().get<CLumpedMassMatrix const>(GetEntity(nested)).values;
+    EXPECT_NEAR_RTOL(3_r * density, HSum(MakeConstSpan(lumpedMass)), kRtol);
+    test::ExpectUniformTranslationAssembly(_scene, nested, kRtol);
+  };
+  SoftMaterialParams material = nested->GetSoftMaterialParams(test::ExpectOK{});
+  material.density = kDensity;
+  material.massDampingCoefficient = 3_r;
+  // Keeps stress round-off out of the residual of a posed body with gravity but no inertia.
+  material.neoHookean.youngsModulus = 1e-10_r;
+  nested->SetSoftMaterialParams(material, test::ExpectOK{});
+  expectMass(kDensity);
+  nested->SetDensity(2_r * kDensity, test::ExpectOK{});
+  expectMass(2_r * kDensity);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    PosedInertiaAndStress,
+    NestedSoftInertiaTest,
+    ::testing::Combine(::testing::Bool(), ::testing::Bool()));
+
 TEST_F(CreateBlendedActorTest, NestedDisplacementSettersPublishDerivedState) {
   real constexpr kSoftWeight = 0.5_r;
   auto params = MakeMinimalBlendedParams(
