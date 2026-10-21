@@ -184,7 +184,7 @@ void mochi::DeclareMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_
   }
 
   {
-    auto boundEnum = nb::enum_<mochi::LineSearchType>(m, "LineSearchType", "Line-search strategy used by the non-linear solver.");
+    auto boundEnum = nb::enum_<mochi::LineSearchType>(m, "LineSearchType", "Line-search strategy used by the non-linear solver.\n\nNote:\n    In the line searches that test the objective (:class:`SIMPLE\n    <superdex.physics.LineSearchType>`, :class:`ARMIJO\n    <superdex.physics.LineSearchType>`, :class:`WOLFE_WEAK\n    <superdex.physics.LineSearchType>`, :class:`WOLFE_STRONG\n    <superdex.physics.LineSearchType>` and :class:`ARMIJO_OR_RESIDUAL_NORM\n    <superdex.physics.LineSearchType>`), a step that fails the test but changes\n    the objective by no more than an estimate of its rounding error is tested on\n    the slope of the objective along the step instead.");
     boundEnum
       .value("NONE", mochi::LineSearchType::None, "No line search. May substantially degrade stability.")
       .value("SIMPLE", mochi::LineSearchType::Simple, "Simple line search. Accepts a step if the objective function does not increase\n    by more than a specified relative tolerance.\n    \n    See Also:\n        :attr:`~superdex.physics.NonLinearSolverParams.line_search_max_rel_increase`")
@@ -1444,7 +1444,7 @@ void mochi::DefineMochiCore_MochiCore([[maybe_unused]] nb::module_& m, [[maybe_u
     .def_rw("line_search_alpha", &mochi::NonLinearSolverParams::lineSearchAlpha, "Step length reduction factor for line search.\n\nNote:\n    Must be in (0, 1).")
     .def_rw("line_search_wolfe1", &mochi::NonLinearSolverParams::lineSearchWolfe1, "Wolfe condition parameter c1 (sufficient decrease).\n\nNote:\n    Must be in (0, 1).\n\nNote:\n    Used only by :class:`ARMIJO <superdex.physics.LineSearchType>`,\n    :class:`WOLFE_WEAK <superdex.physics.LineSearchType>`, :class:`WOLFE_STRONG\n    <superdex.physics.LineSearchType>`, and :class:`ARMIJO_OR_RESIDUAL_NORM\n    <superdex.physics.LineSearchType>` line search types.")
     .def_rw("line_search_wolfe2", &mochi::NonLinearSolverParams::lineSearchWolfe2, "Wolfe condition parameter c2 (curvature).\n\nNote:\n    Must be in\n    (:attr:`~superdex.physics.NonLinearSolverParams.line_search_wolfe1`, 1).\n\nNote:\n    Used only by :class:`WOLFE_WEAK <superdex.physics.LineSearchType>` and\n    :class:`WOLFE_STRONG <superdex.physics.LineSearchType>` line search types.")
-    .def_rw("line_search_max_rel_increase", &mochi::NonLinearSolverParams::lineSearchMaxRelIncrease, "Maximum relative increase in the objective to accept the step.\n\nNote:\n    Only applies to :class:`SIMPLE <superdex.physics.LineSearchType>`.")
+    .def_rw("line_search_max_rel_increase", &mochi::NonLinearSolverParams::lineSearchMaxRelIncrease, "Maximum relative increase in the objective to accept the step.\n\nNote:\n    Only applies to :class:`SIMPLE <superdex.physics.LineSearchType>`.\n\nNote:\n    An increase beyond this maximum but within an estimate of the objective's\n    rounding error is tested on the slope of the objective along the step\n    instead (see :class:`~superdex.physics.LineSearchType`).")
     .def_rw("line_search_type", &mochi::NonLinearSolverParams::lineSearchType, "Line search type.")
     .def_rw("linear_tolerance_strategy", &mochi::NonLinearSolverParams::linearToleranceStrategy, "Strategy for adaptive linear solver tolerance (forcing term).")
     .def_rw("verbosity", &mochi::NonLinearSolverParams::verbosity, "Verbosity level for logging output.")

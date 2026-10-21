@@ -137,7 +137,15 @@ MOCHI_ENUM_COUNT(Count)
 MOCHI_ENUM_END()
 
 namespace mochi {
-/** @brief Line search methods for the non-linear solver. */
+/**
+ * @brief Line search methods for the non-linear solver.
+ *
+ * @note In the line searches that test the objective (@ref LineSearchType::Simple,
+ * @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, @ref LineSearchType::WolfeStrong and
+ * @ref LineSearchType::ArmijoOrResidualNorm), a step that fails the test but changes the objective
+ * by no more than an estimate of its rounding error is tested on the slope of the objective along
+ * the step instead.
+ */
 enum struct LineSearchType {
   /** @brief No line search. May substantially degrade stability. */
   None,
@@ -446,6 +454,8 @@ struct NonLinearSolverParams {
    * @brief Maximum relative increase in the objective to accept the step.
    *
    * @note Only applies to @ref LineSearchType::Simple.
+   * @note An increase beyond this maximum but within an estimate of the objective's rounding error
+   * is tested on the slope of the objective along the step instead (see @ref LineSearchType).
    */
   real lineSearchMaxRelIncrease = 0.0_r;
 

@@ -1347,7 +1347,18 @@ class PsdProjectionMode:
     def __index__(self) -> int: ...
 
 class LineSearchType:
-    """Line-search strategy used by the non-linear solver."""
+    """Line-search strategy used by the non-linear solver.
+
+    Note:
+        In the line searches that test the objective (:class:`SIMPLE
+        <superdex.physics.LineSearchType>`, :class:`ARMIJO
+        <superdex.physics.LineSearchType>`, :class:`WOLFE_WEAK
+        <superdex.physics.LineSearchType>`, :class:`WOLFE_STRONG
+        <superdex.physics.LineSearchType>` and :class:`ARMIJO_OR_RESIDUAL_NORM
+        <superdex.physics.LineSearchType>`), a step that fails the test but changes
+        the objective by no more than an estimate of its rounding error is tested on
+        the slope of the objective along the step instead.
+    """
     NONE: LineSearchType
     """No line search. May substantially degrade stability."""
     SIMPLE: LineSearchType
@@ -4011,6 +4022,11 @@ class NonLinearSolverParams:
 
     Note:
         Only applies to :class:`SIMPLE <superdex.physics.LineSearchType>`.
+
+    Note:
+        An increase beyond this maximum but within an estimate of the objective's
+        rounding error is tested on the slope of the objective along the step
+        instead (see :class:`~superdex.physics.LineSearchType`).
     """
     line_search_type: LineSearchType
     """Line search type."""
