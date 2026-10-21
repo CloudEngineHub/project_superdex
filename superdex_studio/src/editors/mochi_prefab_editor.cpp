@@ -2205,7 +2205,7 @@ void MochiPrefabEditor::PasteFromClipboard() {
     return;
   }
   std::string const clip = text;
-  if (clip.rfind(kClipboardPrefix, 0) != 0) {
+  if (!clip.starts_with(kClipboardPrefix)) {
     return; // Not our clipboard format.
   }
   auto& prefab = _prefabAsset->GetPrefab();
@@ -2213,7 +2213,7 @@ void MochiPrefabEditor::PasteFromClipboard() {
 
   // Parse one tagged block, append the actor, and return its new selection (None if invalid).
   auto parseBlock = [&](std::string const& block) -> Selection {
-    if (block.rfind(kClipboardPrefix, 0) != 0) {
+    if (!block.starts_with(kClipboardPrefix)) {
       return {};
     }
     auto const nl = block.find('\n');

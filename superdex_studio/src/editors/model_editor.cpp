@@ -2836,8 +2836,7 @@ void ModelEditor::SaveModifierOutput(std::size_t index) {
   std::string path = chosen.ToString();
   std::string const lower = mochi::Path{path}.AsLowercaseString();
   auto endsWith = [&lower](std::string_view ext) {
-    return lower.size() >= ext.size() &&
-        lower.compare(lower.size() - ext.size(), ext.size(), ext) == 0;
+    return lower.size() >= ext.size() && lower.ends_with(ext);
   };
   bool const isObj = endsWith(".obj");
   if (!isObj && !endsWith(".glb") && !endsWith(".gltf")) {
