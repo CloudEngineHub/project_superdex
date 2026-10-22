@@ -30,9 +30,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace mochi;
@@ -247,6 +250,68 @@ TEST_F(MjcfLinkMeshesTest, BoxRendersWithFlatFaces) {
          std::abs(sections[0].normals[i + 2])});
     EXPECT_NEAR(largest, 1.0f, 1e-5f);
   }
+}
+
+// The vendored mujoco_menagerie Franka FR3 v2 (assets/test/mjcf/franka_fr3_v2).
+static superdex::robotics::MjcfBodyReference Fr3v2Body(std::string_view name) {
+  char const* assets = std::getenv("SUPERDEX_ASSETS_PATH");
+  EXPECT_NE(assets, nullptr);
+  std::string const path = (std::filesystem::path(assets ? assets : "") / "test" / "mjcf" /
+                            "franka_fr3_v2" / "fr3v2.xml")
+                               .string();
+  superdex::robotics::MjcfImportInfo info;
+  (void)superdex::robotics::LoadBotPrefabFromMjcfFile(path, info, test::ExpectOK{});
+  for (auto const& body : info.bodies) {
+    if (std::string_view(body.name) == name) {
+      return body;
+    }
+  }
+  ADD_FAILURE() << "No FR3 v2 body " << name;
+  return {};
+}
+
+static MjcfGeoms GeomsOf(superdex::robotics::MjcfBodyReference const& body, bool collision) {
+  MjcfGeoms geoms;
+  for (MjcfGeomReference const& geom : body.geoms) {
+    if (collision ? geom.isCollision : geom.isVisual) {
+      geoms.push_back(geom);
+    }
+  }
+  return geoms;
+}
+
+TEST_F(MjcfLinkMeshesTest, Fr3v2BaseGeomInertiaMatchesMuJoCo) {
+  // The inertia Studio infers from fr3v2_link0's geoms, as for a body without an <inertial>.
+  // MuJoCo 3.16 with inertiafromgeom="true" gives 2.78558 kg at (-0.02990, -0.00016, 0.05783) m.
+  superdex::robotics::MjcfBodyReference const body = Fr3v2Body("fr3v2_link0");
+  std::vector<std::string> warnings;
+  MjcfGeoms const geoms(body.geoms.begin(), body.geoms.end());
+  std::optional<GeomsInertia> const inertia = ComputeGeomsInertia(geoms, warnings);
+  ASSERT_TRUE(inertia.has_value());
+  EXPECT_NEAR(inertia->mass, 2.78558_r, 0.02_r * 2.78558_r);
+  EXPECT_TRUE(
+      NearEqual(inertia->centerOfMass, Real3{-0.0298969_r, -0.00016023_r, 0.0578298_r}, 0.002_r));
+}
+
+TEST_F(MjcfLinkMeshesTest, Fr3v2BaseModelsBuild) {
+  superdex::robotics::MjcfBodyReference const body = Fr3v2Body("fr3v2_link0");
+  MjcfGeoms const visual = GeomsOf(body, /*collision=*/false);
+  ASSERT_FALSE(visual.empty());
+  CoordinateSpaceConverter const identity(CoordinateSpace::Default(), CoordinateSpace::Default());
+  std::vector<std::string> warnings;
+  Path const glb = Path{(_dir.Path() / "fr3v2_link0.glb").string()};
+  ASSERT_TRUE(BuildLinkGlb(visual, glb, identity, warnings));
+  // Each visual OBJ keeps its own MJCF material.
+  EXPECT_GE(mochi_renderer::ReadGlbFromFile(glb.ToString().c_str()).size(), visual.size());
+
+  LinkCollisionOptions options;
+  options.remesh = false;
+  Path const h5 = Path{(_dir.Path() / "fr3v2_link0.mochi.h5").string()};
+  ASSERT_TRUE(BuildLinkCollisionH5(GeomsOf(body, /*collision=*/true), options, h5, warnings));
+  ModelData const model = model_utils::LoadFromFile(h5.ToString(), test::ExpectOK{});
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_GT(Volume(*model.mesh), 0_r);
+  EXPECT_TRUE(model.sdf.has_value());
 }
 
 TEST_F(MjcfLinkMeshesTest, GeomsWithoutMassHaveNoInertia) {

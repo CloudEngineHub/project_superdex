@@ -16,11 +16,17 @@
 
 Loads a robot directly from a MuJoCo .xml file and simulates it. Bodies become
 links, <inertial> becomes link inertia, and mesh geoms become collision shapes and
-render models. A body with several geoms gets one extra Hard-jointed link per geom.
+render models. Mesh files resolve against the MJCF's <compiler meshdir>, relative
+to the .xml file, so no preprocessing is required; an SDF collider is baked on the
+fly when the bot is created.
+
+The bundled model is the MuJoCo Menagerie Franka FR3 v2. Each of its bodies has one
+collision mesh and several visual meshes, and every extra mesh geom becomes its own
+Hard-jointed child link, so the 7-DoF arm loads as 30 links.
 
 PITFALL: The runtime MJCF loader only loads *mesh* geoms. Primitive geoms (box,
-capsule, cylinder, ellipsoid, sphere) are skipped with a warning, so the bundled
-arm's box "tool" has no collision geometry here.
+capsule, cylinder, ellipsoid, sphere) are skipped with a warning and have no
+collision geometry.
 
 PITFALL: Raw MuJoCo meshes are used as-is. Some menagerie meshes have degenerate
 triangles or are not closed, and Mochi cannot use those as dynamic link shapes.
@@ -44,8 +50,8 @@ from superdex.physics.paths import resolve_asset
 
 
 def get_default_mjcf_path() -> str:
-    """Resolve the path to the bundled FR3 arm MJCF."""
-    return str(resolve_asset("test/mjcf/fr3_arm.xml"))
+    """Resolve the path to the bundled FR3 v2 test MJCF."""
+    return str(resolve_asset("test/mjcf/franka_fr3_v2/fr3v2.xml"))
 
 
 def main() -> None:
@@ -56,44 +62,63 @@ def main() -> None:
         type=str,
         nargs="?",
         default=None,
-        help="Path to an MJCF .xml file (default: fr3_arm.xml)",
+        help="Path to an MJCF .xml file (default: franka_fr3_v2/fr3v2.xml)",
     )
     args = parser.parse_args()
 
     mjcf_path = args.path if args.path else get_default_mjcf_path()
 
     # Initialize the physics engine before creating scenes or actors.
+    # num_worker_threads=0 runs single-threaded; pass -1 to auto-select.
     sdp.initialize(num_worker_threads=0)
 
-    # MuJoCo and SuperDex both use Z-up, so gravity points down the -Z axis.
+    # Create an empty scene. MuJoCo and SuperDex both use Z-up, so gravity points
+    # down the -Z axis.
     scene = sdp.create_scene("MJCF Bot Loading Example")
     scene.set_gravity([0, 0, -9.81])
 
-    # Parse the MJCF into a bot prefab. A top-level body without a <freejoint> is
-    # welded to the world, so the arm's base stays put. The "home" keyframe
-    # becomes the bot's default pose.
+    # Parse the MJCF into a bot prefab: a template describing links and joints.
+    # A top-level body without a <freejoint> is welded to the world, so the arm's
+    # base stays put. The "home" keyframe becomes the bot's default pose. Content
+    # with no SuperDex equivalent (sites, actuator gains) is skipped with a warning.
+    # The arm still sags under gravity since there is no controller.
     bot_prefab = sdr.load_bot_prefab_from_mjcf_file(mjcf_path)
 
+    # Instantiate the prefab as a live Bot in the scene. This builds the robot's
+    # articulated actor and bakes each link's SDF collider from its mesh. The
+    # robotics context tracks every bot and controller you create.
     robotics_context = sdr.create_context()
     bot = sdr.create_bot(scene, bot_prefab, robotics_context)
     bot_actor = bot.get_articulated_actor()
 
+    # Add a static ground plane for the robot to rest on (normal points up, +Z).
     plane_shape = sdp.create_plane_shape(normal=[0, 0, 1], distance=0)
     scene.create_rigid_actor(name="ground", shape=plane_shape, is_static=True)
 
+    # Print a quick summary of the loaded robot.
     print(f"Robot: {bot_prefab.name}")
     print(f"  Links: {len(bot_prefab.links)}")
     print(f"  Joints: {len(bot_prefab.joints)}")
     print(f"  DOFs: {bot_actor.get_num_dofs()}")
 
+    # Simulate at 60 Hz (each step advances 1/60 of a second).
     time_step = 1.0 / 60.0
+
+    # Declare the scene's coordinate convention so the debugger renders it the
+    # right way up: SuperDex is X-forward, Y-left, Z-up (FLU). Must come before
+    # attach(), which starts the server.
     sdp.get_debug_server().set_coordinate_space(
         sdp.CoordinateSpace(axes=sdp.CoordinateSpaceAxes.FLU)
     )
+
+    # Launch and connect the SuperDex Physics Debugger, a separate desktop app for
+    # viewing and interacting with the simulation. The loop runs until you close
+    # the debugger; attach() returns False if it can't connect.
     if sdp.debugger.attach():
         while sdp.debugger.is_attached():
             scene.step(time_step)
 
+    # Tear down: destroy the bot, then shut the engine down cleanly.
     sdr.destroy_bot(scene, bot)
     sdp.shutdown()
     print("Simulation complete.")
