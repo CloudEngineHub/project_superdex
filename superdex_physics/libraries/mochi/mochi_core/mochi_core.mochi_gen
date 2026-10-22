@@ -1554,11 +1554,10 @@ enum PsdProjectionMode [from_mochi_core] {
 
 // @brief Line-search strategy used by the non-linear solver.
 //
-// @note In the line searches that test the objective (@ref LineSearchType::Simple,
-// @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, @ref LineSearchType::WolfeStrong and
-// @ref LineSearchType::ArmijoOrResidualNorm), a step that fails the test but changes the objective
-// by no more than an estimate of its rounding error is tested on the slope of the objective along
-// the step instead.
+// @note In the line searches that test the objective (@ref LineSearchType::Simple, @ref
+// LineSearchType::Armijo, @ref LineSearchType::WolfeWeak and @ref LineSearchType::WolfeStrong), a step
+// that fails the test but changes the objective by no more than an estimate of its rounding error
+// is tested on the slope of the objective along the step instead.
 enum LineSearchType [from_mochi_core] {
   // @brief No line search. May substantially degrade stability.
   None,
@@ -1588,12 +1587,6 @@ enum LineSearchType [from_mochi_core] {
   // they should due to the inability to take valid steps. Consider using an objective-based line
   // search in that case.
   ResidualNorm,
-  // @brief Line search that accepts either the Armijo or the residual norm condition.
-  //
-  // @note It combines the robustness of objective-based criteria when the iteration is far from the
-  // solution, with residual-based criteria when it is near the solution (particularly useful with
-  // single precision). It requires slightly higher cost per line-search iteration.
-  ArmijoOrResidualNorm,
   // @brief Number of line search type enum values.
   Count,
   // @brief Default line search type.
@@ -1707,8 +1700,8 @@ struct NonLinearSolverParams [equality(default), from_mochi_core] {
   // @brief Wolfe condition parameter c1 (sufficient decrease).
   //
   // @note Must be in (0, 1).
-  // @note Used only by @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, @ref
-  // LineSearchType::WolfeStrong, and @ref LineSearchType::ArmijoOrResidualNorm line search types.
+  // @note Used only by @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, and @ref
+  // LineSearchType::WolfeStrong line search types.
   real lineSearchWolfe1 = 1e-4;
   // @brief Wolfe condition parameter c2 (curvature).
   //

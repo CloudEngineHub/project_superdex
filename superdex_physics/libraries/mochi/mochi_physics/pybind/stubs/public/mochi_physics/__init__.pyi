@@ -1359,8 +1359,7 @@ class LineSearchType:
         In the line searches that test the objective (:class:`SIMPLE
         <superdex.physics.LineSearchType>`, :class:`ARMIJO
         <superdex.physics.LineSearchType>`, :class:`WOLFE_WEAK
-        <superdex.physics.LineSearchType>`, :class:`WOLFE_STRONG
-        <superdex.physics.LineSearchType>` and :class:`ARMIJO_OR_RESIDUAL_NORM
+        <superdex.physics.LineSearchType>` and :class:`WOLFE_STRONG
         <superdex.physics.LineSearchType>`), a step that fails the test but changes
         the objective by no more than an estimate of its rounding error is tested on
         the slope of the objective along the step instead.
@@ -1408,15 +1407,6 @@ class LineSearchType:
         residual norm cannot be reduced, it may cause objects to move at slower
         velocity than they should due to the inability to take valid steps. Consider
         using an objective-based line search in that case.
-    """
-    ARMIJO_OR_RESIDUAL_NORM: LineSearchType
-    """Line search that accepts either the Armijo or the residual norm condition.
-
-    Note:
-        It combines the robustness of objective-based criteria when the iteration is
-        far from the solution, with residual-based criteria when it is near the
-        solution (particularly useful with single precision). It requires slightly
-        higher cost per line-search iteration.
     """
     COUNT: LineSearchType
     """Number of line search type enum values."""
@@ -4008,9 +3998,8 @@ class NonLinearSolverParams:
 
     Note:
         Used only by :class:`ARMIJO <superdex.physics.LineSearchType>`,
-        :class:`WOLFE_WEAK <superdex.physics.LineSearchType>`, :class:`WOLFE_STRONG
-        <superdex.physics.LineSearchType>`, and :class:`ARMIJO_OR_RESIDUAL_NORM
-        <superdex.physics.LineSearchType>` line search types.
+        :class:`WOLFE_WEAK <superdex.physics.LineSearchType>`, and
+        :class:`WOLFE_STRONG <superdex.physics.LineSearchType>` line search types.
     """
     line_search_wolfe2: float
     """Wolfe condition parameter c2 (curvature).

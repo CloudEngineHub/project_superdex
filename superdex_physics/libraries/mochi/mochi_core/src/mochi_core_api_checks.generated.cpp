@@ -161,8 +161,7 @@ static_assert(static_cast<int>(mochi::LineSearchType::Armijo) == 2, "\n  ERROR: 
 static_assert(static_cast<int>(mochi::LineSearchType::WolfeWeak) == 3, "\n  ERROR: enum value mochi::LineSearchType::WolfeWeak is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
 static_assert(static_cast<int>(mochi::LineSearchType::WolfeStrong) == 4, "\n  ERROR: enum value mochi::LineSearchType::WolfeStrong is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
 static_assert(static_cast<int>(mochi::LineSearchType::ResidualNorm) == 5, "\n  ERROR: enum value mochi::LineSearchType::ResidualNorm is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
-static_assert(static_cast<int>(mochi::LineSearchType::ArmijoOrResidualNorm) == 6, "\n  ERROR: enum value mochi::LineSearchType::ArmijoOrResidualNorm is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
-static_assert(static_cast<int>(mochi::LineSearchType::Count) == 7, "\n  ERROR: enum value mochi::LineSearchType::Count is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
+static_assert(static_cast<int>(mochi::LineSearchType::Count) == 6, "\n  ERROR: enum value mochi::LineSearchType::Count is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
 static_assert(mochi::LineSearchType::Default == mochi::LineSearchType::ResidualNorm, "\n  ERROR: enum value mochi::LineSearchType::Default is out-of-sync with C++.\n  Please check the enum definition, then run mochi_gen_py to regenerate this file.\n");
 
 // enum mochi::LinearToleranceStrategy

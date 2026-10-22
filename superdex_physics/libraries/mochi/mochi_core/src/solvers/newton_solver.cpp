@@ -336,15 +336,12 @@ void NewtonSolver<T>::SetParams(NewtonSolverParams const& params) {
     case LineSearchType::ResidualNorm:
       _lineSearch = LineSearch<T>::ResidualNorm;
       break;
-    case LineSearchType::ArmijoOrResidualNorm:
-      _lineSearch = LineSearch<T>::ArmijoOrResidualNorm;
-      break;
     default:
       MOCHI_ASSERT(false, "Invalid line search type.");
       _lineSearch = LineSearch<T>::None; // Fall back to no line search.
   }
   static_assert(
-      static_cast<int>(LineSearchType::Count) == 7,
+      static_cast<int>(LineSearchType::Count) == 6,
       "Please update the switch statement above if LineSearchType enum changes");
 }
 
@@ -663,7 +660,7 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
     {
       AssemblyParams assemblyParams;
       static_assert(
-          static_cast<int>(LineSearchType::Count) == 7,
+          static_cast<int>(LineSearchType::Count) == 6,
           "Please make sure the logic below is correct if LineSearchType enum changes");
       assemblyParams.assemObj = (_params.lineSearch.type != LineSearchType::None) &&
           (_params.lineSearch.type != LineSearchType::ResidualNorm);

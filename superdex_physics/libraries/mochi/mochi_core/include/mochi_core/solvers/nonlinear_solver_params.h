@@ -140,11 +140,10 @@ namespace mochi {
 /**
  * @brief Line search methods for the non-linear solver.
  *
- * @note In the line searches that test the objective (@ref LineSearchType::Simple,
- * @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, @ref LineSearchType::WolfeStrong and
- * @ref LineSearchType::ArmijoOrResidualNorm), a step that fails the test but changes the objective
- * by no more than an estimate of its rounding error is tested on the slope of the objective along
- * the step instead.
+ * @note In the line searches that test the objective (@ref LineSearchType::Simple, @ref
+ * LineSearchType::Armijo, @ref LineSearchType::WolfeWeak and @ref LineSearchType::WolfeStrong), a
+ * step that fails the test but changes the objective by no more than an estimate of its rounding
+ * error is tested on the slope of the objective along the step instead.
  */
 enum struct LineSearchType {
   /** @brief No line search. May substantially degrade stability. */
@@ -190,15 +189,6 @@ enum struct LineSearchType {
    */
   ResidualNorm,
 
-  /**
-   * @brief Line search that accepts either the Armijo or the residual norm condition.
-   *
-   * @note It combines the robustness of objective-based criteria when the iteration is far from the
-   * solution, with residual-based criteria when it is near the solution (particularly useful with
-   * single precision). It requires slightly higher cost per line-search iteration.
-   */
-  ArmijoOrResidualNorm,
-
   /** @brief Number of line search type enum values. */
   Count,
 
@@ -214,7 +204,6 @@ MOCHI_ENUM_ITEM(Armijo)
 MOCHI_ENUM_ITEM(WolfeWeak)
 MOCHI_ENUM_ITEM(WolfeStrong)
 MOCHI_ENUM_ITEM(ResidualNorm)
-MOCHI_ENUM_ITEM(ArmijoOrResidualNorm)
 MOCHI_ENUM_COUNT(Count)
 MOCHI_ENUM_END()
 
@@ -436,8 +425,8 @@ struct NonLinearSolverParams {
    * @brief Wolfe condition parameter c1 (sufficient decrease).
    *
    * @note Must be in (0, 1).
-   * @note Used only by @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, @ref
-   * LineSearchType::WolfeStrong, and @ref LineSearchType::ArmijoOrResidualNorm line search types.
+   * @note Used only by @ref LineSearchType::Armijo, @ref LineSearchType::WolfeWeak, and @ref
+   * LineSearchType::WolfeStrong line search types.
    */
   real lineSearchWolfe1 = 1e-4_r;
 

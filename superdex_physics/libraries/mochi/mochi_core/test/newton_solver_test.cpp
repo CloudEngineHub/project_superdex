@@ -275,8 +275,7 @@ TEST(NewtonSolver, SmoothLocalMinimum) {
             LineSearchType::Armijo,
             LineSearchType::WolfeWeak,
             LineSearchType::WolfeStrong,
-            LineSearchType::ResidualNorm,
-            LineSearchType::ArmijoOrResidualNorm}) {
+            LineSearchType::ResidualNorm}) {
         ColumnVector<real, 1> x0(-3_r); // Hessian is positive definite starting from -3.
         problem.SetSolution(x0);
 
@@ -791,8 +790,7 @@ TEST(NewtonSolver, LineSearchRejectsNonFiniteTrial) {
           std::pair{LineSearchType::Armijo, &Ls::Armijo},
           std::pair{LineSearchType::WolfeWeak, &Ls::WolfeWeak},
           std::pair{LineSearchType::WolfeStrong, &Ls::WolfeStrong},
-          std::pair{LineSearchType::ResidualNorm, &Ls::ResidualNorm},
-          std::pair{LineSearchType::ArmijoOrResidualNorm, &Ls::ArmijoOrResidualNorm}}) {
+          std::pair{LineSearchType::ResidualNorm, &Ls::ResidualNorm}}) {
       problem.SetSolution(ColumnVector<real>({{1_r, 1_r}}));
       problem.increment.SetConstant(-3_r);
       problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
@@ -848,16 +846,14 @@ GetLineSearchTrialProblem(double merit0, real startSlope, double rise, real slop
 // more than the band, as passing that test if its slope passes the merit test's Armijo condition;
 // the Wolfe searches still apply their curvature test. Out of the band, and for trials that pass
 // the merit test, the slope test doesn't apply. The first two trials rise by |merit0|, which every
-// merit test and the band reject, so the third, at step scale 1/4, decides, unless the
-// residual-norm branch of ArmijoOrResidualNorm accepts earlier.
+// merit test and the band reject, so the third, at step scale 1/4, decides.
 TEST(NewtonSolver, MeritRoundingErrorBand) {
   using Search = bool (*)(SnleProblem<real>&, NewtonSolverStatus<real>&, LineSearchParams const&);
-  std::array<std::pair<LineSearchType, Search>, 5> constexpr kSearches = {
+  std::array<std::pair<LineSearchType, Search>, 4> constexpr kSearches = {
       {{LineSearchType::Simple, &LineSearch<real>::Simple},
        {LineSearchType::Armijo, &LineSearch<real>::Armijo},
        {LineSearchType::WolfeWeak, &LineSearch<real>::WolfeWeak},
-       {LineSearchType::WolfeStrong, &LineSearch<real>::WolfeStrong},
-       {LineSearchType::ArmijoOrResidualNorm, &LineSearch<real>::ArmijoOrResidualNorm}}};
+       {LineSearchType::WolfeStrong, &LineSearch<real>::WolfeStrong}}};
   real constexpr kEps = std::numeric_limits<real>::epsilon();
   // Rises and slopes are in units of |merit0|, so the band is 2000 kEps. The start slope -kG is
   // small enough that a merit drop of kEps passes every merit test, in both precisions.
@@ -867,25 +863,25 @@ TEST(NewtonSolver, MeritRoundingErrorBand) {
     double rise{};
     real startSlope{};
     real slope{};
-    std::array<bool, 5> accepted{}; // In the order of kSearches
+    std::array<bool, 4> accepted{}; // In the order of kSearches
   };
   for (double const merit0 : {4.0, -0.25}) {
     real const unit = Abs(real(merit0));
     for (Case const& c :
-         {Case{1500 * kEps, -kG, -0.5_r * kG, {true, true, true, true, true}},
-          Case{1500 * kEps, -kG, 1.5_r * kG, {false, false, false, false, false}},
-          Case{1500 * kEps, -kG, 0.9999_r * kG, {true, false, false, false, false}}, // c1 = 0
-          Case{1500 * kEps, -kG, -0.95_r * kG, {true, true, false, false, true}}, // Wolfe expands
-          Case{1500 * kEps, -kG, -kInf, {false, false, false, false, false}},
-          Case{1500 * kEps, -kInf, -0.5_r * kG, {false, false, false, false, true}}, // RN passes
-          Case{4000 * kEps, -kG, -0.5_r * kG, {false, false, false, false, false}}, // Out of band
+         {Case{1500 * kEps, -kG, -0.5_r * kG, {true, true, true, true}},
+          Case{1500 * kEps, -kG, 1.5_r * kG, {false, false, false, false}},
+          Case{1500 * kEps, -kG, 0.9999_r * kG, {true, false, false, false}}, // c1 = 0
+          Case{1500 * kEps, -kG, -0.95_r * kG, {true, true, false, false}}, // Wolfe expands
+          Case{1500 * kEps, -kG, -kInf, {false, false, false, false}},
+          Case{1500 * kEps, -kInf, -0.5_r * kG, {false, false, false, false}},
+          Case{4000 * kEps, -kG, -0.5_r * kG, {false, false, false, false}}, // Out of band
           // Out-of-band drop that fails the Armijo test
-          Case{-3000 * kEps, -2e8_r * kEps, -4e8_r * kEps, {true, false, false, false, false}},
+          Case{-3000 * kEps, -2e8_r * kEps, -4e8_r * kEps, {true, false, false, false}},
           // In-band drop that fails the Armijo test
-          Case{-10 * kEps, -1e6_r * kEps, -0.5e6_r * kEps, {true, true, true, true, true}},
-          Case{-10 * kEps, -kG, 2_r * kG, {true, true, true, false, true}}, // Merit test passes
-          Case{kNaN, -kG, -0.5_r * kG, {false, false, false, false, false}}}) { // NaN merit
-      std::array<bool, 5> accepted{};
+          Case{-10 * kEps, -1e6_r * kEps, -0.5e6_r * kEps, {true, true, true, true}},
+          Case{-10 * kEps, -kG, 2_r * kG, {true, true, true, false}}, // Merit test passes
+          Case{kNaN, -kG, -0.5_r * kG, {false, false, false, false}}}) { // NaN merit
+      std::array<bool, 4> accepted{};
       for (int i = 0; i < isize(kSearches); ++i) {
         auto const [type, search] = kSearches[i];
         SnleProblem<real> problem =
