@@ -89,7 +89,6 @@ MOCHI_SIMD_BENCHMARK_VEC8F(LoadIndexed, Vec8f);
 /****************************************************************************************
   Load
 */
-namespace {
 template <class V>
 static void Load(benchmark::State& state) {
   alignas(alignof(V)) typename V::Scalar const buf[V::kSize + 1] = {};
@@ -109,12 +108,10 @@ MOCHI_SIMD_BENCHMARK_VEC4F(Load, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC4I(Load, Vec4i);
 MOCHI_SIMD_BENCHMARK_VEC8F(Load, Vec8f);
 MOCHI_SIMD_BENCHMARK_VEC8I(Load, Vec8i);
-} // namespace
 
 /****************************************************************************************
   Load<N>
 */
-namespace {
 template <int N, class V>
 static void Load(benchmark::State& state) {
   alignas(alignof(V)) typename V::Scalar const buf[N + 1] = {};
@@ -134,12 +131,10 @@ MOCHI_SIMD_BENCHMARK_VEC4F(Load, 3, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC4I(Load, 3, Vec4i);
 MOCHI_SIMD_BENCHMARK_VEC8F(Load, 7, Vec8f);
 MOCHI_SIMD_BENCHMARK_VEC8I(Load, 7, Vec8i);
-} // namespace
 
 /****************************************************************************************
   Load(ptr, n)
 */
-namespace {
 template <class V>
 static void VLoad_n(benchmark::State& state) {
   alignas(alignof(V)) typename V::Scalar const buf[V::kSize + 1] = {};
@@ -160,12 +155,10 @@ MOCHI_SIMD_BENCHMARK_VEC4F(VLoad_n, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC4I(VLoad_n, Vec4i);
 MOCHI_SIMD_BENCHMARK_VEC8F(VLoad_n, Vec8f);
 MOCHI_SIMD_BENCHMARK_VEC8I(VLoad_n, Vec8i);
-} // namespace
 
 /****************************************************************************************
   LoadTransposed
 */
-namespace {
 template <class T, int N, int M, int kVersion, bool kTestLatency>
 static void LoadTransposed(benchmark::State& state) {
   static_assert(M == 3, "Only supported interleaving stride for now");
@@ -246,13 +239,11 @@ BENCHMARK_TEMPLATE(LoadTransposed, mochi::real, 8, 3, 2, false)
     ->Name("SIMD/LoadTransposed/Vec8r/Mochi/Throughput");
 BENCHMARK_TEMPLATE(LoadTransposed, mochi::real, 8, 3, 2, true)
     ->Name("SIMD/LoadTransposed/Vec8r/Mochi/Latency");
-} // namespace
 
 /****************************************************************************************
   StoreTransposed
 */
 
-namespace {
 template <class T, int N, int M, int kVersion, bool kTestLatency>
 static void StoreTransposed(benchmark::State& state) {
   static_assert(M == 3, "Only supported interleaving stride for now");
@@ -340,12 +331,10 @@ BENCHMARK_TEMPLATE(StoreTransposed, mochi::real, 8, 3, 2, false)
     ->Name("SIMD/StoreTransposed/Vec8r/Mochi/Throughput");
 BENCHMARK_TEMPLATE(StoreTransposed, mochi::real, 8, 3, 2, true)
     ->Name("SIMD/StoreTransposed/Vec8r/Mochi/Latency");
-} // namespace
 
 /****************************************************************************************
   Store
 */
-namespace {
 template <class V>
 static void Store(benchmark::State& state) {
   alignas(alignof(V)) typename V::Scalar buf[V::kSize + 1] = {};
@@ -365,12 +354,10 @@ MOCHI_SIMD_BENCHMARK_VEC4F(Store, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC4I(Store, Vec4i);
 MOCHI_SIMD_BENCHMARK_VEC8F(Store, Vec8f);
 MOCHI_SIMD_BENCHMARK_VEC8I(Store, Vec8i);
-} // namespace
 
 /****************************************************************************************
   Store<N>
 */
-namespace {
 template <int N, class V>
 static void Store(benchmark::State& state) {
   alignas(alignof(V)) typename V::Scalar buf[N + 1] = {};
@@ -390,12 +377,10 @@ MOCHI_SIMD_BENCHMARK_VEC4F(Store, 3, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC4I(Store, 3, Vec4i);
 MOCHI_SIMD_BENCHMARK_VEC8F(Store, 7, Vec8f);
 MOCHI_SIMD_BENCHMARK_VEC8I(Store, 7, Vec8i);
-} // namespace
 
 /****************************************************************************************
   Store(ptr, v, n)
 */
-namespace {
 template <class V>
 static void VStore_n(benchmark::State& state) {
   alignas(alignof(V)) typename V::Scalar buf[V::kSize + 1] = {};
@@ -416,7 +401,6 @@ MOCHI_SIMD_BENCHMARK_VEC4F(VStore_n, Vec4f);
 MOCHI_SIMD_BENCHMARK_VEC4I(VStore_n, Vec4i);
 MOCHI_SIMD_BENCHMARK_VEC8F(VStore_n, Vec8f);
 MOCHI_SIMD_BENCHMARK_VEC8I(VStore_n, Vec8i);
-} // namespace
 
 /****************************************************************************************
   VAdd
