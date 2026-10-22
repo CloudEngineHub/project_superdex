@@ -32,12 +32,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numbers>
@@ -63,27 +66,41 @@ static void AppendUint(std::string& out, size_t value) {
   out.append(buf, static_cast<size_t>(n));
 }
 
+// Appends `bytes` to `bin`, then pads to a 4-byte boundary so the next view stays aligned.
+static size_t AppendAligned(std::vector<uint8_t>& bin, void const* bytes, size_t size) {
+  size_t const offset = bin.size();
+  bin.resize(offset + size);
+  if (size > 0) {
+    auto const* const source = static_cast<uint8_t const*>(bytes);
+    std::copy(source, source + size, bin.begin() + static_cast<std::ptrdiff_t>(offset));
+  }
+  bin.resize((bin.size() + 3) & ~size_t{3}, 0);
+  return offset;
+}
+
 std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& sections) {
   static_assert(sizeof(int) == sizeof(uint32_t), "int must be 32 bits for GLB index data");
+
+  // A byte range in the binary buffer, emitted as one bufferView.
+  struct View {
+    size_t offset;
+    size_t bytes;
+  };
 
   // Per-section bookkeeping needed to emit bufferViews/accessors after the
   // binary buffer layout is fixed. Material fields are copied here so the JSON
   // emitters never re-index the original `sections` (which may contain skipped
   // empty sections, making positional lookups unsafe).
   struct SectionLayout {
-    size_t posOffset;
-    size_t posBytes;
-    size_t normOffset;
-    size_t normBytes;
-    size_t idxOffset;
-    size_t idxBytes;
     size_t vertexCount;
     size_t indexCount;
-    bool hasNormals;
-    // Index of this section's first accessor/bufferView (accessors and
-    // bufferViews are 1:1 and emitted in the same order). POSITION is at
-    // `firstView`, NORMAL (when present) at `firstView + 1`, indices last.
-    size_t firstView;
+    // Accessor (and bufferView) indices; accessors and their views are 1:1. Optional streams
+    // are kNone when absent.
+    size_t posView;
+    size_t normView;
+    size_t uvView;
+    size_t idxView;
+    size_t texture; // index into the glTF textures, or kNone
     float minPos[3];
     float maxPos[3];
     std::array<float, 4> baseColor;
@@ -92,13 +109,20 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
     std::array<float, 3> emissive;
     float emissiveStrength;
   };
+  constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
   std::vector<SectionLayout> layouts;
   layouts.reserve(sections.size());
+  std::vector<View> views; // accessor views first, then image views
+  std::vector<TextureImage const*> images; // distinct textures, in first-use order
 
-  // Binary buffer layout: for each non-empty section, [positions | normals |
-  // indices], all naturally 4-byte aligned (float/uint32).
+  // Binary buffer layout: for each non-empty section, [positions | normals | texcoords |
+  // indices], all 4-byte aligned (float/uint32); then each distinct image.
   std::vector<uint8_t> bin;
+  auto addView = [&](void const* data, size_t bytes) {
+    views.push_back(View{AppendAligned(bin, data, bytes), bytes});
+    return views.size() - 1;
+  };
   for (MeshSection const& s : sections) {
     if (s.positions.empty() || s.indices.empty()) {
       continue;
@@ -106,14 +130,15 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
     SectionLayout layout{};
     layout.vertexCount = s.positions.size() / 3;
     layout.indexCount = s.indices.size();
-    // `hasNormals` is the single source of truth for normal presence (see
-    // @ref MeshSection). A section that advertises normals must supply exactly
-    // one per vertex; otherwise we would emit a NORMAL accessor that outruns its
-    // bufferView.
+    // `hasNormals` / `hasTexcoords` are the single source of truth for presence (see
+    // @ref MeshSection). A section that advertises a stream must supply exactly one entry per
+    // vertex; otherwise we would emit an accessor that outruns its bufferView.
     MOCHI_ASSERT(
         !s.hasNormals || s.normals.size() == s.positions.size(),
         "MeshSection.hasNormals is set but normals do not match positions");
-    layout.hasNormals = s.hasNormals;
+    MOCHI_ASSERT(
+        !s.hasTexcoords || s.texcoords.size() == 2 * layout.vertexCount,
+        "MeshSection.hasTexcoords is set but texcoords do not match positions");
     layout.baseColor = s.baseColor;
     layout.metallic = s.metallic;
     layout.roughness = s.roughness;
@@ -132,24 +157,21 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
       }
     }
 
-    layout.posBytes = s.positions.size() * sizeof(float);
-    layout.normBytes = layout.hasNormals ? s.normals.size() * sizeof(float) : 0;
-    layout.idxBytes = layout.indexCount * sizeof(uint32_t);
+    layout.posView = addView(s.positions.data(), s.positions.size() * sizeof(float));
+    layout.normView =
+        s.hasNormals ? addView(s.normals.data(), s.normals.size() * sizeof(float)) : kNone;
+    layout.uvView =
+        s.hasTexcoords ? addView(s.texcoords.data(), s.texcoords.size() * sizeof(float)) : kNone;
+    layout.idxView = addView(s.indices.data(), layout.indexCount * sizeof(uint32_t));
 
-    layout.posOffset = bin.size();
-    bin.resize(bin.size() + layout.posBytes);
-    std::memcpy(bin.data() + layout.posOffset, s.positions.data(), layout.posBytes);
-
-    layout.normOffset = bin.size();
-    if (layout.normBytes > 0) {
-      bin.resize(bin.size() + layout.normBytes);
-      std::memcpy(bin.data() + layout.normOffset, s.normals.data(), layout.normBytes);
+    layout.texture = kNone;
+    if (s.hasTexcoords && s.baseColorTexture && !s.baseColorTexture->bytes.empty()) {
+      auto const it = std::find(images.begin(), images.end(), s.baseColorTexture.get());
+      layout.texture = static_cast<size_t>(it - images.begin());
+      if (it == images.end()) {
+        images.push_back(s.baseColorTexture.get());
+      }
     }
-
-    layout.idxOffset = bin.size();
-    bin.resize(bin.size() + layout.idxBytes);
-    std::memcpy(bin.data() + layout.idxOffset, s.indices.data(), layout.idxBytes);
-
     layouts.push_back(layout);
   }
 
@@ -157,15 +179,10 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
     return {};
   }
 
-  // Assign each section its accessor/bufferView index range now that the set of
-  // non-empty sections is known. Sections without normals emit two views
-  // (POSITION, indices); those with normals emit three.
-  size_t nextView = 0;
-  for (SectionLayout& layout : layouts) {
-    layout.firstView = nextView;
-    nextView += layout.hasNormals ? 3 : 2;
+  size_t const numAccessors = views.size();
+  for (TextureImage const* image : images) {
+    addView(image->bytes.data(), image->bytes.size());
   }
-
   size_t const binSize = bin.size();
 
   // A glTF extension must be declared at the top level before any material may reference it.
@@ -174,10 +191,9 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
         return layout.emissiveStrength != 1.0f;
       });
 
-  // Build the glTF JSON descriptor. One primitive + one material per section;
-  // three bufferViews + three accessors per section (POSITION, NORMAL, indices).
+  // Build the glTF JSON descriptor. One primitive + one material per section.
   std::string json;
-  json.reserve(1024 + layouts.size() * 768);
+  json.reserve(1024 + layouts.size() * 1024);
   json += R"({"asset":{"version":"2.0","generator":"mochi_renderer"},)";
   if (usesEmissiveStrength) {
     json += R"("extensionsUsed":["KHR_materials_emissive_strength"],)";
@@ -190,13 +206,17 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
       json += ',';
     }
     json += R"({"attributes":{"POSITION":)";
-    AppendUint(json, layout.firstView);
-    if (layout.hasNormals) {
+    AppendUint(json, layout.posView);
+    if (layout.normView != kNone) {
       json += R"(,"NORMAL":)";
-      AppendUint(json, layout.firstView + 1);
+      AppendUint(json, layout.normView);
+    }
+    if (layout.uvView != kNone) {
+      json += R"(,"TEXCOORD_0":)";
+      AppendUint(json, layout.uvView);
     }
     json += R"(},"indices":)";
-    AppendUint(json, layout.firstView + (layout.hasNormals ? 2 : 1));
+    AppendUint(json, layout.idxView);
     json += R"(,"material":)";
     AppendUint(json, i);
     json += '}';
@@ -215,7 +235,13 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
     AppendFloat(json, layout.baseColor[2]);
     json += ',';
     AppendFloat(json, layout.baseColor[3]);
-    json += R"(],"metallicFactor":)";
+    json += ']';
+    if (layout.texture != kNone) {
+      json += R"(,"baseColorTexture":{"index":)";
+      AppendUint(json, layout.texture);
+      json += '}';
+    }
+    json += R"(,"metallicFactor":)";
     AppendFloat(json, layout.metallic);
     json += R"(,"roughnessFactor":)";
     AppendFloat(json, layout.roughness);
@@ -241,14 +267,34 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
     // culling. This is the minimum-viable choice (see @ref MeshSection).
     json += R"(,"doubleSided":true})";
   }
-  json += R"(],"accessors":[)";
+  json += ']';
+  if (!images.empty()) {
+    // One linear, mipmapped, repeating sampler serves every texture.
+    json += R"(,"samplers":[{"magFilter":9729,"minFilter":9987,"wrapS":10497,"wrapT":10497}])";
+    json += R"(,"textures":[)";
+    for (size_t t = 0; t < images.size(); ++t) {
+      json += t > 0 ? R"(,{"sampler":0,"source":)" : R"({"sampler":0,"source":)";
+      AppendUint(json, t);
+      json += '}';
+    }
+    json += R"(],"images":[)";
+    for (size_t t = 0; t < images.size(); ++t) {
+      json += t > 0 ? R"(,{"bufferView":)" : R"({"bufferView":)";
+      AppendUint(json, numAccessors + t);
+      json += R"(,"mimeType":")";
+      json += images[t]->mimeType;
+      json += R"("})";
+    }
+    json += ']';
+  }
+  json += R"(,"accessors":[)";
   for (size_t i = 0; i < layouts.size(); ++i) {
     SectionLayout const& layout = layouts[i];
     if (i > 0) {
       json += ',';
     }
     json += R"({"bufferView":)";
-    AppendUint(json, layout.firstView);
+    AppendUint(json, layout.posView);
     json += R"(,"componentType":5126,"count":)";
     AppendUint(json, layout.vertexCount);
     json += R"(,"type":"VEC3","min":[)";
@@ -264,41 +310,35 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
     json += ',';
     AppendFloat(json, layout.maxPos[2]);
     json += R"(]})";
-    if (layout.hasNormals) {
+    if (layout.normView != kNone) {
       json += R"(,{"bufferView":)";
-      AppendUint(json, layout.firstView + 1);
+      AppendUint(json, layout.normView);
       json += R"(,"componentType":5126,"count":)";
       AppendUint(json, layout.vertexCount);
       json += R"(,"type":"VEC3"})";
     }
+    if (layout.uvView != kNone) {
+      json += R"(,{"bufferView":)";
+      AppendUint(json, layout.uvView);
+      json += R"(,"componentType":5126,"count":)";
+      AppendUint(json, layout.vertexCount);
+      json += R"(,"type":"VEC2"})";
+    }
     json += R"(,{"bufferView":)";
-    AppendUint(json, layout.firstView + (layout.hasNormals ? 2 : 1));
+    AppendUint(json, layout.idxView);
     json += R"(,"componentType":5125,"count":)";
     AppendUint(json, layout.indexCount);
     json += R"(,"type":"SCALAR"})";
   }
   json += R"(],"bufferViews":[)";
-  for (size_t i = 0; i < layouts.size(); ++i) {
-    SectionLayout const& layout = layouts[i];
-    if (i > 0) {
+  for (size_t v = 0; v < views.size(); ++v) {
+    if (v > 0) {
       json += ',';
     }
     json += R"({"buffer":0,"byteOffset":)";
-    AppendUint(json, layout.posOffset);
+    AppendUint(json, views[v].offset);
     json += R"(,"byteLength":)";
-    AppendUint(json, layout.posBytes);
-    json += '}';
-    if (layout.hasNormals) {
-      json += R"(,{"buffer":0,"byteOffset":)";
-      AppendUint(json, layout.normOffset);
-      json += R"(,"byteLength":)";
-      AppendUint(json, layout.normBytes);
-      json += '}';
-    }
-    json += R"(,{"buffer":0,"byteOffset":)";
-    AppendUint(json, layout.idxOffset);
-    json += R"(,"byteLength":)";
-    AppendUint(json, layout.idxBytes);
+    AppendUint(json, views[v].bytes);
     json += '}';
   }
   json += R"(],"buffers":[{"byteLength":)";
@@ -655,10 +695,70 @@ static bool DecodeMeshoptBufferViews(cgltf_data& data) {
   return true;
 }
 
+// The MIME type of PNG or JPEG bytes, from their signature, or null for anything else.
+static char const* DetectImageMimeType(uint8_t const* data, size_t size) {
+  static constexpr uint8_t kPng[] = {0x89, 'P', 'N', 'G'};
+  static constexpr uint8_t kJpeg[] = {0xFF, 0xD8, 0xFF};
+  if (size >= sizeof(kPng) && std::memcmp(data, kPng, sizeof(kPng)) == 0) {
+    return "image/png";
+  }
+  if (size >= sizeof(kJpeg) && std::memcmp(data, kJpeg, sizeof(kJpeg)) == 0) {
+    return "image/jpeg";
+  }
+  return nullptr;
+}
+
+// Images already extracted from one glTF file, so primitives sharing an image share one
+// TextureImage.
+using ImageCache = std::unordered_map<cgltf_image const*, std::shared_ptr<TextureImage const>>;
+
+// The PNG or JPEG behind a glTF image: embedded in a bufferView, or an external file resolved
+// relative to `gltfPath` (data URIs are not supported). Null if unavailable.
+static std::shared_ptr<TextureImage const>
+ExtractImage(cgltf_image const* image, char const* gltfPath, ImageCache& cache) {
+  if (image == nullptr) {
+    return nullptr;
+  }
+  auto [it, inserted] = cache.try_emplace(image);
+  if (!inserted) {
+    return it->second;
+  }
+  if (image->buffer_view != nullptr) {
+    cgltf_buffer_view const* view = image->buffer_view;
+    // cgltf leaves checking that a view lies inside its buffer to cgltf_validate.
+    // Compared without adding the two sizes, which a corrupt file could make overflow.
+    bool const inBounds = view->buffer != nullptr && view->offset <= view->buffer->size &&
+        view->size <= view->buffer->size - view->offset;
+    auto const* data =
+        inBounds ? static_cast<uint8_t const*>(cgltf_buffer_view_data(view)) : nullptr;
+    if (char const* mimeType = data ? DetectImageMimeType(data, view->size) : nullptr) {
+      auto texture = std::make_shared<TextureImage>();
+      texture->bytes.assign(data, data + view->size);
+      texture->mimeType = mimeType;
+      it->second = std::move(texture);
+    }
+  } else if (
+      image->uri != nullptr && std::strncmp(image->uri, "data:", 5) != 0 && gltfPath != nullptr) {
+    // glTF URIs are percent-encoded (e.g. a space is %20).
+    std::string uri = image->uri;
+    uri.resize(cgltf_decode_uri(uri.data()));
+    std::filesystem::path const file = std::filesystem::path(gltfPath).parent_path() / uri;
+    it->second = ReadTextureImageFromFile(file.string().c_str());
+  }
+  if (it->second == nullptr) {
+    MOCHI_LOG_WARNING(
+        "ReadGlb: could not load base color image '%s'; using the base color factor instead.",
+        image->uri != nullptr && std::strncmp(image->uri, "data:", 5) != 0 ? image->uri
+                                                                           : "(embedded)");
+  }
+  return it->second;
+}
+
 // Builds a MeshSection from a single triangle primitive, or nullopt if the
 // primitive is not a usable triangle mesh (non-triangle, missing POSITION, or
 // empty geometry). Assumes cgltf_load_buffers has already populated buffer data.
-static std::optional<MeshSection> ExtractPrimitive(cgltf_primitive const& prim) {
+static std::optional<MeshSection>
+ExtractPrimitive(cgltf_primitive const& prim, char const* gltfPath, ImageCache& images) {
   static_assert(sizeof(int) == 4, "cgltf index unpack requires 32-bit int");
 
   if (prim.type != cgltf_primitive_type_triangles) {
@@ -667,12 +767,15 @@ static std::optional<MeshSection> ExtractPrimitive(cgltf_primitive const& prim) 
 
   cgltf_accessor const* posAccessor = nullptr;
   cgltf_accessor const* normAccessor = nullptr;
+  cgltf_accessor const* uvAccessor = nullptr;
   for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
     cgltf_attribute const& attr = prim.attributes[a];
     if (attr.type == cgltf_attribute_type_position) {
       posAccessor = attr.data;
     } else if (attr.type == cgltf_attribute_type_normal) {
       normAccessor = attr.data;
+    } else if (attr.type == cgltf_attribute_type_texcoord && attr.index == 0) {
+      uvAccessor = attr.data;
     }
   }
   if (posAccessor == nullptr) {
@@ -696,6 +799,15 @@ static std::optional<MeshSection> ExtractPrimitive(cgltf_primitive const& prim) 
   }
 
   cgltf_size const vertexCount = posFloats / 3;
+  // Texture coordinates are optional; accept only if there is one pair per vertex.
+  if (uvAccessor != nullptr) {
+    cgltf_size const uvFloats = cgltf_accessor_unpack_floats(uvAccessor, nullptr, 0);
+    if (uvFloats == 2 * vertexCount) {
+      section.texcoords.resize(uvFloats);
+      cgltf_accessor_unpack_floats(uvAccessor, section.texcoords.data(), uvFloats);
+      section.hasTexcoords = true;
+    }
+  }
   if (prim.indices != nullptr) {
     cgltf_size const indexCount =
         cgltf_accessor_unpack_indices(prim.indices, nullptr, sizeof(int), 0);
@@ -719,6 +831,10 @@ static std::optional<MeshSection> ExtractPrimitive(cgltf_primitive const& prim) 
           pbr.base_color_factor[3]};
       section.metallic = pbr.metallic_factor;
       section.roughness = pbr.roughness_factor;
+      if (pbr.base_color_texture.texture != nullptr) {
+        section.baseColorTexture =
+            ExtractImage(pbr.base_color_texture.texture->image, gltfPath, images);
+      }
     }
     // emissiveFactor sits on the material itself, not under pbrMetallicRoughness, so it is read
     // even for materials with no metallic-roughness model.
@@ -774,8 +890,9 @@ static void ApplyWorldTransform(MeshSection& section, float const world[16]) {
 // space. Each mesh is emitted once per referencing scene node with that node's
 // world transform applied, so node placement/rotation/scale is preserved. GLBs
 // with no node graph fall back to emitting each mesh once at identity.
-static std::vector<MeshSection> ExtractSections(cgltf_data const& data) {
+static std::vector<MeshSection> ExtractSections(cgltf_data const& data, char const* gltfPath) {
   std::vector<MeshSection> sections;
+  ImageCache images;
 
   bool anyNodeMesh = false;
   for (cgltf_size n = 0; n < data.nodes_count; ++n) {
@@ -787,7 +904,8 @@ static std::vector<MeshSection> ExtractSections(cgltf_data const& data) {
     float world[16];
     cgltf_node_transform_world(&node, world);
     for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p) {
-      std::optional<MeshSection> section = ExtractPrimitive(node.mesh->primitives[p]);
+      std::optional<MeshSection> section =
+          ExtractPrimitive(node.mesh->primitives[p], gltfPath, images);
       if (section.has_value()) {
         ApplyWorldTransform(*section, world);
         sections.push_back(std::move(*section));
@@ -800,7 +918,7 @@ static std::vector<MeshSection> ExtractSections(cgltf_data const& data) {
     for (cgltf_size m = 0; m < data.meshes_count; ++m) {
       cgltf_mesh const& mesh = data.meshes[m];
       for (cgltf_size p = 0; p < mesh.primitives_count; ++p) {
-        std::optional<MeshSection> section = ExtractPrimitive(mesh.primitives[p]);
+        std::optional<MeshSection> section = ExtractPrimitive(mesh.primitives[p], gltfPath, images);
         if (section.has_value()) {
           sections.push_back(std::move(*section));
         }
@@ -835,7 +953,7 @@ static std::vector<MeshSection> ReadGlbImpl(uint8_t const* data, size_t size, ch
   if (!DecodeMeshoptBufferViews(*parsed) || !DecodeDracoMeshes(*parsed, dracoStreams)) {
     return {};
   }
-  return ExtractSections(*parsed);
+  return ExtractSections(*parsed, path);
 }
 
 std::vector<MeshSection> ReadGlbFromFile(char const* path) {
@@ -904,6 +1022,24 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
   tinyobj::attrib_t const& attrib = reader.GetAttrib();
   std::vector<tinyobj::material_t> const& materials = reader.GetMaterials();
   bool const hasNormals = !attrib.normals.empty();
+  bool const hasTexcoords = !attrib.texcoords.empty();
+
+  // Diffuse maps, by path, so materials sharing an image share one TextureImage.
+  std::unordered_map<std::string, std::shared_ptr<TextureImage const>> textures;
+  auto loadTexture = [&](std::string const& name) -> std::shared_ptr<TextureImage const> {
+    std::string const file = (std::filesystem::path(path).parent_path() / name).string();
+    auto [it, inserted] = textures.try_emplace(file);
+    if (inserted) {
+      it->second = ReadTextureImageFromFile(file.c_str());
+      if (!it->second) {
+        MOCHI_LOG_WARNING(
+            "ReadObjFromFile: '%s' uses diffuse map '%s', which is missing or not a PNG/JPEG.",
+            path,
+            file.c_str());
+      }
+    }
+    return it->second;
+  };
 
   // One section per material in first-seen order across all shapes; faces with
   // no material (id -1) accumulate into a single default section.
@@ -912,14 +1048,16 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
   // Parallel to `sections`: false once any corner in that section is missing a
   // valid normal index. Such sections cannot be trusted to have per-vertex
   // normals, so their (partial) normals are dropped below to force the caller to
-  // recompute them.
+  // recompute them. Texture coordinates are tracked the same way.
   std::vector<bool> sectionNormalsComplete;
+  std::vector<bool> sectionTexcoordsComplete;
 
   auto sectionFor = [&](int materialId) -> size_t {
     auto const [it, inserted] = sectionByMaterial.try_emplace(materialId, sections.size());
     if (inserted) {
       MeshSection section;
       section.hasNormals = hasNormals;
+      section.hasTexcoords = hasTexcoords;
       if (materialId >= 0 && materialId < static_cast<int>(materials.size())) {
         tinyobj::material_t const& mat = materials[materialId];
         section.baseColor = {
@@ -929,9 +1067,13 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
             static_cast<float>(mat.dissolve)};
         auto const ns = static_cast<float>(mat.shininess);
         section.roughness = std::clamp(std::sqrt(2.0f / (ns + 2.0f)), 0.0f, 1.0f);
+        if (!mat.diffuse_texname.empty()) {
+          section.baseColorTexture = loadTexture(mat.diffuse_texname);
+        }
       }
       sections.push_back(std::move(section));
       sectionNormalsComplete.push_back(true);
+      sectionTexcoordsComplete.push_back(true);
     }
     return it->second;
   };
@@ -973,6 +1115,20 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
           }
         }
 
+        if (hasTexcoords) {
+          // Range-checked before scaling, which a corrupt index could overflow.
+          if (idx.texcoord_index >= 0 &&
+              static_cast<size_t>(idx.texcoord_index) < attrib.texcoords.size() / 2) {
+            size_t const uvIdx = 2 * static_cast<size_t>(idx.texcoord_index);
+            // OBJ puts v = 0 at the bottom of the image; glTF puts it at the top.
+            section.texcoords.push_back(static_cast<float>(attrib.texcoords[uvIdx]));
+            section.texcoords.push_back(1.0f - static_cast<float>(attrib.texcoords[uvIdx + 1]));
+          } else {
+            section.texcoords.insert(section.texcoords.end(), {0.0f, 0.0f});
+            sectionTexcoordsComplete[sectionIdx] = false;
+          }
+        }
+
         section.indices.push_back(static_cast<int>(section.indices.size()));
       }
       indexOffset += static_cast<size_t>(faceVertices);
@@ -986,6 +1142,10 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
       sections[i].normals.clear();
       sections[i].hasNormals = false;
     }
+    if (!sectionTexcoordsComplete[i]) {
+      sections[i].texcoords.clear();
+      sections[i].hasTexcoords = false;
+    }
   }
 
   std::erase_if(sections, [](MeshSection const& section) {
@@ -993,6 +1153,26 @@ std::vector<MeshSection> ReadObjFromFile(char const* path) {
   });
 
   return sections;
+}
+
+std::shared_ptr<TextureImage const> ReadTextureImageFromFile(char const* path) {
+  if (path == nullptr) {
+    return nullptr;
+  }
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return nullptr;
+  }
+  std::vector<uint8_t> bytes(
+      (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  char const* mimeType = DetectImageMimeType(bytes.data(), bytes.size());
+  if (mimeType == nullptr) {
+    return nullptr;
+  }
+  auto texture = std::make_shared<TextureImage>();
+  texture->bytes = std::move(bytes);
+  texture->mimeType = mimeType;
+  return texture;
 }
 
 std::vector<MeshSection> ReadStlFromFile(char const* path) {

@@ -26,6 +26,7 @@
 #include <mochi_core/utils/file_utils.h>
 #include <mochi_core/utils/log.h>
 
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -125,4 +126,91 @@ TEST(ObjReaderTest, MissingFileReturnsEmpty) {
   MOCHI_DEFER(mochi::SetLogCallback(prevLogFn));
 
   EXPECT_TRUE(ReadObjFromFile("/nonexistent/path/missing.obj").empty());
+}
+
+// Texture coordinates come through per corner, flipped to glTF's top-left origin, and the diffuse
+// map becomes the base color texture.
+TEST(ObjReaderTest, TexcoordsAndDiffuseMap) {
+  mochi::TempDirCleanup const dir =
+      mochi::CreateTempDirectory("obj_reader_texture", mochi::test::ExpectOK{});
+  std::vector<char> const png = {
+      static_cast<char>(0x89), 'P', 'N', 'G', '\r', '\n', static_cast<char>(0x1A), '\n', 7};
+  std::ofstream(dir.Path() / "albedo.png", std::ios::binary).write(png.data(), png.size());
+  std::ofstream(dir.Path() / "textured.mtl") << "newmtl Skin\nKd 1 1 1\nmap_Kd albedo.png\n";
+  std::filesystem::path const objPath = dir.Path() / "model.obj";
+  std::ofstream(objPath) << R"OBJ(
+mtllib textured.mtl
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vt 0 0
+vt 1 0
+vt 0 0.25
+usemtl Skin
+f 1/1 2/2 3/3
+)OBJ";
+
+  std::vector<MeshSection> const sections = ReadObjFromFile(objPath.string().c_str());
+  ASSERT_EQ(sections.size(), 1u);
+  MeshSection const& s = sections[0];
+  EXPECT_TRUE(s.hasTexcoords);
+  std::vector<float> const expectedTexcoords = {0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.75f};
+  EXPECT_EQ(s.texcoords, expectedTexcoords);
+  ASSERT_NE(s.baseColorTexture, nullptr);
+  EXPECT_EQ(s.baseColorTexture->mimeType, "image/png");
+  EXPECT_EQ(s.baseColorTexture->bytes.size(), png.size());
+}
+
+TEST(ObjReaderTest, PartialTexcoordsAreDropped) {
+  // One face of the material has texture coordinates and one does not, so the section has none.
+  mochi::TempDirCleanup const dir =
+      mochi::CreateTempDirectory("obj_reader_partial_texcoords", mochi::test::ExpectOK{});
+  std::filesystem::path const objPath = dir.Path() / "model.obj";
+  std::ofstream(objPath) << "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nvt 0 0\nvt 1 0\nvt 0 1\n"
+                            "f 1/1 2/2 3/3\nf 1 2 4\n";
+
+  std::vector<MeshSection> const sections = ReadObjFromFile(objPath.string().c_str());
+  ASSERT_EQ(sections.size(), 1u);
+  EXPECT_FALSE(sections[0].hasTexcoords);
+  EXPECT_TRUE(sections[0].texcoords.empty());
+  EXPECT_FALSE(BuildGlbFromMeshSections(sections).empty());
+}
+
+TEST(ObjReaderTest, UnsupportedDiffuseMapFallsBackToColor) {
+  mochi::TempDirCleanup const dir =
+      mochi::CreateTempDirectory("obj_reader_unsupported_texture", mochi::test::ExpectOK{});
+  std::ofstream(dir.Path() / "albedo.bmp", std::ios::binary) << "BM not a png or jpeg";
+  std::ofstream(dir.Path() / "textured.mtl") << "newmtl Skin\nKd 0 1 0\nmap_Kd albedo.bmp\n";
+  std::filesystem::path const objPath = dir.Path() / "model.obj";
+  std::ofstream(objPath) << "mtllib textured.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\n"
+                            "usemtl Skin\nf 1/1 2/1 3/1\n";
+  auto const prevLogFn = mochi::GetLogCallback();
+  mochi::SetLogCallback(nullptr);
+  MOCHI_DEFER(mochi::SetLogCallback(prevLogFn));
+
+  std::vector<MeshSection> const sections = ReadObjFromFile(objPath.string().c_str());
+  ASSERT_EQ(sections.size(), 1u);
+  EXPECT_EQ(sections[0].baseColorTexture, nullptr);
+  std::array<float, 4> const green = {0.0f, 1.0f, 0.0f, 1.0f};
+  EXPECT_EQ(sections[0].baseColor, green);
+}
+
+TEST(ObjReaderTest, MissingDiffuseMapFallsBackToColor) {
+  mochi::TempDirCleanup const dir =
+      mochi::CreateTempDirectory("obj_reader_missing_texture", mochi::test::ExpectOK{});
+  std::ofstream(dir.Path() / "textured.mtl") << "newmtl Skin\nKd 0 0 1\nmap_Kd missing.png\n";
+  std::filesystem::path const objPath = dir.Path() / "model.obj";
+  std::ofstream(objPath) << "mtllib textured.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\n"
+                            "usemtl Skin\nf 1/1 2/1 3/1\n";
+  // The missing map is reported on the warning channel, which the test harness otherwise treats
+  // as a failure.
+  auto const prevLogFn = mochi::GetLogCallback();
+  mochi::SetLogCallback(nullptr);
+  MOCHI_DEFER(mochi::SetLogCallback(prevLogFn));
+
+  std::vector<MeshSection> const sections = ReadObjFromFile(objPath.string().c_str());
+  ASSERT_EQ(sections.size(), 1u);
+  EXPECT_EQ(sections[0].baseColorTexture, nullptr);
+  std::array<float, 4> const blue = {0.0f, 0.0f, 1.0f, 1.0f};
+  EXPECT_EQ(sections[0].baseColor, blue);
 }

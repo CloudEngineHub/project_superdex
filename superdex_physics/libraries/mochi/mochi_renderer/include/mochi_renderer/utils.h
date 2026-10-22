@@ -18,6 +18,8 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace mochi {
@@ -30,22 +32,34 @@ namespace mochi_renderer {
 // STRUCTS
 //--------------------------------------------------------------------------------------------------
 
+// An encoded PNG or JPEG image used as a texture. Sections that use the same image share one
+// instance, so @ref BuildGlbFromMeshSections embeds it once.
+struct TextureImage {
+  std::vector<uint8_t> bytes;
+  std::string mimeType; // "image/png" or "image/jpeg"
+};
+
 // One sub-mesh of a multi-material asset: flat positions/normals/indices plus a
-// resolved solid PBR material.
+// resolved PBR material, optionally with a base color texture.
 //
 // MeshSection is the common intermediate representation that enables a minimum-
 // viable conversion of DAE (COLLADA), OBJ, and STL assets into GLB: each reader
 // (@ref ReadColladaFromFile, @ref ReadObjFromFile, @ref ReadStlFromFile) emits
 // sections, and @ref BuildGlbFromMeshSections turns them into a GLB with one
 // glTF primitive (and one material) per section. It captures only what that
-// baseline conversion needs (geometry + a solid PBR material); richer glTF
-// features such as textures, skinning, and animation are intentionally omitted.
-// These and other fields may be added later as needed.
+// baseline conversion needs (geometry, texture coordinates, and a PBR material
+// with an optional base color texture); skinning, animation, and other texture
+// maps are intentionally omitted. These and other fields may be added later as needed.
 //
 // `hasNormals` is the single source of truth for normal presence: it indicates
 // whether `normals` is populated, and when true `normals` must hold exactly one
 // (x, y, z) normal per vertex (i.e. `normals.size() == positions.size()`). When
 // false the recipient is expected to compute normals if necessary.
+//
+// `hasTexcoords` plays the same role for `texcoords`: when true, `texcoords` holds exactly one
+// (u, v) pair per vertex, in glTF's convention (v = 0 at the top of the image).
+// `baseColorTexture` is sampled with those coordinates and multiplied by `baseColor`; it is
+// ignored for a section without texture coordinates.
 //
 // `emissive` is glTF's `emissiveFactor`, scaled by `emissiveStrength`
 // (`KHR_materials_emissive_strength`). The strength is carried separately rather
@@ -56,6 +70,9 @@ struct MeshSection {
   std::vector<float> normals;
   std::vector<int> indices;
   bool hasNormals = false;
+  std::vector<float> texcoords;
+  bool hasTexcoords = false;
+  std::shared_ptr<TextureImage const> baseColorTexture;
   std::array<float, 4> baseColor = {0.5f, 0.5f, 0.5f, 1.0f};
   float metallic = 0.0f;
   float roughness = 0.5f;
@@ -69,14 +86,16 @@ struct MeshSection {
 
 // Builds a minimal GLB (binary glTF) in memory from multiple mesh sections, one
 // glTF primitive and one PBR material per section. All sections share a single
-// buffer; each contributes its own POSITION/index bufferViews (plus NORMAL when
-// the section has normals). Use this for both single- and multi-material assets
-// (e.g. COLLADA with per-section materials); pass a single-element vector for a
-// single-material mesh.
+// buffer; each contributes its own POSITION/index bufferViews (plus NORMAL and
+// TEXCOORD_0 when the section has them). Base color textures are embedded in the
+// buffer, once per distinct @ref TextureImage, and sampled with repeat wrapping.
+// Use this for both single- and multi-material assets (e.g. COLLADA with
+// per-section materials); pass a single-element vector for a single-material mesh.
 //
 // A NORMAL attribute is emitted for each section whose `hasNormals` is set; such
 // a section must supply one normal per vertex (`normals.size() ==
-// positions.size()`). Leave `hasNormals` false to skip normals. Triangle indices
+// positions.size()`). Leave `hasNormals` false to skip normals. TEXCOORD_0 follows
+// the same rule with `hasTexcoords` (`texcoords.size() == 2 * vertexCount`). Triangle indices
 // are local to each section's own vertex arrays (zero-based per section). Empty
 // sections (no positions or no indices) are skipped.
 //
@@ -92,18 +111,18 @@ std::vector<uint8_t> BuildGlbFromMeshSections(std::vector<MeshSection> const& se
 // Reads a `.glb` file from disk into one @ref MeshSection per triangle
 // primitive, the inverse of @ref BuildGlbFromMeshSections. Each section receives
 // flat POSITION data and triangle indices (generated sequentially when the
-// primitive is non-indexed); NORMAL is unpacked when present (`hasNormals`). PBR
-// base color / metallic / roughness factors are read from the primitive's
-// material when it has a metallic-roughness model, otherwise the
-// @ref MeshSection defaults apply. Emissive factor and strength are read from
-// any material, with or without a metallic-roughness model. Non-triangle
-// primitives are skipped.
-// Geometry is returned in world space: each mesh is emitted once per referencing
-// scene node, with that node's world transform applied, so node
+// primitive is non-indexed); NORMAL and TEXCOORD_0 are unpacked when present
+// (`hasNormals`, `hasTexcoords`). PBR base color / metallic / roughness factors,
+// and a PNG or JPEG base color texture, are read from the primitive's material
+// when it has a metallic-roughness model, otherwise the @ref MeshSection defaults apply. Emissive
+// factor and strength are read from any material, with or without a metallic-roughness model.
+// Non-triangle primitives are skipped. Geometry is returned in world space: each mesh is emitted
+// once per referencing scene node, with that node's world transform applied, so node
 // placement/rotation/scale is preserved; GLBs with no node graph fall back to
-// emitting each mesh once at identity. External `.bin` buffers are resolved
-// relative to `path`. Returns an empty vector on read / parse failure or when no
-// triangle geometry is found.
+// emitting each mesh once at identity. External `.bin` buffers and texture images
+// are resolved relative to `path`; images in `data:` URIs are not supported and
+// fall back to the base color factor with a warning. Returns an empty vector on
+// read / parse failure or when no triangle geometry is found.
 std::vector<MeshSection> ReadGlbFromFile(char const* path);
 
 // Reads a `.dae` (COLLADA) file from disk into one @ref MeshSection per geometry
@@ -120,12 +139,15 @@ std::vector<MeshSection> ReadColladaFromFile(char const* path);
 // material, first-seen order); faces before any `usemtl` form a default section.
 // Referenced `.mtl` libraries (`mtllib`) are resolved relative to `path` and
 // their materials mapped to glTF PBR factors (diffuse `Kd` → baseColor, `d`/`Tr`
-// → alpha, specular exponent `Ns` → roughness, metallic = 0); textures and
-// unknown/unresolved materials fall back to the @ref MeshSection defaults. Faces
-// are fan-triangulated with vertices emitted flat per corner. `hasNormals` is
-// set only when the file supplies vertex normals (vn); otherwise `normals` is
-// left empty for the caller to compute. Returns an empty vector on read failure
-// or when no geometry is found.
+// → alpha, specular exponent `Ns` → roughness, metallic = 0). A diffuse map
+// (`map_Kd`, resolved relative to `path`) becomes the base color texture; other
+// maps and unknown/unresolved materials fall back to the @ref MeshSection defaults.
+// Faces are fan-triangulated with vertices emitted flat per corner. `hasNormals`
+// is set only when the file supplies vertex normals (vn); otherwise `normals` is
+// left empty for the caller to compute. `hasTexcoords` is set only when every
+// corner has a texture coordinate (vt, flipped to glTF's top-left origin);
+// otherwise `texcoords` is left empty. Returns an empty vector on read failure or
+// when no geometry is found.
 std::vector<MeshSection> ReadObjFromFile(char const* path);
 
 // Reads a `.stl` file (ASCII or binary) from disk into a single @ref MeshSection
@@ -135,6 +157,10 @@ std::vector<MeshSection> ReadObjFromFile(char const* path);
 // solid STL files are unsupported and yield an empty vector. Returns an empty
 // vector on read failure or when no geometry is found.
 std::vector<MeshSection> ReadStlFromFile(char const* path);
+
+// Reads a PNG or JPEG file (detected from its contents) into a @ref TextureImage.
+// Returns null on read failure or for any other image format.
+std::shared_ptr<TextureImage const> ReadTextureImageFromFile(char const* path);
 
 //--------------------------------------------------------------------------------------------------
 // MESH FILE WRITING

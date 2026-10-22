@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -363,6 +364,107 @@ TEST(GlbReaderTest, RoundTripPositionsIndicesNormalsMaterial) {
   }
   EXPECT_NEAR(read[0].metallic, 0.25f, 1e-6f);
   EXPECT_NEAR(read[0].roughness, 0.75f, 1e-6f);
+}
+
+// Two sections that share one texture: the image is embedded once and both materials sample it,
+// and the texture coordinates and image bytes survive a round trip.
+TEST(GlbReaderTest, RoundTripTexcoordsAndSharedTexture) {
+  auto texture = std::make_shared<TextureImage>();
+  texture->bytes = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 1, 2, 3};
+  texture->mimeType = "image/png";
+  std::vector<MeshSection> sections = {
+      MakeTriangle({1.0f, 1.0f, 1.0f, 1.0f}),
+      MakeTriangle({0.5f, 0.5f, 0.5f, 1.0f}),
+  };
+  for (MeshSection& section : sections) {
+    section.texcoords = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+    section.hasTexcoords = true;
+    section.baseColorTexture = texture;
+  }
+
+  std::vector<uint8_t> const glb = BuildGlbFromMeshSections(sections);
+  std::string const json = ExtractJson(glb);
+  EXPECT_EQ(CountOccurrences(json, R"("mimeType":"image/png")"), 1u);
+  EXPECT_EQ(CountOccurrences(json, R"("baseColorTexture":{"index":0})"), 2u);
+  EXPECT_EQ(CountOccurrences(json, R"("TEXCOORD_0")"), 2u);
+
+  mochi::TempFileCleanup const file = WriteTempGlb(glb, "glb_sections_texture");
+  std::vector<MeshSection> const read = ReadGlbFromFile(file.Path().string().c_str());
+  ASSERT_EQ(read.size(), 2u);
+  for (MeshSection const& section : read) {
+    EXPECT_TRUE(section.hasTexcoords);
+    EXPECT_EQ(section.texcoords, sections[0].texcoords);
+    ASSERT_NE(section.baseColorTexture, nullptr);
+    EXPECT_EQ(section.baseColorTexture->bytes, texture->bytes);
+    EXPECT_EQ(section.baseColorTexture->mimeType, "image/png");
+  }
+  EXPECT_EQ(read[0].baseColorTexture, read[1].baseColorTexture);
+}
+
+// Without texture coordinates a texture cannot be sampled, so it is not embedded.
+TEST(GlbSectionsTest, TextureWithoutTexcoordsIsNotEmbedded) {
+  auto texture = std::make_shared<TextureImage>();
+  texture->bytes = {0xFF, 0xD8, 0xFF, 0xE0};
+  texture->mimeType = "image/jpeg";
+  std::vector<MeshSection> sections = {MakeTriangle({1.0f, 1.0f, 1.0f, 1.0f})};
+  sections[0].baseColorTexture = texture;
+
+  std::string const json = ExtractJson(BuildGlbFromMeshSections(sections));
+  EXPECT_EQ(json.find("images"), std::string::npos);
+  EXPECT_EQ(json.find("baseColorTexture"), std::string::npos);
+}
+
+// A .gltf whose base color image is an external file with a percent-encoded name.
+TEST(GlbReaderTest, ExternalBaseColorImageWithEncodedUri) {
+  mochi::TempDirCleanup const dir =
+      mochi::CreateTempDirectory("gltf_external_image", mochi::test::ExpectOK{});
+  std::vector<float> const data = {
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0, // POSITION
+      0,
+      0,
+      1,
+      0,
+      0,
+      1}; // TEXCOORD_0
+  std::ofstream(dir.Path() / "tri.bin", std::ios::binary)
+      .write(reinterpret_cast<char const*>(data.data()), data.size() * sizeof(float));
+  std::vector<uint8_t> const png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 4, 5};
+  std::ofstream(dir.Path() / "my tex.png", std::ios::binary)
+      .write(reinterpret_cast<char const*>(png.data()), png.size());
+  std::filesystem::path const gltf = dir.Path() / "tri.gltf";
+  std::ofstream(gltf) << R"({
+    "asset": {"version": "2.0"},
+    "buffers": [{"uri": "tri.bin", "byteLength": 60}],
+    "bufferViews": [
+      {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+      {"buffer": 0, "byteOffset": 36, "byteLength": 24}],
+    "accessors": [
+      {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+       "min": [0, 0, 0], "max": [1, 1, 0]},
+      {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC2"}],
+    "images": [{"uri": "my%20tex.png"}],
+    "textures": [{"source": 0}],
+    "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+    "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "TEXCOORD_0": 1}, "material": 0}]}],
+    "nodes": [{"mesh": 0}],
+    "scenes": [{"nodes": [0]}],
+    "scene": 0
+  })";
+
+  std::vector<MeshSection> const read = ReadGlbFromFile(gltf.string().c_str());
+  ASSERT_EQ(read.size(), 1u);
+  EXPECT_TRUE(read[0].hasTexcoords);
+  ASSERT_NE(read[0].baseColorTexture, nullptr);
+  EXPECT_EQ(read[0].baseColorTexture->mimeType, "image/png");
+  EXPECT_EQ(read[0].baseColorTexture->bytes, png);
 }
 
 // A strength above 1 is the reason it cannot be folded into emissiveFactor, which the spec clamps
