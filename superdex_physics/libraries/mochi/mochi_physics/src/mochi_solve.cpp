@@ -1092,6 +1092,7 @@ static SnleProblem<real> InitIslandProblem(
   GetSolutions(problem.solution, reg, descendants.actors, 0);
 
   // Apply boundary conditions (if any) to solution and actors
+  // TODO: Make moving Dirichlet targets exact when an integrator's step end is not its last stage.
   if (ApplyBoundaryConditionsToSolution(reg, descendants.actors, problem.solution)) {
     SetSolutions(reg, descendants, problem.solution);
     solver::PostNewSolutionLocalPipeline(reg, island, problem.solution);
