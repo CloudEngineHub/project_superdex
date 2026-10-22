@@ -2723,6 +2723,7 @@
 ///
 /// @brief Stiffness coefficient [N/m or N·m/rad] for the joint limit constraints.
 ///
+/// @note Must be non-negative and finite.
 /// @note Ignored for joints without limits.
 ///
 
@@ -2730,6 +2731,7 @@
 ///
 /// @brief Damping coefficient [N·s/m or N·m·s/rad] for the joint limit constraints.
 ///
+/// @note Must be non-negative and finite.
 /// @note Ignored for joints without limits.
 ///
 

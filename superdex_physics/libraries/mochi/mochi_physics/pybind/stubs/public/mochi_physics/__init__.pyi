@@ -5877,10 +5877,16 @@ class ArticulatedJointParams:
     """Stiffness coefficient [N/m or N·m/rad] for the joint limit constraints.
 
     Note:
+        Must be non-negative and finite.
+
+    Note:
         Ignored for joints without limits.
     """
     limit_damping: float
     """Damping coefficient [N·s/m or N·m·s/rad] for the joint limit constraints.
+
+    Note:
+        Must be non-negative and finite.
 
     Note:
         Ignored for joints without limits.
