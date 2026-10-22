@@ -491,8 +491,8 @@ TEST_F(MjcfImportTest, PrimitiveNamingAMeshKeepsItForFitting) {
   <worldbody><body name="base"><geom type="capsule" mesh="part" fitscale="2"/></body></worldbody>
 </mujoco>)",
       info);
-  MjcfGeomReference const& geom = info.bodies[0].geoms[0];
-  EXPECT_EQ(geom.type, MjcfGeomType::Capsule);
+  GeomReference const& geom = info.bodies[0].geoms[0];
+  EXPECT_EQ(geom.type, GeomType::Capsule);
   EXPECT_FALSE(geom.meshFile.empty());
   EXPECT_TRUE(geom.shapeFile.empty());
   EXPECT_EQ(geom.fitScale, 2_r);

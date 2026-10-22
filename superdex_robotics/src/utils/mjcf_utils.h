@@ -43,11 +43,4 @@ void LoadBotPrefabFromMjcfXml(
     MjcfImportInfo& outInfo,
     Error& error);
 
-/* @brief True for the primitive geom types: sphere, capsule, ellipsoid, cylinder, and box. */
-inline bool IsMjcfPrimitive(MjcfGeomType type) {
-  return type == MjcfGeomType::Sphere || type == MjcfGeomType::Capsule ||
-      type == MjcfGeomType::Ellipsoid || type == MjcfGeomType::Cylinder ||
-      type == MjcfGeomType::Box;
-}
-
 } // namespace superdex::robotics

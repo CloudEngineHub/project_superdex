@@ -25,9 +25,7 @@ namespace superdex::studio {
 // geom frame with its axis along +Z. `size` follows MuJoCo: sphere (radius), capsule and cylinder
 // (radius, half-length), ellipsoid (radii), box (half-extents). Returns an empty mesh for
 // non-primitive types (mesh, plane, hfield, sdf).
-[[nodiscard]] mochi::MeshData TessellatePrimitive(
-    superdex::robotics::MjcfGeomType type,
-    mochi::Real3 const& size,
-    int segments = 32);
+[[nodiscard]] mochi::MeshData
+TessellatePrimitive(superdex::robotics::GeomType type, mochi::Real3 const& size, int segments = 32);
 
 } // namespace superdex::studio

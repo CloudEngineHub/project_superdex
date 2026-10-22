@@ -145,22 +145,23 @@ TEST_F(UrdfMeshResolutionTest, NoPackageXmlResolvesOmittedPackageSegment) {
 }
 
 // Layout (under _tempDir): no package.xml and no ancestor directory named after the
-// package — the mesh cannot be resolved on disk. The resolved path field is left empty
+// package — the mesh cannot be resolved on disk. The resolved path is left empty
 // (path-only semantics), while the raw URDF reference is surfaced through
-// UrdfMeshReferences so the importer can flag the link's mesh as missing.
+// UrdfImportInfo so the importer can flag the link's mesh as missing.
 TEST_F(UrdfMeshResolutionTest, UnresolvableMeshPreservesRawReference) {
   auto const packageDir = _tempDir / "some_other_dir";
   auto const urdfPath = packageDir / "urdf" / "robot.urdf";
 
   WriteFileText(urdfPath, SingleMeshUrdf("package://ur_description/meshes/base.dae"));
 
-  UrdfMeshReferences meshRefs;
-  BotPrefab const prefab = LoadBotPrefabFromUrdfFile(urdfPath.string(), meshRefs, ExpectOK{});
+  UrdfImportInfo info;
+  BotPrefab const prefab = LoadBotPrefabFromUrdfFile(urdfPath.string(), info, ExpectOK{});
 
   ASSERT_FALSE(prefab.links.empty());
-  EXPECT_TRUE(prefab.links[0].renderModelFile.empty());
-  ASSERT_EQ(meshRefs.links.size(), prefab.links.size());
-  EXPECT_EQ(
-      std::string(meshRefs.links[0].visual.c_str()), "package://ur_description/meshes/base.dae");
-  EXPECT_TRUE(meshRefs.links[0].collision.empty());
+  ASSERT_EQ(info.links.size(), prefab.links.size());
+  ASSERT_EQ(info.links[0].geoms.size(), 1u);
+  GeomReference const& visual = info.links[0].geoms[0];
+  EXPECT_TRUE(visual.isVisual);
+  EXPECT_EQ(std::string(visual.meshRef), "package://ur_description/meshes/base.dae");
+  EXPECT_TRUE(visual.meshFile.empty());
 }

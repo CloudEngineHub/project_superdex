@@ -21,7 +21,8 @@ collider is baked on the fly when the bot is created.
 PITFALL: The runtime URDF loader only understands *mesh* collision geometry and
 silently ignores primitive shapes (<box>, <cylinder>, <sphere>). The bundled FR3
 URDF defines its gripper fingers as <box> primitives, so the loaded fingers have
-no collision geometry.
+no collision geometry. A link with several meshes gets one Hard-jointed child
+link per extra mesh.
 
 PITFALL: Baking an SDF on the fly assumes each collision mesh is a closed
 (watertight) surface. Raw URDF meshes often are not, so loading may warn, e.g.:

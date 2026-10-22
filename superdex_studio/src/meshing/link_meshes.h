@@ -27,32 +27,33 @@
 #include <string>
 #include <vector>
 
-// Builds the render and collision models of MJCF bodies for the MJCF importer. Geoms come from
-// superdex::robotics::MjcfImportInfo, posed in their link's frame, in Mochi space.
+// Builds the render and collision models of links for the URDF and MJCF importers. Geoms come from
+// superdex::robotics::UrdfImportInfo or MjcfImportInfo, posed in their link's frame, in Mochi
+// space.
 
 namespace superdex::studio {
 
-using MjcfGeoms = std::vector<superdex::robotics::MjcfGeomReference>;
+using GeomList = std::vector<superdex::robotics::GeomReference>;
 
-// How a body's collision geoms become Mochi shapes.
-enum class MjcfCollisionMerge {
-  Union, // one mesh: the boolean union of the geoms
-  ShrinkWrap, // one mesh: a shrink-wrap around the geoms
-  Separate, // one Hard-jointed child link per geom
+// How a link's collision geoms are merged into one mesh.
+enum class CollisionMerge {
+  Union, // the boolean union of the geoms
+  ShrinkWrap, // a shrink-wrap around the geoms
 };
 
 // Render mesh sections of one geom, in the link frame (Mochi space). Mesh geoms are read from their
-// OBJ/STL file; primitives are tessellated. A geom with an MJCF material or rgba takes that color
-// (and its 2D texture, when the mesh has texture coordinates); otherwise an OBJ keeps its .mtl
+// OBJ, STL, DAE, or GLB file; primitives are tessellated. A geom with a color of its own takes it
+// (and its 2D texture, when the mesh has texture coordinates), unless it keeps the materials of a
+// mesh that has some (see GeomReference::keepMeshMaterials); otherwise a mesh keeps its own
 // colors. Appends a note to `warnings` for anything that could not be honored.
 [[nodiscard]] std::vector<mochi_renderer::MeshSection> GeomRenderSections(
-    superdex::robotics::MjcfGeomReference const& geom,
+    superdex::robotics::GeomReference const& geom,
     std::vector<std::string>& warnings);
 
 // Writes one .glb holding every geom in `geoms`, in the link frame, converted to the renderer's
 // space by `toRender`. Returns false if no geom produced geometry or the file could not be written.
 bool BuildLinkGlb(
-    MjcfGeoms const& geoms,
+    GeomList const& geoms,
     mochi::Path const& outputPath,
     mochi::CoordinateSpaceConverter const& toRender,
     std::vector<std::string>& warnings);
@@ -62,7 +63,7 @@ bool BuildLinkGlb(
 // frame, for @ref superdex::robotics::ExpandMjcfGeomLinks to place. Mesh geoms are loaded from
 // their file; primitives are tessellated. Empty if the geom has no usable geometry.
 [[nodiscard]] mochi::MeshData GeomCollisionMesh(
-    superdex::robotics::MjcfGeomReference const& geom,
+    superdex::robotics::GeomReference const& geom,
     bool inLinkFrame,
     std::vector<std::string>& warnings);
 
@@ -75,10 +76,10 @@ bool BuildLinkGlb(
     std::filesystem::path const& outDir);
 
 // Sizes and poses a primitive geom that names a mesh as MuJoCo does (see
-// @ref superdex::robotics::MjcfGeomReference::fitScale), then detaches the mesh. Returns false,
+// @ref superdex::robotics::GeomReference::fitScale), then detaches the mesh. Returns false,
 // with a warning, and leaves the geom unchanged if the mesh cannot be loaded or encloses no volume.
 bool FitPrimitiveToMesh(
-    superdex::robotics::MjcfGeomReference& geom,
+    superdex::robotics::GeomReference& geom,
     std::vector<std::string>& warnings);
 
 struct GeomsInertia {
@@ -91,22 +92,21 @@ struct GeomsInertia {
 // geom (visual or not) weighs its `mass`, or else its `density` (MuJoCo's default 1000 kg/m^3)
 // times its enclosed volume. Empty if no geom has mass.
 [[nodiscard]] std::optional<GeomsInertia> ComputeGeomsInertia(
-    MjcfGeoms const& geoms,
+    GeomList const& geoms,
     std::vector<std::string>& warnings);
 
 struct LinkCollisionOptions {
-  MjcfCollisionMerge merge = MjcfCollisionMerge::Union;
+  CollisionMerge merge = CollisionMerge::Union;
   bool remesh = true;
   bool bakeSdf = true;
 };
 
 // Writes one .mochi.h5 holding `geoms` merged per `options.merge`, in the link frame: their
-// shrink-wrap for ShrinkWrap, otherwise their boolean union (a lone geom as it is; Separate callers
-// write one file per geom). Spheres are tessellated too: Mochi
-// needs a surface mesh on every dynamic link that has contact. Returns false if no geom produced
-// geometry or the merge or save failed.
+// shrink-wrap for ShrinkWrap, otherwise their boolean union (a lone geom as it is). Spheres are
+// tessellated too: Mochi needs a surface mesh on every dynamic link that has contact. Returns false
+// if no geom produced geometry or the merge or save failed.
 bool BuildLinkCollisionH5(
-    MjcfGeoms const& geoms,
+    GeomList const& geoms,
     LinkCollisionOptions const& options,
     mochi::Path const& outputPath,
     std::vector<std::string>& warnings);
@@ -114,7 +114,7 @@ bool BuildLinkCollisionH5(
 // Writes one geom's collision surface to a .mochi.h5 in the mesh's own frame (see
 // @ref GeomCollisionMesh), for the Separate layout.
 bool BuildGeomCollisionH5(
-    superdex::robotics::MjcfGeomReference const& geom,
+    superdex::robotics::GeomReference const& geom,
     LinkCollisionOptions const& options,
     mochi::Path const& outputPath,
     std::vector<std::string>& warnings);

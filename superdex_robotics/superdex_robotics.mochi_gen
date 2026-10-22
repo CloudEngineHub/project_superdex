@@ -282,11 +282,13 @@ fn bots::LoadBotPrefabFromFile(StringView path) -> bots::BotPrefab [export, moch
 // on-disk paths in the returned prefab. Collision meshes may be any format the shape loader
 // accepts (e.g. .stl, .obj, .ply, .off, .mochi.h5); when a collision mesh carries no baked
 // SDF, one is generated on demand at bot creation. A free `world_joint` is injected at index 0.
+// A link with several mesh @code <collision> @endcode or @code <visual> @endcode elements gets one
+// Hard-jointed child link per extra mesh, named after the link with a `_collision_k` or
+// `_visual_k` suffix and appended after the existing links.
 //
-// @note Only @code <mesh> @endcode geometry is imported. Primitive URDF shapes
-// (@code <box> @endcode, @code <cylinder> @endcode, @code <sphere> @endcode) in
-// @code <visual> @endcode / @code <collision> @endcode elements are not supported and are silently
-// skipped; the importer uses the first mesh-bearing visual/collision on each link.
+// @note Only @code <mesh> @endcode geometry is assigned. Primitive URDF shapes
+// (@code <box> @endcode, @code <cylinder> @endcode, @code <sphere> @endcode) have no file to point
+// at and are skipped.
 //
 // @param[in] path Path to the .urdf file.
 //

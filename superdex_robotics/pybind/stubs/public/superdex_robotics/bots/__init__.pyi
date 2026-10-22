@@ -2146,7 +2146,10 @@ def load_bot_prefab_from_urdf_file(path: str) -> BotPrefab:
     resolved on-disk paths in the returned prefab. Collision meshes may be any
     format the shape loader accepts (e.g. .stl, .obj, .ply, .off, .mochi.h5); when a
     collision mesh carries no baked SDF, one is generated on demand at bot creation.
-    A free `world_joint` is injected at index 0.
+    A free `world_joint` is injected at index 0. A link with several mesh
+    ``<collision>`` or ``<visual>`` elements gets one Hard-jointed child link per
+    extra mesh, named after the link with a `_collision_k` or `_visual_k` suffix and
+    appended after the existing links.
 
     Args:
         path (str): Path to the .urdf file.
@@ -2158,10 +2161,8 @@ def load_bot_prefab_from_urdf_file(path: str) -> BotPrefab:
         :class:`~superdex.physics.Error`: If an error occurs.
 
     Note:
-        Only ``<mesh>`` geometry is imported. Primitive URDF shapes (``<box>``,
-        ``<cylinder>``, ``<sphere>``) in ``<visual>`` / ``<collision>`` elements are
-        not supported and are silently skipped; the importer uses the first
-        mesh-bearing visual/collision on each link.
+        Only ``<mesh>`` geometry is assigned. Primitive URDF shapes (``<box>``,
+        ``<cylinder>``, ``<sphere>``) have no file to point at and are skipped.
     """
 
 def load_bot_prefab_from_mjcf_file(path: str) -> BotPrefab:

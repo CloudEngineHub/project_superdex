@@ -25,7 +25,7 @@
 
 namespace superdex::studio {
 
-using superdex::robotics::MjcfGeomType;
+using superdex::robotics::GeomType;
 
 namespace {
 
@@ -111,15 +111,15 @@ mochi::MeshData Box(mochi::Real3 const& h) {
 
 } // namespace
 
-mochi::MeshData TessellatePrimitive(MjcfGeomType type, mochi::Real3 const& size, int segments) {
+mochi::MeshData TessellatePrimitive(GeomType type, mochi::Real3 const& size, int segments) {
   int const rings = std::max(segments / 4, 2);
   std::vector<ProfilePoint> profile;
   switch (type) {
-    case MjcfGeomType::Box:
+    case GeomType::Box:
       return Box(size);
-    case MjcfGeomType::Sphere:
-    case MjcfGeomType::Ellipsoid: {
-      bool const isSphere = type == MjcfGeomType::Sphere;
+    case GeomType::Sphere:
+    case GeomType::Ellipsoid: {
+      bool const isSphere = type == GeomType::Sphere;
       AppendHemisphere(profile, 1, 0, /*bottom=*/true, rings);
       profile.pop_back(); // the equator is shared with the top half
       AppendHemisphere(profile, 1, 0, /*bottom=*/false, rings);
@@ -130,17 +130,17 @@ mochi::MeshData TessellatePrimitive(MjcfGeomType type, mochi::Real3 const& size,
       }
       return mesh;
     }
-    case MjcfGeomType::Capsule:
+    case GeomType::Capsule:
       AppendHemisphere(profile, size[0], -size[1], /*bottom=*/true, rings);
       AppendHemisphere(profile, size[0], size[1], /*bottom=*/false, rings);
       return Revolve(profile, segments);
-    case MjcfGeomType::Cylinder:
+    case GeomType::Cylinder:
       profile = {{0, -size[1]}, {size[0], -size[1]}, {size[0], size[1]}, {0, size[1]}};
       return Revolve(profile, segments);
-    case MjcfGeomType::Plane:
-    case MjcfGeomType::Hfield:
-    case MjcfGeomType::Mesh:
-    case MjcfGeomType::Sdf:
+    case GeomType::Plane:
+    case GeomType::Hfield:
+    case GeomType::Mesh:
+    case GeomType::Sdf:
       break;
   }
   return {};

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "meshing/mjcf_link_meshes.h"
+#include "meshing/link_meshes.h"
 
 #include "meshing/mesh_conversion.h"
 #include "meshing/primitive_meshes.h"
@@ -30,6 +30,7 @@
 #include <mochi_core/utils/transform_rt.h>
 #include <mochi_mesh/step_mesh_stages.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
+#include <mochi_renderer/render_space.h>
 
 #include <algorithm>
 #include <cmath>
@@ -41,25 +42,21 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 namespace superdex::studio {
 
-using superdex::robotics::MjcfGeomReference;
-using superdex::robotics::MjcfGeomType;
+using superdex::robotics::GeomReference;
+using superdex::robotics::GeomType;
+using superdex::robotics::IsPrimitiveGeom;
 
 namespace {
 
 mochi::Real3 const kUnitScale{mochi::real(1), mochi::real(1), mochi::real(1)};
 
-bool IsPrimitive(MjcfGeomType type) {
-  return type == MjcfGeomType::Sphere || type == MjcfGeomType::Capsule ||
-      type == MjcfGeomType::Ellipsoid || type == MjcfGeomType::Cylinder ||
-      type == MjcfGeomType::Box;
-}
-
-std::string GeomLabel(MjcfGeomReference const& geom) {
+std::string GeomLabel(GeomReference const& geom) {
   if (!geom.name.empty()) {
     return "geom \"" + std::string(geom.name) + "\"";
   }
@@ -67,6 +64,68 @@ std::string GeomLabel(MjcfGeomReference const& geom) {
     return "mesh \"" + std::string(geom.meshRef) + "\"";
   }
   return "an unnamed geom";
+}
+
+// The first whitespace-separated token of `line`, and where it ends.
+std::string_view LineKeyword(std::string const& line, size_t& outEnd) {
+  size_t const start = line.find_first_not_of(" \t");
+  outEnd = line.find_first_of(" \t", start);
+  return start == std::string::npos ? std::string_view{}
+                                    : std::string_view(line).substr(start, outEnd - start);
+}
+
+// True if an OBJ file names a material library that exists, so its faces carry their own colors.
+bool ObjHasMaterialLibrary(std::string const& objPath) {
+  std::ifstream in(objPath);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    size_t end = 0;
+    if (LineKeyword(line, end) != "mtllib" || end == std::string::npos) {
+      continue;
+    }
+    size_t const start = line.find_first_not_of(" \t", end);
+    std::error_code error;
+    if (start != std::string::npos &&
+        std::filesystem::exists(
+            std::filesystem::path(objPath).parent_path() / line.substr(start), error)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A mesh file's render sections in its own frame, in Mochi space, and whether the file colors them
+// itself (DAE and GLB always do; an OBJ does with a material library). Empty if the format is not
+// OBJ, STL, DAE, or GLB, or the file could not be read.
+std::vector<mochi_renderer::MeshSection> ReadMeshSections(
+    std::string const& file,
+    bool& outOwnMaterials) {
+  std::string const lower = mochi::Path{file}.AsLowercaseString();
+  outOwnMaterials = false;
+  if (lower.ends_with(".obj")) {
+    outOwnMaterials = ObjHasMaterialLibrary(file);
+    return mochi_renderer::ReadObjFromFile(file.c_str());
+  }
+  if (lower.ends_with(".stl")) {
+    return mochi_renderer::ReadStlFromFile(file.c_str());
+  }
+  bool const isCollada = lower.ends_with(".dae");
+  if (!isCollada && !lower.ends_with(".glb")) {
+    return {};
+  }
+  std::vector<mochi_renderer::MeshSection> sections = isCollada
+      ? mochi_renderer::ReadColladaFromFile(file.c_str())
+      : mochi_renderer::ReadGlbFromFile(file.c_str());
+  // These readers return geometry in the renderer's space.
+  mochi_renderer::ConvertMeshSectionsSpace(
+      sections,
+      mochi::CoordinateSpaceConverter(
+          mochi_renderer::RenderSpace(), mochi::CoordinateSpace::Default()));
+  outOwnMaterials = true;
+  return sections;
 }
 
 // Scales positions per axis and then applies `transform`. Normals follow the inverse-transpose of
@@ -170,36 +229,35 @@ mochi::MeshData ShrinkWrapPieces(std::vector<mochi::MeshData> const& pieces) {
 } // namespace
 
 std::vector<mochi_renderer::MeshSection> GeomRenderSections(
-    MjcfGeomReference const& geom,
+    GeomReference const& geom,
     std::vector<std::string>& warnings) {
   std::vector<mochi_renderer::MeshSection> sections;
-  if (geom.type == MjcfGeomType::Mesh) {
+  bool ownMaterials = false;
+  if (geom.type == GeomType::Mesh) {
     if (geom.meshFile.empty()) {
       warnings.push_back("Missing mesh file for " + GeomLabel(geom) + ".");
       return {};
     }
     std::string const file(geom.meshFile);
-    std::string const ext = mochi::Path{file}.AsLowercaseString();
-    if (ext.ends_with(".obj")) {
-      sections = mochi_renderer::ReadObjFromFile(file.c_str());
-    } else if (ext.ends_with(".stl")) {
-      sections = mochi_renderer::ReadStlFromFile(file.c_str());
-    } else {
-      warnings.push_back("Unsupported mesh format for " + GeomLabel(geom) + ": " + file);
+    sections = ReadMeshSections(file, ownMaterials);
+    if (sections.empty()) {
+      warnings.push_back(
+          "Could not read " + GeomLabel(geom) + " as an OBJ, STL, DAE, or GLB mesh: " + file);
       return {};
     }
     for (auto& section : sections) {
       ScaleAndTransform(section, geom.meshScale, geom.linkFromGeom * geom.geomFromMesh);
     }
-  } else if (IsPrimitive(geom.type)) {
+  } else if (IsPrimitiveGeom(geom.type)) {
     sections.push_back(PrimitiveSection(TessellatePrimitive(geom.type, geom.size)));
     ScaleAndTransform(sections.back(), kUnitScale, geom.linkFromGeom);
   } else {
     return {};
   }
 
-  // MuJoCo colors a geom by its rgba or material and ignores the mesh's own materials.
-  if (geom.hasMaterial) {
+  // MuJoCo colors a geom by its rgba or material and ignores the mesh's own materials. URDF colors
+  // only meshes without materials of their own.
+  if (geom.hasMaterial && !(geom.keepMeshMaterials && ownMaterials)) {
     std::shared_ptr<mochi_renderer::TextureImage const> texture;
     if (!geom.textureFile.empty()) {
       texture = mochi_renderer::ReadTextureImageFromFile(geom.textureFile.c_str());
@@ -238,12 +296,12 @@ std::vector<mochi_renderer::MeshSection> GeomRenderSections(
 }
 
 bool BuildLinkGlb(
-    MjcfGeoms const& geoms,
+    GeomList const& geoms,
     mochi::Path const& outputPath,
     mochi::CoordinateSpaceConverter const& toRender,
     std::vector<std::string>& warnings) {
   std::vector<mochi_renderer::MeshSection> sections;
-  for (MjcfGeomReference const& geom : geoms) {
+  for (GeomReference const& geom : geoms) {
     std::vector<mochi_renderer::MeshSection> geomSections = GeomRenderSections(geom, warnings);
     std::move(geomSections.begin(), geomSections.end(), std::back_inserter(sections));
   }
@@ -261,27 +319,32 @@ bool BuildLinkGlb(
   return mochi_renderer::WriteGlbToFile(outputPath.ToString().c_str(), sections);
 }
 
-mochi::MeshData GeomCollisionMesh(
-    MjcfGeomReference const& geom,
-    bool inLinkFrame,
-    std::vector<std::string>& warnings) {
+mochi::MeshData
+GeomCollisionMesh(GeomReference const& geom, bool inLinkFrame, std::vector<std::string>& warnings) {
   mochi::ModelData data;
   mochi::Real3 scale = kUnitScale;
   mochi::TransformRT linkFromData = geom.linkFromGeom;
-  if (geom.type == MjcfGeomType::Mesh) {
+  if (geom.type == GeomType::Mesh) {
     if (geom.meshFile.empty()) {
       warnings.push_back("Missing mesh file for " + GeomLabel(geom) + ".");
       return {};
     }
+    std::string const file(geom.meshFile);
+    std::string const lower = mochi::Path{file}.AsLowercaseString();
     mochi::ErrorLog error;
-    data = mochi::model_utils::LoadFromFile(std::string(geom.meshFile), error);
+    if (lower.ends_with(".dae") || lower.ends_with(".glb")) {
+      bool ownMaterials = false;
+      data = MeshSectionsToModel(ReadMeshSections(file, ownMaterials), nullptr);
+    } else {
+      data = mochi::model_utils::LoadFromFile(file, error);
+    }
     if (!error.IsOK() || !data.mesh.has_value() || data.mesh->nodesPerElement != 3) {
       warnings.push_back("Could not load " + GeomLabel(geom) + " as a triangle mesh.");
       return {};
     }
     scale = geom.meshScale;
     linkFromData = geom.linkFromGeom * geom.geomFromMesh;
-  } else if (IsPrimitive(geom.type)) {
+  } else if (IsPrimitiveGeom(geom.type)) {
     data.mesh = TessellatePrimitive(geom.type, geom.size);
   } else {
     return {};
@@ -366,7 +429,7 @@ namespace {
 
 // Volume, centroid (link frame), and second moment about the centroid (per unit density) of a
 // primitive geom, from the closed-form solids MuJoCo uses. Empty if it encloses no volume.
-std::optional<LegacyMeshVolume> ComputePrimitiveVolume(MjcfGeomReference const& geom) {
+std::optional<LegacyMeshVolume> ComputePrimitiveVolume(GeomReference const& geom) {
   constexpr mochi::real kPi = mochi::kPI;
   mochi::real const a = geom.size[0];
   mochi::real const b = geom.size[1];
@@ -374,23 +437,23 @@ std::optional<LegacyMeshVolume> ComputePrimitiveVolume(MjcfGeomReference const& 
   mochi::real volume = 0;
   mochi::Real3 moments{}; // integrals of x^2, y^2, z^2 over the solid, in the geom frame
   switch (geom.type) {
-    case MjcfGeomType::Sphere:
+    case GeomType::Sphere:
       volume = 4 * kPi * a * a * a / 3;
       moments = mochi::Real3{a * a, a * a, a * a} * (volume / 5);
       break;
-    case MjcfGeomType::Ellipsoid:
+    case GeomType::Ellipsoid:
       volume = 4 * kPi * a * b * c / 3;
       moments = mochi::Real3{a * a, b * b, c * c} * (volume / 5);
       break;
-    case MjcfGeomType::Box:
+    case GeomType::Box:
       volume = 8 * a * b * c;
       moments = mochi::Real3{a * a, b * b, c * c} * (volume / 3);
       break;
-    case MjcfGeomType::Cylinder: // radius a, half-height b along Z
+    case GeomType::Cylinder: // radius a, half-height b along Z
       volume = 2 * kPi * a * a * b;
       moments = mochi::Real3{volume * a * a / 4, volume * a * a / 4, volume * b * b / 3};
       break;
-    case MjcfGeomType::Capsule: { // radius a, cylinder half-height b along Z, hemispherical caps
+    case GeomType::Capsule: { // radius a, cylinder half-height b along Z, hemispherical caps
       mochi::real const cylinder = 2 * kPi * a * a * b;
       mochi::real const sphere = 4 * kPi * a * a * a / 3;
       volume = cylinder + sphere;
@@ -399,10 +462,10 @@ std::optional<LegacyMeshVolume> ComputePrimitiveVolume(MjcfGeomReference const& 
           radial, radial, cylinder * b * b / 3 + sphere * (b * b + 3 * b * a / 4 + a * a / 5)};
       break;
     }
-    case MjcfGeomType::Mesh:
-    case MjcfGeomType::Plane:
-    case MjcfGeomType::Hfield:
-    case MjcfGeomType::Sdf:
+    case GeomType::Mesh:
+    case GeomType::Plane:
+    case GeomType::Hfield:
+    case GeomType::Sdf:
       return std::nullopt;
   }
   if (!mochi::IsFinite(volume) || volume <= 0) {
@@ -423,25 +486,25 @@ std::optional<LegacyMeshVolume> ComputePrimitiveVolume(MjcfGeomReference const& 
 } // namespace
 
 std::optional<GeomsInertia> ComputeGeomsInertia(
-    MjcfGeoms const& geoms,
+    GeomList const& geoms,
     std::vector<std::string>& warnings) {
   constexpr mochi::real kMjcfDefaultDensity = 1000;
   mochi::real totalMass = 0;
   mochi::Vec4r firstMoment{};
   mochi::VMatrix3x3r secondMoment{};
-  for (MjcfGeomReference const& geom : geoms) {
+  for (GeomReference const& geom : geoms) {
     mochi::real const density = geom.density.value_or(kMjcfDefaultDensity);
     if (geom.mass ? *geom.mass <= 0 : density <= 0) {
       continue;
     }
     std::optional<LegacyMeshVolume> volume;
-    if (geom.type == MjcfGeomType::Mesh) {
+    if (geom.type == GeomType::Mesh) {
       mochi::MeshData mesh = GeomCollisionMesh(geom, /*inLinkFrame=*/true, warnings);
       if (mesh.IsEmpty()) {
         continue;
       }
       volume = ComputeLegacyMeshVolume(std::move(mesh));
-    } else if (IsPrimitive(geom.type)) {
+    } else if (IsPrimitiveGeom(geom.type)) {
       volume = ComputePrimitiveVolume(geom);
     } else {
       continue;
@@ -470,14 +533,6 @@ std::optional<GeomsInertia> ComputeGeomsInertia(
 }
 
 namespace {
-
-// The first whitespace-separated token of `line`, and where it ends.
-std::string_view LineKeyword(std::string const& line, size_t& outEnd) {
-  size_t const start = line.find_first_not_of(" \t");
-  outEnd = line.find_first_of(" \t", start);
-  return start == std::string::npos ? std::string_view{}
-                                    : std::string_view(line).substr(start, outEnd - start);
-}
 
 // Copies the material library `source` to `copy`, with relative texture paths made absolute so
 // they still resolve from the copy's folder.
@@ -565,9 +620,9 @@ std::string FirstObjObjectFile(std::string const& objPath, std::filesystem::path
   return error.IsOK() ? copy.string() : objPath;
 }
 
-bool FitPrimitiveToMesh(MjcfGeomReference& geom, std::vector<std::string>& warnings) {
-  MjcfGeomReference asMesh = geom;
-  asMesh.type = MjcfGeomType::Mesh;
+bool FitPrimitiveToMesh(GeomReference& geom, std::vector<std::string>& warnings) {
+  GeomReference asMesh = geom;
+  asMesh.type = GeomType::Mesh;
   mochi::MeshData mesh = GeomCollisionMesh(asMesh, /*inLinkFrame=*/false, warnings);
   if (mesh.IsEmpty()) {
     return false;
@@ -595,25 +650,25 @@ bool FitPrimitiveToMesh(MjcfGeomReference& geom, std::vector<std::string>& warni
   }
   mochi::Real3 size{};
   switch (geom.type) {
-    case MjcfGeomType::Sphere:
+    case GeomType::Sphere:
       size[0] = (box[0] + box[1] + box[2]) / 3;
       break;
-    case MjcfGeomType::Capsule:
+    case GeomType::Capsule:
       size[0] = (box[0] + box[1]) / 2;
       size[1] = mochi::Max(mochi::real(0), box[2] - size[0] / 2);
       break;
-    case MjcfGeomType::Cylinder:
+    case GeomType::Cylinder:
       size[0] = (box[0] + box[1]) / 2;
       size[1] = box[2];
       break;
-    case MjcfGeomType::Ellipsoid:
-    case MjcfGeomType::Box:
+    case GeomType::Ellipsoid:
+    case GeomType::Box:
       size = box;
       break;
-    case MjcfGeomType::Mesh:
-    case MjcfGeomType::Plane:
-    case MjcfGeomType::Hfield:
-    case MjcfGeomType::Sdf:
+    case GeomType::Mesh:
+    case GeomType::Plane:
+    case GeomType::Hfield:
+    case GeomType::Sdf:
       return false;
   }
   geom.size = size * geom.fitScale;
@@ -626,12 +681,12 @@ bool FitPrimitiveToMesh(MjcfGeomReference& geom, std::vector<std::string>& warni
 }
 
 bool BuildLinkCollisionH5(
-    MjcfGeoms const& geoms,
+    GeomList const& geoms,
     LinkCollisionOptions const& options,
     mochi::Path const& outputPath,
     std::vector<std::string>& warnings) {
   std::vector<mochi::MeshData> pieces;
-  for (MjcfGeomReference const& geom : geoms) {
+  for (GeomReference const& geom : geoms) {
     mochi::MeshData piece = GeomCollisionMesh(geom, /*inLinkFrame=*/true, warnings);
     if (!piece.IsEmpty()) {
       pieces.push_back(std::move(piece));
@@ -642,7 +697,7 @@ bool BuildLinkCollisionH5(
   }
 
   mochi::MeshData merged;
-  if (options.merge == MjcfCollisionMerge::ShrinkWrap) {
+  if (options.merge == CollisionMerge::ShrinkWrap) {
     merged = ShrinkWrapPieces(pieces);
   } else if (pieces.size() == 1) {
     // Like a URDF mesh, a lone geom is only remeshed and baked; there is nothing to merge.
@@ -671,7 +726,7 @@ bool BuildLinkCollisionH5(
 }
 
 bool BuildGeomCollisionH5(
-    MjcfGeomReference const& geom,
+    GeomReference const& geom,
     LinkCollisionOptions const& options,
     mochi::Path const& outputPath,
     std::vector<std::string>& warnings) {

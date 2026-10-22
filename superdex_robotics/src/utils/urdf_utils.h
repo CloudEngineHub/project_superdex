@@ -26,7 +26,7 @@
 // Internal URDF import/export interface for superdex_robotics. The implementation is a
 // hand-rolled tinyxml2 parser/exporter (urdf_import_utils.cpp / urdf_export_utils.cpp) and is a
 // private implementation detail — the public entry points live in
-// superdex_robotics/utils/file_utils.h (LoadBotPrefabFromUrdf*, SaveToUrdf*).
+// superdex_robotics/utils/file_utils.h (LoadBotPrefabFromUrdf*, ExpandUrdfGeomLinks, SaveToUrdf*).
 
 namespace superdex::robotics {
 using namespace mochi;
@@ -59,10 +59,11 @@ int AlphaNumCompare(char const* l, char const* r);
 // Import (tinyxml2 backend)
 // ---------------------------------------------------------------------------
 
+/* @brief Parse a URDF file into links and joints, with no geometry assigned. */
 void LoadBotPrefabFromUrdfFile(
     BotPrefab& outData,
     std::string_view path,
-    UrdfMeshReferences* meshRefs,
+    UrdfImportInfo& outInfo,
     Error& error);
 
 void LoadBotPrefabFromUrdfXml(BotPrefab& outData, std::string_view xmlString, Error& error);

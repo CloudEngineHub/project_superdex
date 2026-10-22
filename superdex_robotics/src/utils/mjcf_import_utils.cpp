@@ -16,6 +16,8 @@
 
 #include "mjcf_utils.h"
 
+#include "geom_utils.h"
+
 #include <superdex_robotics/utils/bot_utils.h>
 
 #include <mochi_core/utils/basic_utils.h>
@@ -55,8 +57,6 @@ constexpr std::string_view kActuatorDefaultsKey = "actuator";
 constexpr int kMaxIncludeDepth = 32;
 // Set on elements spliced in from an <include>: the directory of the file they came from.
 constexpr char const* kIncludeDirAttribute = "superdex_include_dir";
-constexpr real kCollisionChildMassFraction = 1e-6_r;
-constexpr real kCollisionChildMinMass = 1e-9_r;
 
 // MuJoCo actuator element names. Their defaults share one attribute set, as in MuJoCo.
 constexpr std::array<std::string_view, 10> kActuatorTags = {
@@ -149,21 +149,6 @@ std::string SanitizeName(std::string name) {
   return name;
 }
 
-// Returns `name` if free, else `name<suffix>`, `name<suffix>_2`, ..., and records it as taken.
-std::string ClaimUniqueName(
-    std::string const& name,
-    std::unordered_set<std::string>& taken,
-    std::string const& suffix) {
-  if (taken.insert(name).second) {
-    return name;
-  }
-  std::string candidate = name + suffix;
-  for (int i = 2; !taken.insert(candidate).second; ++i) {
-    candidate = name + suffix + "_" + std::to_string(i);
-  }
-  return candidate;
-}
-
 // ---------------------------------------------------------------------------
 // Parsed model
 // ---------------------------------------------------------------------------
@@ -230,7 +215,7 @@ struct ParsedBody {
   TransformRT parentFromBody;
   DynamicArray<ParsedJoint> joints;
   std::optional<ParsedInertial> inertial;
-  DynamicArray<MjcfGeomReference> geoms; // linkFromGeom holds bodyFromGeom until emission
+  DynamicArray<GeomReference> geoms; // linkFromGeom holds bodyFromGeom until emission
   real gravcomp = 0_r;
   DynamicArray<int> children;
 };
@@ -944,7 +929,7 @@ void MjcfReader::ParseGeom(
     std::string const& cls,
     TransformRT const& bodyFromFrame,
     int bodyIndex) {
-  MjcfGeomReference geom;
+  GeomReference geom;
   if (char const* name = e->Attribute("name")) {
     geom.name = name;
     _geomBodyByName[name] = bodyIndex;
@@ -954,16 +939,16 @@ void MjcfReader::ParseGeom(
   if (type.empty()) {
     type = meshName.empty() ? "sphere" : "mesh";
   }
-  static std::unordered_map<std::string_view, MjcfGeomType> const kTypes = {
-      {"plane", MjcfGeomType::Plane},
-      {"hfield", MjcfGeomType::Hfield},
-      {"sphere", MjcfGeomType::Sphere},
-      {"capsule", MjcfGeomType::Capsule},
-      {"ellipsoid", MjcfGeomType::Ellipsoid},
-      {"cylinder", MjcfGeomType::Cylinder},
-      {"box", MjcfGeomType::Box},
-      {"mesh", MjcfGeomType::Mesh},
-      {"sdf", MjcfGeomType::Sdf}};
+  static std::unordered_map<std::string_view, GeomType> const kTypes = {
+      {"plane", GeomType::Plane},
+      {"hfield", GeomType::Hfield},
+      {"sphere", GeomType::Sphere},
+      {"capsule", GeomType::Capsule},
+      {"ellipsoid", GeomType::Ellipsoid},
+      {"cylinder", GeomType::Cylinder},
+      {"box", GeomType::Box},
+      {"mesh", GeomType::Mesh},
+      {"sdf", GeomType::Sdf}};
   auto const typeIt = kTypes.find(type);
   MOCHI_ERROR_IF(typeIt == kTypes.end(), _error, "MJCF <geom> has an unknown type");
   MOCHI_ERROR_RETURN(_error);
@@ -988,7 +973,7 @@ void MjcfReader::ParseGeom(
     bodyFromGeom = TransformRT{rotation, 0.5_r * (from + to)};
     // Capsules and cylinders take (radius, half-length); boxes and ellipsoids keep their X and Y
     // half-sizes and take the half-length along Z.
-    if (geom.type == MjcfGeomType::Capsule || geom.type == MjcfGeomType::Cylinder) {
+    if (geom.type == GeomType::Capsule || geom.type == GeomType::Cylinder) {
       geom.size[1] = 0.5_r * length;
     } else {
       geom.size[2] = 0.5_r * length;
@@ -998,8 +983,8 @@ void MjcfReader::ParseGeom(
   }
   geom.linkFromGeom = bodyFromFrame * bodyFromGeom;
 
-  bool const isFitted = !meshName.empty() && IsMjcfPrimitive(geom.type);
-  if (geom.type == MjcfGeomType::Mesh || isFitted) {
+  bool const isFitted = !meshName.empty() && IsPrimitiveGeom(geom.type);
+  if (geom.type == GeomType::Mesh || isFitted) {
     auto const meshIt = _meshes.find(meshName);
     if (meshIt == _meshes.end()) {
       Warn("Geom references unknown mesh \"" + meshName + "\".");
@@ -1008,7 +993,7 @@ void MjcfReader::ParseGeom(
       geom.meshFile = meshIt->second.file;
       geom.meshScale = meshIt->second.scale;
       geom.geomFromMesh = meshIt->second.geomFromMesh;
-      if (geom.type == MjcfGeomType::Mesh) {
+      if (geom.type == GeomType::Mesh) {
         geom.shapeFile = geom.meshFile;
         geom.renderModelFile = geom.meshFile;
       }
@@ -1285,7 +1270,7 @@ void MjcfReader::EmitBody(
   ref.linkFromBody = linkFromBody;
   ref.hasInertial = body.inertial.has_value();
   ref.hasJoints = numJoints > 0;
-  for (MjcfGeomReference geom : body.geoms) {
+  for (GeomReference geom : body.geoms) {
     geom.linkFromGeom = linkFromBody * geom.linkFromGeom;
     ref.geoms.push_back(std::move(geom));
   }
@@ -1493,41 +1478,6 @@ void LoadMjcfDocument(
   reader.Read(doc, fallbackName, outData);
 }
 
-// Pose of a geom's file data in the link frame, in the shape-bake form R * (scale * v) + t.
-TransformRT LinkFromMesh(MjcfGeomReference const& geom) {
-  return geom.linkFromGeom * geom.geomFromMesh;
-}
-
-void AssignShape(BotLinkPrefab& link, MjcfGeomReference const& geom) {
-  TransformRT const linkFromMesh = LinkFromMesh(geom);
-  link.shapeFile = geom.shapeFile;
-  link.shapeScale = geom.meshScale;
-  link.shapeRotation = linkFromMesh.GetRotation();
-  link.shapeTranslation = linkFromMesh.GetTranslation();
-}
-
-void AssignRenderModel(BotLinkPrefab& link, MjcfGeomReference const& geom) {
-  TransformRT const linkFromMesh = LinkFromMesh(geom);
-  link.renderModelFile = geom.renderModelFile;
-  link.renderModelScale = geom.meshScale;
-  link.renderModelRotation = linkFromMesh.GetRotation();
-  link.renderModelTranslation = linkFromMesh.GetTranslation();
-}
-
-// Mass from a geom's own mass or density, for bodies without an <inertial>.
-void AssignGeomMass(BotLinkPrefab& link, MjcfGeomReference const& geom) {
-  if (geom.mass && *geom.mass > 0_r) {
-    link.mass = *geom.mass;
-  } else if (geom.density && *geom.density > 0_r) {
-    link.density = *geom.density;
-  }
-}
-
-bool IsAssignableCollision(MjcfGeomReference const& geom) {
-  return geom.isCollision && !geom.shapeFile.empty() && geom.type != MjcfGeomType::Plane &&
-      geom.type != MjcfGeomType::Hfield && geom.type != MjcfGeomType::Sdf;
-}
-
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -1570,98 +1520,12 @@ void superdex::robotics::ExpandMjcfGeomLinks(
     BotPrefab& botPrefab,
     MjcfImportInfo const& info,
     Error& error) {
-  MOCHI_ERROR_RETURN(error);
-  // Links and joints share one namespace in a BotPrefab.
-  std::unordered_set<std::string> names;
-  for (auto const& link : botPrefab.links) {
-    names.insert(std::string(link.name));
-  }
-  for (auto const& joint : botPrefab.joints) {
-    names.insert(std::string(joint.name));
-  }
-  auto findLink = [&](DynamicString const& name) {
-    for (int i = 0; i < isize(botPrefab.links); ++i) {
-      if (botPrefab.links[i].name == name) {
-        return i;
-      }
-    }
-    return static_cast<int>(kIndexNone);
-  };
-  auto addChild = [&](int parent, std::string const& name) -> BotLinkPrefab& {
-    BotLinkPrefab child;
-    child.name = DynamicString{ClaimUniqueName(name, names, "_link")};
-    child.parentLink = parent;
-    BotJointPrefab joint;
-    joint.name =
-        DynamicString{ClaimUniqueName(std::string(child.name) + "_fixed", names, "_joint")};
-    joint.type = ArticulatedJointType::Hard;
-    botPrefab.links.push_back(std::move(child));
-    botPrefab.joints.push_back(std::move(joint));
-    return botPrefab.links.back();
-  };
-
+  DynamicArray<LinkGeoms> links;
+  links.reserve(info.bodies.size());
   for (MjcfBodyReference const& body : info.bodies) {
-    int const parent = findLink(body.link);
-    MOCHI_ERROR_IF(parent == kIndexNone, error, "MJCF body link not found in the bot");
-    MOCHI_ERROR_RETURN(error);
-    bool const hasExplicitInertia = botPrefab.links[parent].mass.has_value() &&
-        botPrefab.links[parent].momentOfInertia.has_value();
-    real const childMass =
-        Max(kCollisionChildMinMass,
-            kCollisionChildMassFraction * botPrefab.links[parent].mass.value_or(0_r));
-    std::string const bodyLinkName(body.link);
-
-    std::unordered_set<int> renderedGeoms;
-    int numCollisions = 0;
-    for (int g = 0; g < isize(body.geoms); ++g) {
-      MjcfGeomReference const& geom = body.geoms[g];
-      if (!IsAssignableCollision(geom)) {
-        continue;
-      }
-      bool const alsoRender = geom.isVisual && !geom.renderModelFile.empty();
-      if (numCollisions == 0) {
-        BotLinkPrefab& link = botPrefab.links[parent];
-        AssignShape(link, geom);
-        if (!hasExplicitInertia) {
-          AssignGeomMass(link, geom);
-        }
-        if (alsoRender && link.renderModelFile.empty()) {
-          AssignRenderModel(link, geom);
-          renderedGeoms.insert(g);
-        }
-      } else {
-        BotLinkPrefab& child =
-            addChild(parent, bodyLinkName + "_collision_" + std::to_string(numCollisions));
-        AssignShape(child, geom);
-        if (hasExplicitInertia) {
-          child.mass = childMass;
-        } else {
-          AssignGeomMass(child, geom);
-        }
-        if (alsoRender) {
-          AssignRenderModel(child, geom);
-          renderedGeoms.insert(g);
-        }
-      }
-      ++numCollisions;
-    }
-
-    int numVisuals = 0;
-    for (int g = 0; g < isize(body.geoms); ++g) {
-      MjcfGeomReference const& geom = body.geoms[g];
-      if (!geom.isVisual || geom.renderModelFile.empty() || renderedGeoms.count(g) > 0) {
-        continue;
-      }
-      if (botPrefab.links[parent].renderModelFile.empty()) {
-        AssignRenderModel(botPrefab.links[parent], geom);
-      } else {
-        ++numVisuals;
-        AssignRenderModel(
-            addChild(parent, bodyLinkName + "_visual_" + std::to_string(numVisuals)), geom);
-      }
-    }
+    links.push_back(LinkGeoms{std::string_view(body.link), MakeConstSpan(body.geoms)});
   }
-  RebuildBotData(botPrefab, error);
+  ExpandGeomLinks(botPrefab, MakeConstSpan(links), error);
 }
 
 void superdex::robotics::ApplyMjcfContactFilter(BotPrefab& botPrefab, MjcfImportInfo const& info) {
@@ -1686,7 +1550,7 @@ void superdex::robotics::ApplyMjcfContactFilter(BotPrefab& botPrefab, MjcfImport
   DynamicArray<int> contype(numBodies, 0);
   DynamicArray<int> conaffinity(numBodies, 0);
   for (int b = 0; b < numBodies; ++b) {
-    for (MjcfGeomReference const& geom : info.bodies[b].geoms) {
+    for (GeomReference const& geom : info.bodies[b].geoms) {
       if (geom.isCollision) {
         contype[b] |= geom.contype;
         conaffinity[b] |= geom.conaffinity;

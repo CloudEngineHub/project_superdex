@@ -659,18 +659,20 @@ void superdex::robotics::MakePathsAbsolute(
 BotPrefab superdex::robotics::LoadBotPrefabFromUrdfFile(std::string_view path, Error& error) {
   MOCHI_ERROR_RETURN(error, {});
   BotPrefab botPrefab;
-  LoadBotPrefabFromUrdfFile(botPrefab, path, nullptr, error);
+  UrdfImportInfo info;
+  LoadBotPrefabFromUrdfFile(botPrefab, path, info, error);
+  ExpandUrdfGeomLinks(botPrefab, info, error);
   MOCHI_ERROR_RETURN(error, {});
   return botPrefab;
 }
 
 BotPrefab superdex::robotics::LoadBotPrefabFromUrdfFile(
     std::string_view path,
-    UrdfMeshReferences& meshRefs,
+    UrdfImportInfo& info,
     Error& error) {
   MOCHI_ERROR_RETURN(error, {});
   BotPrefab botPrefab;
-  LoadBotPrefabFromUrdfFile(botPrefab, path, &meshRefs, error);
+  LoadBotPrefabFromUrdfFile(botPrefab, path, info, error);
   MOCHI_ERROR_RETURN(error, {});
   return botPrefab;
 }
@@ -684,7 +686,7 @@ static void FinishMjcfPrefab(BotPrefab& botPrefab, MjcfImportInfo const& info, E
   int numPrimitives = 0;
   for (auto const& body : info.bodies) {
     for (auto const& geom : body.geoms) {
-      numPrimitives += IsMjcfPrimitive(geom.type) && (geom.isCollision || geom.isVisual) ? 1 : 0;
+      numPrimitives += IsPrimitiveGeom(geom.type) && (geom.isCollision || geom.isVisual) ? 1 : 0;
     }
   }
   if (numPrimitives > 0) {

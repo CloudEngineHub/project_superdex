@@ -222,7 +222,7 @@ TEST_F(MjcfLayoutTest, ImportInfoListsEveryGeom) {
   EXPECT_TRUE(arm.geoms[0].isVisual);
   EXPECT_TRUE(arm.geoms[2].isCollision);
   EXPECT_FALSE(arm.geoms[2].isVisual); // group 3 is hidden by default
-  EXPECT_EQ(arm.geoms[4].type, MjcfGeomType::Box);
+  EXPECT_EQ(arm.geoms[4].type, GeomType::Box);
   EXPECT_EQ(arm.geoms[4].size, (Real3{0.05_r, 0.05_r, 0.05_r}));
   EXPECT_TRUE(arm.geoms[4].shapeFile.empty());
   // A missing mesh keeps its reference but has no resolved file.
