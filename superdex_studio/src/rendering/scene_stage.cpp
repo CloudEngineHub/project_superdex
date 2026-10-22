@@ -75,14 +75,17 @@ static bool PrefabHasArticulated(mochi::prefab::ScenePrefab const& prefab) {
 }
 
 // Build a copy of the prefab suitable for cheap articulated forward kinematics: rigid/soft actors
-// are dropped and articulated link shapes are cleared (turning links into shapeless dummy links),
-// while articulated transforms, joints, and nested-prefab structure are preserved. Nested prefabs
+// and the contact settings that may name them are dropped, and articulated link shapes are cleared
+// (turning links into shapeless dummy links), while articulated transforms, joints, and
+// nested-prefab structure are preserved. Nested prefabs
 // are deep-cloned so the original (shared) nested prefabs are not mutated.
 static mochi::prefab::ScenePrefab StripArticulated(mochi::prefab::ScenePrefab const& src) {
   mochi::prefab::ScenePrefab out = src;
   out.actors.rigid.clear();
   out.actors.soft.clear();
   out.actors.softSkinned.clear();
+  out.contactFilter.reset();
+  out.contactPairParamsOverrides.reset();
   for (auto& art : out.actors.articulated) {
     for (auto& link : art.links) {
       link.shapeFile.clear();
