@@ -1313,6 +1313,18 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
       , "Load bot parameters from a URDF file.\n\nParses the URDF and resolves each link's visual and collision mesh references\nrelative to the URDF location (ROS `package://` URIs are supported), storing the\nresolved on-disk paths in the returned prefab. Collision meshes may be any\nformat the shape loader accepts (e.g. .stl, .obj, .ply, .off, .mochi.h5); when a\ncollision mesh carries no baked SDF, one is generated on demand at bot creation.\nA free `world_joint` is injected at index 0.\n\nArgs:\n    path (str): Path to the .urdf file.\n\nReturns:\n    The loaded or built :class:`~superdex.robotics.BotPrefab`.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only ``<mesh>`` geometry is imported. Primitive URDF shapes (``<box>``,\n    ``<cylinder>``, ``<sphere>``) in ``<visual>`` / ``<collision>`` elements are\n    not supported and are silently skipped; the importer uses the first\n    mesh-bearing visual/collision on each link."
     );
 
+    m_bots.def("load_bot_prefab_from_mjcf_file", [](std::string_view path) {
+      mochi::Error error;
+      auto result = superdex::robotics::LoadBotPrefabFromMjcfFile(path, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+      return result;
+    }
+      , nb::arg("path")
+      , "Load bot parameters from an MJCF (MuJoCo XML) file.\n\nBodies become links and joints, ``<inertial>`` becomes explicit link inertia,\nand mesh geoms are assigned as link shapes and render models. A body with\nseveral collision or visual geoms gets one Hard-jointed child link per extra\ngeom. Primitive geoms (boxes, capsules, ...) are not assigned; import the MJCF\nin SuperDex Studio to convert them. MJCF content without a SuperDex equivalent\n(tendons, sites, sensors, actuator gains, ...) is skipped with a logged warning.\n\nArgs:\n    path (str): Path to the MJCF file.\n\nReturns:\n    The loaded :class:`~superdex.robotics.BotPrefab`.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs."
+    );
+
     m_bots.def("build_articulated_pose_from_bot_pose", [](superdex::robotics::BotPrefab const& bot_prefab, mochi::Span<mochi::real const> src_pose, int num_actor_dofs) {
       mochi::Error error;
       auto result = superdex::robotics::BuildArticulatedPoseFromBotPose(bot_prefab, src_pose, num_actor_dofs, error);

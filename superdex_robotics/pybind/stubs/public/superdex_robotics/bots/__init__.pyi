@@ -2164,6 +2164,26 @@ def load_bot_prefab_from_urdf_file(path: str) -> BotPrefab:
         mesh-bearing visual/collision on each link.
     """
 
+def load_bot_prefab_from_mjcf_file(path: str) -> BotPrefab:
+    """Load bot parameters from an MJCF (MuJoCo XML) file.
+
+    Bodies become links and joints, ``<inertial>`` becomes explicit link inertia,
+    and mesh geoms are assigned as link shapes and render models. A body with
+    several collision or visual geoms gets one Hard-jointed child link per extra
+    geom. Primitive geoms (boxes, capsules, ...) are not assigned; import the MJCF
+    in SuperDex Studio to convert them. MJCF content without a SuperDex equivalent
+    (tendons, sites, sensors, actuator gains, ...) is skipped with a logged warning.
+
+    Args:
+        path (str): Path to the MJCF file.
+
+    Returns:
+        The loaded :class:`~superdex.robotics.BotPrefab`.
+
+    Raises:
+        :class:`~superdex.physics.Error`: If an error occurs.
+    """
+
 def build_articulated_pose_from_bot_pose(
     bot_prefab: BotPrefab,
     src_pose: mochi_physics.ArrayLikeReal,

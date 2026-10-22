@@ -314,6 +314,9 @@ static_assert(std::is_same_v<decltype(&superdex::robotics::LoadBotPrefabFromFile
 // free function superdex::robotics::LoadBotPrefabFromUrdfFile
 static_assert(std::is_same_v<decltype(static_cast<superdex::robotics::BotPrefab (*)(std::string_view, mochi::Error&)>(&superdex::robotics::LoadBotPrefabFromUrdfFile)), superdex::robotics::BotPrefab (*)(std::string_view, mochi::Error&)>, "\n  ERROR: Function superdex::robotics::LoadBotPrefabFromUrdfFile is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
+// free function superdex::robotics::LoadBotPrefabFromMjcfFile
+static_assert(std::is_same_v<decltype(static_cast<superdex::robotics::BotPrefab (*)(std::string_view, mochi::Error&)>(&superdex::robotics::LoadBotPrefabFromMjcfFile)), superdex::robotics::BotPrefab (*)(std::string_view, mochi::Error&)>, "\n  ERROR: Function superdex::robotics::LoadBotPrefabFromMjcfFile is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
 // free function superdex::robotics::CreateRoboticsContext
 static_assert(std::is_same_v<decltype(&superdex::robotics::CreateRoboticsContext), superdex::robotics::RoboticsContext* (*)()>, "\n  ERROR: Function superdex::robotics::CreateRoboticsContext is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 

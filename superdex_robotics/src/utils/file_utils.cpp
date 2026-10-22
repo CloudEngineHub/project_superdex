@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "mjcf_utils.h"
 #include "urdf_utils.h"
 
 #include <mochi_core/utils/defer.h>
@@ -670,6 +671,60 @@ BotPrefab superdex::robotics::LoadBotPrefabFromUrdfFile(
   MOCHI_ERROR_RETURN(error, {});
   BotPrefab botPrefab;
   LoadBotPrefabFromUrdfFile(botPrefab, path, &meshRefs, error);
+  MOCHI_ERROR_RETURN(error, {});
+  return botPrefab;
+}
+
+// Assigns mesh geoms and contact rules to a freshly parsed MJCF prefab. Primitive geoms have no
+// file to point at, so they are reported rather than assigned.
+static void FinishMjcfPrefab(BotPrefab& botPrefab, MjcfImportInfo const& info, Error& error) {
+  ExpandMjcfGeomLinks(botPrefab, info, error);
+  MOCHI_ERROR_RETURN(error);
+  ApplyMjcfContactFilter(botPrefab, info);
+  int numPrimitives = 0;
+  for (auto const& body : info.bodies) {
+    for (auto const& geom : body.geoms) {
+      numPrimitives += IsMjcfPrimitive(geom.type) && (geom.isCollision || geom.isVisual) ? 1 : 0;
+    }
+  }
+  if (numPrimitives > 0) {
+    MOCHI_LOG_WARNING(
+        "MJCF import: %d primitive geoms (box, capsule, cylinder, ellipsoid, sphere) were not "
+        "assigned; only mesh geoms are loaded at runtime. Import the MJCF in SuperDex Studio to "
+        "convert them.",
+        numPrimitives);
+  }
+}
+
+BotPrefab superdex::robotics::LoadBotPrefabFromMjcfFile(std::string_view path, Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  BotPrefab botPrefab;
+  MjcfImportInfo info;
+  LoadBotPrefabFromMjcfFile(botPrefab, path, info, error);
+  FinishMjcfPrefab(botPrefab, info, error);
+  MOCHI_ERROR_RETURN(error, {});
+  return botPrefab;
+}
+
+BotPrefab superdex::robotics::LoadBotPrefabFromMjcfFile(
+    std::string_view path,
+    MjcfImportInfo& info,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  BotPrefab botPrefab;
+  LoadBotPrefabFromMjcfFile(botPrefab, path, info, error);
+  MOCHI_ERROR_RETURN(error, {});
+  return botPrefab;
+}
+
+BotPrefab superdex::robotics::LoadBotPrefabFromMjcfString(
+    std::string_view xmlString,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  BotPrefab botPrefab;
+  MjcfImportInfo info;
+  LoadBotPrefabFromMjcfXml(botPrefab, xmlString, info, error);
+  FinishMjcfPrefab(botPrefab, info, error);
   MOCHI_ERROR_RETURN(error, {});
   return botPrefab;
 }

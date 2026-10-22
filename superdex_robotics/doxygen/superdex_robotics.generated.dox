@@ -955,3 +955,14 @@
 /// @param[in] params Params.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
+
+/// @fn BotPrefab superdex::robotics::LoadBotPrefabFromMjcfFile(std::string_view path, superdex::Error& error)
+///
+/// @brief Load bot parameters from an MJCF (MuJoCo XML) file.
+///
+/// @details Bodies become links and joints, `<inertial>` becomes explicit link inertia, and mesh geoms are assigned as link shapes and render models. A body with several collision or visual geoms gets one Hard-jointed child link per extra geom. Primitive geoms (boxes, capsules, ...) are not assigned; import the MJCF in SuperDex Studio to convert them. MJCF content without a SuperDex equivalent (tendons, sites, sensors, actuator gains, ...) is skipped with a logged warning.
+///
+/// @param[in] path Path to the MJCF file.
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+/// @return The loaded @ref superdex::robotics::BotPrefab "BotPrefab".
+///

@@ -1,0 +1,65 @@
+<!--
+  First three links of the Franka FR3 arm, written as MJCF for the MJCF importer tests and
+  examples. Meshes and inertia come from the FR3 URDF test asset in ../urdf/fr3v2_1_urdf.
+-->
+<mujoco model="fr3_arm">
+  <compiler angle="radian" meshdir="../urdf/fr3v2_1_urdf/meshes/robots/fr3v2_1/collision"/>
+
+  <default>
+    <joint damping="1" armature="0.1" range="-2.90074 2.90074"/>
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" rgba="0.9 0.9 0.9 1"/>
+    </default>
+    <default class="collision">
+      <geom type="mesh" group="3"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="link0" file="link0.stl"/>
+    <mesh name="link1" file="link1.stl"/>
+    <mesh name="link2" file="link2.stl"/>
+    <mesh name="link3" file="link3.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="link0">
+      <inertial pos="-0.0172 0.0004 0.0745" mass="2.3966" fullinertia="0.009 0.0115 0.0085 0 0.002 0"/>
+      <geom class="visual" mesh="link0"/>
+      <geom class="collision" mesh="link0"/>
+      <body name="link1" pos="0 0 0.333">
+        <inertial pos="-0.00458 0.027016 -0.0618" mass="2.4377"
+          fullinertia="0.02324 0.02146 0.0055 0.000333 -0.000676 0.003739"/>
+        <joint name="joint1"/>
+        <geom class="visual" mesh="link1"/>
+        <geom class="collision" mesh="link1"/>
+        <body name="link2" euler="-1.5707963 0 0">
+          <inertial pos="-0.01063 -0.184739 -0.010479" mass="2.2375"
+            fullinertia="0.019026 0.00566 0.017114 0.001241 0.000499 -0.001804"/>
+          <joint name="joint2" range="-1.83609 1.83609"/>
+          <geom class="visual" mesh="link2"/>
+          <geom class="collision" mesh="link2"/>
+          <body name="link3" pos="0 -0.316 0" euler="1.5707963 0 0">
+            <inertial pos="0.091995 0.023003 0.047348" mass="2.196382"
+              fullinertia="0.010225 0.012398 0.006877 0.001144 0.003497 0.002156"/>
+            <joint name="joint3"/>
+            <geom class="visual" mesh="link3"/>
+            <geom class="collision" mesh="link3"/>
+            <!-- A primitive: imported by SuperDex Studio, skipped by the runtime loader. -->
+            <geom name="tool" class="collision" type="box" size="0.03 0.03 0.05" pos="0.08 0 0.1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor joint="joint1" forcerange="-87 87"/>
+    <motor joint="joint2" forcerange="-87 87"/>
+    <motor joint="joint3" forcerange="-87 87"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 -0.785 0"/>
+  </keyframe>
+</mujoco>

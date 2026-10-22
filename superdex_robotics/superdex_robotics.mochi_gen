@@ -293,6 +293,19 @@ fn bots::LoadBotPrefabFromFile(StringView path) -> bots::BotPrefab [export, moch
 // @return The loaded or built @ref BotPrefab.
 fn bots::LoadBotPrefabFromUrdfFile(StringView path) -> bots::BotPrefab [export, overloaded, mochi_error];
 
+// @brief Load bot parameters from an MJCF (MuJoCo XML) file.
+//
+// @details Bodies become links and joints, @code <inertial> @endcode becomes explicit link inertia, and mesh
+// geoms are assigned as link shapes and render models. A body with several collision or visual
+// geoms gets one Hard-jointed child link per extra geom. Primitive geoms (boxes, capsules, ...) are
+// not assigned; import the MJCF in SuperDex Studio to convert them. MJCF content without a SuperDex
+// equivalent (tendons, sites, sensors, actuator gains, ...) is skipped with a logged warning.
+//
+// @param[in] path Path to the MJCF file.
+//
+// @return The loaded @ref BotPrefab.
+fn bots::LoadBotPrefabFromMjcfFile(StringView path) -> bots::BotPrefab [export, overloaded, mochi_error];
+
 // @brief Resource owner for bots, controllers, sensors, and actuators.
 //
 // @details Owns the memory for bots, controllers, sensors, and actuators created through it.

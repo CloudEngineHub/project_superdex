@@ -46,6 +46,7 @@ constexpr std::string_view kBotExtension = ".superdex_bot";
 constexpr std::string_view kBotSceneExtension = ".mochi_bot_scene";
 constexpr std::string_view kBotTaskExtension = ".mochi_bot_task";
 constexpr std::string_view kUrdfExtension = ".urdf";
+constexpr std::string_view kMjcfExtension = ".xml";
 constexpr std::string_view kCollisionSubdir = "collision";
 constexpr std::string_view kRenderSubdir = "render";
 constexpr std::string_view kCadSubdir = "cad";
@@ -693,6 +694,186 @@ SaveToUrdfFile(BotPrefab const& botPrefab, std::string_view path, superdex::Erro
  */
 [[nodiscard]] MOCHI_API DynamicString
 SaveToUrdfString(BotPrefab const& botPrefab, superdex::Error& error);
+
+// ---------------------------------------------------------------------------
+// MJCF
+// ---------------------------------------------------------------------------
+
+/* @brief MuJoCo geom types. */
+enum class MjcfGeomType { Plane, Hfield, Sphere, Capsule, Ellipsoid, Cylinder, Box, Mesh, Sdf };
+
+/* @brief One MJCF `<geom>`, resolved against its default class and assets.
+ *
+ * @details Poses are expressed in the frame of the link that holds the geom's body (see
+ * @ref MjcfBodyReference::link). Mesh vertices map into that frame as
+ * `linkFromGeom * geomFromMesh * (meshScale * v)`. */
+struct MjcfGeomReference {
+  /* @brief Geom name, or empty if unnamed. */
+  DynamicString name;
+  /* @brief Geom type. */
+  MjcfGeomType type = MjcfGeomType::Sphere;
+  /* @brief MuJoCo `size` after resolving `fromto`. Sphere: radius. Capsule and cylinder: radius,
+   * half-length. Ellipsoid: radii. Box: half-extents. Unused for meshes, and for primitives that
+   * name a mesh, which MuJoCo fits to that mesh instead (see @ref fitScale). [m] */
+  Real3 size = {};
+  /* @brief Geom pose in the link frame. */
+  TransformRT linkFromGeom;
+  /* @brief Mesh `file` attribute verbatim, or empty for geoms that name no mesh. */
+  DynamicString meshRef;
+  /* @brief Resolved mesh path on disk, or empty if the mesh is missing or the geom names none. */
+  DynamicString meshFile;
+  /* @brief `fitscale` of a primitive that names a mesh. MuJoCo sizes such a primitive to the mesh's
+   * equivalent-inertia box, scaled by this factor, and centers it on the mesh's principal frame;
+   * the loader leaves the fitting to callers that load the mesh. */
+  real fitScale = 1_r;
+  /* @brief Mesh `scale`. */
+  Real3 meshScale = {1_r, 1_r, 1_r};
+  /* @brief Mesh vertices in the geom frame, from the mesh `refpos` / `refquat`. */
+  TransformRT geomFromMesh;
+  /* @brief Color from the geom `rgba`, else its material, else MuJoCo's default gray. */
+  Real4 rgba = {0.5_r, 0.5_r, 0.5_r, 1_r};
+  /* @brief True if the geom names a material or sets `rgba` explicitly. */
+  bool hasMaterial = false;
+  /* @brief Resolved 2D texture image of the geom's material, or empty. */
+  DynamicString textureFile;
+  /* @brief Material `texrepeat`. */
+  std::array<real, 2> texRepeat = {1_r, 1_r};
+  /* @brief Material `shininess`, in [0, 1]. */
+  real shininess = 0.5_r;
+  /* @brief Explicit geom `mass` [kg], if set. */
+  std::optional<real> mass;
+  /* @brief Explicit geom `density` [kg/m^3], if set. */
+  std::optional<real> density;
+  /* @brief Sliding friction coefficient (first `friction` component), if set. */
+  std::optional<real> friction;
+  /* @brief MuJoCo contact bitmasks. */
+  int contype = 1;
+  int conaffinity = 1;
+  /* @brief MuJoCo visibility group. */
+  int group = 0;
+  /* @brief True if the geom participates in contact (`contype | conaffinity` is nonzero). */
+  bool isCollision = true;
+  /* @brief True if MuJoCo renders the geom by default (group 0-2 and not fully transparent). */
+  bool isVisual = true;
+  /* @brief File to use as this geom's Mochi shape. The loader sets it to @ref meshFile for mesh
+   * geoms and leaves it empty for primitives; callers that generate primitive shapes fill it in
+   * before calling @ref ExpandMjcfGeomLinks. */
+  DynamicString shapeFile;
+  /* @brief File to use as this geom's render model, set like @ref shapeFile. */
+  DynamicString renderModelFile;
+};
+
+/* @brief One MJCF `<body>` and where it landed in the @ref BotPrefab. */
+struct MjcfBodyReference {
+  /* @brief Body name (MJCF name, or a generated one for unnamed bodies). */
+  DynamicString name;
+  /* @brief Index of the parent body in @ref MjcfImportInfo::bodies, or -1 for a top-level body. */
+  int parentBody = -1;
+  /* @brief Name of the @ref BotPrefab link whose frame carries this body's geoms. */
+  DynamicString link;
+  /* @brief The body frame in that link's frame. The link sits at the body's last joint, so this
+   * is a pure translation. */
+  TransformRT linkFromBody;
+  /* @brief True if the body has an explicit `<inertial>`. */
+  bool hasInertial = false;
+  /* @brief True if the body has joints. A body without joints is welded to its parent. */
+  bool hasJoints = false;
+  /* @brief The body's geoms, in document order. */
+  DynamicArray<MjcfGeomReference> geoms;
+};
+
+/* @brief A pair of bodies, by index into @ref MjcfImportInfo::bodies. */
+struct MjcfBodyPair {
+  int body1 = -1;
+  int body2 = -1;
+};
+
+/* @brief MJCF data that does not fit a @ref BotPrefab directly. Returned beside the prefab, the
+ * way @ref UrdfMeshReferences is, so importers can convert geoms and apply contact rules. */
+struct MjcfImportInfo {
+  /* @brief Every imported body, parents before children. */
+  DynamicArray<MjcfBodyReference> bodies;
+  /* @brief `<contact><exclude>` pairs. */
+  DynamicArray<MjcfBodyPair> excludes;
+  /* @brief `<contact><pair>` pairs, reduced to their bodies. */
+  DynamicArray<MjcfBodyPair> pairs;
+  /* @brief Human-readable notes on MJCF content that was skipped or approximated. */
+  DynamicArray<DynamicString> warnings;
+};
+
+/* @brief Load bot parameters from an MJCF (MuJoCo XML) file.
+ *
+ * @details Bodies become links and joints, `<inertial>` becomes explicit link inertia, and mesh
+ * geoms are assigned as link shapes and render models. A body with several collision or visual
+ * geoms gets one Hard-jointed child link per extra geom (see @ref ExpandMjcfGeomLinks). Primitive
+ * geoms (boxes, capsules, ...) are not assigned; use the @ref MjcfImportInfo overload to get them.
+ * MJCF content without a SuperDex equivalent (tendons, sites, sensors, actuator gains, ...) is
+ * skipped with a logged warning.
+ *
+ * @param[in] path Path to the MJCF file.
+ * @param[in,out] error Error status. Check @ref Error::IsOK for success.
+ * @return The loaded @ref BotPrefab.
+ */
+[[nodiscard]] MOCHI_API BotPrefab
+LoadBotPrefabFromMjcfFile(std::string_view path, superdex::Error& error);
+
+/* @brief Load bot parameters from an MJCF file without assigning any geoms.
+ *
+ * @details Produces one link per body (plus massless links for bodies with several joints), with
+ * inertia, joints, keyframe pose, and `<equality connect>` cycles, but no shapes, render models,
+ * or contact overrides. @p info receives every body's geoms and the contact rules, so the caller
+ * can convert geometry and then call @ref ExpandMjcfGeomLinks or assign merged shapes itself,
+ * followed by @ref ApplyMjcfContactFilter.
+ *
+ * @param[in] path Path to the MJCF file.
+ * @param[out] info Receives the geoms, contact rules, and warnings.
+ * @param[in,out] error Error status. Check @ref Error::IsOK for success.
+ * @return The loaded @ref BotPrefab.
+ */
+[[nodiscard]] MOCHI_API BotPrefab
+LoadBotPrefabFromMjcfFile(std::string_view path, MjcfImportInfo& info, superdex::Error& error);
+
+/* @brief Load bot parameters from an MJCF XML string (no file I/O).
+ *
+ * @details Same as @ref LoadBotPrefabFromMjcfFile, but asset files cannot be resolved, so the
+ * result has no geometry, and an `<include>` element sets @p error.
+ *
+ * @param[in] xmlString The MJCF XML content.
+ * @param[in,out] error Error status. Check @ref Error::IsOK for success.
+ * @return The loaded @ref BotPrefab.
+ */
+[[nodiscard]] MOCHI_API BotPrefab
+LoadBotPrefabFromMjcfString(std::string_view xmlString, superdex::Error& error);
+
+/* @brief Assign each body's geoms to links, one geom per link.
+ *
+ * @details For each body, the first collision geom with a @ref MjcfGeomReference::shapeFile goes
+ * on the body's link, alongside its inertia. Each further one becomes a Hard-jointed child link
+ * `<body>_collision_<k>` with a negligible mass. Render models work the same way: the first visual
+ * geom with a @ref MjcfGeomReference::renderModelFile goes on the body's link, further ones on
+ * shapeless children `<body>_visual_<k>`. A body without an `<inertial>` takes its mass from its
+ * geoms' `mass` / `density`.
+ *
+ * @param[in,out] botPrefab Prefab from the @ref MjcfImportInfo overload of
+ * @ref LoadBotPrefabFromMjcfFile.
+ * @param[in] info The matching import info.
+ * @param[in,out] error Error status. Check @ref Error::IsOK for success.
+ */
+MOCHI_API void
+ExpandMjcfGeomLinks(BotPrefab& botPrefab, MjcfImportInfo const& info, superdex::Error& error);
+
+/* @brief Add contact overrides so self-contact matches MuJoCo's rules.
+ *
+ * @details MuJoCo lets two bodies collide unless one is the other's parent, their geoms'
+ * `contype` / `conaffinity` bitmasks never match, or they are listed in `<exclude>`; `<pair>`
+ * forces contact. Mochi's default filtering differs (see @ref IsContactImplicitlyDisabled). This
+ * adds a @ref BotContactOverride for every pair of shape-bearing links where the two disagree.
+ * Call it after the prefab's shapes are final.
+ *
+ * @param[in,out] botPrefab Prefab with its final shapes.
+ * @param[in] info The matching import info.
+ */
+MOCHI_API void ApplyMjcfContactFilter(BotPrefab& botPrefab, MjcfImportInfo const& info);
 
 // ---------------------------------------------------------------------------
 // Hashing
