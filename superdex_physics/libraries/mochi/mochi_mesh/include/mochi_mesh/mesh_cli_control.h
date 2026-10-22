@@ -17,6 +17,7 @@
 #pragma once
 
 #include <string>
+#include <thread>
 
 namespace mochi::mesh {
 
@@ -42,5 +43,11 @@ namespace mochi::mesh {
 /// Safe to call from any thread, including while a helper op is running on another thread, and a
 /// no-op when nothing is running.
 void CancelInFlightMeshCli();
+
+/// @brief Terminate the superdex_mesh_cli helper subprocesses that @p thread is waiting on.
+///
+/// As @ref CancelInFlightMeshCli, but leaves helpers run by other threads alone, so one of several
+/// concurrent ops can be stopped. Every helper is waited on by the thread that called the mesh op.
+void CancelInFlightMeshCli(std::thread::id thread);
 
 } // namespace mochi::mesh

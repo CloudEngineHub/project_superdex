@@ -201,6 +201,10 @@ class SuperDexStudio : public ImGuios::Application {
   // True while an async task batch (and its progress modal) is active. Only one batch runs at a
   // time, so callers use this to disable controls that would start another.
   bool IsAsyncTasksRunning() const;
+  // The runner behind BeginAsyncTasks, to inspect or skip the running batch's tasks.
+  AsyncTaskRunner& GetAsyncTasks() {
+    return _asyncTasks;
+  }
 
   //------------------------------------------------------------------------------------------------
   // ImGui

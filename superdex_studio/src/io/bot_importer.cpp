@@ -839,7 +839,7 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
     std::vector<int> const renderGeoms = SelectGeoms(entry, entry.renderSource);
     // The GLB this import builds for the link, if any, and the task building it.
     std::optional<mochi::Path> renderGlb;
-    std::size_t renderTask = 0;
+    int renderTask = -1;
     // A Copy left over from an earlier Source is converted instead (Copy needs one mesh file).
     if (entry.renderOp == RenderOperation::Copy &&
         !entry.CopyableFile(entry.renderSource).empty()) {
@@ -860,7 +860,7 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
       mochi::Path const dst =
           ClaimOutputPath(renderDir, entry.linkName, std::string(kGlbExtension), claimed);
       renderGlb = dst;
-      renderTask = tasks.size();
+      renderTask = static_cast<int>(tasks.size());
       std::vector<std::string>* warnings = AddTaskWarnings();
       needRenderDir = true;
       tasks.push_back(
@@ -969,16 +969,9 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
       link->shapeTranslation = {};
     });
     if (readsRenderModel) {
-      // Tasks may run in parallel, so the recipe reading the GLB runs in the task that builds it.
-      AsyncTask& render = tasks[renderTask];
-      render.label += ", " + dst.GetFilename();
-      render.work = [buildGlb = std::move(render.work),
-                     buildCollision = std::move(recipe.work)](AsyncCancelToken const& cancel) {
-        return buildGlb(cancel) && buildCollision(cancel);
-      };
-    } else {
-      tasks.push_back(std::move(recipe));
+      recipe.dependsOn = {renderTask};
     }
+    tasks.push_back(std::move(recipe));
   }
 
   auto ensureDir = [](mochi::Path const& dir) {

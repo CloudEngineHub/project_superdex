@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if MOCHI_PLATFORM_WINDOWS
@@ -80,28 +81,43 @@ void SetClientError(Error& error, std::string message) {
 }
 
 #if MOCHI_PLATFORM_WINDOWS
-std::vector<HANDLE> g_liveProcesses;
-void RegisterLiveProcess(HANDLE process) {
-  std::scoped_lock const lock(g_liveProcessMutex);
-  g_liveProcesses.push_back(process);
-}
-void UnregisterLiveProcess(HANDLE process) {
-  std::scoped_lock const lock(g_liveProcessMutex);
-  g_liveProcesses.erase(
-      std::remove(g_liveProcesses.begin(), g_liveProcesses.end(), process), g_liveProcesses.end());
-}
+using ProcessId = HANDLE;
 #else
-std::vector<pid_t> g_liveProcesses;
-void RegisterLiveProcess(pid_t pid) {
-  std::scoped_lock const lock(g_liveProcessMutex);
-  g_liveProcesses.push_back(pid);
-}
-void UnregisterLiveProcess(pid_t pid) {
-  std::scoped_lock const lock(g_liveProcessMutex);
-  g_liveProcesses.erase(
-      std::remove(g_liveProcesses.begin(), g_liveProcesses.end(), pid), g_liveProcesses.end());
-}
+using ProcessId = pid_t;
 #endif
+
+// A running helper and the thread waiting on it.
+struct LiveProcess {
+  ProcessId process;
+  std::thread::id thread;
+};
+std::vector<LiveProcess> g_liveProcesses;
+
+void RegisterLiveProcess(ProcessId process) {
+  std::scoped_lock const lock(g_liveProcessMutex);
+  g_liveProcesses.push_back({process, std::this_thread::get_id()});
+}
+void UnregisterLiveProcess(ProcessId process) {
+  std::scoped_lock const lock(g_liveProcessMutex);
+  std::erase_if(
+      g_liveProcesses, [process](LiveProcess const& live) { return live.process == process; });
+}
+
+// Terminates the live helpers that `matches` selects by waiting thread.
+template <typename Predicate>
+void KillLiveProcesses(Predicate const& matches) {
+  std::scoped_lock const lock(g_liveProcessMutex);
+  for (LiveProcess const& live : g_liveProcesses) {
+    if (!matches(live.thread)) {
+      continue;
+    }
+#if MOCHI_PLATFORM_WINDOWS
+    TerminateProcess(live.process, 1);
+#else
+    kill(live.process, SIGKILL);
+#endif
+  }
+}
 
 #if MOCHI_PLATFORM_WINDOWS
 
@@ -502,16 +518,11 @@ std::vector<char> InvokeMeshCliAtPath(
 } // namespace
 
 void mochi::mesh::CancelInFlightMeshCli() {
-  std::scoped_lock const lock(g_liveProcessMutex);
-#if MOCHI_PLATFORM_WINDOWS
-  for (HANDLE const process : g_liveProcesses) {
-    TerminateProcess(process, 1);
-  }
-#else
-  for (pid_t const pid : g_liveProcesses) {
-    kill(pid, SIGKILL);
-  }
-#endif
+  KillLiveProcesses([](std::thread::id) { return true; });
+}
+
+void mochi::mesh::CancelInFlightMeshCli(std::thread::id thread) {
+  KillLiveProcesses([thread](std::thread::id waiting) { return waiting == thread; });
 }
 
 std::string mochi::mesh::FindMeshCliPath() {

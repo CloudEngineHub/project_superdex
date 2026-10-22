@@ -56,6 +56,7 @@
 #include <exception>
 #include <filesystem>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 #include "editors/bot_scene_editor.h"
@@ -1591,9 +1592,10 @@ bool SuperDexStudio::BeginAsyncTasks(
   config.onComplete = std::move(onComplete);
   config.context = _mochiContext;
   config.serial = serial;
-  // All studio background work runs in the superdex_mesh_cli helper, so a Cancel terminates the
-  // in-flight helper subprocess(es); the blocked worker then unblocks and the batch winds down.
-  config.onCancel = []() { mochi::mesh::CancelInFlightMeshCli(); };
+  config.timeoutSeconds = _appSettings.tasks.timeoutSeconds;
+  // Studio's long-running work blocks in the superdex_mesh_cli helper, so stopping a task
+  // terminates the helper its worker waits on; the worker then unblocks and moves on.
+  config.abortTask = [](std::thread::id worker) { mochi::mesh::CancelInFlightMeshCli(worker); };
   _asyncTasks.Begin(std::move(config));
   return true;
 }
@@ -2164,7 +2166,7 @@ constexpr SettingsCategory MakeSettingsCategory(
       applyOnCommit};
 }
 
-constexpr std::array<SettingsCategory, 7> kSettingsCategories = {{
+constexpr std::array<SettingsCategory, 8> kSettingsCategories = {{
     // Hand-drawn rather than reflection-driven: the debug draw feature list is queried from mochi
     // at runtime, so it cannot come from the settings struct. No apply hooks -- these are the
     // defaults a simulation session starts from; a running one is driven by the editor's own
@@ -2210,6 +2212,7 @@ constexpr std::array<SettingsCategory, 7> kSettingsCategories = {{
         }),
     MakeSettingsCategory<&AppSettings::botEditor>("Bot Editor"),
     MakeSettingsCategory<&AppSettings::botVisualization>("Bot Visualization"),
+    MakeSettingsCategory<&AppSettings::tasks>("Tasks"),
 }};
 
 void SuperDexStudio::ApplyHighlightOverlayOpacity() {

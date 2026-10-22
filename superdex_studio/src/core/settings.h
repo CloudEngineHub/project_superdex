@@ -456,6 +456,21 @@ struct PhysicsSettings {
   MOCHI_STRUCT_END()
 };
 
+struct TaskSettings {
+  double timeoutSeconds = 60.0;
+
+  MOCHI_STRUCT_BEGIN(superdex::studio::TaskSettings)
+  MOCHI_FIELD(timeoutSeconds)
+  MOCHI_ATTRIBUTE(DisplayName("Timeout"));
+  MOCHI_ATTRIBUTE(Units("s"));
+  MOCHI_ATTRIBUTE(Description(
+      "Stop a background task, such as an import's conversion or a model build, that runs longer "
+      "than this; tasks that need its result are skipped. 0 disables the timeout. Applies to "
+      "batches started afterwards."));
+  MOCHI_ATTRIBUTE(FloatRange(0.0, 86400.0));
+  MOCHI_STRUCT_END()
+};
+
 // Ordered to match the Settings window's category list. `physicsDrag` has no category of its own
 // (it is drawn under Physics); `recentEntries` and `windowVisibility` are app state rather than
 // preferences, so they sit at the end.
@@ -468,6 +483,7 @@ struct AppSettings {
   LogConsoleSettings logConsole;
   BotEditorSettings botEditor;
   BotVisualizationSettings botVisualization;
+  TaskSettings tasks;
   RecentEntriesSettings recentEntries;
   std::unordered_map<std::string, bool> windowVisibility;
 
@@ -480,6 +496,7 @@ struct AppSettings {
   MOCHI_FIELD(logConsole)
   MOCHI_FIELD(botEditor)
   MOCHI_FIELD(botVisualization)
+  MOCHI_FIELD(tasks)
   MOCHI_FIELD(recentEntries) MOCHI_ATTRIBUTE(HideFromEditor);
   MOCHI_FIELD(windowVisibility) MOCHI_ATTRIBUTE(HideFromEditor);
   MOCHI_STRUCT_END()

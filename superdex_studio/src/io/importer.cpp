@@ -105,8 +105,8 @@ bool Importer::RunImport() {
        title = GetDisplayName()](bool allSucceeded) {
         if (!allSucceeded) {
           MOCHI_LOG_WARNING(
-              "%s import: some conversions failed, and the bot is saved without their models. "
-              "See the messages above.",
+              "%s import: some conversions failed or were skipped, and the bot is saved without "
+              "their models. See the messages above.",
               title.c_str());
         }
         mochi::Path resultPath;

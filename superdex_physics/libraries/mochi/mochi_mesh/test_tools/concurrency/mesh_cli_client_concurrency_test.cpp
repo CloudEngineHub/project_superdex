@@ -135,3 +135,31 @@ TEST(MeshCliClientTest, ConcurrentInvocationsReceiveStdinEof) {
     EXPECT_TRUE(secondResult.response.empty());
   }
 }
+
+TEST(MeshCliClientTest, CancelByThreadStopsOnlyThatThreadsHelper) {
+  ScopedTempDirectory const coordinationDirectory;
+  ASSERT_FALSE(coordinationDirectory.Path().empty());
+  std::string const coordinationPath = coordinationDirectory.Path().string();
+  std::promise<std::thread::id> invokingThread;
+  std::future<std::thread::id> invokingThreadId = invokingThread.get_future();
+  // The helper waits for a second invocation that never comes, so it runs until it is killed.
+  std::future<InvocationResult> first = std::async(std::launch::async, [&]() {
+    invokingThread.set_value(std::this_thread::get_id());
+    return InvokePing(coordinationPath, {});
+  });
+  std::thread::id const thread = invokingThreadId.get();
+
+  auto const markerDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  if (!WaitForMarker(coordinationDirectory.Path() / "first_started", markerDeadline)) {
+    CancelInFlightMeshCli();
+    first.wait();
+    FAIL() << "The concurrency helper did not start";
+  }
+
+  CancelInFlightMeshCli(std::this_thread::get_id());
+  EXPECT_EQ(first.wait_for(std::chrono::milliseconds(200)), std::future_status::timeout);
+
+  CancelInFlightMeshCli(thread);
+  ASSERT_EQ(first.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  EXPECT_FALSE(first.get().isOk);
+}

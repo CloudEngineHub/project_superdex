@@ -2420,30 +2420,60 @@ void ModelEditor::RunGenerationCascade(
   // in a block at the end. Two things need that: a later source reads back the file an earlier
   // export writes, so the write has to have happened by the time it runs; and a failure part-way
   // down still leaves the exports above it written.
+  // Each task depends on the tasks producing what it reads, so a stage whose input failed, timed
+  // out, or was skipped is skipped instead of running on a missing or stale mesh.
   std::vector<AsyncTask> tasks;
+  std::vector<int> generateTask(n, -1); // by chain position; -1 when the stage is not regenerated
+  std::vector<std::pair<int, std::string>> exportTasks; // export task and the file it writes
+  auto const inputTask = [&](std::size_t p) { return p > 0 ? generateTask[p - 1] : -1; };
   for (std::size_t p = 0; p < n; ++p) {
-    char const* const name = _modifiers[chain[p]]->DisplayName();
+    MeshProcessingModifier const& mod = *_modifiers[chain[p]];
+    char const* const name = mod.DisplayName();
     // regen[p] false: up to date, its current output is already in the run.
     if (regen[p]) {
-      tasks.push_back(
-          AsyncTask{std::string("Generate ") + name, [run, p](AsyncCancelToken const& cancel) {
-                      if (cancel.IsCancelRequested()) {
-                        return false;
-                      }
-                      // A failed stage leaves no output; onComplete then keeps its prior buffer.
-                      mochi::ErrorLog error;
-                      return run->Generate(p, error);
-                    }});
+      AsyncTask task{std::string("Generate ") + name, [run, p](AsyncCancelToken const& cancel) {
+                       if (cancel.IsCancelRequested()) {
+                         return false;
+                       }
+                       // A failed stage leaves no output; onComplete then keeps its prior buffer.
+                       mochi::ErrorLog error;
+                       return run->Generate(p, error);
+                     }};
+      if (mod.Kind() == ModifierKind::Source) {
+        // A source reads a file, which an earlier export in this run may write.
+        std::string const sourceFile = mod.SourceFilePath(ctx);
+        for (auto const& [exportTask, exportFile] : exportTasks) {
+          if (SameFilePath(sourceFile, exportFile)) {
+            task.dependsOn.push_back(exportTask);
+          }
+        }
+      } else if (inputTask(p) >= 0) {
+        task.dependsOn.push_back(inputTask(p));
+      }
+      if (mod.NeedsReferenceMesh()) {
+        int const refIdx = ReferenceModifierIndex(_modifiers, chain[p]);
+        for (std::size_t q = 0; q < p; ++q) {
+          if (static_cast<int>(chain[q]) == refIdx && generateTask[q] >= 0) {
+            task.dependsOn.push_back(generateTask[q]);
+          }
+        }
+      }
+      generateTask[p] = static_cast<int>(tasks.size());
+      tasks.push_back(std::move(task));
     }
     if (mochi::Contains(exportChainPositions, p)) {
-      tasks.push_back(
-          AsyncTask{std::string("Export ") + name, [run, p](AsyncCancelToken const& cancel) {
-                      if (cancel.IsCancelRequested()) {
-                        return false;
-                      }
-                      mochi::ErrorLog error;
-                      return run->Export(p, error);
-                    }});
+      AsyncTask task{std::string("Export ") + name, [run, p](AsyncCancelToken const& cancel) {
+                       if (cancel.IsCancelRequested()) {
+                         return false;
+                       }
+                       mochi::ErrorLog error;
+                       return run->Export(p, error);
+                     }};
+      if (inputTask(p) >= 0) {
+        task.dependsOn.push_back(inputTask(p));
+      }
+      exportTasks.emplace_back(static_cast<int>(tasks.size()), mod.ExportPath());
+      tasks.push_back(std::move(task));
     }
   }
 
@@ -2518,7 +2548,8 @@ void ModelEditor::RunGenerationCascade(
           }
         }
         if (!allSucceeded) {
-          MOCHI_LOG_WARNING("Generation cascade: one or more stages failed (see log).");
+          MOCHI_LOG_WARNING(
+              "Generation cascade: one or more stages failed or were skipped (see log).");
         }
         if (hadExports) {
           // Newly written / overwritten export files only appear once the browser rescans.
