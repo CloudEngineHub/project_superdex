@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import unittest
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -29,6 +30,7 @@ from superdex.physics.viewer.unrealcv.unrealcv_actor_utils import (
     apply_hdri_lighting_dr,
     apply_mpc_dr,
     apply_scale_dr,
+    capture_dr_state,
     get_light_info,
     get_material_params,
     KEEP_PREVIOUS_TOKEN,
@@ -903,3 +905,142 @@ class GetLightInfoTest(unittest.TestCase):
             self.assertEqual(
                 get_light_info(self._client(response), self._ACTOR), {}, response
             )
+
+
+class CaptureDrStateTest(unittest.TestCase):
+    def _cfg(self, **fields):
+        return SimpleNamespace(actor_mapping={}, articulated_actor_mapping={}, **fields)
+
+    def _capture(self, cfg, responses):
+        client = MagicMock()
+        client._request_batch.return_value = [json.dumps(r) for r in responses]
+        return client, capture_dr_state(client, cfg)
+
+    def test_queries_actors_from_every_override_section(self):
+        cfg = self._cfg(
+            material_overrides={"Mat": None},
+            sphere_placement_overrides={"Sphere": None},
+            visibility_overrides={"Vis": 0.5},
+            cast_shadow_overrides={"Shadow": False},
+            hidden_actors=["Hidden"],
+            hdri_lighting_override=SimpleNamespace(
+                skylight_actor="Sky", dome_actor="Dome"
+            ),
+        )
+        client, _ = self._capture(cfg, [{}] * 7)
+        self.assertEqual(
+            client._request_batch.call_args[0][0],
+            [
+                f"vget /object/{name}/dr_state"
+                for name in ("Dome", "Hidden", "Mat", "Shadow", "Sky", "Sphere", "Vis")
+            ],
+        )
+
+    def test_all_and_config_modes_request_every_parameter(self):
+        for mode in ("all", "config"):
+            cfg = self._cfg(visibility_overrides={"Mug": True}, dr_state_params=mode)
+            client, _ = self._capture(cfg, [{}])
+            self.assertEqual(
+                client._request_batch.call_args[0][0],
+                ["vget /object/Mug/dr_state all"],
+                mode,
+            )
+
+    def test_config_mode_keeps_only_configured_params_and_components(self):
+        box = SimpleNamespace(
+            scalar_params={"Dirt": None},
+            vector_params={"Edge": [0.5, 0.8, 0.2]},
+            texture_params={"Albedo": None},
+            components=[SimpleNamespace(names=["Lid"], scalar_params={"Wear": None})],
+        )
+        cfg = self._cfg(material_overrides={"Box": box}, dr_state_params="config")
+        captured = {
+            "roughness": 0.4,
+            "scalar_params": {"Dirt": 0.7, "Roughness": 0.4, "Wear": 0.1},
+            "vector_params": {"Edge": [0.9, 0.8, 0.2, 1.0], "Tint": [1, 1, 1, 1]},
+            "texture_params": {"Albedo": "T_Box"},
+            "components": {
+                "Lid": {
+                    "metallic": 0.8,
+                    "scalar_params": {"Wear": 0.2, "Metallic": 0.8},
+                },
+                "Handle": {"roughness": 0.5},
+            },
+        }
+        _, state = self._capture(cfg, [captured])
+        self.assertEqual(
+            state["Box"],
+            {
+                "roughness": 0.4,
+                "scalar_params": {"Dirt": 0.7, "Wear": 0.1},
+                "vector_params": {"Edge": [0.9, 0.8, 0.2, 1.0]},
+                "texture_params": {"Albedo": "T_Box"},
+                "components": {
+                    "Lid": {"metallic": 0.8, "scalar_params": {"Wear": 0.2}}
+                },
+            },
+        )
+
+    def test_config_mode_keeps_hdri_dome_params(self):
+        cfg = self._cfg(
+            hdri_lighting_override=SimpleNamespace(
+                skylight_actor=None, dome_actor="Dome", dome_cube_param=None
+            ),
+            dr_state_params="config",
+        )
+        captured = {
+            "scalar_params": {"Brightness": 2.0, "Opacity": 1.0},
+            "texture_params": {"EnvCube": "HDRI_3", "Noise": "T_Noise"},
+        }
+        _, state = self._capture(cfg, [captured])
+        self.assertEqual(
+            state["Dome"],
+            {
+                "scalar_params": {"Brightness": 2.0},
+                "texture_params": {"EnvCube": "HDRI_3"},
+            },
+        )
+
+    def test_config_mode_strips_generic_params_from_unconfigured_actors(self):
+        cfg = self._cfg(
+            material_overrides={"Box": SimpleNamespace(scalar_params={"Dirt": None})},
+            visibility_overrides={"Curtain": True},
+            dr_state_params="config",
+        )
+        box = {"scalar_params": {"Dirt": 0.7, "Roughness": 0.4}}
+        curtain = {
+            "visible": True,
+            "scalar_params": {"Dirt": 0.1},
+            "components": {"Panel": {"scalar_params": {"Dirt": 0.2}}},
+        }
+        _, state = self._capture(cfg, [box, curtain])
+        self.assertEqual(state["Box"], {"scalar_params": {"Dirt": 0.7}})
+        # "Curtain" has no material config, so its generic params and
+        # components are stripped while non-generic state is kept.
+        self.assertEqual(state["Curtain"], {"visible": True})
+
+    def test_invalid_dr_state_params_raises(self):
+        cfg = self._cfg(visibility_overrides={"Mug": True}, dr_state_params="bogus")
+        client = MagicMock()
+        with self.assertRaises(ValueError):
+            capture_dr_state(client, cfg)
+        client._request_batch.assert_not_called()
+
+    def test_failed_actor_is_reported_not_silently_dropped(self):
+        cfg = self._cfg(visibility_overrides={"Good": True, "Bad": True})
+        client = MagicMock()
+        # Actors are queried in sorted order: Bad first, then Good.
+        client._request_batch.return_value = [
+            "error Can not find object",
+            json.dumps({"visible": True}),
+        ]
+        state = capture_dr_state(client, cfg)
+        self.assertEqual(state["Good"], {"visible": True})
+        self.assertIn("_error", state["Bad"])
+
+    def test_unparseable_response_is_reported_not_silently_dropped(self):
+        cfg = self._cfg(visibility_overrides={"Mug": True})
+        client = MagicMock()
+        client._request_batch.return_value = ["not json at all"]
+        state = capture_dr_state(client, cfg)
+        self.assertIn("_error", state["Mug"])

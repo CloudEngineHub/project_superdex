@@ -55,6 +55,11 @@ PREFAB_PREFIX = "prefab://"
 # and value as set on the underlying material/light.
 KEEP_PREVIOUS_TOKEN = -1.0e6
 
+DEFAULT_DOME_CUBE_PARAM = "EnvCube"
+
+# ``dr_state_params`` modes for ``capture_dr_state``.
+DR_STATE_PARAM_MODES = ("overridden", "all", "config")
+
 
 def _decimal(value: float) -> str:
     """``value`` as UnrealCV's ``[float]`` pattern accepts it. The pattern has no
@@ -2075,28 +2080,99 @@ def apply_sphere_placement_dr(
 ##########################################################################################
 
 
-def _collect_dr_actors(cfg: UnrealCVActorConfig) -> set[str]:
-    """Collect all UE actor names from config mappings and overrides."""
+def _add_mapping_value(actors: set[str], value: str) -> None:
+    """Add the UE instance name a mapping value refers to, if any."""
+    if "@" in value:
+        actors.add(value.split("@", 1)[1])
+    elif not value.startswith("blueprint:") and not value.startswith("prefab:"):
+        actors.add(value)
+
+
+def _collect_mapped_actors(cfg: UnrealCVActorConfig) -> set[str]:
+    """UE actor names from the actor and articulated-actor mappings."""
     actors: set[str] = set()
     for v in cfg.actor_mapping.values():
         if isinstance(v, str):
-            if "@" in v:
-                actors.add(v.split("@", 1)[1])
-            elif not v.startswith("blueprint:") and not v.startswith("prefab:"):
-                actors.add(v)
+            _add_mapping_value(actors, v)
     for v in cfg.articulated_actor_mapping.values():
         ue = v.get("ue_actor", "") if isinstance(v, dict) else ""
         if ue:
-            if "@" in ue:
-                actors.add(ue.split("@", 1)[1])
-            elif not ue.startswith("blueprint:") and not ue.startswith("prefab:"):
-                actors.add(ue)
-    actors.update(getattr(cfg, "material_overrides", {}))
-    actors.update(getattr(cfg, "scale_overrides", {}))
-    actors.update(getattr(cfg, "mpc_overrides", {}))
-    actors.update(getattr(cfg, "position_overrides", {}))
-    actors.update(getattr(cfg, "rotation_overrides", {}))
+            _add_mapping_value(actors, ue)
     return actors
+
+
+def _collect_override_actors(cfg: UnrealCVActorConfig) -> set[str]:
+    """UE actor names from every DR override section."""
+    actors: set[str] = set()
+    for section in (
+        "material_overrides",
+        "scale_overrides",
+        "mpc_overrides",
+        "position_overrides",
+        "rotation_overrides",
+        "sphere_placement_overrides",
+        "visibility_overrides",
+        "cast_shadow_overrides",
+    ):
+        actors.update(getattr(cfg, section, {}))
+    actors.update(getattr(cfg, "hidden_actors", []))
+    hdri = getattr(cfg, "hdri_lighting_override", None)
+    if hdri is not None:
+        for field_name in ("skylight_actor", "dome_actor"):
+            if name := _get_position_field(hdri, field_name):
+                actors.add(name)
+    return actors
+
+
+def _collect_dr_actors(cfg: UnrealCVActorConfig) -> set[str]:
+    """Collect all UE actor names from config mappings and overrides."""
+    return _collect_mapped_actors(cfg) | _collect_override_actors(cfg)
+
+
+def _config_material_targets(
+    cfg: UnrealCVActorConfig,
+) -> dict[str, tuple[set[str], set[str]]]:
+    """Map each actor to the (generic parameter names, component names) its DR writes."""
+    targets: dict[str, tuple[set[str], set[str]]] = {}
+    for actor, override in getattr(cfg, "material_overrides", {}).items():
+        params, components = targets.setdefault(actor, (set(), set()))
+        groups = _get_position_field(override, "components") or []
+        for scope in (override, *groups):
+            params.update(_get_position_field(scope, "scalar_params") or {})
+            params.update(_get_position_field(scope, "vector_params") or {})
+            params.update(_get_position_field(scope, "texture_params") or {})
+        for group in groups:
+            components.update(_get_position_field(group, "names") or [])
+    hdri = getattr(cfg, "hdri_lighting_override", None)
+    if hdri is not None and (dome := _get_position_field(hdri, "dome_actor")):
+        params, _ = targets.setdefault(dome, (set(), set()))
+        params.add(
+            _get_position_field(hdri, "dome_cube_param") or DEFAULT_DOME_CUBE_PARAM
+        )
+        params.add("Brightness")
+    return targets
+
+
+def _keep_configured(state: dict[str, Any], cfg: UnrealCVActorConfig) -> None:
+    """Trim an ``all`` capture to the parameters and components the config randomizes."""
+    targets = _config_material_targets(cfg)
+    for actor, actor_state in state.items():
+        # Actors with no material config get an empty target set, so their
+        # generic params and components are stripped while the rest of the
+        # state (transform, visibility, lights, semantic keys) is kept.
+        params, components = targets.get(actor, (set(), set()))
+        kept_components = {
+            name: block
+            for name, block in actor_state.pop("components", {}).items()
+            if name in components
+        }
+        if kept_components:
+            actor_state["components"] = kept_components
+        for block in (actor_state, *kept_components.values()):
+            for key in ("scalar_params", "vector_params", "texture_params"):
+                kept = {n: v for n, v in block.pop(key, {}).items() if n in params}
+                if kept:
+                    block[key] = kept
 
 
 def capture_dr_state(
@@ -2107,31 +2183,50 @@ def capture_dr_state(
 
     Issues one ``vget /object/<name>/dr_state`` per actor in a single
     ``_request_batch`` call, so the entire capture is one TCP round-trip.
+    ``dr_state_params`` on the config selects which generic material parameters
+    are recorded (see ``DR_STATE_PARAM_MODES``); the default records only those
+    overridden at runtime.
 
     Returns:
-        Dict keyed by actor name, values are property dicts (color_rgba,
-        roughness, metallic, specular, texture_index, light_intensity,
-        source_radius, light_color_rgba, scale, mpc).
+        Dict keyed by actor name. Values hold the whole-actor material keys
+        (color_rgba, roughness, metallic, specular, opacity, texture_index,
+        scalar_params, vector_params, texture_params), per-component material
+        blocks under ``components``, ``lights`` and ``skylight``, the transform
+        (scale, location, rotation), visible, cast_shadow, mpc and
+        component_rotations. An actor whose query fails is reported as
+        ``{"_error": <detail>}`` so a missing actor can never pass as
+        identical in a determinism comparison.
     """
     actors = sorted(_collect_dr_actors(unrealcvactor_cfg))
     if not actors:
         return {}
 
-    commands = [f"vget /object/{name}/dr_state" for name in actors]
+    mode = getattr(unrealcvactor_cfg, "dr_state_params", "overridden")
+    if mode not in DR_STATE_PARAM_MODES:
+        raise ValueError(
+            f"dr_state_params must be one of {DR_STATE_PARAM_MODES}; got {mode!r}"
+        )
+    suffix = "" if mode == "overridden" else " all"
+    commands = [f"vget /object/{name}/dr_state{suffix}" for name in actors]
     result = client._request_batch(commands)
     responses: list[str | None] = result[0] if isinstance(result, tuple) else result
 
     state: dict[str, Any] = {}
     for actor_name, resp in zip(actors, responses):
         if not resp or resp.lower().startswith("error"):
+            logger.error("dr_state query failed for %s: %s", actor_name, resp)
+            state[actor_name] = {"_error": resp or "empty response"}
             continue
         try:
             parsed = json.loads(resp)
             if parsed:
                 state[actor_name] = parsed
         except (json.JSONDecodeError, ValueError):
-            logger.warning("Failed to parse dr_state JSON for %s", actor_name)
+            logger.error("Failed to parse dr_state JSON for %s: %r", actor_name, resp)
+            state[actor_name] = {"_error": "unparseable response"}
 
+    if mode == "config":
+        _keep_configured(state, unrealcvactor_cfg)
     logger.debug("DR state captured (%d actors)", len(state))
     return state
 
@@ -2440,7 +2535,9 @@ def apply_hdri_lighting_dr(
     skylight = _get_position_field(override, "skylight_actor")
     dome = _get_position_field(override, "dome_actor")
     cubemap_paths = _get_position_field(override, "cubemap_asset_paths") or []
-    dome_cube_param = _get_position_field(override, "dome_cube_param") or "EnvCube"
+    dome_cube_param = (
+        _get_position_field(override, "dome_cube_param") or DEFAULT_DOME_CUBE_PARAM
+    )
     offset_yaw_cfg = _get_position_field(override, "offset_yaw")
     dome_yaw_sign = _get_position_field(override, "dome_yaw_sign")
     if dome_yaw_sign is None:
