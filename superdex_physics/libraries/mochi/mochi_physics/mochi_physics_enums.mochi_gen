@@ -372,6 +372,13 @@ enum QueryType {
   // enabled.
   TotalContactForce,
 
+  // @brief Wrench (force and torque) transmitted by each non-cycle joint of an articulated actor.
+  // Available via @ref Actor::GetArticulatedJointWrenches.
+  //
+  // @note Only supported for articulated actors with at least one degree of freedom.
+  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  ArticulatedJointWrenches,
+
   // @brief Number of query type enum values.
   Count,
 }

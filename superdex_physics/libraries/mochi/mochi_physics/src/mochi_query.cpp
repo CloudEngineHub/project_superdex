@@ -16,6 +16,7 @@
 
 #include "mochi_query.h"
 
+#include "mochi_common_components.h"
 #include "mochi_constraint.h"
 #include "mochi_contact.h"
 #include "mochi_discretization_components.h"
@@ -25,6 +26,7 @@
 #include "mochi_pose_controller.h"
 #include "mochi_rod.h"
 #include "mochi_sleep.h"
+#include "mochi_snle.h"
 #include "mochi_soft.h"
 #include "mochi_soft_skinned.h"
 
@@ -193,6 +195,14 @@ void mochi::AddRemoveOrRefComponentsForQuery(
       }
     } break;
 
+    case QueryType::ArticulatedJointWrenches: {
+      AddRemoveOrRefComponent<CQueryArticulatedJointWrenches>(reg, e, add);
+      if (computeImmediately) {
+        MOCHI_LOG_WARNING(
+            "QueryType::ArticulatedJointWrenches does not support the 'computeImmediately' option. Ignoring.");
+      }
+    } break;
+
     default: {
       MOCHI_LOG_ERROR(
           "Unsupported QueryType called in AddRemoveOrRefComponentsForQuery. Ignoring.");
@@ -206,7 +216,7 @@ void mochi::SetErrorIfQueryNotSupported(
     QueryType type,
     Error& error) {
   static_assert(
-      static_cast<int>(QueryType::Count) == 15,
+      static_cast<int>(QueryType::Count) == 16,
       "Please update the switch statement below if QueryType enum changes");
   switch (type) {
     case QueryType::NodePositions:
@@ -252,6 +262,12 @@ void mochi::SetErrorIfQueryNotSupported(
           reg.any_of<CConstraintInfo>(e),
           error,
           "QueryType::ConstraintForce is only supported for constraints.");
+      break;
+    case QueryType::ArticulatedJointWrenches:
+      MOCHI_ERROR_IF_NOT(
+          (reg.all_of<TagArticulatedActor, CActorSnle>(e)),
+          error,
+          "QueryType::ArticulatedJointWrenches is only supported for articulated actors with at least one degree of freedom.");
       break;
     case QueryType::NodeContactForces:
       MOCHI_ERROR_IF(
@@ -363,6 +379,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CActiveQuerySet>(reg);
   ecs::RegisterComponent<CQueryActorContactForces>(reg);
   ecs::RegisterComponent<CQueryArticulatedControllerForce>(reg);
+  ecs::RegisterComponent<CQueryArticulatedJointWrenches>(reg);
   ecs::RegisterComponent<CQueryContactPoints>(reg);
   ecs::RegisterComponent<CQueryContactSamples>(reg);
   ecs::RegisterComponent<CQuerySdfDistances>(reg);

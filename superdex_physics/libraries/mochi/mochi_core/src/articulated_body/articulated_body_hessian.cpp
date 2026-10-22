@@ -268,8 +268,10 @@ void JacobianTransposeContract(
     Span<TransformRT const> linkTransforms,
     Span<real const> inFullGradient,
     RowMatrixView<real const> jacobian,
-    ColumnVectorView<real> outReducedGradient) {
+    ColumnVectorView<real> outReducedGradient,
+    ColumnVectorView<real> outSubtreeGradient) {
   int const numLinks = isize(parents);
+  bool const useLocal = outSubtreeGradient.Rows() == 0;
   MOCHI_ASSERT_VERBOSE(
       isize(dofInfo) >= numLinks, "dofInfo must have one entry per link, then cycle joints");
   MOCHI_ASSERT_VERBOSE(
@@ -285,10 +287,19 @@ void JacobianTransposeContract(
   MOCHI_ASSERT_VERBOSE(
       !SpansOverlap(inFullGradient, outReducedGradient.GetConstSpan()),
       "inFullGradient and outReducedGradient must not overlap");
+  MOCHI_ASSERT_VERBOSE(
+      useLocal || outSubtreeGradient.Rows() == numLinks * RigidSize::kDAll,
+      "outSubtreeGradient must be empty or have size RigidSize::kDAll * numLinks");
+  MOCHI_ASSERT_VERBOSE(
+      !SpansOverlap(outSubtreeGradient.GetConstSpan(), inFullGradient) &&
+          !SpansOverlap(outSubtreeGradient.GetConstSpan(), outReducedGradient.GetConstSpan()),
+      "outSubtreeGradient must not overlap inFullGradient or outReducedGradient");
 
   MOCHI_FILO_STACK_ALLOCATOR(
       allocator, 100 * RigidSize::kDAll * sizeof(real)); // Stack memory for 100 links.
-  DynamicArray<real> fullGradient(inFullGradient, &allocator);
+  ColumnVector<real> localGradient(useLocal ? isize(inFullGradient) : 0, &allocator);
+  ColumnVectorView<real> fullGradient = useLocal ? AsView(localGradient) : outSubtreeGradient;
+  fullGradient = AsConstView(inFullGradient);
 
   for (int link = numLinks - 1; link >= 0; --link) {
     auto const& jointDofs = dofInfo[link];
@@ -300,28 +311,25 @@ void JacobianTransposeContract(
               .template Block<RigidSize::kDAll, krylov::kDynamic>(
                   linkOffset, jointDofs.offset, RigidSize::kDAll, jointDofCount)
               .Transpose() *
-          AsConstView(fullGradient)
-              .template MiddleRows<RigidSize::kDAll>(linkOffset, RigidSize::kDAll);
+          fullGradient.template MiddleRows<RigidSize::kDAll>(linkOffset, RigidSize::kDAll);
     }
 
     int const parent = parents[link];
     if (parent < 0) {
       continue;
     }
+    MOCHI_ASSERT_VERBOSE(parent < link, "Links must be sorted parents first");
 
     int const parentOffset = parent * RigidSize::kDAll;
     Vec4r const force = Load<3, Vec4r>(&fullGradient[linkOffset]);
     Vec4r const torque = Load<3, Vec4r>(&fullGradient[linkOffset + RigidSize::kDTrans]);
     Vec4r const positionDelta =
         linkTransforms[link].VGetTranslation() - linkTransforms[parent].VGetTranslation();
-    AsView(fullGradient)
-        .template MiddleRows<RigidSize::kDTrans>(parentOffset, RigidSize::kDTrans) +=
+    fullGradient.template MiddleRows<RigidSize::kDTrans>(parentOffset, RigidSize::kDTrans) +=
         AsColumnVectorView<3>(force);
     Vec4r const parentTorque = torque + Cross3(positionDelta, force);
-    AsView(fullGradient)
-        .template MiddleRows<RigidSize::kDRot>(
-            parentOffset + RigidSize::kDTrans, RigidSize::kDRot) +=
-        AsColumnVectorView<3>(parentTorque);
+    fullGradient.template MiddleRows<RigidSize::kDRot>(
+        parentOffset + RigidSize::kDTrans, RigidSize::kDRot) += AsColumnVectorView<3>(parentTorque);
   }
 }
 

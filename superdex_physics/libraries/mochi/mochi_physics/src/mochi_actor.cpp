@@ -1286,6 +1286,22 @@ class ActorInterfaceImpl : public ActorInterface {
     articulated::compound::GetArticulatedJointVelocities(reg, e, outVelocities, error);
   }
 
+  void GetArticulatedJointWrenches(Span<Real3> outForces, Span<Real3> outTorques, Error& error)
+      const override {
+    MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED();
+    articulated::compound::GetJointWrenches(reg, e, outForces, outTorques, error);
+  }
+
+  Real3 GetArticulatedJointForce(int jointIndex, Error& error) const override {
+    MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED({});
+    return articulated::compound::GetJointForce(reg, e, jointIndex, error);
+  }
+
+  Real3 GetArticulatedJointTorque(int jointIndex, Error& error) const override {
+    MOCHI_ERROR_RETURN_IF_NOT_ARTICULATED({});
+    return articulated::compound::GetJointTorque(reg, e, jointIndex, error);
+  }
+
   static void SetArticulatedTargetPoseOwner(
       TargetOwner owner,
       uint64_t step,

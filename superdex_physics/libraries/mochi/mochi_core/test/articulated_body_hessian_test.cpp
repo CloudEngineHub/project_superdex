@@ -700,9 +700,78 @@ TEST(ArticulatedBody, Jacobian_TransposeContract) {
       bundle.linkTransforms,
       contractedVector,
       jacobian,
-      gradientContracted);
+      gradientContracted,
+      ColumnVectorView<real>{});
 
   // Compare
   real tol = sizeof(real) == sizeof(float) ? 1e-1_r : 1e-3_r;
   ExpectVectorsNear(gradientContractedBF, gradientContracted, tol);
+}
+
+TEST(ArticulatedBody, Jacobian_TransposeContract_SubtreeGradient) {
+  ArticulatedBodyBundle bundle;
+  CreateComplexBody(bundle);
+  int const numLinks = bundle.props.numLinks;
+
+  RowMatrix<real> jacobian = bundle.ComputeJacobian();
+  ColumnVector<real> fullGradient = bundle.RandomColumnVector(bundle.props.fullDofsDim);
+
+  ColumnVector<real> expectedReduced(bundle.props.reducedDofsDim);
+  expectedReduced.SetZero();
+  JacobianTransposeContract(
+      bundle.dofInfo,
+      bundle.parents,
+      bundle.linkTransforms,
+      fullGradient,
+      jacobian,
+      expectedReduced,
+      ColumnVectorView<real>{});
+
+  ColumnVector<real> reduced(bundle.props.reducedDofsDim);
+  reduced.SetZero();
+  ColumnVector<real> subtreeGradient(bundle.props.fullDofsDim);
+  JacobianTransposeContract(
+      bundle.dofInfo,
+      bundle.parents,
+      bundle.linkTransforms,
+      fullGradient,
+      jacobian,
+      reduced,
+      subtreeGradient);
+  ExpectVectorsNear(expectedReduced, reduced, 0_r);
+
+  // Brute force: sum of [force; torque] of every descendant, with torque moved to the link.
+  auto isInSubtree = [&](int link, int root) {
+    for (; link >= 0; link = bundle.parents[link]) {
+      if (link == root) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto block = [&](ColumnVector<real> const& v, int link, int offset) {
+    int const i = link * RigidSize::kDAll + offset;
+    return Real3{v[i], v[i + 1], v[i + 2]};
+  };
+  ColumnVector<real> expectedSubtree(bundle.props.fullDofsDim);
+  for (int root = 0; root < numLinks; ++root) {
+    Real3 force{};
+    Real3 torque{};
+    Real3 const rootPosition = bundle.linkTransforms[root].GetTranslation();
+    for (int link = 0; link < numLinks; ++link) {
+      if (!isInSubtree(link, root)) {
+        continue;
+      }
+      Real3 const linkForce = block(fullGradient, link, 0);
+      Real3 const lever = bundle.linkTransforms[link].GetTranslation() - rootPosition;
+      force += linkForce;
+      torque += block(fullGradient, link, RigidSize::kDTrans) + Cross(lever, linkForce);
+    }
+    expectedSubtree.MiddleRows(root * RigidSize::kDAll, RigidSize::kDTrans) = AsView(force);
+    expectedSubtree.MiddleRows(root * RigidSize::kDAll + RigidSize::kDTrans, RigidSize::kDRot) =
+        AsView(torque);
+  }
+
+  real constexpr kTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-10_r : 1e-3_r;
+  ExpectVectorsNear(expectedSubtree, subtreeGradient, kTol);
 }

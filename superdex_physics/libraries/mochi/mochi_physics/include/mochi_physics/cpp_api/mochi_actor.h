@@ -344,6 +344,15 @@ class Actor {
 
   [[nodiscard]] virtual Span<real const> GetArticulatedControllerForce(Error& error) const = 0;
 
+  virtual void GetArticulatedJointWrenches(
+      Span<Real3> outForces,
+      Span<Real3> outTorques,
+      Error& error) const = 0;
+
+  [[nodiscard]] virtual Real3 GetArticulatedJointForce(int jointIndex, Error& error) const = 0;
+
+  [[nodiscard]] virtual Real3 GetArticulatedJointTorque(int jointIndex, Error& error) const = 0;
+
   [[nodiscard]] virtual bool IsNestedLinkActor() const = 0;
 
   [[nodiscard]] virtual bool IsNestedSoftActor() const = 0;

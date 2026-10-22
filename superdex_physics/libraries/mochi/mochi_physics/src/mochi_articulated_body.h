@@ -44,6 +44,7 @@ struct CBlendedComposition;
 struct CDofOffset;
 struct CGroupMembers;
 struct CIslandMemberInfo;
+struct CQueryArticulatedJointWrenches;
 
 /*
 Base data structures used to define articulated-body and articulated rigid components
@@ -374,6 +375,22 @@ void GetArticulatedJointVelocities(
     entt::entity e,
     Span<real> outVel,
     Error& error);
+
+// Get the wrench transmitted by each non-cycle joint, from CQueryArticulatedJointWrenches.
+void GetJointWrenches(
+    entt::registry const& reg,
+    entt::entity e,
+    Span<Real3> outForces,
+    Span<Real3> outTorques,
+    Error& error);
+
+// Get the force transmitted by a non-cycle joint, from CQueryArticulatedJointWrenches.
+[[nodiscard]] Real3
+GetJointForce(entt::registry const& reg, entt::entity e, int jointIndex, Error& error);
+
+// Get the torque transmitted by a non-cycle joint, from CQueryArticulatedJointWrenches.
+[[nodiscard]] Real3
+GetJointTorque(entt::registry const& reg, entt::entity e, int jointIndex, Error& error);
 
 // Set the time derivatives of the articulated body's dofs. The function sets the previous state of
 // the actor's joints and the velocity of the bones.
@@ -756,13 +773,14 @@ void EntityAssemble(
 // soft actors) to its full residual, projects it to the reduced DoFs, and adds it to the reduced
 // residual. For state grad targets only. Must run after contact, constraint, articulated and nested
 // soft actor assembly. As their only consumer, it deactivates the link-space residuals, whether
-// projected or not.
+// projected or not. For GradTarget::Current, it also computes the joint wrenches if queried.
 void ProjectFullResidual(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,
     entt::registry& reg,
     CArticulatedBodyShape const& bodyShape,
     CArticulatedParents const& parents,
+    CArticulatedRestTransforms const& restTransforms,
     CArticulatedLinkTransforms<TimeStep::Current> const& currLinkTxs,
     CArticulatedLinkTransforms<TimeStep::StageStart> const& stageStartLinkTxs,
     CArticulatedJacobian const& jacobian,
@@ -770,6 +788,7 @@ void ProjectFullResidual(
     CArticulatedAsyncContactLinkResidual* asyncContactLinkResidual,
     CArticulatedSyncContactLinkResidual& syncContactLinkResidual,
     CArticulatedConstraintLinkResidual& constraintLinkResidual,
+    CQueryArticulatedJointWrenches* jointWrenchesQuery,
     CActorSnle& outCompoundSnle);
 
 /*

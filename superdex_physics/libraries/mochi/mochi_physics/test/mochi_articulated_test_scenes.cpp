@@ -20,6 +20,7 @@
 
 #include <mochi_core/geometry/model_data.h>
 #include <mochi_core/geometry/tetrahedral_mesh.h>
+#include <mochi_core/utils/math_utils.h>
 #include <mochi_physics/mochi_physics_experimental.h>
 #include <mochi_physics/src/mochi_context.h>
 #include <mochi_physics/src/mochi_shape.h>
@@ -104,7 +105,9 @@ ShapeHandle CreateThreeBoneTetRomShape(Context* context) {
       context, model, "contact_test", MakeConstSpan(basis), ExpectOK{});
 }
 
-ArticulatedActorParams MakeThreeBoneSkeletonParams(Context* context) {
+ArticulatedActorParams MakeThreeBoneSkeletonParams(
+    Context* context,
+    ThreeBoneOptions const& options) {
   ArticulatedActorParams params;
   params.joints = {
       {.name = "joint_0", .type = ArticulatedJointType::Hard},
@@ -121,19 +124,19 @@ ArticulatedActorParams MakeThreeBoneSkeletonParams(Context* context) {
        .shape = linkShape,
        .colliderType = ColliderType::None,
        .hasGravity = false,
-       .density = 1e-10_r},
+       .density = options.linkDensity},
       {.name = "link_1",
        .parentLink = 0,
        .shape = linkShape,
        .colliderType = ColliderType::None,
        .hasGravity = false,
-       .density = 1e-10_r},
+       .density = options.linkDensity},
       {.name = "link_2",
        .parentLink = 1,
        .shape = linkShape,
        .colliderType = ColliderType::None,
        .hasGravity = false,
-       .density = 1e-10_r}};
+       .density = options.linkDensity}};
   return params;
 }
 
@@ -142,8 +145,9 @@ Actor* CreateThreeBoneSkinnedActor(
     Scene* scene,
     real coulombCoefficient,
     real viscousCoefficient,
-    real dampingCoefficient) {
-  ArticulatedActorParams params = MakeThreeBoneSkeletonParams(context);
+    real dampingCoefficient,
+    ThreeBoneOptions const& options) {
+  ArticulatedActorParams params = MakeThreeBoneSkeletonParams(context, options);
   ArticulatedSkinParams skinParams;
   skinParams.shape = CreateThreeBoneShape(context);
   skinParams.layer = "Colliding";
@@ -161,12 +165,14 @@ Actor* CreateThreeBoneSoftSkinnedActor(
     TransformRT const& worldFromRoot,
     real coulombCoefficient,
     real viscousCoefficient,
-    real dampingCoefficient) {
+    real dampingCoefficient,
+    ThreeBoneOptions const& options) {
   bool const isPosed = mode == ThreeBoneSoftSkinnedMode::PosedFom;
   SoftSkinnedActorParams params;
   params.hasGravity = isPosed;
+  params.hasInertia = isPosed && options.softHasInertia;
   params.hasStress = isPosed;
-  params.skeletonParams = MakeThreeBoneSkeletonParams(context);
+  params.skeletonParams = MakeThreeBoneSkeletonParams(context, options);
   params.skeletonParams.worldFromRoot = worldFromRoot;
   if (UsesBlendedSurface(mode)) {
     ArticulatedSkinParams skinParams;
@@ -189,9 +195,9 @@ Actor* CreateThreeBoneSoftSkinnedActor(
                                    : CreateThreeBoneShape(context, DynamicArray<int>{0});
   softParams.layer = UsesBlendedSurface(mode) ? "" : "Colliding";
   softParams.hasGravity = false;
-  softParams.hasInertia = false;
+  softParams.hasInertia = !isPosed && options.softHasInertia;
   softParams.hasStress = !isPosed;
-  softParams.material.neoHookean.youngsModulus = 1e-10_r;
+  softParams.material.neoHookean.youngsModulus = options.softYoungsModulus;
   softParams.contact.coulombFrictionCoefficient = coulombCoefficient;
   softParams.contact.viscousFrictionCoefficient = viscousCoefficient;
   softParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
@@ -206,6 +212,17 @@ Actor* CreateThreeBoneSoftSkinnedActor(
   softExperimentalParams.rom->source = "contact_test";
   experimentalParams.softParams.push_back(std::move(softExperimentalParams));
   return experimental::CreateSoftSkinnedActor(scene, params, experimentalParams, ExpectOK{});
+}
+
+Actor* AddThreeBoneSkinCollider(Scene* scene, bool isStatic) {
+  RigidActorParams params;
+  params.isStatic = isStatic;
+  params.layer = "Collider";
+  params.shape = CreateUnitCubeTetMeshShape(scene->GetContext());
+  params.worldFromLocal = TransformRT{
+      Quaternion::FromRotationVector(Real3{0.1_r, -0.1_r, 0.2_r}), Real3{0.98_r, 0.1_r, 0.1_r}};
+  params.colliderType = ColliderType::Box;
+  return scene->CreateRigidActor(params, ExpectOK{});
 }
 
 Actor* CreateUnitCubeChain(
@@ -257,6 +274,167 @@ Actor* CreateUnitCubeChain(
     link.colliderType = ColliderType::Box;
   }
   return scene->CreateArticulatedActor(params, ExpectOK{});
+}
+
+ArticulatedJointParams MakeRevoluteJoint(
+    Real3 const& parentLinkFromJoint,
+    ArticulatedJointFrictionParams const& friction,
+    Real3 const& axis) {
+  return {
+      .type = ArticulatedJointType::Revolute,
+      .parentLinkFromJoint = TransformRT{parentLinkFromJoint},
+      .axis = axis,
+      .friction = friction};
+}
+
+Actor* CreateCubeTree(
+    Scene* scene,
+    DynamicArray<ArticulatedJointParams> joints,
+    CubeTreeOptions const& options) {
+  ShapeHandle const shape = CreateUnitCubeTetMeshShape(scene->GetContext());
+  ArticulatedActorParams params;
+  params.worldFromRoot = options.worldFromRoot;
+  for (int i = 0; i < isize(joints); ++i) {
+    params.links.push_back(
+        {.parentLink = options.parents.empty() ? i - 1 : options.parents[i],
+         .parentJointFromLink =
+             options.parentJointFromLinks.empty() ? TransformRT{} : options.parentJointFromLinks[i],
+         .shape = i == options.dummyLink ? ShapeHandle{} : shape,
+         .colliderType = options.colliderType});
+  }
+  params.joints = std::move(joints);
+  return scene->CreateArticulatedActor(params, ExpectOK{});
+}
+
+Actor* CreateDoublePendulum(Scene* scene, ArticulatedJointFrictionParams const& friction) {
+  return CreateCubeTree(
+      scene,
+      {{.type = ArticulatedJointType::Hard},
+       MakeRevoluteJoint(Real3{1.2_r, 0.5_r, 0_r}, friction),
+       MakeRevoluteJoint(Real3{1.1_r, -0.3_r, 0_r}, friction)});
+}
+
+Actor* CreateStaticChain(Scene* scene, int dummyLink) {
+  Real3 const vertical = Normalize(kDefaultGravity);
+  return CreateCubeTree(
+      scene,
+      {{.type = ArticulatedJointType::Hard,
+        .parentLinkFromJoint = TransformRT{Real3{0_r, 2_r, 0_r}}},
+       MakeRevoluteJoint(Real3{1.5_r, 0_r, 0.3_r}, {}, vertical),
+       {.type = ArticulatedJointType::Hard,
+        .parentLinkFromJoint = TransformRT{Real3{0.5_r, -1.2_r, 0.4_r}}},
+       {.type = ArticulatedJointType::Prismatic,
+        .parentLinkFromJoint = TransformRT{Real3{0.2_r, 0.3_r, 1.1_r}},
+        .axis = OrthogonalVector(vertical)}},
+      {.parentJointFromLinks =
+           {TransformRT{},
+            TransformRT{Real3{0.4_r, -0.3_r, 0.2_r}},
+            TransformRT{Real3{0.1_r, 0.6_r, -0.2_r}},
+            TransformRT{Real3{-0.3_r, 0.2_r, 0.5_r}}},
+       .dummyLink = dummyLink});
+}
+
+namespace {
+ArticulatedLinkParams MakeCubeLink(Context* context, int parentLink, ColliderType colliderType) {
+  return {
+      .parentLink = parentLink,
+      .shape = CreateUnitCubeTetMeshShape(context),
+      .colliderType = colliderType};
+}
+} // namespace
+
+Actor* AddFlatGround(Scene* scene) {
+  RigidActorParams params;
+  params.name = "Ground";
+  params.isStatic = true;
+  params.shape = scene->GetContext()->CreatePlaneShape(Real3{0_r, 1_r, 0_r}, 0_r, ExpectOK{});
+  params.colliderType = ColliderType::Plane;
+  return scene->CreateRigidActor(params, ExpectOK{});
+}
+
+Actor* AddRigidUnitCube(
+    Scene* scene,
+    TransformRT const& worldFromLocal,
+    ColliderType colliderType,
+    bool isStatic) {
+  RigidActorParams params;
+  params.isStatic = isStatic;
+  params.shape = CreateUnitCubeTetMeshShape(scene->GetContext());
+  params.worldFromLocal = worldFromLocal;
+  params.colliderType = colliderType;
+  return scene->CreateRigidActor(params, ExpectOK{});
+}
+
+Actor* CreateBridgeOnGround(Scene* scene, real jointDamping) {
+  Context* context = scene->GetContext();
+  Real3 const vertical{0_r, 1_r, 0_r};
+  ArticulatedActorParams params;
+  params.worldFromRoot = TransformRT{Real3{0_r, 1e-3_r, 0_r}};
+  params.joints = {
+      {.type = ArticulatedJointType::Free},
+      MakeRevoluteJoint(Real3{1.05_r, 0.5_r, 0_r}, {.viscous = jointDamping}, vertical),
+      MakeRevoluteJoint(Real3{1.05_r, -0.5_r, 0_r}, {.viscous = jointDamping}, vertical)};
+  params.links = {
+      MakeCubeLink(context, -1, ColliderType::Box),
+      MakeCubeLink(context, 0, ColliderType::None),
+      MakeCubeLink(context, 1, ColliderType::Box)};
+  return scene->CreateArticulatedActor(params, ExpectOK{});
+}
+
+Actor* CreateSelfContactArm(Scene* scene, real jointDamping) {
+  Context* context = scene->GetContext();
+  ArticulatedActorParams params;
+  // The arm pivots about (1.5, 1.5) and holds link 2 just above link 0, so that gravity rotates
+  // link 2 onto link 0.
+  params.joints = {
+      {.type = ArticulatedJointType::Hard},
+      MakeRevoluteJoint(Real3{1.5_r, 1.5_r, 0_r}, {.viscous = jointDamping}),
+      {.type = ArticulatedJointType::Hard,
+       .parentLinkFromJoint = TransformRT{Real3{-1.6_r, -0.45_r, 0_r}}}};
+  params.links = {
+      MakeCubeLink(context, -1, ColliderType::Box),
+      MakeCubeLink(context, 0, ColliderType::None),
+      MakeCubeLink(context, 1, ColliderType::Box)};
+  return scene->CreateArticulatedActor(params, ExpectOK{});
+}
+
+Actor* CreateParallelogramLinkage(Scene* scene, bool useCycleJoint, real jointDamping) {
+  Context* context = scene->GetContext();
+  ArticulatedActorParams params;
+  params.joints = {
+      {.type = ArticulatedJointType::Hard},
+      MakeRevoluteJoint(Real3{2_r, 0_r, 0_r}, {.viscous = jointDamping}),
+      MakeRevoluteJoint(Real3{0_r, -2_r, 0_r}, {.viscous = jointDamping}),
+      MakeRevoluteJoint(Real3{-2_r, 0_r, 0_r}, {.viscous = jointDamping})};
+  params.links = {
+      MakeCubeLink(context, -1, ColliderType::None),
+      MakeCubeLink(context, 0, ColliderType::None),
+      MakeCubeLink(context, 1, ColliderType::None),
+      MakeCubeLink(context, 2, ColliderType::None)};
+  if (useCycleJoint) {
+    // The cycle joint frame is the frame of link 0, at the origin. At rest, link 3 is at (0, -2,
+    // 0).
+    params.cycles = {
+        {.parentLink = 0,
+         .childLink = 3,
+         .jointFromChildLink = TransformRT{Real3{0_r, -2_r, 0_r}}}};
+  }
+  return scene->CreateArticulatedActor(params, ExpectOK{});
+}
+
+Constraint* CreateRigidSphericalJointAt(
+    Scene* scene,
+    Actor const* actorA,
+    Actor const* actorB,
+    Real3 const& worldPoint,
+    real stiffness) {
+  RigidSphericalJointConstraintParams params;
+  params.stiffness = stiffness;
+  params.actorA = actorA->GetHandle();
+  params.actorB = actorB->GetHandle();
+  params.localPosA = actorA->GetRootTransform().TransformPointInverse(worldPoint);
+  params.localPosB = actorB->GetRootTransform().TransformPointInverse(worldPoint);
+  return scene->CreateRigidSphericalJointConstraint(params, ExpectOK{});
 }
 
 } // namespace mochi::test

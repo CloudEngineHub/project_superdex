@@ -511,6 +511,87 @@ void articulated::compound::GetArticulatedJointVelocities(
       joints->jointTypes, joints->jointAxes, joints->dofInfo, jointVels.value, AsView(outVel));
 }
 
+static CQueryArticulatedJointWrenches const*
+GetValidJointWrenchesQuery(entt::registry const& reg, entt::entity e, Error& error) {
+  MOCHI_ERROR_RETURN(error, nullptr);
+  auto const* query = reg.try_get<CQueryArticulatedJointWrenches const>(e);
+  MOCHI_ERROR_IF(
+      !query,
+      error,
+      "You must register QueryType::ArticulatedJointWrenches before this data will be available.");
+  MOCHI_ERROR_RETURN(error, nullptr);
+  MOCHI_ERROR_IF(
+      !query->isValid,
+      error,
+      "Joint wrenches are not available. They are computed in the simulation step after the query "
+      "is registered.");
+  MOCHI_ERROR_RETURN(error, nullptr);
+  return query;
+}
+
+void articulated::compound::GetJointWrenches(
+    entt::registry const& reg,
+    entt::entity e,
+    Span<Real3> outForces,
+    Span<Real3> outTorques,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  auto const numLinks = isize(reg.get<CArticulatedParents const>(e));
+  MOCHI_ERROR_IF(
+      isize(outForces) != numLinks || isize(outTorques) != numLinks,
+      error,
+      "Size of outForces and outTorques must be the number of links.");
+  auto const* query = GetValidJointWrenchesQuery(reg, e, error);
+  MOCHI_ERROR_RETURN(error);
+
+  auto const& wrenches = query->wrenches;
+  for (int link = 0; link < numLinks; ++link) {
+    int const offset = link * RigidSize::kDAll;
+    AsView(outForces[link]) = wrenches.MiddleRows<RigidSize::kDTrans>(offset, RigidSize::kDTrans);
+    AsView(outTorques[link]) =
+        wrenches.MiddleRows<RigidSize::kDRot>(offset + RigidSize::kDTrans, RigidSize::kDRot);
+  }
+}
+
+// Get the force (wrenchOffset = 0) or the torque (wrenchOffset = RigidSize::kDTrans) of a non-cycle
+// joint.
+[[nodiscard]] static Real3 GetJointWrenchPart(
+    entt::registry const& reg,
+    entt::entity e,
+    int jointIndex,
+    int wrenchOffset,
+    Error& error) {
+  static_assert(RigidSize::kDTrans == 3 && RigidSize::kDRot == 3);
+  MOCHI_ERROR_RETURN(error, {});
+  auto const numLinks = isize(reg.get<CArticulatedParents const>(e));
+  MOCHI_ERROR_IF(
+      jointIndex < 0 || jointIndex >= numLinks,
+      error,
+      "Joint index must be in [0, number of links).");
+  auto const* query = GetValidJointWrenchesQuery(reg, e, error);
+  MOCHI_ERROR_RETURN(error, {});
+
+  Real3 part;
+  AsView(part) = query->wrenches.MiddleRows<3>(jointIndex * RigidSize::kDAll + wrenchOffset, 3);
+  return part;
+}
+
+Real3 articulated::compound::GetJointForce(
+    entt::registry const& reg,
+    entt::entity e,
+    int jointIndex,
+    Error& error) {
+  return GetJointWrenchPart(reg, e, jointIndex, 0, error);
+}
+
+Real3 articulated::compound::GetJointTorque(
+    entt::registry const& reg,
+    entt::entity e,
+    int jointIndex,
+    Error& error) {
+  return GetJointWrenchPart(reg, e, jointIndex, RigidSize::kDTrans, error);
+}
+
 static void AddConstraints(
     Span<PoseConstraintInfo const> info,
     Span<PoseConstraintImpl const> impl,
@@ -2772,12 +2853,31 @@ void articulated::compound::EntityAssemble(
   }
 }
 
+// The residual is inertial minus applied force, so the subtree sum of link j is the wrench that
+// the parent applies to the subtree through joint j. Moves its torque from the link CoM to the
+// origin of the joint's inner frame.
+static void MoveSubtreeWrenchesToJoints(
+    CArticulatedRestTransforms const& restTransforms,
+    Span<TransformRT const> linkTransforms,
+    Span<real> inOutWrenches) {
+  for (int link = 0; link < isize(linkTransforms); ++link) {
+    int const offset = link * RigidSize::kDAll;
+    Vec4r const force = Load<3, Vec4r>(&inOutWrenches[offset]);
+    Vec4r const comToJoint = linkTransforms[link].TransformDirection(
+        restTransforms[link].boneFromInner.VGetTranslation());
+    Vec4r const torque =
+        Load<3, Vec4r>(&inOutWrenches[offset + RigidSize::kDTrans]) + Cross3(force, comToJoint);
+    Store<RigidSize::kDRot>(&inOutWrenches[offset + RigidSize::kDTrans], torque);
+  }
+}
+
 void articulated::compound::ProjectFullResidual(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,
     entt::registry& reg,
     CArticulatedBodyShape const& bodyShape,
     CArticulatedParents const& parents,
+    CArticulatedRestTransforms const& restTransforms,
     CArticulatedLinkTransforms<TimeStep::Current> const& currLinkTxs,
     CArticulatedLinkTransforms<TimeStep::StageStart> const& stageStartLinkTxs,
     CArticulatedJacobian const& jacobian,
@@ -2785,6 +2885,7 @@ void articulated::compound::ProjectFullResidual(
     CArticulatedAsyncContactLinkResidual* asyncContactLinkResidual,
     CArticulatedSyncContactLinkResidual& syncContactLinkResidual,
     CArticulatedConstraintLinkResidual& constraintLinkResidual,
+    CQueryArticulatedJointWrenches* jointWrenchesQuery,
     CActorSnle& outCompoundSnle) {
   MOCHI_PROFILE_SCOPE();
   bool const project = params.assemRes &&
@@ -2831,13 +2932,25 @@ void articulated::compound::ProjectFullResidual(
   Span<TransformRT const> const linkTransforms = params.gradTarget == GradTarget::Previous
       ? MakeConstSpan(stageStartLinkTxs)
       : MakeConstSpan(currLinkTxs);
+  bool const computeWrenches = jointWrenchesQuery && params.gradTarget == GradTarget::Current;
+  ColumnVectorView<real> subtreeGradient;
+  if (computeWrenches) {
+    auto& wrenches = jointWrenchesQuery->wrenches;
+    wrenches.Resize(fullResidual.Rows());
+    subtreeGradient.Reset(wrenches);
+  }
   articulated::JacobianTransposeContract(
       bodyShape.shape->GetJointsData()->dofInfo,
       parents,
       linkTransforms,
       fullResidual.GetConstSpan(),
       jacobian.value,
-      AsView(outCompoundSnle.reducedResidual));
+      AsView(outCompoundSnle.reducedResidual),
+      subtreeGradient);
+  if (computeWrenches) {
+    MoveSubtreeWrenchesToJoints(restTransforms, linkTransforms, subtreeGradient.GetSpan());
+    jointWrenchesQuery->isValid = true;
+  }
 }
 
 void articulated::compound::EntityPreFirstStage(

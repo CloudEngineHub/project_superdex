@@ -674,6 +674,12 @@ class SpanReal2:
     def __setitem__(self, index: int, value: Real2Like) -> None: ...
     def __iter__(self) -> Iterator[Real2]: ...
 
+class SpanReal3:
+    def __len__(self) -> int: ...
+    def __getitem__(self, index: int) -> Real3: ...
+    def __setitem__(self, index: int, value: Real3Like) -> None: ...
+    def __iter__(self) -> Iterator[Real3]: ...
+
 class SpanTransformRT:
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> TransformRT: ...
@@ -4927,6 +4933,19 @@ class QueryType:
     Note:
         Not supported for actors without contact sample points or with far SDF
         evaluation enabled.
+    """
+    ARTICULATED_JOINT_WRENCHES: QueryType
+    """Wrench (force and torque) transmitted by each non-cycle joint of an articulated
+    actor. Available via
+    :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`.
+
+    Note:
+        Only supported for articulated actors with at least one degree of freedom.
+
+    Note:
+        Immediate computation, i.e.
+        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
+        supported.
     """
     COUNT: QueryType
     """Number of query type enum values."""
@@ -11314,6 +11333,11 @@ class Actor:
             zero.
 
         Note:
+            Results correspond to the last simulation step. They may become stale after
+            API calls that modify the simulation state, e.g. setters or state
+            restoration.
+
+        Note:
             Call :meth:`~superdex.physics.Actor.cancel_query` when the query is not
             needed again in the future.
 
@@ -12182,6 +12206,129 @@ class Actor:
             :meth:`~superdex.physics.Actor.register_query`,
             :class:`ARTICULATED_CONTROLLER_FORCE <superdex.physics.QueryType>`
         """
+    def get_articulated_joint_wrenches(
+        self,
+        out_forces: ArrayLikeReal3,
+        out_torques: ArrayLikeReal3,
+    ) -> None:
+        """Get the wrench transmitted by each non-cycle joint of an articulated actor.
+
+        The wrench of joint i is the force and torque applied by the parent of link i to
+        link i through its joint (by the world, for root joints). It includes both the
+        constraint reaction, orthogonal to the joint DoFs, and the joint forces along
+        the joint DoFs (from actuation and joint-level internal forces). Joint i is the
+        joint whose child is link i. Cycle joints are not included, but their forces on
+        the links are accounted for in the wrenches of the other joints. Wrenches of
+        cycle joints are available through :class:`CONSTRAINT_FORCE
+        <superdex.physics.QueryType>`.
+
+        The world position of the torque reference point is the joint origin on the
+        child side, i.e. worldFromLink * jointFromChildLink⁻¹ applied to the origin,
+        with worldFromLink from
+        :meth:`~superdex.physics.Actor.get_articulated_link_transforms` and
+        jointFromChildLink from :class:`~superdex.physics.ArticulatedShapeInfo`.
+
+        Args:
+            out_forces (ArrayLikeReal3): Output span for joint forces [N] in world
+                frame. Must be of size equal to the number of links.
+            out_torques (ArrayLikeReal3): Output span for joint torques [N·m] in world
+                frame, about the joint origin on the child side. Must be of size equal
+                to the number of links.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        Note:
+            Only applicable to articulated actors with at least one DoF.
+
+        Note:
+            Requires registering :class:`ARTICULATED_JOINT_WRENCHES
+            <superdex.physics.QueryType>` before the simulation step. Results are
+            available after the simulation step completes.
+
+        Note:
+            Wrenches correspond to the last state assembled by the solver. If the solver
+            did not converge, the joint balance is only approximate.
+
+        Note:
+            For multi-stage time integrators, wrenches correspond to the last stage. If
+            the last stage is not at the end of the time step (:class:`DIRK23
+            <superdex.physics.IntegrationMethod>`, :class:`SYMPLECTIC_DIRK12
+            <superdex.physics.IntegrationMethod>` and :class:`SYMPLECTIC_DIRK22
+            <superdex.physics.IntegrationMethod>`), they differ from the wrenches at the
+            end-of-step state, e.g. the link transforms returned by
+            :meth:`~superdex.physics.Actor.get_articulated_link_transforms`.
+
+        Note:
+            If the solver diverged in the last simulation step, the returned wrenches
+            may be inaccurate.
+
+        Note:
+            Contact forces on static links, i.e. links whose joints up to the root are
+            all :class:`HARD <superdex.physics.ArticulatedJointType>`, are not included.
+            Hence, if link i is static, the wrenches of joint i and its ancestor joints
+            miss the contact forces on link i.
+
+        See Also:
+            :meth:`~superdex.physics.Actor.register_query`,
+            :class:`ARTICULATED_JOINT_WRENCHES <superdex.physics.QueryType>`
+        """
+    def get_articulated_joint_force(self, joint_index: int) -> Real3:
+        """Get the force transmitted by a non-cycle joint of an articulated actor.
+
+        Same as the force of joint ``joint_index`` in
+        :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`.
+
+        Args:
+            joint_index (int): Joint index in the range [0, number of links). Joint i is
+                the joint whose child is link i.
+
+        Returns:
+            Joint force [N] in world frame.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        Note:
+            Cycle joints, at indices [number of links, number of joints) of
+            :class:`~superdex.physics.ArticulatedShapeInfo`, are not supported.
+
+        Note:
+            Same requirements as
+            :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`.
+
+        See Also:
+            :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`,
+            :meth:`~superdex.physics.Actor.get_articulated_joint_torque`
+        """
+    def get_articulated_joint_torque(self, joint_index: int) -> Real3:
+        """Get the torque transmitted by a non-cycle joint of an articulated actor.
+
+        Same as the torque of joint ``joint_index`` in
+        :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`.
+
+        Args:
+            joint_index (int): Joint index in the range [0, number of links). Joint i is
+                the joint whose child is link i.
+
+        Returns:
+            Joint torque [N·m] in world frame, about the joint origin on the child side.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        Note:
+            Cycle joints, at indices [number of links, number of joints) of
+            :class:`~superdex.physics.ArticulatedShapeInfo`, are not supported.
+
+        Note:
+            Same requirements as
+            :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`.
+
+        See Also:
+            :meth:`~superdex.physics.Actor.get_articulated_joint_wrenches`,
+            :meth:`~superdex.physics.Actor.get_articulated_joint_force`
+        """
     def is_nested_link_actor(self) -> bool:
         """Check if the actor is a rigid link within an articulated actor.
 
@@ -12676,6 +12823,11 @@ class Constraint:
         Note:
             Data becomes available after the next simulation step (even if the time-step
             is zero).
+
+        Note:
+            Results correspond to the last simulation step. They may become stale after
+            API calls that modify the simulation state, e.g. setters or state
+            restoration.
 
         Note:
             Call :meth:`~superdex.physics.Constraint.cancel_query` when the query is not

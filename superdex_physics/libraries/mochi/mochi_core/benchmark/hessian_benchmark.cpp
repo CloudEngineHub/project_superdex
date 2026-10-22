@@ -191,7 +191,8 @@ static void JacobianVectorContractFast(benchmark::State& state) {
         bundle.linkTransforms,
         contractedVector,
         jacobian,
-        gradientContracted);
+        gradientContracted,
+        ColumnVectorView<real>{});
     MOCHI_NO_DISCARD_IN_LOOP(gradientContracted);
   }
   benchmark::DoNotOptimize(gradientContracted);

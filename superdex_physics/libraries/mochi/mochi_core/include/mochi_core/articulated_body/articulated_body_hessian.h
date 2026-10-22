@@ -51,14 +51,17 @@ void Hessian(
 
 // Contract the transpose of an articulated Jacobian with a full-space vector in linear time:
 // outReducedGradient += jacobian^T * inFullGradient.
-// Input and output spans must not alias.
+// If outSubtreeGradient is not empty (size RigidSize::kDAll * numLinks), on return its block of
+// each link holds the sum of inFullGradient over the link's subtree, as [force; torque] about the
+// link's translation in linkTransforms. Arguments must not alias.
 void JacobianTransposeContract(
     Span<ArticulatedDofInfo const> dofInfo,
     Span<int const> parents,
     Span<TransformRT const> linkTransforms,
     Span<real const> inFullGradient,
     RowMatrixView<real const> jacobian,
-    ColumnVectorView<real> outReducedGradient);
+    ColumnVectorView<real> outReducedGradient,
+    ColumnVectorView<real> outSubtreeGradient);
 
 // The articulated Hessian differentiates a locally transported Jacobian. For a Lie perturbation
 // delta around q, define

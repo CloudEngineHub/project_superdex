@@ -148,6 +148,7 @@ namespace mochi {
     DefSpan<mochi::Constraint* const>(m, "SpanConstraintConst");
     DefSpan<mochi::real>(m, "SpanReal");
     DefSpan<mochi::Real2>(m, "SpanReal2");
+    DefSpan<mochi::Real3>(m, "SpanReal3");
     DefSpan<mochi::TransformRT>(m, "SpanTransformRT");
   }
 

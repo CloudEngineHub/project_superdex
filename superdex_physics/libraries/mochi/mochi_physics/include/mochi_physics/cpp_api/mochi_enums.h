@@ -156,6 +156,8 @@ enum class QueryType {
 
   TotalContactForce,
 
+  ArticulatedJointWrenches,
+
   Count
 };
 

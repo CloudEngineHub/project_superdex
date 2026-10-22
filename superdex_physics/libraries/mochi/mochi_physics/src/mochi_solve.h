@@ -90,6 +90,23 @@ void UpdateDerivedStateBeforeAssembly(
     CIslandDescendants const& descendants);
 
 /*
+ * Sets up the non-linear equation (SNLE) problem of a simulation island for assembly at its current
+ * state, without solving: configures time integration (single-stage only) and runs the pre-stage
+ * pipelines, which compute the stage-start state from the TimeStep::Previous state. The returned
+ * problem can be assembled repeatedly with SnleProblem::UpdateObjResDRes. If the state of the
+ * actors is modified between assemblies, call SnleProblem::InvalidateCachedData before assembling.
+ *
+ * @param syncCurrentState If true, recompute the current state of the actors from the solution
+ * after the pre-stage pipelines, which write the stage-start state to some components shared with
+ * the current state (e.g., CArticulatedFullPose and the CRootTransform of articulated links).
+ */
+SnleProblem<real> InitIslandAssembly(
+    entt::registry& reg,
+    entt::entity island,
+    CIslandDescendants const& descendants,
+    bool syncCurrentState);
+
+/*
  * Assembles the system of equations for a simulation island at a given state and computes the
  * residual and/or its derivative (Jacobian).
  *

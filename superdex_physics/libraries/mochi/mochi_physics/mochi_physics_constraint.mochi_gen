@@ -276,6 +276,8 @@ class Constraint [no_init, no_destruct, use_scene] {
   //
   // @note Queries may add substantial computational overhead. Use only when necessary.
   // @note Data becomes available after the next simulation step (even if the time-step is zero).
+  // @note Results correspond to the last simulation step. They may become stale after API calls
+  // that modify the simulation state, e.g. setters or state restoration.
   // @note Call @ref CancelQuery when the query is not needed again in the future.
   // @note Queries are reference counted internally, so they will be available as long as there is
   // one outstanding @ref QueryHandle.

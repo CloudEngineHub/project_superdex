@@ -2105,6 +2105,14 @@
 /// @note Not supported for actors without contact sample points or with far SDF evaluation enabled.
 ///
 
+/// @var mochi::QueryType::ArticulatedJointWrenches
+///
+/// @brief Wrench (force and torque) transmitted by each non-cycle joint of an articulated actor. Available via @ref mochi::Actor::GetArticulatedJointWrenches "Actor::GetArticulatedJointWrenches".
+///
+/// @note Only supported for articulated actors with at least one degree of freedom.
+/// @note Immediate computation, i.e. @ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute", is not supported.
+///
+
 /// @var mochi::QueryType::Count
 ///
 /// @brief Number of query type enum values.
@@ -5871,6 +5879,7 @@
 ///
 /// @note Queries may add substantial computational overhead. Use only when necessary.
 /// @note Data is available after the next simulation step, even if its time step is zero.
+/// @note Results correspond to the last simulation step. They may become stale after API calls that modify the simulation state, e.g. setters or state restoration.
 /// @note Call @ref mochi::Actor::CancelQuery "CancelQuery" when the query is not needed again in the future.
 /// @note Queries are reference counted internally, so they will be available as long as there is one outstanding @ref mochi::QueryHandle "QueryHandle".
 /// @note Registration is all-or-nothing: if registration fails, no query is registered.
@@ -6365,6 +6374,60 @@
 /// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::ArticulatedControllerForce "QueryType::ArticulatedControllerForce"
 ///
 
+/// @fn void mochi::Actor::GetArticulatedJointWrenches(Span<Real3> outForces, Span<Real3> outTorques, Error& error) const
+///
+/// @brief Get the wrench transmitted by each non-cycle joint of an articulated actor.
+///
+/// @details The wrench of joint i is the force and torque applied by the parent of link i to link i through its joint (by the world, for root joints). It includes both the constraint reaction, orthogonal to the joint DoFs, and the joint forces along the joint DoFs (from actuation and joint-level internal forces). Joint i is the joint whose child is link i. Cycle joints are not included, but their forces on the links are accounted for in the wrenches of the other joints. Wrenches of cycle joints are available through @ref mochi::QueryType::ConstraintForce "QueryType::ConstraintForce".
+///
+/// The world position of the torque reference point is the joint origin on the child side, i.e. worldFromLink * jointFromChildLink⁻¹ applied to the origin, with worldFromLink from @ref mochi::Actor::GetArticulatedLinkTransforms "GetArticulatedLinkTransforms" and jointFromChildLink from @ref mochi::ArticulatedShapeInfo "ArticulatedShapeInfo".
+///
+/// @param[out] outForces Output span for joint forces [N] in world frame. Must be of size equal to the number of links.
+/// @param[out] outTorques Output span for joint torques [N·m] in world frame, about the joint origin on the child side. Must be of size equal to the number of links.
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+///
+/// @note Only applicable to articulated actors with at least one DoF.
+/// @note Requires registering @ref mochi::QueryType::ArticulatedJointWrenches "QueryType::ArticulatedJointWrenches" before the simulation step. Results are available after the simulation step completes.
+/// @note Wrenches correspond to the last state assembled by the solver. If the solver did not converge, the joint balance is only approximate.
+/// @note For multi-stage time integrators, wrenches correspond to the last stage. If the last stage is not at the end of the time step (@ref mochi::IntegrationMethod::DIRK23 "IntegrationMethod::DIRK23", @ref mochi::IntegrationMethod::SymplecticDIRK12 "IntegrationMethod::SymplecticDIRK12" and @ref mochi::IntegrationMethod::SymplecticDIRK22 "IntegrationMethod::SymplecticDIRK22"), they differ from the wrenches at the end-of-step state, e.g. the link transforms returned by @ref mochi::Actor::GetArticulatedLinkTransforms "GetArticulatedLinkTransforms".
+/// @note If the solver diverged in the last simulation step, the returned wrenches may be inaccurate.
+/// @note Contact forces on static links, i.e. links whose joints up to the root are all @ref mochi::ArticulatedJointType::Hard "ArticulatedJointType::Hard", are not included. Hence, if link i is static, the wrenches of joint i and its ancestor joints miss the contact forces on link i.
+///
+/// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::QueryType::ArticulatedJointWrenches "QueryType::ArticulatedJointWrenches"
+///
+
+/// @fn Real3 mochi::Actor::GetArticulatedJointForce(int jointIndex, Error& error) const
+///
+/// @brief Get the force transmitted by a non-cycle joint of an articulated actor.
+///
+/// @details Same as the force of joint @p jointIndex in @ref mochi::Actor::GetArticulatedJointWrenches "GetArticulatedJointWrenches".
+///
+/// @param[in] jointIndex Joint index in the range [0, number of links). Joint i is the joint whose child is link i.
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+/// @return Joint force [N] in world frame.
+///
+/// @note Cycle joints, at indices [number of links, number of joints) of @ref mochi::ArticulatedShapeInfo "ArticulatedShapeInfo", are not supported.
+/// @note Same requirements as @ref mochi::Actor::GetArticulatedJointWrenches "GetArticulatedJointWrenches".
+///
+/// @see @ref mochi::Actor::GetArticulatedJointWrenches "GetArticulatedJointWrenches", @ref mochi::Actor::GetArticulatedJointTorque "GetArticulatedJointTorque"
+///
+
+/// @fn Real3 mochi::Actor::GetArticulatedJointTorque(int jointIndex, Error& error) const
+///
+/// @brief Get the torque transmitted by a non-cycle joint of an articulated actor.
+///
+/// @details Same as the torque of joint @p jointIndex in @ref mochi::Actor::GetArticulatedJointWrenches "GetArticulatedJointWrenches".
+///
+/// @param[in] jointIndex Joint index in the range [0, number of links). Joint i is the joint whose child is link i.
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+/// @return Joint torque [N·m] in world frame, about the joint origin on the child side.
+///
+/// @note Cycle joints, at indices [number of links, number of joints) of @ref mochi::ArticulatedShapeInfo "ArticulatedShapeInfo", are not supported.
+/// @note Same requirements as @ref mochi::Actor::GetArticulatedJointWrenches "GetArticulatedJointWrenches".
+///
+/// @see @ref mochi::Actor::GetArticulatedJointWrenches "GetArticulatedJointWrenches", @ref mochi::Actor::GetArticulatedJointForce "GetArticulatedJointForce"
+///
+
 /// @fn bool mochi::Actor::IsNestedLinkActor() const
 ///
 /// @brief Check if the actor is a rigid link within an articulated actor.
@@ -6678,6 +6741,7 @@
 ///
 /// @note Queries may add substantial computational overhead. Use only when necessary.
 /// @note Data becomes available after the next simulation step (even if the time-step is zero).
+/// @note Results correspond to the last simulation step. They may become stale after API calls that modify the simulation state, e.g. setters or state restoration.
 /// @note Call @ref mochi::Constraint::CancelQuery "CancelQuery" when the query is not needed again in the future.
 /// @note Queries are reference counted internally, so they will be available as long as there is one outstanding @ref mochi::QueryHandle "QueryHandle".
 ///

@@ -272,6 +272,16 @@ struct CQueryArticulatedControllerForce : RefCounted {
   ColumnVector<real> force;
 };
 
+// Indicates that we should calculate the wrench transmitted by each non-cycle joint of an
+// articulated actor. Block j holds [force; torque] (6 values) applied by the parent of link j to
+// link j through its joint, in world frame, with torque about the origin of the joint's inner
+// frame. Written by articulated::compound::ProjectFullResidual at every residual assembly of
+// GradTarget::Current.
+struct CQueryArticulatedJointWrenches : RefCounted {
+  ColumnVector<real> wrenches;
+  bool isValid = false;
+};
+
 /**********************************************************************
   QueryHandle Utilities
 */

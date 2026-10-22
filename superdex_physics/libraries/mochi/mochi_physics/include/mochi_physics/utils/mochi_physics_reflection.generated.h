@@ -104,6 +104,7 @@ MOCHI_ENUM_ITEM(ConstraintForce)
 MOCHI_ENUM_ITEM(ArticulatedControllerForce)
 MOCHI_ENUM_ITEM(SdfDistances)
 MOCHI_ENUM_ITEM(TotalContactForce)
+MOCHI_ENUM_ITEM(ArticulatedJointWrenches)
 MOCHI_ENUM_COUNT(Count)
 MOCHI_ENUM_END()
 

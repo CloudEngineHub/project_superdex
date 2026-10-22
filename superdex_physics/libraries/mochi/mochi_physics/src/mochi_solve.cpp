@@ -1099,12 +1099,11 @@ static SnleProblem<real> InitIslandProblem(
   return problem;
 }
 
-void mochi::solver::AssembleIsland(
+SnleProblem<real> mochi::solver::InitIslandAssembly(
     entt::registry& reg,
     entt::entity island,
     CIslandDescendants const& descendants,
-    ColumnVectorView<real> outRes,
-    MatrixView<real> outDRes) {
+    bool syncCurrentState) {
   MOCHI_PROFILE_SCOPE();
   MOCHI_ASSERT(isize(descendants.actors) > 0, "Empty islands should have been pruned");
 
@@ -1120,6 +1119,22 @@ void mochi::solver::AssembleIsland(
   PreFirstStageLocalPipeline(reg, descendants);
 
   PreStageLocalPipeline(reg, descendants, problem);
+
+  if (syncCurrentState) {
+    PostNewSolutionLocalPipeline(reg, island, problem.solution);
+  }
+  return problem;
+}
+
+void mochi::solver::AssembleIsland(
+    entt::registry& reg,
+    entt::entity island,
+    CIslandDescendants const& descendants,
+    ColumnVectorView<real> outRes,
+    MatrixView<real> outDRes) {
+  MOCHI_PROFILE_SCOPE();
+  SnleProblem<real> problem =
+      InitIslandAssembly(reg, island, descendants, /*syncCurrentState*/ false);
 
   problem.UpdateObjResDRes(
       {.assemObj = false, // Can be set to false if the merit isn't needed
