@@ -28,7 +28,6 @@
 #include <mochi_core/utils/quaternion_utils.h>
 #include <mochi_core/utils/rigid_body_utils.h>
 #include <mochi_core/utils/transform_rt.h>
-#include <mochi_mesh/step_mesh_stages.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
 #include <mochi_renderer/render_space.h>
 
@@ -203,27 +202,6 @@ mochi_renderer::MeshSection PrimitiveSection(mochi::MeshData const& mesh) {
     }
   }
   return section;
-}
-
-// One mesh wrapped tightly around `pieces` (a convex hull deflated toward them), or empty on
-// failure.
-mochi::MeshData ShrinkWrapPieces(std::vector<mochi::MeshData> const& pieces) {
-  mochi::MeshData soup;
-  soup.nodesPerElement = 3;
-  for (mochi::MeshData const& piece : pieces) {
-    int const offset = soup.GetNumNodes();
-    for (mochi::real const value : piece.coordinates) {
-      soup.coordinates.push_back(value);
-    }
-    for (int const index : piece.connectivity) {
-      soup.connectivity.push_back(index + offset);
-    }
-  }
-  mochi::mesh::MeshClosureParams params;
-  params.mode = mochi::mesh::MeshClosureMode::ShrinkWrap;
-  mochi::ErrorLog error;
-  mochi::MeshData wrapped = mochi::mesh::CloseMesh(soup, params, error);
-  return error.IsOK() ? wrapped : mochi::MeshData{};
 }
 
 } // namespace
@@ -678,65 +656,6 @@ bool FitPrimitiveToMesh(GeomReference& geom, std::vector<std::string>& warnings)
   geom.meshScale = kUnitScale;
   geom.geomFromMesh = mochi::TransformRT::Identity();
   return true;
-}
-
-bool BuildLinkCollisionH5(
-    GeomList const& geoms,
-    LinkCollisionOptions const& options,
-    mochi::Path const& outputPath,
-    std::vector<std::string>& warnings) {
-  std::vector<mochi::MeshData> pieces;
-  for (GeomReference const& geom : geoms) {
-    mochi::MeshData piece = GeomCollisionMesh(geom, /*inLinkFrame=*/true, warnings);
-    if (!piece.IsEmpty()) {
-      pieces.push_back(std::move(piece));
-    }
-  }
-  if (pieces.empty()) {
-    return false;
-  }
-
-  mochi::MeshData merged;
-  if (options.merge == CollisionMerge::ShrinkWrap) {
-    merged = ShrinkWrapPieces(pieces);
-  } else if (pieces.size() == 1) {
-    // Like a URDF mesh, a lone geom is only remeshed and baked; there is nothing to merge.
-    merged = std::move(pieces.front());
-  } else {
-    std::vector<mochi::MeshDataView> views(pieces.begin(), pieces.end());
-    mochi::ErrorLog error;
-    mochi::mesh::MeshUnionResult result =
-        mochi::mesh::UnionMeshes(mochi::MakeConstSpan(views), {}, error);
-    if (!error.IsOK()) {
-      return false;
-    }
-    if (result.usedFallback) {
-      warnings.push_back(
-          "Part of " + outputPath.GetFilename() +
-          " could not be merged exactly and was wrapped instead, so it is approximate.");
-    }
-    merged = std::move(result.mesh);
-  }
-  if (merged.IsEmpty()) {
-    return false;
-  }
-  mochi::ModelData data;
-  data.mesh = std::move(merged);
-  return SaveMochiModel(std::move(data), outputPath, options.remesh, options.bakeSdf);
-}
-
-bool BuildGeomCollisionH5(
-    GeomReference const& geom,
-    LinkCollisionOptions const& options,
-    mochi::Path const& outputPath,
-    std::vector<std::string>& warnings) {
-  mochi::MeshData mesh = GeomCollisionMesh(geom, /*inLinkFrame=*/false, warnings);
-  if (mesh.IsEmpty()) {
-    return false;
-  }
-  mochi::ModelData data;
-  data.mesh = std::move(mesh);
-  return SaveMochiModel(std::move(data), outputPath, options.remesh, options.bakeSdf);
 }
 
 } // namespace superdex::studio

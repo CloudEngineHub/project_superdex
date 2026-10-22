@@ -357,8 +357,9 @@ void PayloadWriter::WriteMeshDecimateParams(MeshDecimateParams const& params) {
 }
 
 void PayloadWriter::WriteMeshUnionParams(MeshUnionParams const& params) {
-  auto const& [wrapFallback] = params;
+  auto const& [wrapFallback, wrapDetail] = params;
   WriteBool(wrapFallback);
+  WriteDouble(wrapDetail);
 }
 
 bool PayloadReader::ReadU32(uint32_t& outValue) {
@@ -666,6 +667,6 @@ bool PayloadReader::ReadMeshDecimateParams(MeshDecimateParams& outParams) {
 
 bool PayloadReader::ReadMeshUnionParams(MeshUnionParams& outParams) {
   outParams = {};
-  auto& [wrapFallback] = outParams;
-  return ReadBool(wrapFallback);
+  auto& [wrapFallback, wrapDetail] = outParams;
+  return ReadBool(wrapFallback) && ReadDouble(wrapDetail);
 }

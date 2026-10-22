@@ -35,9 +35,13 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace superdex::studio {
+
+// Suffix of the pipeline the Model Editor pairs with a model (see AssetGeneratedFilePath).
+inline constexpr std::string_view kProcessingPipelineSuffix = ".StudioProcessing.json";
 
 // Editor-level state persisted alongside the modifier array. Currently the CAD transform.
 // Reflected; Quaternion serializes as an xyzw array of 4 reals.

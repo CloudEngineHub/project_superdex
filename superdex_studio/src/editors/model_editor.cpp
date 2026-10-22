@@ -691,18 +691,22 @@ std::vector<MeshSection> ReadRenderModelSections(mochi::Path const& path) {
   return processing::ReadSectionsInRenderSpace(path.ToString());
 }
 
-AssetType AssetTypeForModelSlot(ModelSlotType type) {
+std::span<AssetType const> AssetTypesForModelSlot(ModelSlotType type) {
+  static constexpr std::array<AssetType, 3> kModelTypes = {
+      AssetType::CadModel, AssetType::RenderModel, AssetType::MochiModel};
   switch (type) {
     case ModelSlotType::CadModel:
-      return AssetType::CadModel;
+      return std::span(kModelTypes).subspan(0, 1);
     case ModelSlotType::RenderModel:
-      return AssetType::RenderModel;
+      return std::span(kModelTypes).subspan(1, 1);
     case ModelSlotType::MochiModel:
-      return AssetType::MochiModel;
+      return std::span(kModelTypes).subspan(2, 1);
+    case ModelSlotType::AnyModel:
+      return kModelTypes;
   }
   // Only a value outside the enum gets here: -Wswitch flags a new ModelSlotType above.
   MOCHI_LOG_ERROR("Unknown model slot type %d", static_cast<int>(type));
-  return AssetType::Unknown;
+  return {};
 }
 
 class StudioModifierHost final : public ModifierHost {
@@ -710,13 +714,29 @@ class StudioModifierHost final : public ModifierHost {
   explicit StudioModifierHost(SuperDexStudio& studio) : _studio(studio) {}
 
   void ModelSlot(char const* id, mochi::DynamicString& path, ModelSlotType type) override {
+    AssetManager& assets = _studio.GetAssetManager();
+    if (!path.empty()) {
+      std::string const key(path);
+      mochi::Path const slotted{key};
+      // A path set by a loaded pipeline (rather than dropped) names a file the asset manager may
+      // not have loaded yet; load it once so the slot shows its tile.
+      Asset* asset = assets.FindAssetByPath(slotted);
+      if (asset == nullptr && _loadAttempted.insert(key).second) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(slotted.AsFilesystemPath(), error)) {
+          asset = assets.LoadAsset(slotted);
+        }
+      }
+      // A CAD model has no thumbnail until it is tessellated. An STL is read directly, as for the
+      // editor's CAD references; a STEP would need the slow tessellator, so it keeps none.
+      auto* const cad = dynamic_cast<CadModelAsset*>(asset);
+      if (cad != nullptr && !cad->RendersThumbnail() &&
+          slotted.AsLowercaseString().ends_with(".stl") && _tessellated.insert(key).second) {
+        cad->SetTessellation(ReadRenderModelSections(slotted), _studio.GetResourceManager());
+      }
+    }
     ImGui::AssetSlot(
-        id,
-        path,
-        _studio.GetAssetManager(),
-        &_studio,
-        AssetTypeForModelSlot(type),
-        /*acceptDragDropPayload=*/true);
+        id, path, assets, &_studio, AssetTypesForModelSlot(type), /*acceptDragDropPayload=*/true);
   }
   std::string SaveFileDialog(
       char const* title,
@@ -763,6 +783,10 @@ class StudioModifierHost final : public ModifierHost {
 
  private:
   SuperDexStudio& _studio;
+  // Slotted paths already loaded or tessellated for their tiles, so neither is retried each frame
+  // (a missing or unreadable file stays missing until the editor is reopened).
+  std::unordered_set<std::string> _loadAttempted;
+  std::unordered_set<std::string> _tessellated;
 };
 
 } // namespace
@@ -2614,7 +2638,7 @@ std::string ModelEditor::ComputeProcessingJsonPath() const {
     return {};
   }
   return AssetGeneratedFilePath(
-      mochi::Path{originPath}, !_originIsShadowed, ".StudioProcessing.json");
+      mochi::Path{originPath}, !_originIsShadowed, kProcessingPipelineSuffix);
 }
 
 void ModelEditor::LoadProcessingPipelineOnOpen() {

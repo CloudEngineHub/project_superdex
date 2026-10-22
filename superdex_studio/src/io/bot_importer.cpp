@@ -16,6 +16,8 @@
 
 #include "io/bot_importer.h"
 #include "app/app.h"
+#include "app/process_command.h"
+#include "assets/asset_types.h"
 #include "meshing/mesh_conversion.h"
 #include "ui/imgui_widgets.h"
 
@@ -221,6 +223,13 @@ static void ShowCollisionOptions(BotImportOptions& options) {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Bake a signed distance field into each converted collision model.");
   }
+  ImGui::SameLine();
+  ImGui::Checkbox("Keep Recipes", &options.keepRecipes);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "Save each collision model's recipe and source files with the bot, so you can\n"
+        "open the model in the Model Editor, tune it, and rebuild it.");
+  }
 }
 
 // Lists the geoms a model is built from, one per line. The first line is a combo choosing between
@@ -296,6 +305,18 @@ bool BotImporter::SetOption(std::string_view key, std::string_view value) {
         value == "free" ? mochi::ArticulatedJointType::Free : mochi::ArticulatedJointType::Hard;
     return true;
   }
+  if (key == "render_source" || key == "collision_source") {
+    if (value != "visual" && value != "collision") {
+      return false;
+    }
+    bool const render = key == "render_source";
+    int& choice = render ? _renderSourceChoice : _collisionSourceChoice;
+    choice = value == "visual" ? kSourceVisual : kSourceCollision;
+    ApplyBlanketSource(choice, render);
+    ApplyBlanketRenderOp();
+    ApplyBlanketCollisionOp();
+    return true;
+  }
   if (key == "render_operation") {
     static std::unordered_map<std::string_view, int> const kOperations = {
         {"convert", kRenderConvertAll}, {"copy", kRenderCopyAll}, {"ignore", kRenderIgnoreAll}};
@@ -331,6 +352,8 @@ bool BotImporter::SetOption(std::string_view key, std::string_view value) {
     _options.mochiRemesh = *flag;
   } else if (key == "bake_sdf") {
     _options.mochiBakeSdf = *flag;
+  } else if (key == "keep_recipes") {
+    _options.keepRecipes = *flag;
   } else {
     return false;
   }
@@ -765,9 +788,21 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
   mochi::Path const renderDir = _options.renderDir.empty() ? destDir : destDir / _options.renderDir;
   mochi::CoordinateSpaceConverter const renderConverter(
       mochi::CoordinateSpace::Default(), mochi_renderer::RenderSpace());
-  LinkCollisionOptions collisionOptions;
-  collisionOptions.remesh = _options.mochiRemesh;
-  collisionOptions.bakeSdf = _options.mochiBakeSdf;
+  CollisionRecipeOptions recipeOptions;
+  recipeOptions.remesh = _options.mochiRemesh;
+  recipeOptions.bakeSdf = _options.mochiBakeSdf;
+  // The files the recipes read: copies in mochiDir/src while recipes are kept.
+  mochi::Path const srcDir = mochiDir / "src";
+  std::unordered_map<std::string, std::string> sourceCopies;
+  _recipeScratch.reset();
+  if (!_options.keepRecipes) {
+    mochi::ErrorLog scratchError;
+    _recipeScratch.emplace(mochi::CreateTempDirectory("bot_import_recipes", scratchError));
+    if (!scratchError.IsOK()) {
+      MOCHI_LOG_ERROR("Could not create a folder for the collision recipes; nothing was imported.");
+      return false;
+    }
+  }
 
   // Output names are de-duplicated against files on disk and against each other.
   std::set<mochi::Path> claimed;
@@ -802,6 +837,9 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
     AddLinkTasks(entry.sourceLink, link, tasks);
 
     std::vector<int> const renderGeoms = SelectGeoms(entry, entry.renderSource);
+    // The GLB this import builds for the link, if any, and the task building it.
+    std::optional<mochi::Path> renderGlb;
+    std::size_t renderTask = 0;
     // A Copy left over from an earlier Source is converted instead (Copy needs one mesh file).
     if (entry.renderOp == RenderOperation::Copy &&
         !entry.CopyableFile(entry.renderSource).empty()) {
@@ -821,6 +859,8 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
       }
       mochi::Path const dst =
           ClaimOutputPath(renderDir, entry.linkName, std::string(kGlbExtension), claimed);
+      renderGlb = dst;
+      renderTask = tasks.size();
       std::vector<std::string>* warnings = AddTaskWarnings();
       needRenderDir = true;
       tasks.push_back(
@@ -874,48 +914,71 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
         GeomReference* geom = &geoms[g];
         mochi::Path const dst =
             ClaimOutputPath(mochiDir, entry.linkName + "_" + std::to_string(k++), h5, claimed);
-        std::vector<std::string>* warnings = AddTaskWarnings();
-        tasks.push_back(
-            AsyncTask{
-                "Build " + dst.GetFilename(),
-                [geom, dst, collisionOptions, warnings](AsyncCancelToken const& cancel) {
-                  if (cancel.IsCancelRequested() ||
-                      !BuildGeomCollisionH5(*geom, collisionOptions, dst, *warnings)) {
-                    return false;
-                  }
-                  // The file holds the scaled mesh; the layout applies only the pose.
-                  geom->shapeFile = dst.ToString();
-                  geom->meshScale = kUnitScale;
-                  return true;
-                }});
+        CollisionRecipeOptions options = recipeOptions;
+        std::string file = CadModelCopy(*geom, dst);
+        if (!file.empty()) {
+          options.source = CollisionRecipeSource::CadModel;
+        } else {
+          file = RecipeMeshFile(*geom, srcDir, sourceCopies, claimed);
+        }
+        // The file holds the geom in its own frame, scaled; the layout applies only the pose.
+        SourcePart part = PartFromGeom(*geom, file);
+        part.rotation = mochi::Quaternion::Identity();
+        part.translation = {};
+        tasks.push_back(RecipeTask({std::move(part)}, options, dst, [geom, dst] {
+          geom->shapeFile = dst.ToString();
+          geom->meshScale = kUnitScale;
+        }));
       }
       continue;
     }
 
-    GeomList selected;
-    for (int g : collisionGeoms) {
-      selected.push_back(geoms[g]);
-    }
-    LinkCollisionOptions options = collisionOptions;
+    mochi::Path const dst = ClaimOutputPath(mochiDir, entry.linkName, h5, claimed);
+    CollisionRecipeOptions options = recipeOptions;
     options.merge = entry.collisionOp == CollisionOperation::ShrinkWrap ? CollisionMerge::ShrinkWrap
                                                                         : CollisionMerge::Union;
-    mochi::Path const dst = ClaimOutputPath(mochiDir, entry.linkName, h5, claimed);
-    std::vector<std::string>* warnings = AddTaskWarnings();
-    tasks.push_back(
-        AsyncTask{
-            "Build " + dst.GetFilename(),
-            [link, selected = std::move(selected), dst, options, warnings](
-                AsyncCancelToken const& cancel) {
-              if (cancel.IsCancelRequested() ||
-                  !BuildLinkCollisionH5(selected, options, dst, *warnings)) {
-                return false;
-              }
-              link->shapeFile = dst.ToString();
-              link->shapeScale = kUnitScale;
-              link->shapeRotation = mochi::Quaternion::Identity();
-              link->shapeTranslation = {};
-              return true;
-            }});
+    // A model built from the link's lone render geom reads the GLB built for it above, which is the
+    // model's Render Model in the Model Editor.
+    bool const readsRenderModel = _options.keepRecipes && renderGlb.has_value() &&
+        collisionGeoms.size() == 1 && entry.collisionSource == entry.renderSource &&
+        std::string_view(_options.renderDir) == superdex::robotics::kRenderSubdir &&
+        std::string_view(_options.mochiDir) == superdex::robotics::kCollisionSubdir &&
+        GetAssetNameFromPath(*renderGlb) == GetAssetNameFromPath(dst);
+    std::string const cadModel = collisionGeoms.size() == 1 && !readsRenderModel
+        ? CadModelCopy(geoms[collisionGeoms.front()], dst)
+        : std::string{};
+    if (readsRenderModel) {
+      options.source = CollisionRecipeSource::RenderModel;
+    } else if (!cadModel.empty()) {
+      options.source = CollisionRecipeSource::CadModel;
+    }
+    std::vector<SourcePart> parts;
+    for (int g : collisionGeoms) {
+      std::string file = std::string(geoms[g].meshFile);
+      if (!cadModel.empty()) {
+        file = cadModel;
+      } else if (!readsRenderModel) {
+        file = RecipeMeshFile(geoms[g], srcDir, sourceCopies, claimed);
+      }
+      parts.push_back(PartFromGeom(geoms[g], file));
+    }
+    AsyncTask recipe = RecipeTask(std::move(parts), options, dst, [link, dst] {
+      link->shapeFile = dst.ToString();
+      link->shapeScale = kUnitScale;
+      link->shapeRotation = mochi::Quaternion::Identity();
+      link->shapeTranslation = {};
+    });
+    if (readsRenderModel) {
+      // Tasks may run in parallel, so the recipe reading the GLB runs in the task that builds it.
+      AsyncTask& render = tasks[renderTask];
+      render.label += ", " + dst.GetFilename();
+      render.work = [buildGlb = std::move(render.work),
+                     buildCollision = std::move(recipe.work)](AsyncCancelToken const& cancel) {
+        return buildGlb(cancel) && buildCollision(cancel);
+      };
+    } else {
+      tasks.push_back(std::move(recipe));
+    }
   }
 
   auto ensureDir = [](mochi::Path const& dir) {
@@ -970,6 +1033,121 @@ bool BotImporter::OnFinishImport(std::vector<AsyncTask>& tasks, FinalizeFn& fina
     return true;
   };
   return true;
+}
+
+std::string BotImporter::RecipeMeshFile(
+    GeomReference const& geom,
+    mochi::Path const& srcDir,
+    std::unordered_map<std::string, std::string>& copies,
+    std::set<mochi::Path>& claimed) {
+  std::string const source(geom.meshFile);
+  if (!_options.keepRecipes || geom.type != GeomType::Mesh || source.empty()) {
+    return source;
+  }
+  auto const [it, inserted] = copies.try_emplace(source, source);
+  if (!inserted) {
+    return it->second;
+  }
+  // Named after the file the robot description references (MJCF's first-object copies of OBJ
+  // files carry a prefix).
+  std::string name = std::filesystem::path(std::string(geom.meshRef)).filename().string();
+  if (name.empty()) {
+    name = mochi::Path{source}.GetFilename();
+  }
+  mochi::Path const copy = ClaimCopyPath(srcDir, name, claimed);
+  std::error_code error;
+  std::filesystem::create_directories(srcDir.AsFilesystemPath(), error);
+  std::filesystem::copy_file(
+      source, copy.AsFilesystemPath(), std::filesystem::copy_options::overwrite_existing, error);
+  if (error) {
+    MOCHI_LOG_WARNING(
+        "Could not copy %s for its collision recipe (%s); the recipe reads the original.",
+        source.c_str(),
+        error.message().c_str());
+    return source;
+  }
+  it->second = copy.ToString();
+  return it->second;
+}
+
+std::string BotImporter::CadModelCopy(GeomReference const& geom, mochi::Path const& dst) {
+  std::string const source(geom.meshFile);
+  if (!_options.keepRecipes || geom.type != GeomType::Mesh || !EndsWith(source, ".stl")) {
+    return {};
+  }
+  std::filesystem::path const copy =
+      superdex::robotics::AssetRoleFolderForWrite(
+          dst.GetParentPath().AsFilesystemPath(), superdex::robotics::kCadSubdir) /
+      (GetAssetNameFromPath(dst) + ".stl");
+  std::error_code error;
+  if (std::filesystem::exists(copy, error)) {
+    return {};
+  }
+  std::filesystem::create_directories(copy.parent_path(), error);
+  std::filesystem::copy_file(source, copy, error);
+  if (error) {
+    MOCHI_LOG_WARNING(
+        "Could not copy %s to %s (%s); its recipe reads the file from the src folder instead.",
+        source.c_str(),
+        copy.string().c_str(),
+        error.message().c_str());
+    return {};
+  }
+  return copy.string();
+}
+
+AsyncTask BotImporter::RecipeTask(
+    std::vector<SourcePart> parts,
+    CollisionRecipeOptions const& options,
+    mochi::Path const& dst,
+    std::function<void()> onBuilt) {
+  // A kept recipe goes where the Model Editor looks for the model's pipeline.
+  bool const keep = _options.keepRecipes;
+  std::filesystem::path const pipelinePath = keep
+      ? std::filesystem::path(
+            AssetGeneratedFilePath(dst, /*isCanonical=*/true, kProcessingPipelineSuffix))
+      : _recipeScratch->Path() / (dst.GetFilename() + std::string(kProcessingPipelineSuffix));
+  mochi::Error error;
+  std::string writeError;
+  if (!WriteCollisionRecipe(
+          MakeCollisionRecipe(std::move(parts), options, dst.ToString()),
+          pipelinePath,
+          /*relativePaths=*/keep,
+          error)) {
+    writeError = error.GetDescription();
+  }
+  std::vector<std::string>* warnings = AddTaskWarnings();
+  return AsyncTask{
+      "Build " + dst.GetFilename(),
+      [pipelinePath, writeError, warnings, onBuilt = std::move(onBuilt)](
+          AsyncCancelToken const& cancel) {
+        std::string const recipe = pipelinePath.filename().string();
+        if (!writeError.empty()) {
+          warnings->push_back("Could not write " + recipe + ": " + writeError);
+          return false;
+        }
+        if (cancel.IsCancelRequested()) {
+          return false;
+        }
+        ProcessOptions process;
+        process.pipelinePath = pipelinePath.string();
+        mochi::Error runError;
+        ProcessReport const report = RunProcessingPipelineInBoundContext(process, runError);
+        if (!runError.IsOK()) {
+          warnings->push_back(recipe + ": " + runError.GetDescription());
+          return false;
+        }
+        for (ProcessStageReport const& stage : report.stages) {
+          if (!stage.succeeded) {
+            warnings->push_back(recipe + ", " + stage.label + ": " + stage.error);
+          }
+        }
+        if (!report.succeeded) {
+          return false;
+        }
+        onBuilt();
+        return true;
+      }};
 }
 
 bool BotImporter::CanImport() {

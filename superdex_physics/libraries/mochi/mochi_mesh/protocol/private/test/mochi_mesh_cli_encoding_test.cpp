@@ -768,6 +768,7 @@ TEST(MochiMeshCliEncoding, MeshDecimateParamsRoundTrip) {
 TEST(MochiMeshCliEncoding, MeshUnionParamsRoundTrip) {
   MeshUnionParams params;
   params.wrapFallback = false;
+  params.wrapDetail = 0.005;
 
   PayloadWriter writer;
   writer.WriteMeshUnionParams(params);
@@ -777,6 +778,7 @@ TEST(MochiMeshCliEncoding, MeshUnionParamsRoundTrip) {
   EXPECT_TRUE(reader.ReadMeshUnionParams(decoded));
   EXPECT_TRUE(reader.AtEnd());
   EXPECT_EQ(decoded.wrapFallback, params.wrapFallback);
+  EXPECT_EQ(decoded.wrapDetail, params.wrapDetail);
 }
 
 TEST(MochiMeshCliEncoding, MeshDataArrayRoundTrip) {

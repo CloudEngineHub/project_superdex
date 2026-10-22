@@ -17,17 +17,24 @@
 #pragma once
 
 #include "io/importer.h"
+#include "meshing/collision_recipe.h"
 #include "meshing/link_meshes.h"
+#include "meshing/processing_modifiers/source_parts.h"
 
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/error.h>
+#include <mochi_core/utils/file_utils.h>
 #include <mochi_renderer/path.h>
 #include <superdex_robotics/superdex_robotics.h>
 #include <superdex_robotics/utils/file_utils.h>
 
 #include <deque>
+#include <functional>
+#include <optional>
+#include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace superdex::studio {
@@ -90,6 +97,10 @@ struct BotImportOptions {
   bool mochiRemesh = true;
   // Bake a signed distance field into converted mochi (collision) models.
   bool mochiBakeSdf = true;
+  // Keep each converted collision model's processing recipe (in the `intermediates` folder) and the
+  // source files it reads (in a `src` folder beside the models), so the model can be reopened,
+  // tuned and rebuilt in the Model Editor.
+  bool keepRecipes = true;
 };
 
 // Import wizard for robot formats whose links carry several visual and collision geoms (URDF,
@@ -101,9 +112,11 @@ class BotImporter : public Importer {
   [[nodiscard]] std::string const& GetDisplayName() const override;
   [[nodiscard]] std::vector<std::string> const& GetExtensions() const override;
   [[nodiscard]] ImU32 GetColor() const override;
-  // name, world_joint (free | hard), render_operation (convert | copy | ignore),
+  // name, world_joint (free | hard), render_source and collision_source (visual | collision),
+  // render_operation (convert | copy | ignore),
   // collision_operation (union | shrink_wrap | separate | copy | ignore), render_dir,
-  // collision_dir, remesh, bake_sdf (true | false). Copy needs a format that allows it.
+  // collision_dir, remesh, bake_sdf, keep_recipes (true | false). Copy needs a format that allows
+  // it.
   bool SetOption(std::string_view key, std::string_view value) override;
   [[nodiscard]] mochi::Path GetOutputAssetPath() const override;
 
@@ -158,6 +171,25 @@ class BotImporter : public Importer {
   void ShowCollisionModelsTab();
   // The collision operations this format offers, in display order.
   [[nodiscard]] std::vector<CollisionOperation> CollisionOperations() const;
+  // The file a collision recipe reads for @p geom's mesh: while recipes are kept, a copy in
+  // @p srcDir, made once per source file (@p copies) under a name unique in @p claimed; otherwise
+  // the geom's own file.
+  std::string RecipeMeshFile(
+      superdex::robotics::GeomReference const& geom,
+      mochi::Path const& srcDir,
+      std::unordered_map<std::string, std::string>& copies,
+      std::set<mochi::Path>& claimed);
+  // While recipes are kept, copies @p geom's mesh, if it is an STL, to `cad/<model>.stl` for the
+  // model @p dst, where the Model Editor finds it as the model's CAD Model, and returns the copy.
+  // Empty otherwise, or if that file exists already.
+  std::string CadModelCopy(superdex::robotics::GeomReference const& geom, mochi::Path const& dst);
+  // Writes the recipe building @p dst from @p parts and returns the task that runs it, which calls
+  // @p onBuilt once @p dst is written. The task fails if the recipe could not be written.
+  AsyncTask RecipeTask(
+      std::vector<SourcePart> parts,
+      CollisionRecipeOptions const& options,
+      mochi::Path const& dst,
+      std::function<void()> onBuilt);
   // Combo over CollisionOperations (plus Custom if `withCustom`), with Copy disabled unless
   // `canCopy`. Returns true on change.
   bool ShowCollisionOpCombo(char const* label, int& choice, bool withCustom, bool canCopy) const;
@@ -176,6 +208,8 @@ class BotImporter : public Importer {
   // Notes collected by background tasks, one buffer per task, logged by finalize. A deque keeps
   // each task's buffer in place as more are added.
   std::deque<std::vector<std::string>> _taskWarnings;
+  // Holds the recipes of an import that does not keep them, until the next import begins.
+  std::optional<mochi::TempDirCleanup> _recipeScratch;
 
   // False if the file failed to load or produced no links; the dialog then shows a warning and
   // disables Import.

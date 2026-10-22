@@ -91,6 +91,13 @@ ProcessReport RunProcessingPipeline(
     mochi::Error& error,
     std::function<void(ProcessStageReport const&)> const& onStage = {});
 
+// Same as RunProcessingPipeline, on the mochi::Context already bound to the calling thread (as on
+// an async task's thread) instead of a context of its own.
+ProcessReport RunProcessingPipelineInBoundContext(
+    ProcessOptions const& options,
+    mochi::Error& error,
+    std::function<void(ProcessStageReport const&)> const& onStage = {});
+
 // Runs RunProcessingPipeline, printing progress to stdout and failures to stderr. Returns the
 // process exit code: 0 when every stage and export succeeded, 1 otherwise.
 int RunProcessCommand(ProcessOptions const& options);

@@ -182,3 +182,11 @@ TEST(MeshUnionTest, FailedUnionWithoutFallbackIsAnError) {
   std::vector<MeshDataView> views(meshes.begin(), meshes.end());
   (void)UnionMeshes(MakeConstSpan(views), params, ExpectNotOK{});
 }
+
+TEST(MeshUnionTest, NonPositiveWrapDetailIsAnError) {
+  MeshUnionParams params;
+  params.wrapDetail = 0.0;
+  std::vector<MeshData> const meshes = {CreateCubeTriMesh()};
+  std::vector<MeshDataView> views(meshes.begin(), meshes.end());
+  (void)UnionMeshes(MakeConstSpan(views), params, ExpectNotOK{});
+}

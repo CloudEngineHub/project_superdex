@@ -18,7 +18,7 @@
 
 #include "meshing/mesh_conversion.h" // MeshSectionsToModel (render->mochi space conversion for .mochi.h5)
 #include "meshing/processing_modifiers/processing_export_path.h" // DefaultExportPath
-#include "meshing/processing_modifiers/processing_mesh_utils.h" // SectionFromMeshData, MeshDataFromSections, EndsWithNoCase
+#include "meshing/processing_modifiers/processing_mesh_utils.h" // SectionFromMeshData, WeldIdenticalVertices, EndsWithNoCase
 
 #include <picojson/picojson.h>
 
@@ -51,12 +51,15 @@ namespace {
 
 using mochi_renderer::MeshSection;
 
-// Reflected props: the SDF bake parameters (a reflected mochi type, nested) + the export path.
+// Reflected props: whether to bake an SDF, its parameters (a reflected mochi type, nested), and the
+// export path.
 struct MochiModelExportProps {
+  bool bakeSdf = true;
   mochi::GridSdfParams sdf;
   mochi::DynamicString exportPath;
 
   MOCHI_STRUCT_BEGIN(superdex::studio::MochiModelExportProps)
+  MOCHI_FIELD(bakeSdf)
   MOCHI_FIELD(sdf)
   MOCHI_FIELD(exportPath)
   MOCHI_STRUCT_END()
@@ -78,7 +81,8 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     return "SDF";
   }
   char const* Description() const override {
-    return "Bake a grid SDF from the input surface and export the mesh plus SDF as a .mochi.h5.";
+    return "Bake a grid SDF from the input surface and export the mesh plus SDF as a .mochi.h5 (or "
+           "the mesh alone, with Bake SDF off).";
   }
   bool ProvidesFileExport() const override {
     return true;
@@ -131,14 +135,24 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
 
   void ShowParams(ModifierGuiContext const& gui) override {
     ModifierTooltip const& tooltip = gui.tooltip;
+    ImGui::Checkbox("Bake SDF", &_props.bakeSdf);
+    tooltip(
+        "Bake a signed distance field into the exported model. Off exports the mesh alone; Mochi "
+        "then bakes an SDF each time it loads the model.");
+    ImGui::BeginDisabled(!_props.bakeSdf);
     if (gui.host) {
       (void)gui.host->ReflectedStruct(
           static_cast<SReflect::StructTypeInfo const&>(
               SReflect::GetTypeInfo<mochi::GridSdfParams>()),
           &_props.sdf);
     }
-    ImGui::TextUnformatted("Bakes a grid SDF from the input surface; the output buffer is its");
-    ImGui::TextUnformatted("reconstructed surface (preview only).");
+    ImGui::EndDisabled();
+    if (_props.bakeSdf) {
+      ImGui::TextUnformatted("Bakes a grid SDF from the input surface; the output buffer is its");
+      ImGui::TextUnformatted("reconstructed surface (preview only).");
+    } else {
+      ImGui::TextUnformatted("Exports the input surface alone; the output buffer is the input.");
+    }
 
     ImGui::SeparatorText("Mochi Model Export");
     ImGui::TextUnformatted("Auto");
@@ -211,6 +225,13 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
       MOCHI_ERROR_SET(error, "Export Mochi Model: no input geometry.");
       return {};
     }
+    // Render and CAD sources leave triangles unjoined at seams (an STL entirely), which a Mochi
+    // model must not be.
+    processing::WeldIdenticalVertices(*md.mesh);
+    if (!_props.bakeSdf) {
+      _bakedModel = std::move(md);
+      return input;
+    }
     mochi::model_utils::BakeSdf(md, _props.sdf, error);
     if (!error.IsOK() || !md.sdf.has_value()) {
       return {};
@@ -239,8 +260,8 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
       MOCHI_ERROR_SET(error, "Export Mochi Model: set a .mochi.h5 export path first.");
       return;
     }
-    if (!_bakedModel.mesh.has_value() || !_bakedModel.sdf.has_value()) {
-      MOCHI_ERROR_SET(error, "Export Mochi Model: generate the SDF before exporting.");
+    if (!_bakedModel.mesh.has_value() || (_props.bakeSdf && !_bakedModel.sdf.has_value())) {
+      MOCHI_ERROR_SET(error, "Export Mochi Model: generate the model before exporting.");
       return;
     }
     // The target folder may not exist yet -- a derived collision/ folder in a fresh bot, or one the
@@ -257,9 +278,10 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     if (_bakedModel.sdf.has_value()) {
       stats.sdfGrid = _bakedModel.sdf->dims;
     }
-    if (_bakedModel.mesh.has_value() && _bakedModel.sdf.has_value()) {
+    if (_bakedModel.mesh.has_value()) {
       stats.fileSizeBytes = processing::EstimateMochiH5SizeBytes(
-          *_bakedModel.mesh, static_cast<int64_t>(_bakedModel.sdf->values.size()));
+          *_bakedModel.mesh,
+          _bakedModel.sdf.has_value() ? static_cast<int64_t>(_bakedModel.sdf->values.size()) : 0);
       stats.fileSizeLabel = "Est. Export Size";
     }
   }

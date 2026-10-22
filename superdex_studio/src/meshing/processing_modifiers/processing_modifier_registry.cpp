@@ -18,10 +18,12 @@
 
 #include "meshing/processing_modifiers/export_mesh_file.h"
 #include "meshing/processing_modifiers/export_mochi_model.h"
+#include "meshing/processing_modifiers/merge_meshes.h"
 #include "meshing/processing_modifiers/refine_mesh.h"
 #include "meshing/processing_modifiers/remesh.h"
 #include "meshing/processing_modifiers/source_cad_model.h"
 #include "meshing/processing_modifiers/source_mochi_model.h"
+#include "meshing/processing_modifiers/source_parts.h"
 #include "meshing/processing_modifiers/source_render_model.h"
 #include "meshing/processing_modifiers/transform.h"
 #include "meshing/processing_modifiers/wrap_mesh.h"
@@ -41,7 +43,9 @@ std::vector<ModifierRegistryEntry> const& ProcessingModifierRegistry() {
     entries.push_back(MakeCadModelSourceEntry());
     entries.push_back(MakeRenderModelSourceEntry());
     entries.push_back(MakeMochiModelSourceEntry());
+    entries.push_back(MakePartsSourceEntry());
     // Transforms
+    entries.push_back(MakeMergeMeshesEntry());
     entries.push_back(MakeRefineMeshEntry());
     entries.push_back(MakeWrapMeshEntry());
     entries.push_back(MakeRemeshEntry());

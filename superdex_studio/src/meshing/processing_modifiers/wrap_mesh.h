@@ -17,12 +17,21 @@
 #pragma once
 
 // "Wrap Mesh" modifier: builds a fresh closed envelope around the input (shrink wrap, convex hull,
-// alpha wrap). Each is a method; this header exposes only the registry entry.
+// alpha wrap). Each is a method. This header exposes the registry entry and the Shrink Wrap method,
+// which the Merge modifier offers too.
 
 #include "meshing/processing_modifiers/processing_modifier.h"
+
+#include <memory>
 
 namespace superdex::studio {
 
 ModifierRegistryEntry MakeWrapMeshEntry();
+
+// The Shrink Wrap method's name, as stored in pipeline files.
+inline constexpr char const* kShrinkWrapMethod = "Shrink Wrap";
+
+// The "Shrink Wrap" method: one envelope deflated onto the whole input, however many pieces it has.
+std::unique_ptr<MeshProcessingMethod> MakeShrinkWrapMethod();
 
 } // namespace superdex::studio

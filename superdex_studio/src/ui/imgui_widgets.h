@@ -313,6 +313,16 @@ bool AssetSlot(
     bool acceptDragDropPayload,
     bool showClearButton = true);
 
+// The same, accepting an asset of any of @p assetTypes (the first one colors an empty slot).
+bool AssetSlot(
+    char const* label,
+    mochi::DynamicString& assetPath,
+    superdex::studio::AssetManager const& assetManager,
+    superdex::studio::SuperDexStudio* studio,
+    std::span<superdex::studio::AssetType const> assetTypes,
+    bool acceptDragDropPayload,
+    bool showClearButton = true);
+
 bool DragReal(
     char const* label,
     mochi::real* value,

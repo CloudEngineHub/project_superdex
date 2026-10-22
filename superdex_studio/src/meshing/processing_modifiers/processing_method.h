@@ -66,8 +66,9 @@ struct ModifierRunContext {
 // Hover-tooltip helper injected by the editor so a method can annotate its widgets consistently.
 using ModifierTooltip = std::function<void(char const*)>;
 
-// The model types a source method's own file slot can hold.
-enum class ModelSlotType { CadModel, RenderModel, MochiModel };
+// The model types a source method's own file slot can hold. AnyModel holds a CAD, render, or Mochi
+// model.
+enum class ModelSlotType { CadModel, RenderModel, MochiModel, AnyModel };
 
 // The app's widgets and services, for the methods whose parameters need more than Dear ImGui. The
 // editor implements it; without the app ModifierGuiContext::host is null and methods leave those
@@ -189,7 +190,8 @@ class MeshProcessingMethod {
   // JSON keys of this method's props that hold a file path. The pipeline serializer rewrites the
   // value at each key between the absolute path kept in memory and the bot-relative form written to
   // disk (via superdex::robotics::MakePathRelative / MakePathAbsolute), so the saved JSON never
-  // embeds an absolute path. Empty for methods with no path parameter (the default).
+  // embeds an absolute path. "list[].field" names a field of every element of an array prop. Empty
+  // for methods with no path parameter (the default).
   virtual std::vector<std::string_view> PathPropKeys() const {
     return {};
   }

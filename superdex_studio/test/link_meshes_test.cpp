@@ -17,8 +17,14 @@
 // The URDF and MJCF importers' mesh building (meshing/primitive_meshes.h,
 // meshing/link_meshes.h). The collision cases spawn the mesh helper (SUPERDEX_MESH_CLI_PATH).
 
+#include "app/process_command.h"
+#include "meshing/collision_recipe.h"
 #include "meshing/link_meshes.h"
 #include "meshing/primitive_meshes.h"
+#include "meshing/processing_modifiers/merge_meshes.h"
+#include "meshing/processing_modifiers/processing_serialization.h"
+
+#include <picojson/picojson.h>
 
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/constants.h>
@@ -75,6 +81,21 @@ Real3 Center(MeshData const& mesh) {
   return 0.5_r * (lo + hi);
 }
 
+// A unit right tetrahedron at the origin.
+constexpr std::string_view kTetraObj =
+    "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n";
+
+// "Modifier/Method" for each modifier of the pipeline at @p path.
+std::vector<std::string> ModifierLabels(std::filesystem::path const& path) {
+  LoadedPipeline loaded;
+  EXPECT_TRUE(LoadProcessingPipeline(path.string(), path, loaded, test::ExpectOK{}));
+  std::vector<std::string> labels;
+  for (auto const& modifier : loaded.modifiers) {
+    labels.push_back(modifier->DisplayName() + std::string("/") + modifier->ActiveMethodName());
+  }
+  return labels;
+}
+
 GeomReference BoxGeom(Real3 const& halfExtents, Real3 const& position) {
   GeomReference geom;
   geom.type = GeomType::Box;
@@ -92,6 +113,31 @@ class LinkMeshesTest : public testing::Test {
   }
   void TearDown() override {
     SetLogCallback(_prevLogFn);
+  }
+
+  // The recipe the importers write for @p geoms, at `<dir>/link.StudioProcessing.json`, exporting
+  // `<dir>/link.mochi.h5`.
+  std::filesystem::path WriteRecipe(GeomList const& geoms, CollisionRecipeOptions const& options) {
+    std::vector<SourcePart> parts;
+    for (GeomReference const& geom : geoms) {
+      parts.push_back(PartFromGeom(geom, std::string(geom.meshFile)));
+    }
+    std::filesystem::path const pipeline = _dir.Path() / "link.StudioProcessing.json";
+    EXPECT_TRUE(WriteCollisionRecipe(
+        MakeCollisionRecipe(std::move(parts), options, (_dir.Path() / "link.mochi.h5").string()),
+        pipeline,
+        /*relativePaths=*/true,
+        test::ExpectOK{}));
+    return pipeline;
+  }
+
+  // Builds @p geoms' collision model through its recipe, as the importers do, and loads it.
+  ModelData BuildThroughRecipe(GeomList const& geoms, CollisionRecipeOptions const& options) {
+    ProcessOptions process;
+    process.pipelinePath = WriteRecipe(geoms, options).string();
+    ProcessReport const report = RunProcessingPipeline(process, test::ExpectOK{});
+    EXPECT_TRUE(report.succeeded);
+    return model_utils::LoadFromFile((_dir.Path() / "link.mochi.h5").string(), test::ExpectOK{});
   }
 
   LogFn _prevLogFn{};
@@ -243,24 +289,6 @@ TEST_F(LinkMeshesTest, LinkGlbHoldsEveryGeom) {
   EXPECT_EQ(mochi_renderer::ReadGlbFromFile(out.ToString().c_str()).size(), 2u);
 }
 
-TEST_F(LinkMeshesTest, UnionCollisionMergesOverlappingGeoms) {
-  // Two 0.2 m cubes overlapping by half enclose 0.012 m^3.
-  Path const out = Path{(_dir.Path() / "link.mochi.h5").string()};
-  LinkCollisionOptions options;
-  options.remesh = false;
-  std::vector<std::string> warnings;
-  ASSERT_TRUE(BuildLinkCollisionH5(
-      {BoxGeom({0.1_r, 0.1_r, 0.1_r}, {}), BoxGeom({0.1_r, 0.1_r, 0.1_r}, {0.1_r, 0_r, 0_r})},
-      options,
-      out,
-      warnings));
-  ModelData const model = model_utils::LoadFromFile(out.ToString(), test::ExpectOK{});
-  ASSERT_TRUE(model.mesh.has_value());
-  EXPECT_NEAR(Volume(*model.mesh), 0.012_r, 1e-5_r);
-  EXPECT_TRUE(model.sdf.has_value());
-  EXPECT_TRUE(warnings.empty());
-}
-
 TEST_F(LinkMeshesTest, GeomsInertiaWeighsEveryGeomWithMass) {
   // 0.2 m cubes: one at MuJoCo's default density (8 kg), one with a 2 kg mass 1 m along X, and a
   // massless visual one that must not count.
@@ -365,11 +393,9 @@ TEST_F(LinkMeshesTest, Fr3v2BaseModelsBuild) {
   // Each visual OBJ keeps its own MJCF material.
   EXPECT_GE(mochi_renderer::ReadGlbFromFile(glb.ToString().c_str()).size(), visual.size());
 
-  LinkCollisionOptions options;
+  CollisionRecipeOptions options;
   options.remesh = false;
-  Path const h5 = Path{(_dir.Path() / "fr3v2_link0.mochi.h5").string()};
-  ASSERT_TRUE(BuildLinkCollisionH5(GeomsOf(body, /*collision=*/true), options, h5, warnings));
-  ModelData const model = model_utils::LoadFromFile(h5.ToString(), test::ExpectOK{});
+  ModelData const model = BuildThroughRecipe(GeomsOf(body, /*collision=*/true), options);
   ASSERT_TRUE(model.mesh.has_value());
   EXPECT_GT(Volume(*model.mesh), 0_r);
   EXPECT_TRUE(model.sdf.has_value());
@@ -458,35 +484,234 @@ TEST_F(LinkMeshesTest, OnlyTheFirstObjObjectIsKept) {
   EXPECT_EQ(FirstObjObjectFile(single, copies), single);
 }
 
-TEST_F(LinkMeshesTest, ShrinkWrapCollisionWrapsTheGeoms) {
-  // Two 0.2 m cubes overlapping by half form a convex 0.3 x 0.2 x 0.2 box, which a shrink-wrap
-  // fits.
-  Path const out = Path{(_dir.Path() / "link.mochi.h5").string()};
-  LinkCollisionOptions options;
-  options.merge = CollisionMerge::ShrinkWrap;
+TEST_F(LinkMeshesTest, UnionRecipeMergesOverlappingGeoms) {
+  // Two 0.2 m cubes overlapping by half enclose 0.012 m^3.
+  CollisionRecipeOptions options;
   options.remesh = false;
-  std::vector<std::string> warnings;
-  ASSERT_TRUE(BuildLinkCollisionH5(
+  ModelData const model = BuildThroughRecipe(
       {BoxGeom({0.1_r, 0.1_r, 0.1_r}, {}), BoxGeom({0.1_r, 0.1_r, 0.1_r}, {0.1_r, 0_r, 0_r})},
-      options,
-      out,
-      warnings));
-  ModelData const model = model_utils::LoadFromFile(out.ToString(), test::ExpectOK{});
+      options);
   ASSERT_TRUE(model.mesh.has_value());
-  EXPECT_NEAR(Volume(*model.mesh), 0.012_r, 0.0015_r);
+  EXPECT_NEAR(Volume(*model.mesh), 0.012_r, 1e-5_r);
   EXPECT_TRUE(model.sdf.has_value());
 }
 
-TEST_F(LinkMeshesTest, SeparateGeomStaysInItsOwnFrame) {
-  // ExpandMjcfGeomLinks places each Separate geom, so its file is not posed in the link frame.
-  Path const out = Path{(_dir.Path() / "geom.mochi.h5").string()};
-  LinkCollisionOptions options;
+TEST_F(LinkMeshesTest, ShrinkWrapRecipeWrapsTheGeoms) {
+  // The same cubes form a convex 0.3 x 0.2 x 0.2 box, which a shrink-wrap fits.
+  CollisionRecipeOptions options;
+  options.merge = CollisionMerge::ShrinkWrap;
+  options.remesh = false;
+  ModelData const model = BuildThroughRecipe(
+      {BoxGeom({0.1_r, 0.1_r, 0.1_r}, {}), BoxGeom({0.1_r, 0.1_r, 0.1_r}, {0.1_r, 0_r, 0_r})},
+      options);
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_NEAR(Volume(*model.mesh), 0.012_r, 0.0015_r);
+}
+
+TEST_F(LinkMeshesTest, RecipeKeepsTheGeomPoseAndCanSkipTheSdf) {
+  // A lone part is not merged, and the model stays in the link frame.
+  CollisionRecipeOptions options;
   options.remesh = false;
   options.bakeSdf = false;
-  std::vector<std::string> warnings;
-  ASSERT_TRUE(BuildGeomCollisionH5(
-      BoxGeom({0.1_r, 0.1_r, 0.1_r}, {1_r, 2_r, 3_r}), options, out, warnings));
-  ModelData const model = model_utils::LoadFromFile(out.ToString(), test::ExpectOK{});
+  ModelData const model =
+      BuildThroughRecipe({BoxGeom({0.1_r, 0.1_r, 0.1_r}, {1_r, 2_r, 3_r})}, options);
   ASSERT_TRUE(model.mesh.has_value());
-  EXPECT_TRUE(NearEqual(Center(*model.mesh), Real3{}, 1e-6_r));
+  EXPECT_TRUE(NearEqual(Center(*model.mesh), Real3{1_r, 2_r, 3_r}, 1e-5_r));
+  EXPECT_FALSE(model.sdf.has_value());
+}
+
+TEST_F(LinkMeshesTest, RecipeLayoutAndRelativeParts) {
+  // A mesh part beside the recipe is stored relative to it, and the recipe reads back in order.
+  std::string const obj = (_dir.Path() / "part.obj").string();
+  WriteFile(obj, kTetraObj, test::ExpectOK{});
+  GeomReference mesh;
+  mesh.type = GeomType::Mesh;
+  mesh.meshFile = obj;
+  std::filesystem::path const pipeline =
+      WriteRecipe({mesh, BoxGeom({0.1_r, 0.1_r, 0.1_r}, {})}, CollisionRecipeOptions{});
+  std::string const text = ReadFileString(pipeline, test::ExpectOK{});
+  EXPECT_NE(text.find("\"part.obj\""), std::string::npos);
+  EXPECT_EQ(text.find(_dir.Path().string()), std::string::npos);
+
+  std::vector<std::string> const expected = {
+      "Source from Parts/Parts",
+      "Merge/Union",
+      "Wrap Mesh/Alpha Wrap",
+      "Remesh/Incremental Isotropic Remesh",
+      "Export Mochi Model/SDF"};
+  EXPECT_EQ(ModifierLabels(pipeline), expected);
+  LoadedPipeline loaded;
+  ASSERT_TRUE(LoadProcessingPipeline(pipeline.string(), pipeline, loaded, test::ExpectOK{}));
+  EXPECT_TRUE(loaded.issues.empty());
+  EXPECT_EQ(loaded.modifiers.front()->SourceFilePath({}), obj);
+}
+
+TEST_F(LinkMeshesTest, SplitConnectedPiecesSeparatesTheParts) {
+  MeshData two = TessellatePrimitive(GeomType::Box, {0.1_r, 0.1_r, 0.1_r});
+  MeshData const other = TessellatePrimitive(GeomType::Sphere, {0.1_r, 0_r, 0_r});
+  int const offset = two.GetNumNodes();
+  for (real const value : other.coordinates) {
+    two.coordinates.push_back(value);
+  }
+  for (int const index : other.connectivity) {
+    two.connectivity.push_back(index + offset);
+  }
+  std::vector<MeshData> const pieces = SplitConnectedPieces(two);
+  ASSERT_EQ(pieces.size(), 2u);
+  EXPECT_EQ(pieces[0].GetNumElements() + pieces[1].GetNumElements(), two.GetNumElements());
+  EXPECT_EQ(pieces[1].GetNumNodes(), other.GetNumNodes());
+}
+
+TEST_F(LinkMeshesTest, LoneMeshRecipeReadsItsFileAndPlacesIt) {
+  // A tetrahedron scaled by (2, 1, 1), turned 90 degrees about Z, and moved to (1, 2, 3) spans
+  // x in [0, 1], y in [2, 4], z in [3, 4].
+  std::string const obj = (_dir.Path() / "tetra.obj").string();
+  WriteFile(obj, kTetraObj, test::ExpectOK{});
+  GeomReference mesh;
+  mesh.type = GeomType::Mesh;
+  mesh.meshFile = obj;
+  mesh.meshScale = {2_r, 1_r, 1_r};
+  mesh.linkFromGeom = TransformRT{Quaternion::RotationZ(0.5_r * kPI), Real3{1_r, 2_r, 3_r}};
+  CollisionRecipeOptions options;
+  options.remesh = false;
+  options.bakeSdf = false;
+
+  ModelData const model = BuildThroughRecipe({mesh}, options);
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_TRUE(NearEqual(Center(*model.mesh), Real3{0.5_r, 3_r, 3.5_r}, 1e-5_r));
+
+  std::vector<std::string> const expected = {
+      "Source from Render Model/From File",
+      "Apply SRT Transformation/SRT Transform",
+      "Export Mochi Model/SDF"};
+  EXPECT_EQ(ModifierLabels(_dir.Path() / "link.StudioProcessing.json"), expected);
+}
+
+TEST_F(LinkMeshesTest, LoneMeshRecipeKeepsAMirroringScale) {
+  // Mirrored across Mochi's XZ plane (Y, which the renderer's Z reverses), the tetrahedron spans
+  // y in [-1, 0].
+  std::string const obj = (_dir.Path() / "tetra.obj").string();
+  WriteFile(obj, kTetraObj, test::ExpectOK{});
+  GeomReference mesh;
+  mesh.type = GeomType::Mesh;
+  mesh.meshFile = obj;
+  mesh.meshScale = {1_r, -1_r, 1_r};
+  CollisionRecipeOptions options;
+  options.remesh = false;
+  options.bakeSdf = false;
+
+  ModelData const model = BuildThroughRecipe({mesh}, options);
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_TRUE(NearEqual(Center(*model.mesh), Real3{0.5_r, -0.5_r, 0.5_r}, 1e-5_r));
+}
+
+TEST_F(LinkMeshesTest, ShrinkWrapRecipeWrapsALoneGeom) {
+  CollisionRecipeOptions options;
+  options.merge = CollisionMerge::ShrinkWrap;
+  options.remesh = false;
+  std::vector<std::string> const expected = {
+      "Source from Parts/Parts", "Merge/Shrink Wrap", "Export Mochi Model/SDF"};
+  EXPECT_EQ(ModifierLabels(WriteRecipe({BoxGeom({0.1_r, 0.1_r, 0.1_r}, {})}, options)), expected);
+}
+
+TEST_F(LinkMeshesTest, RemeshedRecipeUsesTheImportEdgeSize) {
+  // The Alpha Wrap and Remesh use the edge size the importer has always remeshed with.
+  std::filesystem::path const pipeline =
+      WriteRecipe({BoxGeom({0.1_r, 0.1_r, 0.1_r}, {})}, CollisionRecipeOptions{});
+  LoadedPipeline loaded;
+  ASSERT_TRUE(LoadProcessingPipeline(pipeline.string(), pipeline, loaded, test::ExpectOK{}));
+  std::vector<double> edgeSizes;
+  for (auto const& modifier : loaded.modifiers) {
+    picojson::value props;
+    modifier->ActiveMethod().SerializeProps(props);
+    if (props.contains("edgeSize")) {
+      edgeSizes.push_back(props.get<picojson::object>().at("edgeSize").get<double>());
+    }
+  }
+  std::vector<double> const expected = {0.05, 0.05};
+  EXPECT_EQ(edgeSizes, expected);
+}
+
+TEST_F(LinkMeshesTest, LoneStlRecipeReadsTheCadModelSlot) {
+  // In an asset laid out like an import, `cad/link.stl` is the CAD Model of `collision/link`, so
+  // the recipe reads it "From Model Viewer" and places it with the editor's CAD transform. The
+  // placed tetrahedron spans x in [0, 1], y in [2, 4], z in [3, 4], as in the test above.
+  std::filesystem::path const asset = _dir.Path() / "bot";
+  std::filesystem::path const stl = asset / "cad" / "link.stl";
+  WriteFile(
+      stl,
+      "solid t\n"
+      "facet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 0 1 0\nvertex 1 0 0\nendloop\nendfacet\n"
+      "facet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 0 1\nendloop\nendfacet\n"
+      "facet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 0 0 1\nvertex 0 1 0\nendloop\nendfacet\n"
+      "facet normal 0 0 0\nouter loop\nvertex 1 0 0\nvertex 0 1 0\nvertex 0 0 1\nendloop\nendfacet\n"
+      "endsolid t\n",
+      test::ExpectOK{});
+  GeomReference mesh;
+  mesh.type = GeomType::Mesh;
+  mesh.meshScale = {2_r, 1_r, 1_r};
+  mesh.linkFromGeom = TransformRT{Quaternion::RotationZ(0.5_r * kPI), Real3{1_r, 2_r, 3_r}};
+  CollisionRecipeOptions options;
+  options.remesh = false;
+  options.bakeSdf = false;
+  options.source = CollisionRecipeSource::CadModel;
+  std::filesystem::path const h5 = asset / "collision" / "link.mochi.h5";
+  CollisionRecipe recipe =
+      MakeCollisionRecipe({PartFromGeom(mesh, stl.string())}, options, h5.string());
+  std::filesystem::path const pipeline = asset / "intermediates" / "link.StudioProcessing.json";
+  ASSERT_TRUE(WriteCollisionRecipe(recipe, pipeline, /*relativePaths=*/true, test::ExpectOK{}));
+
+  ProcessOptions process;
+  process.pipelinePath = pipeline.string();
+  ProcessReport const report = RunProcessingPipeline(process, test::ExpectOK{});
+  EXPECT_TRUE(report.succeeded);
+  EXPECT_EQ(std::filesystem::path(report.slots.cadPath), stl);
+  ModelData const model = model_utils::LoadFromFile(h5.string(), test::ExpectOK{});
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_TRUE(NearEqual(Center(*model.mesh), Real3{0.5_r, 3_r, 3.5_r}, 1e-5_r));
+  // The STL's 12 corners are exported as the tetrahedron's 4 vertices.
+  EXPECT_EQ(model.mesh->GetNumNodes(), 4);
+
+  LoadedPipeline loaded;
+  ASSERT_TRUE(LoadProcessingPipeline(pipeline.string(), pipeline, loaded, test::ExpectOK{}));
+  ASSERT_EQ(loaded.modifiers.size(), 2u);
+  EXPECT_EQ(std::string(loaded.modifiers[0]->DisplayName()), "Source from CAD Model");
+  EXPECT_EQ(std::string(loaded.modifiers[0]->ActiveMethodName()), "From Model Viewer");
+  EXPECT_TRUE(loaded.hasEditorState);
+}
+
+TEST_F(LinkMeshesTest, RecipeCanReadTheRenderModelSlot) {
+  // The importer's `render/link.glb` of a lone geom is the Render Model of `collision/link`,
+  // already in the link frame, so the recipe reads it "From Model Viewer" unplaced.
+  std::filesystem::path const asset = _dir.Path() / "bot";
+  GeomReference const box = BoxGeom({0.1_r, 0.1_r, 0.1_r}, {1_r, 2_r, 3_r});
+  std::filesystem::create_directories(asset / "render");
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(BuildLinkGlb(
+      {box},
+      Path{(asset / "render" / "link.glb").string()},
+      CoordinateSpaceConverter(CoordinateSpace::Default(), mochi_renderer::RenderSpace()),
+      warnings));
+  CollisionRecipeOptions options;
+  options.remesh = false;
+  options.bakeSdf = false;
+  options.source = CollisionRecipeSource::RenderModel;
+  std::filesystem::path const h5 = asset / "collision" / "link.mochi.h5";
+  std::filesystem::path const pipeline = asset / "intermediates" / "link.StudioProcessing.json";
+  ASSERT_TRUE(WriteCollisionRecipe(
+      MakeCollisionRecipe({PartFromGeom(box, {})}, options, h5.string()),
+      pipeline,
+      /*relativePaths=*/true,
+      test::ExpectOK{}));
+
+  ProcessOptions process;
+  process.pipelinePath = pipeline.string();
+  ProcessReport const report = RunProcessingPipeline(process, test::ExpectOK{});
+  EXPECT_TRUE(report.succeeded);
+  EXPECT_EQ(std::filesystem::path(report.slots.renderPath), asset / "render" / "link.glb");
+  ModelData const model = model_utils::LoadFromFile(h5.string(), test::ExpectOK{});
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_TRUE(NearEqual(Center(*model.mesh), Real3{1_r, 2_r, 3_r}, 1e-5_r));
+  ASSERT_FALSE(report.stages.empty());
+  EXPECT_EQ(report.stages.front().label, "From Model Viewer [Source from Render Model]");
 }

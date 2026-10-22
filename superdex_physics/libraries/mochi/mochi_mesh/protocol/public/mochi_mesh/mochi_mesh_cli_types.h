@@ -332,6 +332,9 @@ struct MeshDecimateParams {
 struct MeshUnionParams {
   /// When the exact union fails, alpha-wrap the combined inputs instead of failing.
   bool wrapFallback = true;
+  /// Narrowest concavity the alpha wraps keep, as a fraction of the wrapped mesh's bounding-box
+  /// diagonal. Smaller is finer but slower. Must be positive.
+  double wrapDetail = 0.01;
 };
 
 } // namespace mochi::mesh

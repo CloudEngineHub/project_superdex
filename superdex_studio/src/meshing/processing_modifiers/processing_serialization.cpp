@@ -148,6 +148,16 @@ void TransformJsonPathField(
     return;
   }
   picojson::object& obj = props.get<picojson::object>();
+  // "list[].field" names the field in every element of an array prop.
+  if (std::size_t const at = key.find("[]."); at != std::string_view::npos) {
+    auto const listIt = obj.find(std::string(key.substr(0, at)));
+    if (listIt != obj.end() && listIt->second.is<picojson::array>()) {
+      for (picojson::value& element : listIt->second.get<picojson::array>()) {
+        TransformJsonPathField(element, key.substr(at + 3), baseFile, transform);
+      }
+    }
+    return;
+  }
   auto const it = obj.find(std::string(key));
   if (it == obj.end() || !it->second.is<std::string>()) {
     return;

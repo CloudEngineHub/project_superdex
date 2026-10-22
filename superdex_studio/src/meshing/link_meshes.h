@@ -35,12 +35,6 @@ namespace superdex::studio {
 
 using GeomList = std::vector<superdex::robotics::GeomReference>;
 
-// How a link's collision geoms are merged into one mesh.
-enum class CollisionMerge {
-  Union, // the boolean union of the geoms
-  ShrinkWrap, // a shrink-wrap around the geoms
-};
-
 // Render mesh sections of one geom, in the link frame (Mochi space). Mesh geoms are read from their
 // OBJ, STL, DAE, or GLB file; primitives are tessellated. A geom with a color of its own takes it
 // (and its 2D texture, when the mesh has texture coordinates), unless it keeps the materials of a
@@ -93,30 +87,6 @@ struct GeomsInertia {
 // times its enclosed volume. Empty if no geom has mass.
 [[nodiscard]] std::optional<GeomsInertia> ComputeGeomsInertia(
     GeomList const& geoms,
-    std::vector<std::string>& warnings);
-
-struct LinkCollisionOptions {
-  CollisionMerge merge = CollisionMerge::Union;
-  bool remesh = true;
-  bool bakeSdf = true;
-};
-
-// Writes one .mochi.h5 holding `geoms` merged per `options.merge`, in the link frame: their
-// shrink-wrap for ShrinkWrap, otherwise their boolean union (a lone geom as it is). Spheres are
-// tessellated too: Mochi needs a surface mesh on every dynamic link that has contact. Returns false
-// if no geom produced geometry or the merge or save failed.
-bool BuildLinkCollisionH5(
-    GeomList const& geoms,
-    LinkCollisionOptions const& options,
-    mochi::Path const& outputPath,
-    std::vector<std::string>& warnings);
-
-// Writes one geom's collision surface to a .mochi.h5 in the mesh's own frame (see
-// @ref GeomCollisionMesh), for the Separate layout.
-bool BuildGeomCollisionH5(
-    superdex::robotics::GeomReference const& geom,
-    LinkCollisionOptions const& options,
-    mochi::Path const& outputPath,
     std::vector<std::string>& warnings);
 
 } // namespace superdex::studio

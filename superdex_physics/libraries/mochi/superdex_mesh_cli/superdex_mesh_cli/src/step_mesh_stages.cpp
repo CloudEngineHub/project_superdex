@@ -573,9 +573,9 @@ bool ShrinkWrap(CgalSurfaceMesh& mesh, double tightness, double targetEdgeLen, b
 }
 
 // Replaces `mesh` with its alpha wrap: a closed, self-intersection-free surface just outside it
-// that keeps concavities wider than 1% of its bounding-box diagonal. Accepts any input.
-bool AlphaWrap(CgalSurfaceMesh& mesh) {
-  constexpr double kRelativeAlpha = 0.01;
+// that keeps concavities wider than `relativeAlpha` of its bounding-box diagonal. Accepts any
+// input.
+bool AlphaWrap(CgalSurfaceMesh& mesh, double relativeAlpha) {
   constexpr double kOffsetToAlpha = 1.0 / 30.0; // CGAL's default ratio
   std::vector<Point3> const points(mesh.points().begin(), mesh.points().end());
   std::vector<std::vector<std::size_t>> faces;
@@ -589,7 +589,7 @@ bool AlphaWrap(CgalSurfaceMesh& mesh) {
   if (faces.empty()) {
     return false;
   }
-  double const alpha = std::max(BboxDiagonal(mesh) * kRelativeAlpha, 1e-9);
+  double const alpha = std::max(BboxDiagonal(mesh) * relativeAlpha, 1e-9);
   CgalSurfaceMesh wrap;
   CGAL::alpha_wrap_3(points, faces, alpha, alpha * kOffsetToAlpha, wrap);
   mesh = std::move(wrap);
@@ -599,7 +599,7 @@ bool AlphaWrap(CgalSurfaceMesh& mesh) {
 // Makes `mesh` a valid corefinement input (closed, outward-oriented, free of self-intersections):
 // rebuilds it from its non-degenerate triangles and fills its holes, then alpha-wraps it if it is
 // still invalid, setting `outApproximated`. Returns false if it encloses no volume.
-bool PrepareUnionInput(CgalSurfaceMesh& mesh, bool& outApproximated) {
+bool PrepareUnionInput(CgalSurfaceMesh& mesh, double wrapDetail, bool& outApproximated) {
   namespace PMP = CGAL::Polygon_mesh_processing;
   std::vector<Point3> points(mesh.points().begin(), mesh.points().end());
   std::vector<std::vector<std::size_t>> triangles;
@@ -628,7 +628,7 @@ bool PrepareUnionInput(CgalSurfaceMesh& mesh, bool& outApproximated) {
       "UnionMeshes: wrapping an input that %s.",
       closed ? "intersects itself" : "stays open after hole filling");
   outApproximated = true;
-  return AlphaWrap(mesh);
+  return AlphaWrap(mesh, wrapDetail);
 }
 
 } // namespace
@@ -742,6 +742,11 @@ MeshData mochi::mesh::cli::UnionMeshes(
   namespace PMP = CGAL::Polygon_mesh_processing;
   outUsedFallback = false;
   MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+  MOCHI_MESH_CLI_ERROR_IF(
+      !(params.wrapDetail > 0.0) || !std::isfinite(params.wrapDetail),
+      error,
+      "UnionMeshes: wrapDetail must be positive and finite.");
+  MOCHI_MESH_CLI_ERROR_RETURN(error, {});
 
   try {
     std::vector<CgalSurfaceMesh> pieces;
@@ -751,7 +756,7 @@ MeshData mochi::mesh::cli::UnionMeshes(
       }
       CgalSurfaceMesh sm = cgal_utils::MeshDataToSurfaceMesh(mesh, error);
       MOCHI_MESH_CLI_ERROR_RETURN(error, {});
-      if (PrepareUnionInput(sm, outUsedFallback)) {
+      if (PrepareUnionInput(sm, params.wrapDetail, outUsedFallback)) {
         pieces.push_back(std::move(sm));
       }
     }
@@ -805,7 +810,9 @@ MeshData mochi::mesh::cli::UnionMeshes(
         CGAL::copy_face_graph(piece, soup);
       }
       MOCHI_MESH_CLI_ERROR_IF(
-          !AlphaWrap(soup), error, "UnionMeshes: the wrap fallback produced no closed surface.");
+          !AlphaWrap(soup, params.wrapDetail),
+          error,
+          "UnionMeshes: the wrap fallback produced no closed surface.");
       MOCHI_MESH_CLI_ERROR_RETURN(error, {});
       result = std::move(soup);
       outUsedFallback = true;

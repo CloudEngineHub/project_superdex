@@ -39,8 +39,6 @@ namespace superdex::studio {
 
 namespace {
 
-constexpr std::string_view kPipelineSuffix = ".StudioProcessing.json";
-
 std::string* SlotForType(PipelineModelSlots& slots, AssetType type) {
   switch (type) {
     case AssetType::CadModel:
@@ -74,10 +72,11 @@ std::string AbsolutePath(std::string const& path) {
 PipelineModelSlots FindPipelineModelSlots(std::filesystem::path const& pipelinePath) {
   PipelineModelSlots slots;
   std::string const fileName = pipelinePath.filename().string();
-  if (fileName.size() <= kPipelineSuffix.size() || !fileName.ends_with(kPipelineSuffix)) {
+  if (fileName.size() <= kProcessingPipelineSuffix.size() ||
+      !fileName.ends_with(kProcessingPipelineSuffix)) {
     return slots;
   }
-  std::string const name = fileName.substr(0, fileName.size() - kPipelineSuffix.size());
+  std::string const name = fileName.substr(0, fileName.size() - kProcessingPipelineSuffix.size());
 
   // The model's asset is the folder holding `intermediates/`; without one, the pipeline's own
   // folder stands in for it. Discovery starts from `intermediates/` itself, a role folder, so the
@@ -116,10 +115,13 @@ PipelineModelSlots FindPipelineModelSlots(std::filesystem::path const& pipelineP
   return slots;
 }
 
-ProcessReport RunProcessingPipeline(
+namespace {
+
+ProcessReport RunPipeline(
     ProcessOptions const& options,
     mochi::Error& error,
-    std::function<void(ProcessStageReport const&)> const& onStage) {
+    std::function<void(ProcessStageReport const&)> const& onStage,
+    bool ownContext) {
   ProcessReport report;
   MOCHI_ERROR_RETURN(error, report);
 
@@ -226,12 +228,16 @@ ProcessReport RunProcessingPipeline(
 
   // Same worker setup as the editor's async tasks (see AsyncTaskRunner): the mesh operations use
   // the context's scheduler, and the file cache is on in the app.
-  mochi::Context* const context = mochi::CreateContext();
-  context->EnableFileCache(true);
-  context->BindThisThread();
+  mochi::Context* const context = ownContext ? mochi::CreateContext() : nullptr;
+  if (context != nullptr) {
+    context->EnableFileCache(true);
+    context->BindThisThread();
+  }
   MOCHI_DEFER({
-    context->UnbindThisThread();
-    mochi::DestroyContext(context);
+    if (context != nullptr) {
+      context->UnbindThisThread();
+      mochi::DestroyContext(context);
+    }
   });
 
   StackRun run(stack, chain, ctx, [](std::size_t /*modifierIndex*/) { return mochi::MeshData{}; });
@@ -276,6 +282,22 @@ ProcessReport RunProcessingPipeline(
     report.stages.push_back(std::move(stage));
   }
   return report;
+}
+
+} // namespace
+
+ProcessReport RunProcessingPipeline(
+    ProcessOptions const& options,
+    mochi::Error& error,
+    std::function<void(ProcessStageReport const&)> const& onStage) {
+  return RunPipeline(options, error, onStage, /*ownContext=*/true);
+}
+
+ProcessReport RunProcessingPipelineInBoundContext(
+    ProcessOptions const& options,
+    mochi::Error& error,
+    std::function<void(ProcessStageReport const&)> const& onStage) {
+  return RunPipeline(options, error, onStage, /*ownContext=*/false);
 }
 
 int RunProcessCommand(ProcessOptions const& options) {

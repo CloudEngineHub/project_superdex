@@ -1456,7 +1456,28 @@ bool ImGui::AssetSlot(
     AssetType assetType,
     bool acceptDragDropPayload,
     bool showClearButton) {
+  return AssetSlot(
+      label,
+      assetPath,
+      assetManager,
+      studio,
+      std::span<AssetType const>(&assetType, 1),
+      acceptDragDropPayload,
+      showClearButton);
+}
+
+bool ImGui::AssetSlot(
+    char const* label,
+    mochi::DynamicString& assetPath,
+    AssetManager const& assetManager,
+    SuperDexStudio* studio,
+    std::span<AssetType const> assetTypes,
+    bool acceptDragDropPayload,
+    bool showClearButton) {
   constexpr float thumbnailSize = 64;
+  auto const accepts = [assetTypes](AssetType type) {
+    return std::find(assetTypes.begin(), assetTypes.end(), type) != assetTypes.end();
+  };
   bool changed = false;
   // Scope all internal widget IDs under the slot label so this widget's icon-only buttons
   // (search/trash) never collide with identical buttons drawn by the caller or by sibling slots.
@@ -1471,7 +1492,11 @@ bool ImGui::AssetSlot(
       studio->OpenAssetEditor(asset);
     }
   } else {
-    ImGui::AssetThumbnail("##thumbnail", nullptr, thumbnailSize, GetAssetTypeColor(assetType));
+    ImGui::AssetThumbnail(
+        "##thumbnail",
+        nullptr,
+        thumbnailSize,
+        GetAssetTypeColor(assetTypes.empty() ? AssetType::Unknown : assetTypes.front()));
   }
   if (acceptDragDropPayload && ImGui::BeginDragDropTarget()) {
     // Peek first to validate without drawing the highlight rect. Accept any single asset of the
@@ -1481,7 +1506,7 @@ bool ImGui::AssetSlot(
             kAssetBrowserDragDropType, ImGuiDragDropFlags_AcceptPeekOnly)) {
       auto const* dragPayload = *static_cast<AssetBrowserDragDropPayload* const*>(peek->Data);
       bool const valid = dragPayload && dragPayload->items.size() == 1 &&
-          !dragPayload->items[0].isFolder && dragPayload->items[0].type == assetType;
+          !dragPayload->items[0].isFolder && accepts(dragPayload->items[0].type);
       if (valid) {
         // Accept for real (draws highlight, delivers on release)
         if (ImGui::AcceptDragDropPayload(kAssetBrowserDragDropType)) {
@@ -1538,7 +1563,11 @@ bool ImGui::AssetSlot(
     static std::vector<Asset*> candidates;
     if (ImGui::IsWindowAppearing()) {
       assetFilter.Clear();
-      candidates = assetManager.GetAllAssetsOfType(assetType);
+      candidates.clear();
+      for (AssetType const type : assetTypes) {
+        std::vector<Asset*> const ofType = assetManager.GetAllAssetsOfType(type);
+        candidates.insert(candidates.end(), ofType.begin(), ofType.end());
+      }
       ImGui::SetKeyboardFocusHere();
     }
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);

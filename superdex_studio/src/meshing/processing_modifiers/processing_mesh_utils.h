@@ -62,6 +62,10 @@ mochi::MeshData MeshDataFromSections(std::vector<mochi_renderer::MeshSection> co
 // Neutral MeshData -> a single renderer MeshSection with computed angle-weighted vertex normals.
 mochi_renderer::MeshSection SectionFromMeshData(mochi::MeshData const& mesh);
 
+// Merges vertices at identical positions, joining the triangles of an STL (which repeats every
+// corner) or of a mesh split at its seams into connected surfaces.
+void WeldIdenticalVertices(mochi::MeshData& mesh);
+
 // Applies scale, then rotation, then translation in place to a mesh's coordinates.
 void ApplyTransform(
     mochi::MeshData& mesh,

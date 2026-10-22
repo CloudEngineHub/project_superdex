@@ -25,11 +25,15 @@
 #include <mochi_renderer/utils.h> // Read*FromFile, Write*ToFile, ConvertMeshSectionsSpace, normals
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace superdex::studio::processing {
@@ -160,6 +164,40 @@ MeshSection SectionFromMeshData(mochi::MeshData const& mesh) {
       section.positions, faceNormals, section.indices, section.normals);
   section.hasNormals = section.normals.size() == section.positions.size();
   return section;
+}
+
+void WeldIdenticalVertices(mochi::MeshData& mesh) {
+  using Position = std::array<mochi::real, 3>;
+  struct PositionHash {
+    std::size_t operator()(Position const& p) const {
+      std::size_t seed = 0;
+      for (mochi::real const value : p) {
+        seed ^= std::hash<mochi::real>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+      }
+      return seed;
+    }
+  };
+  int const numNodes = mesh.GetNumNodes();
+  std::unordered_map<Position, int, PositionHash> indexOf;
+  indexOf.reserve(static_cast<std::size_t>(numNodes));
+  std::vector<int> remap(static_cast<std::size_t>(numNodes));
+  mochi::DynamicArray<mochi::real> coordinates;
+  coordinates.reserve(mesh.coordinates.size());
+  for (int v = 0; v < numNodes; ++v) {
+    Position const p = {
+        mesh.coordinates[3 * v], mesh.coordinates[3 * v + 1], mesh.coordinates[3 * v + 2]};
+    auto const [it, inserted] = indexOf.try_emplace(p, static_cast<int>(coordinates.size() / 3));
+    if (inserted) {
+      for (mochi::real const value : p) {
+        coordinates.push_back(value);
+      }
+    }
+    remap[static_cast<std::size_t>(v)] = it->second;
+  }
+  for (int& index : mesh.connectivity) {
+    index = remap[static_cast<std::size_t>(index)];
+  }
+  mesh.coordinates = std::move(coordinates);
 }
 
 void ApplyTransform(

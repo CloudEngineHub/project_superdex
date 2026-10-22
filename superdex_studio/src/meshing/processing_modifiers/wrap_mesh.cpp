@@ -65,7 +65,7 @@ struct WrapAlphaWrapProps {
 class ShrinkWrapMethod : public ReflectedMethod<WrapShrinkWrapProps> {
  public:
   char const* Name() const override {
-    return "Shrink Wrap";
+    return kShrinkWrapMethod;
   }
   char const* Description() const override {
     return "Build a fresh watertight envelope by shrinking a hull onto the surface, bridging "
@@ -176,10 +176,14 @@ class AlphaWrapMethod : public ReflectedMethod<WrapAlphaWrapProps> {
 
 } // namespace
 
+std::unique_ptr<MeshProcessingMethod> MakeShrinkWrapMethod() {
+  return std::make_unique<ShrinkWrapMethod>();
+}
+
 ModifierRegistryEntry MakeWrapMeshEntry() {
   return ModifierRegistryEntry{"Wrap Mesh", ModifierKind::Transform, []() {
                                  std::vector<std::unique_ptr<MeshProcessingMethod>> methods;
-                                 methods.push_back(std::make_unique<ShrinkWrapMethod>());
+                                 methods.push_back(MakeShrinkWrapMethod());
                                  methods.push_back(std::make_unique<ConvexHullMethod>());
                                  methods.push_back(std::make_unique<AlphaWrapMethod>());
                                  return methods;
