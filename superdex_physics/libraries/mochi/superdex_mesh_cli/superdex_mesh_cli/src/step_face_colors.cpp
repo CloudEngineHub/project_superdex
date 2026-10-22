@@ -57,6 +57,7 @@
 #include <XCAFPrs_DocumentExplorer.hxx>
 #include <XCAFPrs_IndexedDataMapOfShapeStyle.hxx>
 #include <XCAFPrs_Style.hxx>
+#include <algorithm>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Vec.hxx>
@@ -345,9 +346,7 @@ bool mochi::mesh::cli::ReadStepFaceColors(
     for (auto const& [rgb, info] : byColor) {
       outColors.push_back(info);
     }
-    std::sort(outColors.begin(), outColors.end(), [](auto const& a, auto const& b) {
-      return a.area > b.area;
-    });
+    std::ranges::sort(outColors, [](auto const& a, auto const& b) { return a.area > b.area; });
   } catch (Standard_Failure const& failure) {
     char const* const message = failure.GetMessageString();
     std::fprintf(

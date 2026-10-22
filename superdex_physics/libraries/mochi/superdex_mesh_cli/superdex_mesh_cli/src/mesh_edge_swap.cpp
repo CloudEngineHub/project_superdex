@@ -314,7 +314,7 @@ void EdgeSwapTowardSurface(
     if (winners.empty()) {
       break;
     }
-    std::sort(winners.begin(), winners.end(), [](Candidate const& x, Candidate const& y) {
+    std::ranges::sort(winners, [](Candidate const& x, Candidate const& y) {
       return x.improvement > y.improvement;
     });
 

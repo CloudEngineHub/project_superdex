@@ -34,8 +34,7 @@ using namespace mochi::mesh::cli;
 using K = cgal_utils::K;
 
 static bool IsAllFinite(std::span<double const> values) {
-  return std::all_of(
-      values.begin(), values.end(), [](double value) { return std::isfinite(value); });
+  return std::ranges::all_of(values, [](double value) { return std::isfinite(value); });
 }
 
 MeshData mochi::mesh::cli::ReconstructSurfaceFromSdf(
