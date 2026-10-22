@@ -37,9 +37,10 @@ constexpr std::string_view kMochiH5Extension = ".mochi.h5";
 // matching mochi_renderer reader (@ref mochi_renderer::ReadColladaFromFile,
 // @ref mochi_renderer::ReadObjFromFile, @ref mochi_renderer::ReadStlFromFile),
 // mapping each format's solid material colors to glTF PBR factors (diffuse →
-// baseColor; shininess/specular exponent → roughness; metallic = 0). Image
-// textures are not supported and degrade to a default gray. Missing normals are
-// computed.
+// baseColor; shininess/specular exponent → roughness; metallic = 0). An OBJ's
+// diffuse map (`map_Kd`) is embedded as the base color texture; other image
+// textures are not supported and degrade to the material color. Missing normals
+// are computed.
 //
 // When `converter` is non-null the parsed geometry is transformed by it (via
 // @ref mochi_renderer::ConvertMeshSectionsSpace) before the GLB is written; when
@@ -116,5 +117,17 @@ bool ConvertToH5(
     mochi::CoordinateSpaceConverter const* converter = nullptr,
     bool remesh = true,
     bool bakeSdf = true);
+
+// @brief Save a Mochi-space collision model to a .mochi.h5 file, optionally remeshing its
+// triangle surface and baking an SDF first, with the same defaults and failure handling as
+// @ref ConvertToH5 (a failed remesh keeps the original surface; a failed bake saves without an
+// SDF). A model holding only an implicit sphere is saved as-is.
+//
+// @return true if the file was written.
+bool SaveMochiModel(
+    mochi::ModelData data,
+    mochi::Path const& outputPath,
+    bool remesh,
+    bool bakeSdf);
 
 } // namespace superdex::studio

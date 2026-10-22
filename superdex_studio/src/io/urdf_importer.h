@@ -112,6 +112,9 @@ class UrdfImporter : public Importer {
   std::string const& GetDisplayName() const override;
   std::vector<std::string> const& GetExtensions() const override;
   ImU32 GetColor() const override;
+  // name, render_dir, collision_dir, remesh, bake_sdf (true | false).
+  bool SetOption(std::string_view key, std::string_view value) override;
+  [[nodiscard]] mochi::Path GetOutputAssetPath() const override;
 
  protected:
   void OnBeginImport(mochi::Path const& path, mochi::Path const& destDir) override;

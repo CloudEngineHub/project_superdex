@@ -15,6 +15,8 @@
  */
 
 #include "io/importer.h"
+
+#include <mochi_core/utils/log.h>
 #include "app/app.h"
 #include "assets/asset_manager.h"
 
@@ -22,6 +24,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cfloat>
 #include <filesystem>
 #include <string>
@@ -58,11 +61,68 @@ std::vector<std::string> Importer::SiblingFoldersToEnsure() const {
       std::string(superdex::robotics::kCollisionSubdir)};
 }
 
-void Importer::BeginImport(mochi::Path const& path, mochi::Path const& destDir) {
+void Importer::BeginImport(mochi::Path const& path, mochi::Path const& destDir, bool openModal) {
   _importedPath = path;
   _destDir = destDir;
   OnBeginImport(path, destDir);
-  _openModal = true;
+  _openModal = openModal;
+}
+
+std::optional<bool> Importer::ParseBoolOption(std::string_view value) {
+  if (value == "true" || value == "1") {
+    return true;
+  }
+  if (value == "false" || value == "0") {
+    return false;
+  }
+  return std::nullopt;
+}
+
+bool Importer::RunImport() {
+  if (!CanImport()) {
+    return false;
+  }
+  std::vector<AsyncTask> tasks;
+  FinalizeFn finalize;
+  if (!OnFinishImport(tasks, finalize)) {
+    return false;
+  }
+  // Hand the background work off to the app's runner, which shows its own progress modal.
+  // onComplete runs on the main thread once the work finishes: it runs finalize, then performs the
+  // post-import asset-browser/asset-manager steps (all main-thread only).
+  SuperDexStudio* studio = _studio;
+  mochi::Path const destDir = GetDestDir();
+  // Snapshot the folders to create now (main thread): it reflects the importer's current
+  // destination choices, which the modal no longer draws once the import launches.
+  std::vector<std::string> siblingFolders = SiblingFoldersToEnsure();
+  return studio->BeginAsyncTasks(
+      GetDisplayName(),
+      std::move(tasks),
+      [studio,
+       finalize = std::move(finalize),
+       destDir,
+       siblingFolders = std::move(siblingFolders),
+       title = GetDisplayName()](bool allSucceeded) {
+        if (!allSucceeded) {
+          MOCHI_LOG_WARNING(
+              "%s import: some conversions failed, and the bot is saved without their models. "
+              "See the messages above.",
+              title.c_str());
+        }
+        mochi::Path resultPath;
+        bool const ok = finalize ? finalize(resultPath) : false;
+        if (ok) {
+          // The import produced an asset (fully or partially -- some meshes may have failed):
+          // ensure the standard sibling folders exist next to it.
+          EnsureSiblingFolders(destDir, siblingFolders);
+        }
+        studio->GetAssetBrowser().Refresh();
+        if (ok && !resultPath.IsEmpty()) {
+          if (Asset* asset = studio->GetAssetManager().LoadAsset(resultPath)) {
+            studio->GetAssetBrowser().SelectAsset(asset);
+          }
+        }
+      });
 }
 
 bool Importer::ShowModalWindow() {
@@ -75,7 +135,14 @@ bool Importer::ShowModalWindow() {
   ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
   // Importers may request a fixed width and/or height. A 0 axis auto-fits to
   // content. AlwaysAutoResize is only used when at least one axis is auto.
-  ImVec2 const modalSize = GetModalSize();
+  // The requested size is at 100% display scaling, so it is scaled like the
+  // settings window (macOS already reports logical points) and kept on screen.
+  float const fbScale = ImGui::GetIO().DisplayFramebufferScale.x;
+  float const layoutScale = fbScale > 1.0f ? 1.0f : _studio->GetDpiScale();
+  ImVec2 const maxSize = ImGui::GetMainViewport()->Size * 0.9f;
+  ImVec2 const modalSize(
+      std::min(GetModalSize().x * layoutScale, maxSize.x),
+      std::min(GetModalSize().y * layoutScale, maxSize.y));
   ImGuiWindowFlags windowFlags =
       ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
   if (modalSize.x > 0.0f && modalSize.y > 0.0f) {
@@ -119,43 +186,10 @@ bool Importer::ShowModalWindow() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::BeginDisabled(!CanImport());
-    if (ImGui::Button("Import", ImVec2(120, 0))) {
-      std::vector<AsyncTask> tasks;
-      FinalizeFn finalize;
-      if (OnFinishImport(tasks, finalize)) {
-        // Close the options modal now and hand the background work off to the app's
-        // runner, which shows its own progress modal. onComplete runs on the main
-        // thread once the work finishes: it runs finalize, then performs the
-        // post-import asset-browser/asset-manager steps (all main-thread only).
-        SuperDexStudio* studio = _studio;
-        mochi::Path const destDir = GetDestDir();
-        // Snapshot the folders to create now (main thread): it reflects the importer's current
-        // destination choices, which the modal below no longer draws once the import launches.
-        std::vector<std::string> siblingFolders = SiblingFoldersToEnsure();
-        studio->BeginAsyncTasks(
-            GetDisplayName(),
-            std::move(tasks),
-            [studio,
-             finalize = std::move(finalize),
-             destDir,
-             siblingFolders = std::move(siblingFolders)](bool /*allSucceeded*/) {
-              mochi::Path resultPath;
-              bool const ok = finalize ? finalize(resultPath) : false;
-              if (ok) {
-                // The import produced an asset (fully or partially -- some meshes may have failed):
-                // ensure the standard sibling folders exist next to it.
-                EnsureSiblingFolders(destDir, siblingFolders);
-              }
-              studio->GetAssetBrowser().Refresh();
-              if (ok && !resultPath.IsEmpty()) {
-                if (Asset* asset = studio->GetAssetManager().LoadAsset(resultPath)) {
-                  studio->GetAssetBrowser().SelectAsset(asset);
-                }
-              }
-            });
-        ImGui::CloseCurrentPopup();
-        open = false;
-      }
+    if (ImGui::Button("Import", ImVec2(120, 0)) && RunImport()) {
+      // The import runs on in the app's progress modal.
+      ImGui::CloseCurrentPopup();
+      open = false;
     }
     ImGui::EndDisabled();
     ImGui::SameLine();

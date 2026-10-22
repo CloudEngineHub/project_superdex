@@ -34,6 +34,7 @@
 #include <cfloat>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -521,6 +522,37 @@ UrdfImporter::UrdfImporter(SuperDexStudio* studio)
       _displayName("URDF"),
       _extensions({std::string(superdex::robotics::kUrdfExtension)}) {}
 
+bool UrdfImporter::SetOption(std::string_view key, std::string_view value) {
+  if (key == "name") {
+    _options.name = value;
+    return !value.empty();
+  }
+  if (key == "render_dir") {
+    _options.renderDir = value;
+    return true;
+  }
+  if (key == "collision_dir") {
+    _options.mochiDir = value;
+    return true;
+  }
+  std::optional<bool> const flag = Importer::ParseBoolOption(value);
+  if (!flag) {
+    return false;
+  }
+  if (key == "remesh") {
+    _options.mochiRemesh = *flag;
+  } else if (key == "bake_sdf") {
+    _options.mochiBakeSdf = *flag;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+mochi::Path UrdfImporter::GetOutputAssetPath() const {
+  return GetDestDir() / (_options.name + std::string(superdex::robotics::kBotExtension));
+}
+
 std::string const& UrdfImporter::GetDisplayName() const {
   return _displayName;
 }
@@ -898,7 +930,7 @@ std::vector<std::string> UrdfImporter::SiblingFoldersToEnsure() const {
 
 ImVec2 UrdfImporter::GetModalSize() const {
   // Fixed size so the modal stays consistent across tabs and large URDFs scroll.
-  return {600.0f, 700.0f};
+  return {900.0f, 1050.0f};
 }
 
 } // namespace superdex::studio

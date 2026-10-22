@@ -61,6 +61,7 @@
 #include "editors/bot_scene_editor.h"
 #include "editors/mochi_prefab_editor.h"
 #include "editors/model_editor.h"
+#include "io/mjcf_importer.h"
 #include "io/urdf_importer.h"
 
 #if MOCHI_PLATFORM_WINDOWS
@@ -440,6 +441,7 @@ void SuperDexStudio::OnInitialize() {
 
   // Register importers
   RegisterImporter(std::make_unique<UrdfImporter>(this));
+  RegisterImporter(std::make_unique<MjcfImporter>(this));
 
 #ifdef MOCHI_MCP_ENABLED
   RegisterMcpCommands(*this);
@@ -1524,7 +1526,7 @@ Importer* SuperDexStudio::FindImporterForPath(mochi::Path const& path) const {
       ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
   for (auto const& importer : _importers) {
     for (auto const& candidate : importer->GetExtensions()) {
-      if (ext == candidate) {
+      if (ext == candidate && importer->CanImportFile(path)) {
         return importer.get();
       }
     }

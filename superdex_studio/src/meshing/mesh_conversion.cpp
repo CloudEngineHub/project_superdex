@@ -175,38 +175,47 @@ bool ConvertToH5(
     MOCHI_LOG_WARNING("Mesh '%s' produced no usable geometry.", inputPath.ToString().c_str());
     return false;
   }
+  return SaveMochiModel(std::move(data), outputPath, remesh, bakeSdf);
+}
 
-  // Remesh the surface. Only triangle meshes are supported by RemeshSurface; on
-  // failure we keep the original geometry (a separate Error keeps a remesh failure
-  // from aborting the save below).
-  if (remesh && data.mesh->nodesPerElement == 3) {
-    mochi::mesh::SurfaceRemeshingParams params;
-    params.relativeToMeshSize = true;
-    params.edgeSize = 0.05f;
-    mochi::ErrorLog remeshError;
-    mochi::MeshData remeshed = mochi::mesh::RemeshSurface(*data.mesh, params, remeshError);
-    if (remeshError.IsOK()) {
-      data.mesh = std::move(remeshed);
-    } else {
-      MOCHI_LOG_WARNING(
-          "Mesh remesh failed for '%s'; saving original geometry.", inputPath.ToString().c_str());
+bool SaveMochiModel(
+    mochi::ModelData data,
+    mochi::Path const& outputPath,
+    bool remesh,
+    bool bakeSdf) {
+  std::string const& name = outputPath.ToString();
+  if (data.mesh.has_value()) {
+    // Remesh the surface. Only triangle meshes are supported by RemeshSurface; on
+    // failure we keep the original geometry (a separate Error keeps a remesh failure
+    // from aborting the save below).
+    if (remesh && data.mesh->nodesPerElement == 3) {
+      mochi::mesh::SurfaceRemeshingParams params;
+      params.relativeToMeshSize = true;
+      params.edgeSize = 0.05f;
+      mochi::ErrorLog remeshError;
+      mochi::MeshData remeshed = mochi::mesh::RemeshSurface(*data.mesh, params, remeshError);
+      if (remeshError.IsOK()) {
+        data.mesh = std::move(remeshed);
+      } else {
+        MOCHI_LOG_WARNING("Mesh remesh failed for '%s'; saving original geometry.", name.c_str());
+      }
+    }
+
+    // Bake a signed distance field. BakeSdf requires a triangle/tetrahedral mesh; on
+    // failure we save the mesh without an SDF (a separate Error keeps a bake failure
+    // from aborting the save below).
+    if (bakeSdf) {
+      mochi::ErrorLog sdfError;
+      mochi::GridSdfParams params;
+      mochi::model_utils::BakeSdf(data, params, sdfError);
+      if (!sdfError.IsOK()) {
+        MOCHI_LOG_WARNING("SDF bake failed for '%s'; saving without an SDF.", name.c_str());
+      }
     }
   }
 
-  // Bake a signed distance field. BakeSdf requires a triangle/tetrahedral mesh; on
-  // failure we save the mesh without an SDF (a separate Error keeps a bake failure
-  // from aborting the save below).
-  if (bakeSdf) {
-    mochi::ErrorLog sdfError;
-    mochi::GridSdfParams params;
-    mochi::model_utils::BakeSdf(data, params, sdfError);
-    if (!sdfError.IsOK()) {
-      MOCHI_LOG_WARNING(
-          "SDF bake failed for '%s'; saving without an SDF.", inputPath.ToString().c_str());
-    }
-  }
-
-  mochi::model_utils::SaveToFile(data, outputPath.ToString(), mochi::FileFormat::H5, error);
+  mochi::ErrorLog error;
+  mochi::model_utils::SaveToFile(data, name, mochi::FileFormat::H5, error);
   return error.IsOK();
 }
 

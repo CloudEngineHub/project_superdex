@@ -24,7 +24,9 @@
 #include <imgui.h>
 
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace superdex::studio {
@@ -58,9 +60,34 @@ class Importer {
   // Color used to tint importable file tiles in the asset browser.
   virtual ImU32 GetColor() const = 0;
 
+  // Whether this importer handles `path`, which already has one of its extensions. Importers whose
+  // extension is shared with other formats (e.g. ".xml") check the contents.
+  [[nodiscard]] virtual bool CanImportFile(mochi::Path const& /*path*/) const {
+    return true;
+  }
+
   // Begin importing `path` into `destDir`: store them, reset transient options,
-  // and open the modal.
-  void BeginImport(mochi::Path const& path, mochi::Path const& destDir);
+  // and (unless `openModal` is false, for scripted imports) open the modal.
+  void BeginImport(mochi::Path const& path, mochi::Path const& destDir, bool openModal = true);
+
+  // Sets an import option by name, for scripted imports (see the MCP `import` command). Returns
+  // false if the importer has no such option or the value is invalid.
+  virtual bool SetOption(std::string_view /*key*/, std::string_view /*value*/) {
+    return false;
+  }
+
+  // Parses a boolean option value: "true"/"1" or "false"/"0".
+  [[nodiscard]] static std::optional<bool> ParseBoolOption(std::string_view value);
+
+  // The asset the import will write, once it finishes. Empty if unknown.
+  [[nodiscard]] virtual mochi::Path GetOutputAssetPath() const {
+    return {};
+  }
+
+  // Launches the import with the current options, as the modal's Import button does: the
+  // background tasks run on the app's runner, then the asset is loaded and selected. Returns false
+  // if the options do not allow importing or nothing was launched.
+  bool RunImport();
 
   // Draw the options modal for one frame.
   // Returns true while the modal is still open; false once it has closed.
