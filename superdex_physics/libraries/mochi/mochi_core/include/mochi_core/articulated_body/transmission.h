@@ -121,11 +121,16 @@ class DisplacementControlActuator : public TransmissionActuator {
       return;
     }
     if (outEnergy) {
-      // The damping term is d*(dx/dt)^2*dt, written here as (d/dt)*dx^2 so that an infinite time
-      // step gives 0 instead of 0*inf == NaN. The two forms are algebraically identical for a
-      // finite time step.
-      *outEnergy =
-          0.5_r * (_stiffness * Sqr(dDisplacement) + dampingOverDt * Sqr(displacementChange));
+      if (_allowCompressiveForce) {
+        // The damping term is d*(dx/dt)^2*dt, written here as (d/dt)*dx^2 so that an infinite time
+        // step gives 0 instead of 0*inf == NaN. The two forms are algebraically identical for a
+        // finite time step.
+        *outEnergy =
+            0.5_r * (_stiffness * Sqr(dDisplacement) + dampingOverDt * Sqr(displacementChange));
+      } else {
+        // Integral of the force from its root, where the rope goes slack.
+        *outEnergy = 0.5_r * force * (force / (_stiffness + dampingOverDt));
+      }
     }
     if (outGradient) {
       *outGradient = force;

@@ -156,6 +156,18 @@ TEST(TransmissionActuator, DisplacementControlActuator_MultipleDisplacements) {
   for (real displacement : displacements) {
     VerifyDerivatives(&actuator, displacement, prevDisplacement, timeStep);
   }
+
+  // The energy is continuous where the rope goes slack, at the root of the force.
+  real const dampingOverDt = damping / timeStep;
+  real const slackDisplacement =
+      (stiffness * targetDisplacement + dampingOverDt * prevDisplacement) /
+      (stiffness + dampingOverDt);
+  for (real const offset : {-1e-6_r, 1e-6_r}) {
+    real energy{};
+    actuator.EnergyGradientHessian(
+        slackDisplacement + offset, prevDisplacement, timeStep, &energy, nullptr, nullptr);
+    EXPECT_NEAR(energy, 0_r, 1e-6_r);
+  }
 }
 
 TEST(TransmissionActuator, DisplacementControlActuator_StateVariables) {
@@ -216,36 +228,38 @@ TEST(TransmissionActuator, DisplacementControlActuator_InfiniteTimeStep) {
   // energy silently defeats merit-based line searches, so assert finiteness explicitly.
   real const targetDisplacement = 0.02_r;
   real const stiffness = 1e5_r;
+  // Past the target, so that the rope-like mode stays out of the clamped branch, which returns
+  // zeros and would hide a NaN.
   real const displacement = 0.05_r;
   real const prevDisplacement = 0_r;
   real const infiniteTimeStep = std::numeric_limits<real>::infinity();
-  // Couplings between joints are bidirectional, so they allow compressive force. That also keeps
-  // the actuator out of the clamped branch, which returns zeros and would hide a NaN.
-  bool const allowCompressiveForce = true;
 
   real const dDisplacement = displacement - targetDisplacement;
   real const expectedForce = stiffness * dDisplacement;
   real const expectedEnergy = 0.5_r * stiffness * Sqr(dDisplacement);
 
   // Sweep zero and non-zero damping: an infinite time step must stay finite for any damping value,
-  // including zero, since the damping term is what risks a 0*inf == NaN.
-  for (real const damping : {0_r, 1e3_r}) {
-    DisplacementControlActuator actuator(
-        targetDisplacement, stiffness, damping, allowCompressiveForce);
+  // including zero, since the damping term is what risks a 0*inf == NaN. Sweep both modes, whose
+  // energy formulas differ.
+  for (bool const allowCompressiveForce : {false, true}) {
+    for (real const damping : {0_r, 1e3_r}) {
+      DisplacementControlActuator actuator(
+          targetDisplacement, stiffness, damping, allowCompressiveForce);
 
-    real energy{}, force{}, computedStiffness{};
-    actuator.EnergyGradientHessian(
-        displacement, prevDisplacement, infiniteTimeStep, &energy, &force, &computedStiffness);
+      real energy{}, force{}, computedStiffness{};
+      actuator.EnergyGradientHessian(
+          displacement, prevDisplacement, infiniteTimeStep, &energy, &force, &computedStiffness);
 
-    EXPECT_TRUE(IsFinite(energy));
-    EXPECT_TRUE(IsFinite(force));
-    EXPECT_TRUE(IsFinite(computedStiffness));
+      EXPECT_TRUE(IsFinite(energy));
+      EXPECT_TRUE(IsFinite(force));
+      EXPECT_TRUE(IsFinite(computedStiffness));
 
-    // An infinite time step means zero velocity, so damping drops out of all three outputs and
-    // only the stiffness penalty remains.
-    EXPECT_NEAR_RTOL(energy, expectedEnergy, kRelativeTolerance);
-    EXPECT_NEAR_RTOL(force, expectedForce, kRelativeTolerance);
-    EXPECT_NEAR_RTOL(computedStiffness, stiffness, kRelativeTolerance);
+      // An infinite time step means zero velocity, so damping drops out of all three outputs and
+      // only the stiffness penalty remains.
+      EXPECT_NEAR_RTOL(energy, expectedEnergy, kRelativeTolerance);
+      EXPECT_NEAR_RTOL(force, expectedForce, kRelativeTolerance);
+      EXPECT_NEAR_RTOL(computedStiffness, stiffness, kRelativeTolerance);
+    }
   }
 }
 
