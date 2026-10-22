@@ -248,7 +248,7 @@ static void ComputeAsyncContactResponseImpl(
       "Allowed contact element mask size must match the number of contact elements.");
 
   // Transformation from sample space to world space.
-  auto const rotWorldFromLocal = ToVMatrix3x3(transform.GetRotation());
+  auto const worldFromLocalRotation = ToVMatrix3x3(transform.GetRotation());
 
   // Reset contact response samples.
   outResponse.Reset(numContactElements, FemDiscretization<ElementT>::kNumQuads);
@@ -273,12 +273,11 @@ static void ComputeAsyncContactResponseImpl(
     // Add the transformation between collider and world space. The response is the gradient wrt the
     // current contact points, so map it back through the current collider frame even when explicit
     // normals take the friction plane from the stage-start frame.
-    auto const& rotColliderFromWorld = contactQuery.jacColliderFromWorld;
+    auto const& colliderFromWorld = contactQuery.jacColliderFromWorld;
     MOCHI_ASSERT(
-        isize(rotColliderFromWorld) == 1,
+        colliderFromWorld.size() == 1,
         "Collider transform must be shared by all sample points for async contact.");
-    auto const rotColliderFromLocal = Dot3x3(rotColliderFromWorld[0], rotWorldFromLocal);
-    auto const rotColliderFromLocalT = Transpose3x3(rotColliderFromLocal);
+    auto const colliderFromLocal = Dot3x3(colliderFromWorld[0], worldFromLocalRotation);
 
     ComputeCollisionResponse<GradTarget::Current>(
         contactQuery,
@@ -297,12 +296,12 @@ static void ComputeAsyncContactResponseImpl(
       Real3* outForce = nullptr;
       if (evalGrad) {
         outForce = &collisionResponse.force[i];
-        *outForce = ToReal3(DotVecMat3x3(ToSimd(*outForce), rotColliderFromLocal));
+        *outForce = TransformContactForceToCollidingLocal(colliderFromLocal, *outForce);
       }
       VMatrix3x3r* outDForce = nullptr;
       if (evalHess) {
         outDForce = &collisionResponse.dforce[i];
-        *outDForce = Dot3x3(rotColliderFromLocalT, Dot3x3(*outDForce, rotColliderFromLocal));
+        *outDForce = TransformContactDForceToCollidingLocal(colliderFromLocal, *outDForce);
       }
 
       // Write energy response to buffer.

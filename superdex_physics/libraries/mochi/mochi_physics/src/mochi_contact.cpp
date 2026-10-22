@@ -42,6 +42,7 @@
 #include <mochi_core/geometry/grid_sdf.h>
 #include <mochi_core/memory/filo_allocator.h>
 #include <mochi_core/utils/basic_utils.h>
+#include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/container_utils.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/profile.h>
@@ -55,6 +56,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
@@ -193,6 +195,7 @@ void mochi::InitializeLinearContactSkinningJacobian(
 
 void mochi::SetupContactSkinCollidingJacobians(
     ecs::RequiredTag<TagUseDeformableContactSkin>,
+    ecs::Excluded<CLinearContactSkinElementMap>,
     CFemSurfaceDiscretization const& surfaceDisc,
     CRootTransform const& transform,
     CDofOffset const& dofOffset,
@@ -2081,6 +2084,28 @@ static void AddLinkResiduals(
 }
 
 namespace {
+
+// Appends the kBlockSize-block indices of the DoFs that an element maps to, in increasing order.
+template <int kBlockSize>
+void AppendLinearContactSkinElementIndices(
+    DynamicArray<int>& outIndices,
+    CLinearContactSkinElementMap const& elementMap,
+    int elementIndex,
+    int dofOffset) {
+  static_assert(kBlockSize == 1 || kBlockSize == kSpaceDim3);
+  int previousBlock = -1;
+  for (int physicsNode : elementMap.PhysicsNodeIndices(elementIndex)) {
+    int const firstDof = dofOffset + kSpaceDim3 * physicsNode;
+    for (int component = 0; component < kSpaceDim3; ++component) {
+      int const blockIndex = (firstDof + component) / kBlockSize;
+      if (blockIndex != previousBlock) {
+        outIndices.push_back(blockIndex);
+        previousBlock = blockIndex;
+      }
+    }
+  }
+}
+
 class ContactResAssembler {
  public:
   // Constructor
@@ -3838,16 +3863,53 @@ Graph<int, int> mochi::MakeContactGraph(
     if (!activeCollisions) {
       continue; // No collisions
     }
+    auto const* elementMap = reg.try_get<CLinearContactSkinElementMap const>(e);
+    int const mappedDofOffset = elementMap ? reg.get<CDofOffset const>(e).dofsOffset : 0;
+
     // Traverse colliding entities
     for (auto const& coll : *activeCollisions) {
-      // Lambda on active contact Jacobians of the pair. Async contact has only colliding Jacobians.
-      auto const& collidingJacData =
-          reg.get<CCollJacs<CollRole::Colliding> const>(e)[coll.collidingJacId];
       [[maybe_unused]] JacData const* colliderJacData = nullptr;
       if constexpr (kIsSync) {
         colliderJacData =
             &reg.get<CCollJacs<CollRole::Collider> const>(coll.colliderEntity)[coll.colliderJacId];
       }
+
+      if (elementMap) {
+        auto const& query = coll.collisionResult;
+        for (int contactIndex = 0; contactIndex < isize(query.sampleIndices); ++contactIndex) {
+          int const elementIndex =
+              query.sampleIndices[contactIndex] / elementMap->samplesPerElement;
+          int const rowBegin = isize(targetIndices);
+          AppendLinearContactSkinElementIndices<kBlockSize>(
+              targetIndices, *elementMap, elementIndex, mappedDofOffset);
+          if constexpr (kIsSync) {
+            colliderJacData->ForEachActiveJac([&](ContactJac const& jac) {
+              AppendBlockIndices<kBlockSize>(targetIndices, jac.Inds(contactIndex));
+            });
+            auto const rowIndices =
+                std::ranges::subrange(targetIndices.begin() + rowBegin, targetIndices.end());
+            std::ranges::sort(rowIndices);
+            targetIndices.erase(std::ranges::unique(rowIndices).begin(), targetIndices.end());
+          }
+          // Drop a row that repeats the previous one, e.g. for consecutive contacts on one element.
+          int const previousRowBegin = isize(ptr) > 1 ? ptr[isize(ptr) - 2] : rowBegin;
+          auto* const rowStart = targetIndices.begin() + rowBegin;
+          if (std::equal(
+                  targetIndices.begin() + previousRowBegin,
+                  rowStart,
+                  rowStart,
+                  targetIndices.end())) {
+            targetIndices.resize(rowBegin);
+          } else {
+            ptr.push_back(static_cast<PtrT>(targetIndices.size()));
+          }
+        }
+        continue;
+      }
+
+      // Lambda on active contact Jacobians of the pair. Async contact has only colliding Jacobians.
+      auto const& collidingJacData =
+          reg.get<CCollJacs<CollRole::Colliding> const>(e)[coll.collidingJacId];
       auto const forEachActiveJac = [&](auto const& fn) {
         collidingJacData.ForEachActiveJac(fn);
         if constexpr (kIsSync) {
@@ -3953,6 +4015,10 @@ static void AssembleAllSyncContactPairs(
     ActiveCollision* collision = nullptr;
     Interval<int> jacRange;
     int numCollidingJacs = 0;
+    CLinearContactSkinElementMap const* linearElementMap = nullptr;
+    CFemSurfaceDiscretization const* surfaceDiscretization = nullptr;
+    CRootTransform const* rootTransform = nullptr;
+    CDofOffset const* dofOffset = nullptr;
     double costPerPoint = 0;
   };
 
@@ -3991,14 +4057,23 @@ static void AssembleAllSyncContactPairs(
   for (auto entity0 : actors) {
     if (auto* activeCollisions =
             regOut.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(entity0)) {
+      auto const* linearElementMap = reg.try_get<CLinearContactSkinElementMap const>(entity0);
+      auto const* surfaceDiscretization =
+          linearElementMap ? &reg.get<CFemSurfaceDiscretization const>(entity0) : nullptr;
+      auto const* rootTransform =
+          linearElementMap ? &reg.get<CRootTransform const>(entity0) : nullptr;
+      auto const* dofOffset = linearElementMap ? &reg.get<CDofOffset const>(entity0) : nullptr;
       for (auto& coll : *activeCollisions) {
         entt::entity const entity1 = coll.colliderEntity;
         int firstJac = isize(allJacs);
         int numCollidingJacs = 0;
         if (needJacs) {
-          // For each contact pair, colliding Jacobian(s) must go before collider Jacobian(s).
-          reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId].GetActiveJacs(
-              allJacs);
+          // Mapped contact retains only collider-side Jacobians. Unmapped pairs put colliding
+          // Jacobian(s) before collider Jacobian(s).
+          if (!linearElementMap) {
+            reg.get<CCollJacs<CollRole::Colliding> const>(entity0)[coll.collidingJacId]
+                .GetActiveJacs(allJacs);
+          }
           numCollidingJacs = isize(allJacs) - firstJac;
           reg.get<CCollJacs<CollRole::Collider> const>(entity1)[coll.colliderJacId].GetActiveJacs(
               allJacs);
@@ -4008,6 +4083,10 @@ static void AssembleAllSyncContactPairs(
         pair.collision = &coll;
         pair.jacRange = {firstJac, isize(allJacs)};
         pair.numCollidingJacs = numCollidingJacs;
+        pair.linearElementMap = linearElementMap;
+        pair.surfaceDiscretization = surfaceDiscretization;
+        pair.rootTransform = rootTransform;
+        pair.dofOffset = dofOffset;
         allPairs.emplace_back(pair);
       }
     }
@@ -4020,17 +4099,22 @@ static void AssembleAllSyncContactPairs(
     if (assemObj) {
       cp.costPerPoint += 1;
     }
+    double const averageMappedDofs =
+        cp.linearElementMap ? cp.linearElementMap->AverageDofsPerElement() : 0.0;
     if (assemRes) { // linear cost
+      cp.costPerPoint += averageMappedDofs;
       for (int i : cp.jacRange) {
         double alpha = allJacs[i]->hasSharedDoFs ? 0 : 2.5;
         cp.costPerPoint += allJacs[i]->nDoFsInternal * (1 + alpha);
       }
     }
     if (assemDRes) { // quadratic cost
+      cp.costPerPoint += averageMappedDofs * averageMappedDofs;
       for (int a : cp.jacRange) {
         double alpha = allJacs[a]->hasSharedDoFs ? 0 : 5;
         int nDofsInternalA = allJacs[a]->nDoFsInternal;
         int nDofsStateA = allJacs[a]->nDoFsState;
+        cp.costPerPoint += 2 * averageMappedDofs * nDofsStateA;
         cp.costPerPoint += nDofsInternalA * nDofsInternalA * (1 + alpha);
         for (int b = cp.jacRange.Min(); b < a; ++b) {
           double beta = allJacs[a]->hasSharedDoFs && allJacs[b]->hasSharedDoFs ? 1 : 0;
@@ -4041,6 +4125,8 @@ static void AssembleAllSyncContactPairs(
         }
       }
     }
+    MOCHI_ASSERT_VERBOSE(
+        numContacts == 0 || cp.costPerPoint > 0, "Contact pair assembly cost must be positive.");
     totalCost += numContacts * cp.costPerPoint;
   }
 
@@ -4291,6 +4377,28 @@ static void AssembleAllSyncContactPairs(
             assemRes,
             assemDRes,
             response);
+        if (pair.linearElementMap) {
+          linear_contact_skin::AssembleContactResponseRange(
+              query,
+              *pair.linearElementMap,
+              *pair.surfaceDiscretization,
+              *pair.rootTransform,
+              samples.weights,
+              pair.dofOffset->dofsOffset,
+              pairWork.pointRange,
+              response,
+              jacs,
+              &taskLocalAlloc,
+              {.outObj = taskObj,
+               .outRes = taskRes,
+               .outDRes = taskDRes,
+               .params = {
+                   .assemObj = assemObj,
+                   .assemRes = assemRes,
+                   .assemDRes = assemDRes,
+                   .psdDRes = psdDRes}});
+        }
+        // Mapped pairs hold only collider Jacobians here, and their energy is assembled above.
         AssembleCollisionResponseRange(
             pairWork.pointRange,
             query,
@@ -4299,7 +4407,7 @@ static void AssembleAllSyncContactPairs(
             jacs,
             pair.numCollidingJacs,
             &taskLocalAlloc,
-            taskObj,
+            pair.linearElementMap ? nullptr : taskObj,
             taskRes,
             linkRes,
             taskDRes);
@@ -4503,10 +4611,150 @@ void mochi::AssembleIslandSyncContact(
       params.fittedSaturationHessian.contactFriction);
 }
 
+// Returns the island-sized contact residual, empty if not assembled or if no slice may assemble
+// into it, rather than into a link-space residual.
+static ColumnVectorView<real> SetUpAsyncSkinnedContactSnle(
+    AssemblyParams const& params,
+    bool useBlockSparse3x3,
+    entt::registry const& reg,
+    entt::entity e,
+    CIslandMemberInfo const& islandMember,
+    CSkinnedContactSnle& outContactSnle) {
+  outContactSnle.dresiduals.resize(1);
+  auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
+
+  ColumnVectorView<real> outContactResidual;
+  if (params.assemRes) {
+    if (NeedResidual(reg, MakeSingletonConstSpan(e))) {
+      // TODO: Skinned contact should assemble directly into this entity's reduced CActorSnle, or
+      // to another residual/dresidual of the same size. For now, it produces an
+      // interactionResidual and interactionMatrix for the island's SNLE problem, so they need to
+      // be the size of the island.
+      auto const& islandDofInfo = reg.get<CIslandDofInfo>(islandMember.island);
+      outContactSnle.residuals.resize(1);
+      outContactSnle.residuals[0].second.Resize(islandDofInfo.dofsSize);
+      outContactResidual.Reset(AsView(outContactSnle.residuals[0].second));
+    } else {
+      outContactSnle.residuals.clear();
+    }
+  }
+
+  if (params.assemDRes) {
+    // Compute sparsity based on the DOFs that are actually affected by explicit contact.
+    if (useBlockSparse3x3) {
+      outContactDResidual = BlockSparseMatrix<real, 3>{
+          MakeContactGraph<3, /*kIsSync*/ false>(reg, MakeSingletonConstSpan(e))};
+    } else {
+      outContactDResidual = SparseMatrix<real>{
+          MakeContactGraph<1, /*kIsSync*/ false>(reg, MakeSingletonConstSpan(e))};
+    }
+    MOCHI_ASSERT_VERBOSE(
+        GetNumValues(outContactDResidual) > 0,
+        "If there was no async contact with this actor, then we shouldn't have gotten this far.");
+  }
+
+  outContactSnle.SetZero(params);
+  return outContactResidual;
+}
+
+static ContactEvalConfig MakeAsyncContactEvalConfig(
+    AssemblyParams const& params,
+    CSimulationParams const& simParams,
+    entt::registry const& reg,
+    entt::entity e,
+    CColliderInfo const& colliderInfo) {
+  return ContactEvalConfig{
+      .psdDRes = params.psdDRes,
+      .addPadding = ShouldAddPenaltyPadding(colliderInfo.type),
+      .validCollidingNormals = ValidCollidingNormals(reg, e),
+      .explicitNormals = simParams.experimentalEval.explicitNormals,
+      .fadeFriction = simParams.experimentalEval.fadeFriction,
+      .implicitNormalForceForDissipation =
+          simParams.experimentalEval.implicitNormalForceForDissipation,
+      .useFittedHessian = params.fittedSaturationHessian.contactFriction,
+      .frictionModel = simParams.experimentalEval.frictionModel};
+}
+
+void mochi::AssembleAsyncLinearContactSkin(
+    AssemblyParams const& params,
+    bool useBlockSparse3x3,
+    ecs::Included<TagSkinnedContact, TagUseContact>,
+    ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
+    entt::registry const& reg,
+    entt::entity e,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& activeCollisions,
+    CIslandMemberInfo const& islandMember,
+    CTimeIntegratorState const& intState,
+    CContactSamples<TimeStep::Current> const& samples,
+    CColliderInfo const& colliderInfo,
+    CRootTransform const& rootTransform,
+    CDofOffset const& dofOffset,
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CLinearContactSkinElementMap const& linearElementMap,
+    CSkinnedContactSnle& outContactSnle) {
+  MOCHI_PROFILE_SCOPE();
+  MOCHI_ASSERT_VERBOSE(params.gradTarget == GradTarget::Current, "Unexpected grad target");
+
+  bool const hasContact = std::ranges::any_of(
+      activeCollisions, [](auto const& collision) { return !collision.collisionResult.Empty(); });
+  if (!hasContact) {
+    outContactSnle.useInSolver = false;
+    return;
+  }
+
+  ColumnVectorView<real> const outContactResidual =
+      SetUpAsyncSkinnedContactSnle(params, useBlockSparse3x3, reg, e, islandMember, outContactSnle);
+  outContactSnle.useInSolver = true;
+  auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
+
+  MOCHI_FILO_STACK_ALLOCATOR(filoAllocator, 64 * 1024);
+  CollisionResponseResult response(&filoAllocator);
+  response.Reserve(activeCollisions, params.assemObj, params.assemRes, params.assemDRes);
+  ContactEvalConfig const config =
+      MakeAsyncContactEvalConfig(params, simParams.value, reg, e, colliderInfo);
+
+  for (auto& collision : activeCollisions) {
+    auto const& query = collision.collisionResult;
+    int const numPoints = isize(query.sampleIndices);
+    response.ResizeNoInit(numPoints, params.assemObj, params.assemRes, params.assemDRes);
+    ComputeCollisionResponse<GradTarget::Current>(
+        query,
+        GetContactPairParams(reg, e, collision.colliderEntity),
+        config,
+        intState.dtStage,
+        params.assemObj,
+        params.assemRes,
+        params.assemDRes,
+        response);
+    linear_contact_skin::AssembleContactResponseRange(
+        query,
+        linearElementMap,
+        surfaceDisc,
+        rootTransform,
+        samples.weights,
+        dofOffset.dofsOffset,
+        Interval<int>{0, numPoints},
+        response,
+        /*colliderJacs=*/{},
+        &filoAllocator,
+        {.outObj = params.assemObj ? &outContactSnle.objective : nullptr,
+         .outRes = outContactResidual,
+         .outDRes = params.assemDRes ? AsView(outContactDResidual) : AnyMatrixView<real>{},
+         .params = params});
+
+    // Store the forces in case they are needed for a later contact point query
+    if (params.assemRes && queryActiveContacts) {
+      collision.collisionResult.forcePerUnitArea = response.force;
+    }
+  }
+}
+
 void mochi::AssembleAsyncSkinnedContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,
     ecs::RequiredTag<TagSkinnedContact>,
+    ecs::Excluded<CLinearContactSkinElementMap>,
     ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
     entt::registry const& reg,
     entt::entity e,
@@ -4541,43 +4789,8 @@ void mochi::AssembleAsyncSkinnedContact(
   // Set up the output SNLE if needed
   ColumnVectorView<real> outContactResidual; // Empty if not assembled or no slice assembles into it
   if (hasContactWithDofs) {
-    outContactSnle.dresiduals.resize(1);
-    auto& outContactDResidual = outContactSnle.dresiduals[0].matrix;
-
-    // The island-sized residual is registered only if some slice may assemble into it, rather than
-    // into a link-space residual.
-    if (params.assemRes) {
-      if (NeedResidual(reg, MakeSingletonConstSpan(e))) {
-        // TODO: Skinned contact should assemble directly into this entity's reduced CActorSnle, or
-        // to another residual/dresidual of the same size. For now, it produces an
-        // interactionResidual and interactionMatrix for the island's SNLE problem, so they need to
-        // be the size of the island.
-        auto const& islandDofInfo = reg.get<CIslandDofInfo>(islandMember.island);
-
-        // Resize the contact residual if necessary
-        outContactSnle.residuals.resize(1);
-        outContactSnle.residuals[0].second.Resize(islandDofInfo.dofsSize);
-        outContactResidual.Reset(AsView(outContactSnle.residuals[0].second));
-      } else {
-        outContactSnle.residuals.clear();
-      }
-    }
-
-    if (params.assemDRes) {
-      // Compute sparsity based on the DOFs that are actually affected by explicit contact.
-      if (useBlockSparse3x3) {
-        outContactDResidual = BlockSparseMatrix<real, 3>{
-            MakeContactGraph<3, /*kIsSync*/ false>(reg, MakeSingletonConstSpan(e))};
-      } else {
-        outContactDResidual = SparseMatrix<real>{
-            MakeContactGraph<1, /*kIsSync*/ false>(reg, MakeSingletonConstSpan(e))};
-      }
-      MOCHI_ASSERT(
-          GetNumValues(outContactDResidual) > 0,
-          "If there was no async contact with this actor, then we shouldn't have gotten this far.");
-    }
-
-    outContactSnle.SetZero(params);
+    outContactResidual.Reset(SetUpAsyncSkinnedContactSnle(
+        params, useBlockSparse3x3, reg, e, islandMember, outContactSnle));
   }
 
   // Configure common containers for all colliders
@@ -4597,16 +4810,8 @@ void mochi::AssembleAsyncSkinnedContact(
   }
   jacs.reserve(maxJacs);
 
-  ContactEvalConfig config{
-      .psdDRes = params.psdDRes,
-      .addPadding = ShouldAddPenaltyPadding(colliderInfo.type),
-      .validCollidingNormals = ValidCollidingNormals(reg, e),
-      .explicitNormals = simParams->experimentalEval.explicitNormals,
-      .fadeFriction = simParams->experimentalEval.fadeFriction,
-      .implicitNormalForceForDissipation =
-          simParams->experimentalEval.implicitNormalForceForDissipation,
-      .useFittedHessian = params.fittedSaturationHessian.contactFriction,
-      .frictionModel = simParams->experimentalEval.frictionModel};
+  ContactEvalConfig const config =
+      MakeAsyncContactEvalConfig(params, simParams.value, reg, e, colliderInfo);
 
   // Traverse colliding entities and assemble to outContactSnle
   for (auto& coll : activeCollisions) {
@@ -4855,6 +5060,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CContactSamples<TimeStep::Current>>(reg);
   ecs::RegisterComponent<CContactSamples<TimeStep::StageStart>>(reg);
   ecs::RegisterComponent<CContactSkinningData>(reg);
+  ecs::RegisterComponent<CLinearContactSkinElementMap>(reg);
   ecs::RegisterComponent<CDeformedContactSkinNodes>(reg);
   ecs::RegisterComponent<CContactCorrespondence</*kIsSync*/ false>>(reg);
   ecs::RegisterComponent<CContactCorrespondence</*kIsSync*/ true>>(reg);

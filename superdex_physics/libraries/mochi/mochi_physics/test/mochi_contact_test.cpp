@@ -34,6 +34,7 @@
 #include <mochi_physics/src/mochi_differentiable.h>
 #include <mochi_physics/src/mochi_group.h>
 #include <mochi_physics/src/mochi_island.h>
+#include <mochi_physics/src/mochi_linear_contact_skin.h>
 #include <mochi_physics/src/mochi_rigid.h>
 #include <mochi_physics/src/mochi_shape.h>
 #include <mochi_physics/src/mochi_snle.h>
@@ -914,6 +915,9 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
   ColumnVector<real> _residual;
   SparseMatrix<real> _dresidual;
 
+  // Whether the colliding soft cube contacts through a linear contact skin.
+  bool _useContactSkin = false;
+
  public:
   virtual void InitState() = 0;
 
@@ -1015,12 +1019,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     }
   }
 
-  // Test with finite differences. For GradTarget::Current, test both residual and dresidual. For
-  // GradTarget::Previous, test only the residual. The results for the dresidual are not perfect, as
-  // the derivatives discard some nonlinearities (e.g., derivative of the SDF normal for some SDFs,
-  // 2nd derivative of the mapping from contact sample to DoFs). In particular, error grows for the
-  // rotation of the _collider, and its corresponding block in the Hessian is sometimes ignored
-  void RunTest() {
+  void InitializeSceneFromParams() {
     auto const& params = GetParam();
 
     auto solverParams = _scene->GetSolverParams();
@@ -1034,6 +1033,16 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
 
     InitializeScene(
         params.coulombCoefficient, params.viscousCoefficient, params.dampingCoefficient);
+  }
+
+  // Test with finite differences. For GradTarget::Current, test both residual and dresidual. For
+  // GradTarget::Previous, test only the residual. The results for the dresidual are not perfect, as
+  // the derivatives discard some nonlinearities (e.g., derivative of the SDF normal for some SDFs,
+  // 2nd derivative of the mapping from contact sample to DoFs). In particular, error grows for the
+  // rotation of the _collider, and its corresponding block in the Hessian is sometimes ignored
+  void RunTest() {
+    auto const& params = GetParam();
+    InitializeSceneFromParams();
 
     InitState();
     PreStep();
@@ -1104,6 +1113,60 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
       ColumnVector<real> dresValueDelta = AsConstView(dres.Values()) - AsConstView(dresFD.Values());
       EXPECT_NEAR(dresValueDelta.Norm() / Max(dres.Norm(), dresFD.Norm()), 0_r, dresTol);
     }
+  }
+
+  template <bool kIsSync>
+  bool CollidingHasContact() const {
+    for (auto const& collision :
+         GetRegistry().get<CActiveCollisions<kIsSync, TimeStep::Current> const>(_colliding)) {
+      if (!collision.collisionResult.Empty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Expects the colliding contact skin to carry a linear element map, and its contacts to be
+  // detected only as sync or only as async, so that the corresponding mapped assembly runs.
+  template <bool kIsSync>
+  void ExpectMappedContactSkinCollisions() const {
+    EXPECT_TRUE(GetRegistry().all_of<CLinearContactSkinElementMap>(_colliding));
+    EXPECT_TRUE(CollidingHasContact<kIsSync>());
+    EXPECT_FALSE(CollidingHasContact<!kIsSync>());
+  }
+
+  // Compares the mapped contact-skin assembly with the legacy one through colliding contact
+  // Jacobians, which runs once the linear element map is removed.
+  void RunMappedVsLegacyContactSkinTest() {
+    auto const gradTarget = GetParam().gradTarget;
+    InitializeSceneFromParams();
+    InitState();
+    PreStep();
+    ComputeResponse(gradTarget);
+    double const mappedObjective = _objective;
+    ColumnVector<real> const mappedResidual = _residual.Duplicate();
+    SparseMatrix<real> const mappedDResidual = _dresidual.Duplicate();
+
+    auto& reg = GetRegistry();
+    InitializeContactSkinningColumnCoalescingMap(
+        reg.get<CFemSurfaceDiscretization const>(_colliding),
+        reg.get<CContactSkinningData>(_colliding));
+    reg.remove<CLinearContactSkinElementMap>(_colliding);
+    InitState();
+    PreStep();
+    ComputeResponse(gradTarget);
+
+    // Both paths evaluate the same contacts and differ only in summation order.
+    real constexpr kRelTol = 1e-5_r;
+    EXPECT_NEAR(mappedObjective, _objective, kRelTol * Abs(mappedObjective));
+    ColumnVector<real> const resDelta = mappedResidual - _residual;
+    EXPECT_LE(resDelta.Norm(), kRelTol * mappedResidual.Norm());
+    // Values are compared positionally, so the sparsity patterns must match.
+    ASSERT_TRUE(test::EqualSpan(mappedDResidual.Pointers(), _dresidual.Pointers()));
+    ASSERT_TRUE(test::EqualSpan(mappedDResidual.Indices(), _dresidual.Indices()));
+    ColumnVector<real> const dresDelta =
+        AsConstView(mappedDResidual.Values()) - AsConstView(_dresidual.Values());
+    EXPECT_LE(dresDelta.Norm(), kRelTol * mappedDResidual.Norm());
   }
 
   Actor* InitStaticCube(
@@ -1178,11 +1241,19 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     caparams.material.type = SoftMaterialType::NeoHookean;
     caparams.material.neoHookean.youngsModulus = 1e-6_r;
     caparams.layer = isCollider ? "Collider" : "Colliding";
-    auto&& [unitCubeCoordinates, unitCubeConnectivity] = test::CreateMinimalTetMeshUnitCube();
-    caparams.shape = _scene->GetContext()->CreateTetMeshShape(
-        Flatten(MakeSpan(unitCubeCoordinates)),
-        Flatten(MakeSpan(unitCubeConnectivity)),
-        test::ExpectOK{});
+    if (_useContactSkin && !isCollider) {
+      caparams.shape =
+          _scene->GetContext()->CreateModelShape(CreateMixedContactSkinModel(), test::ExpectOK{});
+      caparams.useContactSkin = true;
+      // Several samples per element, so element blocks accumulate more than one sample.
+      caparams.boundaryElementType = ActorBoundaryElementType::P1Q3;
+    } else {
+      auto&& [unitCubeCoordinates, unitCubeConnectivity] = test::CreateMinimalTetMeshUnitCube();
+      caparams.shape = _scene->GetContext()->CreateTetMeshShape(
+          Flatten(MakeSpan(unitCubeCoordinates)),
+          Flatten(MakeSpan(unitCubeConnectivity)),
+          test::ExpectOK{});
+    }
     caparams.worldFromLocal = transform;
 
     caparams.contact.viscousFrictionCoefficient = viscousCoefficient;
@@ -1223,17 +1294,46 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     return Quaternion::FromRotationVector(Real3(0.3_r, -0.4_r, 0.5_r));
   }
 
+  // Unit-cube contact skin whose node i is embedded at tet node i plus a zero-sum combination of
+  // the four nodes of the opposite z face, so that the skin keeps the unit-cube geometry while
+  // each skin node depends on five physics nodes.
+  static ModelData CreateMixedContactSkinModel() {
+    ModelData model = test::CreateUnitCubeContactSkinModel();
+    auto& skinning = *model.contactSkinMesh->skinning;
+    // Unit-cube node n is at (n & 1, (n >> 1) & 1, n >> 2), so x(f) - x(f+1) - x(f+2) + x(f+3) = 0
+    // for the first node f of either z face.
+    std::array<real, 4> constexpr kFaceWeights = {0.1_r, -0.1_r, -0.1_r, 0.1_r};
+    SkinningData mixed;
+    mixed.weightsPerNode = 1 + isize(kFaceWeights);
+    for (int i = 0; i < isize(skinning.indices); ++i) {
+      mixed.indices.push_back(skinning.indices[i]);
+      mixed.weights.push_back(skinning.weights[i]);
+      int const oppositeFace = skinning.indices[i] < 4 ? 4 : 0;
+      for (int k = 0; k < isize(kFaceWeights); ++k) {
+        mixed.indices.push_back(oppositeFace + k);
+        mixed.weights.push_back(kFaceWeights[k]);
+      }
+    }
+    skinning = std::move(mixed);
+    return model;
+  }
+
   void InitSoftCubeStageStart(entt::entity e) {
     auto& reg = GetRegistry();
 
     // Set up contact samples at stage start
-    ecs::InvokeOnEntity(
-        UpdateCollisionSamplePositions<
-            CFemBoundaryDiscretization,
-            TimeStep::StageStart,
-            kSpaceDim3>,
-        reg,
-        e);
+    if (reg.all_of<TagUseDeformableContactSkin>(e)) {
+      ecs::InvokeOnEntity(
+          linear_contact_skin::UpdatePositionsAndSamples<TimeStep::StageStart>, reg, e);
+    } else {
+      ecs::InvokeOnEntity(
+          UpdateCollisionSamplePositions<
+              CFemBoundaryDiscretization,
+              TimeStep::StageStart,
+              kSpaceDim3>,
+          reg,
+          e);
+    }
 
     // Set up the tetrahedral map at stage start
     ecs::TryInvokeOnEntity(soft::UpdateMap<TimeStep::StageStart>, reg, e);
@@ -2273,6 +2373,63 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 1e-3_r, 1e-3_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
+// The soft cube contacts the static cube through a linear contact skin, which takes the async
+// mapped assembly.
+class MochiSkinnedSoftStaticContact : public MochiSoftStaticContact {
+ public:
+  MochiSkinnedSoftStaticContact() {
+    _useContactSkin = true;
+  }
+};
+
+TEST_P(MochiSkinnedSoftStaticContact, ContactAssembly) {
+  RunTest();
+  ExpectMappedContactSkinCollisions</*kIsSync*/ false>();
+}
+
+TEST_P(MochiSkinnedSoftStaticContact, MappedMatchesLegacyAssembly) {
+  RunMappedVsLegacyContactSkinTest();
+}
+
+// Finite differences of the dresidual through the contact skin have float rounding error near 1e-3
+// that varies across build configurations.
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiSkinnedSoftStaticContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 1e-3_r, 2e-3_r},
+        TestParams{"Viscous", GradTarget::Current, 0_r, 1_r, 0_r, false, 1e-3_r, 2e-3_r},
+        TestParams{"Coulomb", GradTarget::Current, 0.5_r, 0_r, 0_r, false, 1e-3_r, 2e-3_r},
+        TestParams{"Damping", GradTarget::Current, 0_r, 0_r, 1_r, false, 1e-3_r, 2e-3_r},
+        TestParams{"NoFrictionExplicit", GradTarget::Current, 0_r, 0_r, 0_r, true, 1e-3_r, 2e-3_r},
+        TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 1e-3_r, 2e-3_r},
+        TestParams{"CoulombExplicit", GradTarget::Current, 0.5_r, 0_r, 0_r, true, 1e-3_r, 2e-3_r},
+        TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 1_r, true, 1e-3_r, 2e-3_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// A skinned soft cube against the moving static cube takes the async mapped assembly, which must
+// also map the response back through the current collider frame.
+class MochiSkinnedSoftMovingStaticContact : public MochiSoftMovingStaticContact {
+ public:
+  MochiSkinnedSoftMovingStaticContact() {
+    _useContactSkin = true;
+  }
+};
+
+TEST_P(MochiSkinnedSoftMovingStaticContact, ContactAssembly) {
+  RunTest();
+  ExpectMappedContactSkinCollisions</*kIsSync*/ false>();
+}
+
+// Only explicit normals read the stage-start collider frame.
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiSkinnedSoftMovingStaticContact,
+    ::testing::Values(
+        TestParams{"NoFrictionExplicit", GradTarget::Current, 0_r, 0_r, 0_r, true, 1e-3_r, 2e-3_r},
+        TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 1e-3_r, 2e-3_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
 class MochiSoftRigidContact : public MochiContactTestBase {
   ColumnVector<real> _posA;
   TransformRT _posB;
@@ -2288,12 +2445,13 @@ class MochiSoftRigidContact : public MochiContactTestBase {
       override {
     auto& reg = GetRegistry();
 
-    auto* actorA =
-        InitSoftCube({}, false, {}, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+    // Create the rigid cube first so that the soft cube's DoFs are offset.
     auto transform = TransformRT(
         Quaternion::FromRotationVector(Real3(0.1_r, -0.1_r, 0.2_r)), Real3(0.6_r, 0.6_r, 0.6_r));
     auto* actorB = InitRigidCube(
         1_r, transform, true, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+    auto* actorA =
+        InitSoftCube({}, false, {}, coulombCoefficient, viscousCoefficient, dampingCoefficient);
     InitActors(actorA, actorB);
 
     _posA =
@@ -2349,6 +2507,74 @@ TEST_P(MochiSoftRigidContact, ContactAssembly) {
 INSTANTIATE_TEST_SUITE_P(
     FrictionVariations,
     MochiSoftRigidContact,
+    ::testing::Values(
+        TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 1e-3_r, 1e-3_r, true},
+        TestParams{"Viscous", GradTarget::Current, 0_r, 1_r, 0_r, false, 1e-3_r, 1e-3_r, true},
+        TestParams{"Coulomb", GradTarget::Current, 0.5_r, 0_r, 0_r, false, 3e-3_r, 1e-3_r, true},
+        TestParams{
+            "NoFrictionExplicit",
+            GradTarget::Current,
+            0_r,
+            0_r,
+            0_r,
+            true,
+            1e-3_r,
+            1e-3_r,
+            true},
+        TestParams{
+            "ViscousExplicit",
+            GradTarget::Current,
+            0_r,
+            1_r,
+            0_r,
+            true,
+            1e-3_r,
+            1e-3_r,
+            true},
+        TestParams{
+            "CoulombExplicit",
+            GradTarget::Current,
+            0.5_r,
+            0_r,
+            0_r,
+            true,
+            1e-3_r,
+            1e-3_r,
+            true},
+        TestParams{"Damping", GradTarget::Current, 0_r, 0_r, 1_r, false, 1e-3_r, 1e-3_r, true},
+        TestParams{
+            "DampingExplicit",
+            GradTarget::Current,
+            0_r,
+            0_r,
+            1_r,
+            true,
+            1e-3_r,
+            1e-3_r,
+            true}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// The soft cube contacts the dynamic rigid cube through a linear contact skin, which takes the sync
+// mapped assembly with skin-collider coupling blocks.
+class MochiSkinnedSoftRigidContact : public MochiSoftRigidContact {
+ public:
+  MochiSkinnedSoftRigidContact() {
+    _useContactSkin = true;
+  }
+};
+
+TEST_P(MochiSkinnedSoftRigidContact, ContactAssembly) {
+  RunTest();
+  ExpectMappedContactSkinCollisions</*kIsSync*/ true>();
+}
+
+TEST_P(MochiSkinnedSoftRigidContact, MappedMatchesLegacyAssembly) {
+  RunMappedVsLegacyContactSkinTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiSkinnedSoftRigidContact,
     ::testing::Values(
         TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 1e-3_r, 1e-3_r, true},
         TestParams{"Viscous", GradTarget::Current, 0_r, 1_r, 0_r, false, 1e-3_r, 1e-3_r, true},

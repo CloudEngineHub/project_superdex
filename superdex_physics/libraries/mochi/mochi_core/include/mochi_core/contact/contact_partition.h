@@ -18,6 +18,7 @@
 
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/utils/basic_utils.h>
+#include <mochi_core/utils/constants.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/span.h>
 #include <mochi_core/utils/subset_map.h>
@@ -113,7 +114,7 @@ class BoneIdsDescriptor : public PartitionDescriptorImpl<DynamicArray<int>> {
       size_t hash = 0;
       std::hash<int> hashInt;
       for (int id : boneIds) {
-        hash ^= hashInt(id) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+        hash ^= hashInt(id) + kGoldenRatio32 + (hash << 6) + (hash >> 2);
       }
       return hash;
     }

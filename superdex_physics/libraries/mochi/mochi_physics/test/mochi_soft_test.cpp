@@ -580,16 +580,19 @@ TEST_IF_F(MOCHI_ENABLE_ROM_ACTORS, MochiSoftContactSkin, RejectsRom) {
 TEST_F(MochiSoftContactSkin, UseContactSkinSelectsContactRepresentation) {
   auto& reg = GetRegistry();
   entt::entity const direct = GetEntity(CreateActor(false));
-  EXPECT_FALSE(reg.all_of<TagUseDeformableContactSkin>(direct));
+  EXPECT_FALSE((reg.any_of<TagUseDeformableContactSkin, CLinearContactSkinElementMap>(direct)));
   EXPECT_TRUE(reg.all_of<CFemBoundaryDiscretization>(direct));
 
   // A non-default element type checks that boundaryElementType reaches the contact skin.
   entt::entity const skin = GetEntity(CreateActor(true, ActorBoundaryElementType::P1Q6));
   EXPECT_TRUE(reg.all_of<TagUseDeformableContactSkin>(skin));
   EXPECT_FALSE(reg.all_of<CFemBoundaryDiscretization>(skin));
+  int const numElements = reg.get<CContactSkinMesh const>(skin).mesh->GetNumElements();
   EXPECT_EQ(
-      6 * reg.get<CContactSkinMesh const>(skin).mesh->GetNumElements(),
-      isize(reg.get<CContactSamples<TimeStep::Current> const>(skin).positions));
+      6 * numElements, isize(reg.get<CContactSamples<TimeStep::Current> const>(skin).positions));
+  auto const& elementMap = reg.get<CLinearContactSkinElementMap const>(skin);
+  EXPECT_EQ(6, elementMap.samplesPerElement);
+  EXPECT_EQ(numElements, elementMap.NumElements());
 }
 
 TEST_F(MochiSoftContactSkin, AuthoredSkinIsExposedIndependentlyOfContactSelection) {

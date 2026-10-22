@@ -1129,8 +1129,8 @@ TEST_P(NodeContactForcesTest, DynamicSoft_on_StaticRigid) {
 }
 
 TEST_P(NodeContactForcesTest, DynamicSoftContactSkin_on_StaticRigid) {
-  // Same as DynamicSoft_on_StaticRigid, but with skinned async contact assembly, which stores
-  // forces in collider space rather than colliding space.
+  // Same as DynamicSoft_on_StaticRigid, but with linear contact-skin async contact assembly, which
+  // maps the forces to the physics nodes through the skin weights.
   auto params = GetParam();
   Actor* bodyA = CreateSoftCube(
       _scene, 0.1_r, Real3{-1_r, 0.001_r, 0_r}, params.topRotation, /*useContactSkin=*/true);

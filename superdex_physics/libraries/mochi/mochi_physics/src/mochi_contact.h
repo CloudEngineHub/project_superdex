@@ -390,11 +390,34 @@ struct ContactSamples : public NoCopy {
 };
 
 // Sparse Jacobian from embedded contact-skin nodes to actor DoFs (one row per skin node, one Real3
-// entry per DoF), plus its column coalescing map. Rebuild the map whenever the surface connectivity
-// or the Jacobian's sparsity changes; value-only updates keep it valid.
+// entry per DoF), plus, for rod contact skins, its column coalescing map. Rebuild the map whenever
+// the surface connectivity or the Jacobian's sparsity changes; value-only updates keep it valid.
 struct CContactSkinningData : public NoCopy {
   SparseMatrix<Real3> jacobian;
   ContactJacColumnCoalescingMap columnCoalescingMap;
+};
+
+// Constant map from each three-node contact-skin triangle to actor-local physics nodes. Row e of
+// weights lists element e's physics nodes (sorted), each with its weight in the element's nodes.
+struct CLinearContactSkinElementMap : public NoCopy {
+  int samplesPerElement = 0;
+  SparseMatrix<Real3> weights;
+
+  [[nodiscard]] int NumElements() const {
+    return weights.Rows();
+  }
+
+  [[nodiscard]] Span<int const> PhysicsNodeIndices(int elementIndex) const {
+    return weights.Indices(elementIndex);
+  }
+
+  [[nodiscard]] Span<Real3 const> SkinNodeWeights(int elementIndex) const {
+    return weights.Values(elementIndex);
+  }
+
+  [[nodiscard]] double AverageDofsPerElement() const {
+    return static_cast<double>(kSpaceDim3 * weights.NumNonZeros()) / NumElements();
+  }
 };
 
 // Cached contact-skin node positions, pre-allocated during actor creation.
@@ -680,6 +703,21 @@ using ContactAssemblyReg = ecs::PartialRegistry<
     CRigidState<TimeStep::Current> const,
     CRigidState<TimeStep::StageStart> const,
     CRigidBodyInertia const>;
+
+// Transform a collider-local contact force into the colliding actor's local frame.
+[[nodiscard]] MOCHI_FORCE_INLINE Real3 TransformContactForceToCollidingLocal(
+    VMatrix3x3r const& colliderFromCollidingRotation,
+    Real3 const& force) {
+  return ToReal3(DotVecMat3x3(ToSimd(force), colliderFromCollidingRotation));
+}
+
+// Transform a collider-local contact force derivative into the colliding actor's local frame.
+[[nodiscard]] MOCHI_FORCE_INLINE VMatrix3x3r TransformContactDForceToCollidingLocal(
+    VMatrix3x3r const& colliderFromCollidingRotation,
+    VMatrix3x3r const& dforce) {
+  return Dot3x3(
+      Transpose3x3(colliderFromCollidingRotation), Dot3x3(dforce, colliderFromCollidingRotation));
+}
 
 [[nodiscard]] inline int CollidingIntegralDim(
     ContactAssemblyReg const& reg,
@@ -1023,16 +1061,38 @@ void InitializeLinearContactSkinningJacobian(
 // Sets up colliding Jacobians through DMap<DQuad, DMapRTConst, DMapSparseSkinning>.
 void SetupContactSkinCollidingJacobians(
     ecs::RequiredTag<TagUseDeformableContactSkin>,
+    ecs::Excluded<CLinearContactSkinElementMap>,
     CFemSurfaceDiscretization const& surfaceDisc,
     CRootTransform const& transform,
     CDofOffset const& dofOffset,
     CContactSkinningData const& skinningData,
     CCollJacs<CollRole::Colliding>& outJacobians);
 
+// Assemble async contact for a linear soft/shell contact skin directly through its element map.
+void AssembleAsyncLinearContactSkin(
+    AssemblyParams const& params,
+    bool useBlockSparse3x3,
+    ecs::Included<TagSkinnedContact, TagUseContact>,
+    ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
+    entt::registry const& reg,
+    entt::entity e,
+    ecs::CtxGlobal<CSimulationParams const> simParams,
+    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& activeCollisions,
+    CIslandMemberInfo const& islandMember,
+    CTimeIntegratorState const& intState,
+    CContactSamples<TimeStep::Current> const& samples,
+    CColliderInfo const& colliderInfo,
+    CRootTransform const& rootTransform,
+    CDofOffset const& dofOffset,
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CLinearContactSkinElementMap const& linearElementMap,
+    CSkinnedContactSnle& outContactSnle);
+
 // Assemble async contact for a single colliding actor whose contact samples are tied to its DoFs
 // through skinning/embedding (i.e. it carries CSkinnedContactSnle). Currently used for articulated
 // actors with skinned contact meshes, nested soft actors configured as colliding actors, and
-// deformable actors that use contact-skin contact. Results are written to CSkinnedContactSnle,
+// deformable actors whose contact skin has no linear element map (see
+// AssembleAsyncLinearContactSkin). Results are written to CSkinnedContactSnle,
 // except for link residuals, which are written to CArticulatedAsyncContactLinkResidual and are
 // projected later by articulated::compound::ProjectFullResidual. The island-sized residual is not
 // registered for non-blended articulated actors, whose slices all have link residuals.
@@ -1040,6 +1100,7 @@ void AssembleAsyncSkinnedContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,
     ecs::RequiredTag<TagSkinnedContact>,
+    ecs::Excluded<CLinearContactSkinElementMap>,
     ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
     entt::registry const& reg,
     entt::entity e,

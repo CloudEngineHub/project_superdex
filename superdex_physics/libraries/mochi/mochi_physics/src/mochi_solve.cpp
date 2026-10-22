@@ -746,6 +746,14 @@ void mochi::solver::AssembleIslandPipeline(
         actors,
         std::cref(params),
         useBlockSparse3x3ForInteractions);
+    ecs::ScheduleInvokeForEach<ecs::policy::AllowFullRegistryAccess>(
+        masterSemaphore,
+        "AssembleAsyncLinearContactSkin",
+        AssembleAsyncLinearContactSkin,
+        reg,
+        actors,
+        std::cref(params),
+        useBlockSparse3x3ForInteractions);
   }
 
   // rigid::EntityAssemble is called for both (normal) rigid bodies and for articulated rigid

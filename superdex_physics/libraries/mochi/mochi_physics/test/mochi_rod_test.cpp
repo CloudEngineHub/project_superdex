@@ -1812,6 +1812,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_InitializesSkinningJacobianSpar
                CContactSkinningData,
                CFemSurfaceDiscretization,
                TagUseDeformableContactSkin>(entity)));
+  EXPECT_FALSE(reg.all_of<CLinearContactSkinElementMap>(entity));
   EXPECT_FALSE(reg.all_of<CFemSegmentDiscretization>(entity));
 
   auto const& contactSkin = reg.get<CContactSkinMesh const>(entity);
@@ -2173,6 +2174,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
   collidingJacobians.emplace_back(false, &result, false, entt::null, /*collidingPartitionId=*/0);
   SetupContactSkinCollidingJacobians(
       {},
+      {},
       reg.get<CFemSurfaceDiscretization const>(entity),
       reg.get<CRootTransform const>(entity),
       reg.get<CDofOffset const>(entity),
@@ -2194,6 +2196,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
   test::ContactJacSnapshot const firstSetup = test::SnapshotContactJac(contactJacobian);
   SetupContactSkinCollidingJacobians(
       {},
+      {},
       reg.get<CFemSurfaceDiscretization const>(entity),
       reg.get<CRootTransform const>(entity),
       reg.get<CDofOffset const>(entity),
@@ -2207,6 +2210,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinCollidingJacobianMatchesFiniteDifferenc
   CCollJacs<CollRole::Colliding> shiftedJacobians;
   shiftedJacobians.emplace_back(false, &result, false, entt::null, /*collidingPartitionId=*/0);
   SetupContactSkinCollidingJacobians(
+      {},
       {},
       reg.get<CFemSurfaceDiscretization const>(entity),
       reg.get<CRootTransform const>(entity),

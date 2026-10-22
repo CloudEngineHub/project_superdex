@@ -18,6 +18,7 @@
 
 #include <mochi_core/utils/nd_array.h>
 
+#include <cstdint>
 #include <limits>
 
 namespace mochi {
@@ -104,5 +105,8 @@ struct TetFaces {
 
 // This is intended to be used as a placeholder index in linear algebra data structures.
 constexpr int kSentinelIndex = -1;
+
+// floor(2^32 / golden ratio), as used in Fibonacci hashing and hash combining.
+inline constexpr uint32_t kGoldenRatio32 = 0x9E3779B9u;
 
 } // namespace mochi

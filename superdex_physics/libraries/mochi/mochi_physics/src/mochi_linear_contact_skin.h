@@ -40,6 +40,12 @@ void EmplaceComponents(
     LinearMeshEmbedding const& embedding,
     Span<Real3 const> physicsNodeCoordinates);
 
+// Builds the compact element-local map of a linear skinning Jacobian, which must be W tensor I_3.
+void InitializeElementMap(
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CContactSkinningData const& skinningData,
+    CLinearContactSkinElementMap& outMap);
+
 // Interpolates contact samples from the deformed skin nodes, which must already be up to date.
 template <TimeStep kTimeStep>
 void UpdateSamples(
@@ -91,5 +97,21 @@ void UpdateBounds(
     CPointCloudColliderParams const* pointCloudColliderParams,
     CDeformedContactSkinNodes& deformedNodes,
     CBoundingVolume& outBounds);
+
+// Assembles the contact response of pointRange through the linear element map, into each output
+// that results provides. Given the collider Jacobians of sync contact, it also assembles the
+// skin-collider coupling blocks of the dresidual, but not the collider terms themselves.
+void AssembleContactResponseRange(
+    ContactDetectionResult const& query,
+    CLinearContactSkinElementMap const& elementMap,
+    CFemSurfaceDiscretization const& surfaceDisc,
+    CRootTransform const& rootTransform,
+    Span<real const> sampleWeights,
+    int dofOffset,
+    Interval<int> pointRange,
+    CollisionResponseResult const& response,
+    Span<ContactJac const*> colliderJacs,
+    Allocator* allocator,
+    AssemblyResults<real> results);
 
 } // namespace mochi::linear_contact_skin

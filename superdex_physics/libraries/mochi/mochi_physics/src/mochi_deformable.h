@@ -83,47 +83,58 @@ void ComputeAsyncContactResponse(
 
 /**
  * @brief Creates a batched boundary (traction/contact) assembly operator.
+ *
+ * @details @p response provides `kInvalidIndex` and `GetResponseIndexFromSampleIndex(sampleIndex)`,
+ * which returns `kInvalidIndex` for samples without a response, plus `GetEnergy`, `GetGradient`,
+ * and `GetHessian` by response index.
  */
 template <
     class ElementT,
     int kNumFields = ElementT::kSpaceDim,
-    int kBatchSize = kDefaultFemBatchSize>
+    int kBatchSize = kDefaultFemBatchSize,
+    class ContactResponseT>
 [[nodiscard]] NoDispElOpFnType<ElementT, kNumFields, kBatchSize> MakeBatchedBoundaryOp(
     Span<ElementT const> elements,
-    CDeformablePointAsyncCollisionsResponse const& outResponse,
+    ContactResponseT const& response,
     Span<real const> bdFaceWeights) {
   using V = BatchReal<kBatchSize>;
   using Vd = BatchDouble<kBatchSize>;
   using V3 = BatchReal3<kBatchSize>;
-  return [&outResponse, elements, bdFaceWeights](
+  return [&response, elements, bdFaceWeights](
              NdArray<int, kBatchSize> const& elemIndices,
              Span<int const> /*indicesFlat*/,
              Vd* outEnergy,
              fem::BatchElementVector<kBatchSize, ElementT, kNumFields>* outRes,
              fem::BatchElementMatrix<kBatchSize, ElementT, kNumFields>* outDRes,
              bool /*projectPsd*/) -> bool {
-    auto batchedContactFn = [&outResponse](
+    auto batchedContactFn = [&response](
                                 NdArray<int, kBatchSize> const& eleIndices,
                                 int q,
                                 Vd* cbEnergy,
                                 V3* cbForce,
                                 NdArray<V3, 3>* cbDForce,
                                 NdArray<bool, kBatchSize>& hasForce) {
-      Real3 sf[V::kSize]{};
+      // sf is only accessed when cbForce is non-null, so it only needs zeroing then.
+      Real3 sf[V::kSize] MOCHI_NO_INIT;
+      if (cbForce) {
+        for (auto& force : sf) {
+          force = {};
+        }
+      }
       int respIdxByLane[kBatchSize] MOCHI_NO_INIT;
       for (int b = 0; b < kBatchSize; ++b) {
         int const sampleIdx = eleIndices[b] * ElementT::kNumQuadPoints + q;
-        int const respIdx = outResponse.GetResponseIndexFromSampleIndex(sampleIdx);
+        int const respIdx = response.GetResponseIndexFromSampleIndex(sampleIdx);
         respIdxByLane[b] = respIdx;
-        hasForce[b] = (respIdx != CDeformablePointAsyncCollisionsResponse::kInvalidIndex);
+        hasForce[b] = (respIdx != ContactResponseT::kInvalidIndex);
         if (!hasForce[b]) {
           continue;
         }
         if (cbEnergy) {
-          *cbEnergy = Set(*cbEnergy, b, outResponse.GetEnergy(respIdx));
+          *cbEnergy = Set(*cbEnergy, b, response.GetEnergy(respIdx));
         }
         if (cbForce) {
-          sf[b] = outResponse.GetGradient(respIdx);
+          sf[b] = response.GetGradient(respIdx);
         }
       }
       if (cbForce) {
@@ -135,7 +146,7 @@ template <
             alignas(alignof(V)) real sd[V::kSize]{};
             for (int b = 0; b < kBatchSize; ++b) {
               if (hasForce[b]) {
-                sd[b] = outResponse.GetHessian(respIdxByLane[b])[r][c];
+                sd[b] = response.GetHessian(respIdxByLane[b])[r][c];
               }
             }
             (*cbDForce)[r][c] = Load<V>(sd);

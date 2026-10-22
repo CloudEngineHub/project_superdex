@@ -3317,6 +3317,11 @@ void SceneImpl::ValidateNewActorComposition(entt::entity e) const {
       !usesContactSkin || _registry.all_of<CContactSkinMesh>(e),
       "Contact-skin contact requires the contact skin mesh.");
 
+  bool const hasLinearContactSkinMap = _registry.all_of<CLinearContactSkinElementMap>(e);
+  MOCHI_ASSERT(
+      hasLinearContactSkinMap ==
+          (usesContactSkin && _registry.any_of<TagSoftActor, TagShellActor>(e)),
+      "Contact-skinned soft and shell actors, and only they, have a linear contact-skin element map.");
   if (_registry.all_of<TagRodActor>(e)) {
     MOCHI_ASSERT(
         usesContactSkin != _registry.all_of<CFemSegmentDiscretization>(e),
