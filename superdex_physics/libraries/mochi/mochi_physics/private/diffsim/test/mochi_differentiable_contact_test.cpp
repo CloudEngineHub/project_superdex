@@ -120,13 +120,21 @@ class MochiDifferentiableContact : public MochiSceneTestBase {
 
     MakeSceneDifferentiable(_scene, test::ExpectOK{});
 
+    // Tighter than the default solver tolerance to reduce finite-difference noise; single precision
+    // cannot reach it. Reaching it takes up to 20 Newton iterations in some contact scenes.
+    real constexpr kSolverAbsTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-6_r : 1e-3_r;
+    int constexpr kSolverMaxIter = MOCHI_USE_DOUBLE_PRECISION ? 25 : 15;
     auto simParams = _scene->GetSolverParams();
-    simParams.nonLinearSolver.maxIter = 15;
-    simParams.nonLinearSolver.absTol = BackPropagationSolverParams{}.outerSolverAbsTol;
+    simParams.nonLinearSolver.maxIter = kSolverMaxIter;
+    simParams.nonLinearSolver.absTol = kSolverAbsTol;
     simParams.nonLinearSolver.relTol = BackPropagationSolverParams{}.outerSolverRelTol;
     simParams.linearSolver.absTol = BackPropagationSolverParams{}.innerSolverAbsTol;
     simParams.experimentalEval.fittedSaturationHessian = SaturationHessianParams::All(false);
     _scene->SetSolverParams(simParams, test::ExpectOK{});
+
+    auto diffParams = GetBackPropagationSolverParams(_scene, test::ExpectOK{});
+    diffParams.outerSolverAbsTol = kSolverAbsTol;
+    SetBackPropagationSolverParams(_scene, diffParams, test::ExpectOK{});
   }
 
  protected:
@@ -181,9 +189,9 @@ class MochiDifferentiableContact : public MochiSceneTestBase {
   void RunTest(
       std::string_view prefabName,
       std::string_view queryActorName,
-      std::string_view gradActorName) {
+      std::string_view gradActorName,
+      real tolerance) {
     real constexpr kEps = 1e-7_r;
-    real constexpr kTolerance = 2e-2_r;
 
     entt::registry& reg = test::GetRegistry(_scene);
     MOCHI_DEFER({ _scene->ReleaseAllStates(); });
@@ -236,7 +244,7 @@ class MochiDifferentiableContact : public MochiSceneTestBase {
     real finiteDiffNorm = finiteDiff.Norm();
     ColumnVector<real> diff = analytical - finiteDiff;
     auto diffNorm = diff.Norm();
-    EXPECT_NEAR(diffNorm / Max(analyticalNorm, finiteDiffNorm), 0_r, kTolerance);
+    EXPECT_NEAR(diffNorm / Max(analyticalNorm, finiteDiffNorm), 0_r, tolerance);
   }
 
   Actor* _queryActor = {};
@@ -247,12 +255,16 @@ class MochiDifferentiableContact : public MochiSceneTestBase {
 } // namespace
 
 TEST_IF_F(MOCHI_USE_DOUBLE_AND_INTERNAL, MochiDifferentiableContact, ConsistencyTestRigidAsync) {
-  RunTest</*kIsSync*/ false>("rigid_cube_on_plane_frictionless.mochi_scene", "Cube", "Cube");
+  RunTest</*kIsSync*/ false>(
+      "rigid_cube_on_plane_frictionless.mochi_scene", "Cube", "Cube", /*tolerance*/ 1e-2_r);
 }
 
 TEST_IF_F(MOCHI_USE_DOUBLE_AND_INTERNAL, MochiDifferentiableContact, ConsistencyTestRigidSync) {
   RunTest</*kIsSync*/ true>(
-      "two_rigid_cubes_on_plane_frictionless.mochi_scene", "TopCube", "TopCube");
+      "two_rigid_cubes_on_plane_frictionless.mochi_scene",
+      "TopCube",
+      "TopCube",
+      /*tolerance*/ 1e-2_r);
 }
 
 TEST_IF_F(
@@ -260,7 +272,10 @@ TEST_IF_F(
     MochiDifferentiableContact,
     ConsistencyTestArticulatedAsync) {
   RunTest</*kIsSync*/ false>(
-      "articulated_actor_on_plane.mochi_scene", "ArticulatedActor/Link0_Root", "ArticulatedActor");
+      "articulated_actor_on_plane.mochi_scene",
+      "ArticulatedActor/Link0_Root",
+      "ArticulatedActor",
+      /*tolerance*/ 2e-2_r);
 }
 
 TEST_IF_F(
@@ -270,7 +285,8 @@ TEST_IF_F(
   RunTest</*kIsSync*/ true>(
       "articulated_and_rigid_actor_contact.mochi_scene",
       "ArticulatedActor/Link2_Horizontal",
-      "ArticulatedActor");
+      "ArticulatedActor",
+      /*tolerance*/ 2e-2_r);
 }
 
 // The contact-force backward pass must not crash when an active collision has zero contacts.

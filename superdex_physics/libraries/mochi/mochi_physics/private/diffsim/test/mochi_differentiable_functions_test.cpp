@@ -30,6 +30,12 @@ real constexpr kDt = 0.01_r;
 int constexpr kNumSteps = 3;
 int constexpr kNumRuns = 2;
 
+// Non-linear solver tolerance for forward simulation and back-propagation. It is tighter than the
+// default to reduce finite-difference noise. Reaching it takes up to 20 Newton iterations in some
+// contact scenes.
+real constexpr kSolverAbsTol = 1e-6_r;
+int constexpr kSolverMaxIter = 25;
+
 // These tests are too slow for CI in non-optimized builds.
 // Modify the following line if you ever need to debug them locally.
 // The model assets used by these tests are not shipped externally.
@@ -42,6 +48,7 @@ int constexpr kNumRuns = 2;
 struct TestParams {
   real tol = 1e-2_r;
   real epsFiniteDiff = 1e-7_r;
+  real solverAbsTol = kSolverAbsTol;
 };
 
 /// @brief Base fixture for gradient consistency tests of differentiable I/O backward functions.
@@ -73,12 +80,16 @@ class DifferentiableFunctionsTest : public MochiSceneTestBase {
     auto simParams = _scene->GetSolverParams();
     simParams.experimentalEval.fittedSaturationHessian = {
         .contactFriction = false, .jointFriction = false, .constraintSaturation = false};
-    simParams.nonLinearSolver.maxIter = 15;
+    simParams.nonLinearSolver.maxIter = kSolverMaxIter;
     // TODO(T273020090): Enable NonLinearSolverConvergenceMode::PerActorWeighted.
     simParams.nonLinearSolver.convergenceMode = NonLinearSolverConvergenceMode::Global;
-    simParams.nonLinearSolver.absTol = 1e-3_r;
+    simParams.nonLinearSolver.absTol = kSolverAbsTol;
     simParams.nonLinearSolver.relTol = 1e-10_r;
     _scene->SetSolverParams(simParams, ExpectOK{});
+
+    auto diffParams = GetBackPropagationSolverParams(_scene, ExpectOK{});
+    diffParams.outerSolverAbsTol = kSolverAbsTol;
+    SetBackPropagationSolverParams(_scene, diffParams, ExpectOK{});
 
     CollectActorData();
     BuildDefaultControl();
@@ -185,6 +196,13 @@ class DifferentiableFunctionsTest : public MochiSceneTestBase {
       OutputBackwardFn const& outputBackwardFn,
       TestParams const& params) {
     int const inputSize = isize(input);
+
+    auto simParams = _scene->GetSolverParams();
+    simParams.nonLinearSolver.absTol = params.solverAbsTol;
+    _scene->SetSolverParams(simParams, ExpectOK{});
+    auto diffParams = GetBackPropagationSolverParams(_scene, ExpectOK{});
+    diffParams.outerSolverAbsTol = params.solverAbsTol;
+    SetBackPropagationSolverParams(_scene, diffParams, ExpectOK{});
 
     // Capture initial scene state before any runs.
     StateHandle initialSceneState = _scene->CaptureState(ExpectOK{});
@@ -455,7 +473,7 @@ TEST_IF_F(
     }
   };
 
-  RunInputFunctionTest(control, inputFn, inputBackwardFn, TestParams{.tol = 2e-2_r});
+  RunInputFunctionTest(control, inputFn, inputBackwardFn);
 }
 
 // Test SetArticulatedPoseFromJointsBackward with control applied at steps 1+.
@@ -834,7 +852,7 @@ TEST_IF_F(
     });
   };
 
-  RunInputFunctionTest(combinedControl, inputFn, inputBackwardFn, TestParams{.tol = 2e-2_r});
+  RunInputFunctionTest(combinedControl, inputFn, inputBackwardFn);
 }
 
 /// Test mixed usage: SetArticulatedTargetPose + SetArticulatedTargetVelocity at step 0,
@@ -984,13 +1002,7 @@ TEST_IF_F(
     });
   };
 
-  TestParams params;
-
-  // Rounding error is significantly affected by the order in which Scene::ForEachActor iterates
-  // over actors. This test does not dictate the order. Instead the tolerance is increased to
-  // account for orders differences.
-  params.tol = 0.13_r;
-  RunInputFunctionTest(combinedControl, inputFn, inputBackwardFn, params);
+  RunInputFunctionTest(combinedControl, inputFn, inputBackwardFn);
 }
 
 /// Test mixed usage: ResetArticulatedTargetPose followed by SetArticulatedTargetVelocity at
@@ -1145,12 +1157,7 @@ TEST_IF_F(
     });
   };
 
-  TestParams params;
-  // Rounding error is significantly affected by the order in which Scene::ForEachActor iterates
-  // over actors. This test does not dictate the order. Instead the tolerance is increased to
-  // account for orders differences.
-  params.tol = 0.17_r;
-  RunInputFunctionTest(combinedControl, inputFn, inputBackwardFn, params);
+  RunInputFunctionTest(combinedControl, inputFn, inputBackwardFn);
 }
 
 /// Test the reverse ordering: set a target velocity, then reset the target pose in the same step.
@@ -1481,7 +1488,13 @@ TEST_IF_F(
     });
   };
 
-  RunInputFunctionTest(forceControl, inputFn, inputBackwardFn);
+  // Near convergence, the Armijo line search rejects the Newton steps in this test and the solver
+  // cannot reach kSolverAbsTol.
+  RunInputFunctionTest(
+      forceControl,
+      inputFn,
+      inputBackwardFn,
+      TestParams{.solverAbsTol = BackPropagationSolverParams{}.outerSolverAbsTol});
 }
 
 #undef MOCHI_TEST_DIFFERENTIABLE_FUNCTIONS

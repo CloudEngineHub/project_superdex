@@ -56,6 +56,12 @@ using LossAndGradientEvalPair = std::pair<LossEvalFn, GradientEvalFn>;
 namespace {
 real constexpr kDt = 0.01_r;
 
+// Non-linear solver tolerance for forward simulation and back-propagation. It is tighter than the
+// default to reduce finite-difference noise; single precision cannot reach it. Reaching it takes
+// up to 20 Newton iterations in some contact scenes.
+real constexpr kSolverAbsTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-6_r : 1e-3_r;
+int constexpr kSolverMaxIter = MOCHI_USE_DOUBLE_PRECISION ? 25 : 15;
+
 Real3 constexpr kPosRef{1.4_r, -0.7_r, 0.5_r};
 
 Quaternion const kRotRef = Quaternion::FromRotationVector(Real3{-0.8_r, -0.2_r, 0.3_r});
@@ -233,8 +239,8 @@ class MochiDifferentiable : public MochiSceneTestBase,
     // Set the forward simulation solver settings.
     auto simParams = _scene->GetSolverParams();
     // Special settings for differentiability
-    simParams.nonLinearSolver.maxIter = 15;
-    simParams.nonLinearSolver.absTol = BackPropagationSolverParams{}.outerSolverAbsTol;
+    simParams.nonLinearSolver.maxIter = kSolverMaxIter;
+    simParams.nonLinearSolver.absTol = kSolverAbsTol;
     simParams.nonLinearSolver.relTol = BackPropagationSolverParams{}.outerSolverRelTol;
     simParams.nonLinearSolver.convergenceMode =
         BackPropagationSolverParams{}.outerSolverConvergenceMode;
@@ -244,6 +250,7 @@ class MochiDifferentiable : public MochiSceneTestBase,
     // Set the back-propagation solver settings.
     auto diffParams = GetBackPropagationSolverParams(_scene, test::ExpectOK{});
     diffParams.verbosity = params.diffVerbosity;
+    diffParams.outerSolverAbsTol = kSolverAbsTol;
     diffParams.validateFiniteDiff = true; // Validate finite-difference robustness
     SetBackPropagationSolverParams(_scene, diffParams, test::ExpectOK{});
 
@@ -545,7 +552,7 @@ TEST_IF_P(
       LoadScenePrefab(_scene, "rigid_cube_on_plane_coulomb_friction.mochi_scene", "Cube");
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
-  TestParams params{.tol = 2e-2_r, .gradEpsFiniteDiff = 1e-4_r, .forceSpeed = 0.1_r};
+  TestParams params{.gradEpsFiniteDiff = 1e-6_r, .forceSpeed = 0.1_r};
   RunGradientConsistencyTest(lossTerms, target, 10, params);
 }
 
@@ -558,7 +565,7 @@ TEST_IF_P(
   target->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
-  TestParams params{.tol = 2e-2_r, .gradEpsFiniteDiff = 1e-8_r, .forceSpeed = 0.1_r};
+  TestParams params{.gradEpsFiniteDiff = 1e-6_r, .forceSpeed = 0.1_r};
   RunGradientConsistencyTest(lossTerms, target, 20, params);
   // Confirm that there are contact forces at the end of the simulation
   Real3 force = target->GetContactForceWorld(test::ExpectOK{});
@@ -575,7 +582,7 @@ TEST_IF_P(
       LoadScenePrefab(_scene, "two_rigid_cubes_on_plane_frictionless.mochi_scene", "BottomCube");
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
-  RunGradientConsistencyTest(lossTerms, target, 10, TestParams{.tol = 3e-2_r});
+  RunGradientConsistencyTest(lossTerms, target, 10);
 }
 
 // One cube is penetrating the incline at initialization, the other one is on top. Coulomb friction.
@@ -587,8 +594,7 @@ TEST_IF_P(
       _scene, "two_rigid_cubes_on_plane_coulomb_friction.mochi_scene", "BottomCube");
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
-  TestParams params{.tol = 3e-2_r};
-  RunGradientConsistencyTest(lossTerms, target, 10, params);
+  RunGradientConsistencyTest(lossTerms, target, 10);
 }
 
 // These tests are too slow for CI in non-optimized builds.
@@ -621,7 +627,7 @@ TEST_IF_P(
     SingleArticulatedActorContact_LastStepError) {
   auto* target = LoadScenePrefab(
       _scene, "articulated_actor_on_plane.mochi_scene", "ArticulatedActor/Link2_Horizontal");
-  TestParams params{.tol = 2e-2_r, .gradEpsFiniteDiff = 1e-6_r, .forceSpeed = 0.1_r};
+  TestParams params{.gradEpsFiniteDiff = 1e-6_r, .forceSpeed = 0.1_r};
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
   RunGradientConsistencyTest(lossTerms, target, 10, params);
@@ -637,7 +643,7 @@ TEST_IF_P(
       "articulated_and_rigid_actor_contact.mochi_scene",
       "ArticulatedActor/Link2_Horizontal");
 
-  TestParams params{.tol = 2e-2_r, .gradEpsFiniteDiff = 1e-8_r, .forceSpeed = 0.1_r};
+  TestParams params{.gradEpsFiniteDiff = 1e-8_r, .forceSpeed = 0.1_r};
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
   RunGradientConsistencyTest(lossTerms, target, 10, params);
@@ -700,7 +706,7 @@ TEST_IF_P(
       _scene,
       "articulated_actor_controller.mochi_scene",
       "ArticulatedActor/ArticulatedActor/Link2_Horizontal");
-  TestParams params{.tol = 2e-2_r, .gradEpsFiniteDiff = 1e-6_r, .controlSpeed = 10_r};
+  TestParams params{.gradEpsFiniteDiff = 1e-6_r, .controlSpeed = 10_r};
   std::array<LossAndGradientEvalPair, 2> lossTerms = {
       lastStepTranslationError, lastStepRotationError};
   RunGradientConsistencyTest(lossTerms, target, 10, params);
