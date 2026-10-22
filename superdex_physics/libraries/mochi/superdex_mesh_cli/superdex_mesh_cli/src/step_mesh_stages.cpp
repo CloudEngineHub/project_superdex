@@ -27,19 +27,24 @@
 #include <CGAL/AABB_face_graph_triangle_primitive.h>
 #include <CGAL/AABB_traits_3.h>
 #include <CGAL/AABB_tree.h>
+#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
+#include <CGAL/Polygon_mesh_processing/corefinement.h>
 #include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
 #include <CGAL/Polygon_mesh_processing/orientation.h>
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 #include <CGAL/Polygon_mesh_processing/remesh.h>
 #include <CGAL/Polygon_mesh_processing/repair.h>
 #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/stitch_borders.h>
 #include <CGAL/Polygon_mesh_processing/triangulate_hole.h>
 #include <CGAL/Surface_mesh_simplification/Policies/Edge_collapse/Edge_length_cost.h>
 #include <CGAL/Surface_mesh_simplification/Policies/Edge_collapse/Edge_length_stop_predicate.h>
 #include <CGAL/Surface_mesh_simplification/Policies/Edge_collapse/Midpoint_placement.h>
 #include <CGAL/Surface_mesh_simplification/edge_collapse.h>
+#include <CGAL/alpha_wrap_3.h>
 #include <CGAL/boost/graph/Euler_operations.h>
+#include <CGAL/boost/graph/copy_face_graph.h>
 #include <CGAL/boost/graph/helpers.h>
 #include <CGAL/boost/graph/iterator.h>
 #include <CGAL/convex_hull_3.h>
@@ -48,6 +53,7 @@
 #include <cmath>
 #include <cstddef>
 #include <queue>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -60,6 +66,20 @@ using mochi::mesh::cli::cgal_utils::K;
 
 using Point3 = K::Point_3;
 using Vector3 = K::Vector_3;
+
+using ExactKernel = CGAL::Exact_predicates_exact_constructions_kernel;
+using ExactSurfaceMesh = CGAL::Surface_mesh<ExactKernel::Point_3>;
+
+// True if two vertices of `mesh` share a position.
+bool HasCoincidentVertices(ExactSurfaceMesh const& mesh) {
+  std::set<ExactKernel::Point_3> points;
+  for (auto const v : mesh.vertices()) {
+    if (!points.insert(mesh.point(v)).second) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Spatial-hash welder that merges near-coincident points within an epsilon. Used to weld the
 // unwelded per-face triangle soup that Stage 1 produces, and to re-weld during overlap removal.
@@ -552,6 +572,65 @@ bool ShrinkWrap(CgalSurfaceMesh& mesh, double tightness, double targetEdgeLen, b
   return true;
 }
 
+// Replaces `mesh` with its alpha wrap: a closed, self-intersection-free surface just outside it
+// that keeps concavities wider than 1% of its bounding-box diagonal. Accepts any input.
+bool AlphaWrap(CgalSurfaceMesh& mesh) {
+  constexpr double kRelativeAlpha = 0.01;
+  constexpr double kOffsetToAlpha = 1.0 / 30.0; // CGAL's default ratio
+  std::vector<Point3> const points(mesh.points().begin(), mesh.points().end());
+  std::vector<std::vector<std::size_t>> faces;
+  faces.reserve(mesh.number_of_faces());
+  for (auto const f : mesh.faces()) {
+    std::vector<std::size_t>& face = faces.emplace_back();
+    for (auto const v : CGAL::vertices_around_face(mesh.halfedge(f), mesh)) {
+      face.push_back(v.idx());
+    }
+  }
+  if (faces.empty()) {
+    return false;
+  }
+  double const alpha = std::max(BboxDiagonal(mesh) * kRelativeAlpha, 1e-9);
+  CgalSurfaceMesh wrap;
+  CGAL::alpha_wrap_3(points, faces, alpha, alpha * kOffsetToAlpha, wrap);
+  mesh = std::move(wrap);
+  return mesh.number_of_faces() > 0 && CGAL::is_closed(mesh);
+}
+
+// Makes `mesh` a valid corefinement input (closed, outward-oriented, free of self-intersections):
+// rebuilds it from its non-degenerate triangles and fills its holes, then alpha-wraps it if it is
+// still invalid, setting `outApproximated`. Returns false if it encloses no volume.
+bool PrepareUnionInput(CgalSurfaceMesh& mesh, bool& outApproximated) {
+  namespace PMP = CGAL::Polygon_mesh_processing;
+  std::vector<Point3> points(mesh.points().begin(), mesh.points().end());
+  std::vector<std::vector<std::size_t>> triangles;
+  triangles.reserve(mesh.number_of_faces());
+  for (auto const f : mesh.faces()) {
+    std::vector<std::size_t>& triangle = triangles.emplace_back();
+    for (auto const v : CGAL::vertices_around_face(mesh.halfedge(f), mesh)) {
+      triangle.push_back(v.idx());
+    }
+  }
+  RemoveDegenerateTriangles(points, triangles);
+  mesh = BuildSurfaceMeshFromSoup(std::move(points), std::move(triangles));
+  if (!CGAL::is_closed(mesh)) {
+    FillHoles(mesh);
+    if (CGAL::is_closed(mesh) && !PMP::is_outward_oriented(mesh)) {
+      PMP::reverse_face_orientations(mesh);
+    }
+  }
+  bool const closed = CGAL::is_closed(mesh);
+  if (closed && !PMP::does_self_intersect(mesh)) {
+    // An inside-out shell would read as a cavity.
+    PMP::orient_to_bound_a_volume(mesh);
+    return mesh.number_of_faces() >= 4;
+  }
+  MOCHI_MESH_CLI_LOG_WARNING(
+      "UnionMeshes: wrapping an input that %s.",
+      closed ? "intersects itself" : "stays open after hole filling");
+  outApproximated = true;
+  return AlphaWrap(mesh);
+}
+
 } // namespace
 
 MeshData mochi::mesh::cli::CleanupMesh(MeshData const& mesh, CliError& error) {
@@ -651,6 +730,96 @@ MeshData mochi::mesh::cli::CloseMesh(
     return {};
   } catch (...) {
     MOCHI_MESH_CLI_ERROR_SET(error, "CloseMesh: unknown exception during closure.");
+    return {};
+  }
+}
+
+MeshData mochi::mesh::cli::UnionMeshes(
+    std::vector<MeshData> const& meshes,
+    MeshUnionParams const& params,
+    bool& outUsedFallback,
+    CliError& error) {
+  namespace PMP = CGAL::Polygon_mesh_processing;
+  outUsedFallback = false;
+  MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+
+  try {
+    std::vector<CgalSurfaceMesh> pieces;
+    for (MeshData const& mesh : meshes) {
+      if (GetNumElements(mesh) == 0) {
+        continue;
+      }
+      CgalSurfaceMesh sm = cgal_utils::MeshDataToSurfaceMesh(mesh, error);
+      MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+      if (PrepareUnionInput(sm, outUsedFallback)) {
+        pieces.push_back(std::move(sm));
+      }
+    }
+    MOCHI_MESH_CLI_ERROR_IF(pieces.empty(), error, "UnionMeshes: no non-empty input meshes.");
+    MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+
+    // Union pairwise in a balanced tree, in exact arithmetic: rounding to doubles between steps can
+    // make the next input self-intersect (convex decompositions share coplanar faces). A CGAL
+    // failure drops to the wrap fallback.
+    bool exact = true;
+    CgalSurfaceMesh result;
+    std::vector<ExactSurfaceMesh> level(pieces.size());
+    for (std::size_t i = 0; i < pieces.size(); ++i) {
+      CGAL::copy_face_graph(pieces[i], level[i]);
+    }
+    try {
+      while (exact && level.size() > 1) {
+        std::vector<ExactSurfaceMesh> next;
+        for (std::size_t i = 0; exact && i < level.size(); i += 2) {
+          if (i + 1 == level.size()) {
+            next.push_back(std::move(level[i]));
+            continue;
+          }
+          ExactSurfaceMesh merged;
+          exact = PMP::corefine_and_compute_union(level[i], level[i + 1], merged);
+          // Pieces touching at a single point leave coincident vertices, which crash a later
+          // corefinement.
+          exact = exact && !HasCoincidentVertices(merged);
+          next.push_back(std::move(merged));
+        }
+        level = std::move(next);
+      }
+    } catch (std::exception const&) {
+      exact = false;
+    }
+    if (exact) {
+      CGAL::copy_face_graph(level.front(), result);
+    }
+
+    if (!exact) {
+      MOCHI_MESH_CLI_LOG_WARNING(
+          "UnionMeshes: the exact union of %zu inputs failed; wrapping them together.",
+          pieces.size());
+      MOCHI_MESH_CLI_ERROR_IF(
+          !params.wrapFallback,
+          error,
+          "UnionMeshes: exact union failed and the wrap fallback is disabled.");
+      MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+      CgalSurfaceMesh soup;
+      for (CgalSurfaceMesh const& piece : pieces) {
+        CGAL::copy_face_graph(piece, soup);
+      }
+      MOCHI_MESH_CLI_ERROR_IF(
+          !AlphaWrap(soup), error, "UnionMeshes: the wrap fallback produced no closed surface.");
+      MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+      result = std::move(soup);
+      outUsedFallback = true;
+    }
+
+    MOCHI_MESH_CLI_ERROR_IF(
+        result.number_of_faces() == 0, error, "UnionMeshes: union produced an empty mesh.");
+    MOCHI_MESH_CLI_ERROR_RETURN(error, {});
+    return cgal_utils::SurfaceMeshToMeshData(result);
+  } catch (std::exception const&) {
+    MOCHI_MESH_CLI_ERROR_SET(error, "UnionMeshes: CGAL exception during union.");
+    return {};
+  } catch (...) {
+    MOCHI_MESH_CLI_ERROR_SET(error, "UnionMeshes: unknown exception during union.");
     return {};
   }
 }

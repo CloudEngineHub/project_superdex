@@ -19,6 +19,8 @@
 #include "mesh_cli_adapter.h"
 #include "mesh_cli_client.h"
 
+#include <vector>
+
 // Client side of the Stage 2-5 mesh ops: each marshals its request and routes it to the
 // superdex_mesh_cli helper, which runs the CGAL implementation.
 
@@ -63,6 +65,36 @@ MeshData mochi::mesh::EdgeSwapMesh(
   WriteMesh(reference, writer, error);
   writer.WriteMeshEdgeSwapParams(params);
   return InvokeMeshOp(cli::GeometryOp::EdgeSwapMesh, writer, error);
+}
+
+MeshUnionResult mochi::mesh::UnionMeshes(
+    Span<MeshDataView const> meshes,
+    MeshUnionParams const& params,
+    Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  std::vector<cli::MeshData> cliMeshes;
+  cliMeshes.reserve(meshes.size());
+  for (MeshDataView const& mesh : meshes) {
+    cliMeshes.push_back(cli_adapter::ToCliMeshData(mesh, error));
+  }
+  MOCHI_ERROR_RETURN(error, {});
+  cli::PayloadWriter writer;
+  writer.WriteMeshDataArray(cliMeshes);
+  writer.WriteMeshUnionParams(params);
+
+  std::vector<char> const response =
+      InvokeMeshCli(cli::GeometryOp::UnionMeshes, writer.Bytes(), error);
+  MOCHI_ERROR_RETURN(error, {});
+  cli::PayloadReader reader(response);
+  cli::MeshData cliMesh;
+  MeshUnionResult result;
+  MOCHI_ERROR_IF(
+      !reader.ReadMeshData(cliMesh) || !reader.ReadBool(result.usedFallback) || !reader.AtEnd(),
+      error,
+      "Malformed UnionMeshes response from superdex_mesh_cli.");
+  MOCHI_ERROR_RETURN(error, {});
+  result.mesh = cli_adapter::FromCliMeshData(cliMesh, error);
+  return result;
 }
 
 MeshData mochi::mesh::DecimateMesh(

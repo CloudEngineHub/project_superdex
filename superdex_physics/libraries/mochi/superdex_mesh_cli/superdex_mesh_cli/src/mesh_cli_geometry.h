@@ -49,6 +49,7 @@ using mochi::mesh::MeshClosureMode;
 using mochi::mesh::MeshClosureParams;
 using mochi::mesh::MeshDecimateParams;
 using mochi::mesh::MeshEdgeSwapParams;
+using mochi::mesh::MeshUnionParams;
 using mochi::mesh::RemeshMethod;
 using mochi::mesh::StepFaceColorInfo;
 using mochi::mesh::StepFaceColorSizing;
@@ -103,5 +104,12 @@ CloseMesh(MeshData const& mesh, MeshClosureParams const& params, CliError& error
     CliError& error);
 [[nodiscard]] MeshData
 DecimateMesh(MeshData const& mesh, MeshDecimateParams const& params, CliError& error);
+/// Boolean union of @p meshes, each first repaired into a valid corefinement input. Sets
+/// @p outUsedFallback when an input or the whole union had to be alpha-wrapped.
+[[nodiscard]] MeshData UnionMeshes(
+    std::vector<MeshData> const& meshes,
+    MeshUnionParams const& params,
+    bool& outUsedFallback,
+    CliError& error);
 
 } // namespace mochi::mesh::cli

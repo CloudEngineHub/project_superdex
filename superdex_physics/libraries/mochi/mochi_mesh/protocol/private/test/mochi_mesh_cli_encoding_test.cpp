@@ -765,6 +765,51 @@ TEST(MochiMeshCliEncoding, MeshDecimateParamsRoundTrip) {
   EXPECT_EQ(decoded.collapseDistance, params.collapseDistance);
 }
 
+TEST(MochiMeshCliEncoding, MeshUnionParamsRoundTrip) {
+  MeshUnionParams params;
+  params.wrapFallback = false;
+
+  PayloadWriter writer;
+  writer.WriteMeshUnionParams(params);
+
+  PayloadReader reader(writer.Bytes());
+  MeshUnionParams decoded;
+  EXPECT_TRUE(reader.ReadMeshUnionParams(decoded));
+  EXPECT_TRUE(reader.AtEnd());
+  EXPECT_EQ(decoded.wrapFallback, params.wrapFallback);
+}
+
+TEST(MochiMeshCliEncoding, MeshDataArrayRoundTrip) {
+  MeshData second = Triangle();
+  second.coordinates[0] = 7.0;
+  std::vector<MeshData> const meshes = {Triangle(), second};
+
+  PayloadWriter writer;
+  writer.WriteMeshDataArray(meshes);
+
+  PayloadReader reader(writer.Bytes());
+  std::vector<MeshData> decoded;
+  EXPECT_TRUE(reader.ReadMeshDataArray(decoded));
+  EXPECT_TRUE(reader.AtEnd());
+  ASSERT_EQ(decoded.size(), meshes.size());
+  for (size_t i = 0; i < meshes.size(); ++i) {
+    EXPECT_EQ(decoded[i].coordinates, meshes[i].coordinates);
+    EXPECT_EQ(decoded[i].connectivity, meshes[i].connectivity);
+  }
+}
+
+TEST(MochiMeshCliEncoding, MeshDataArrayRejectsOversizedCount) {
+  PayloadWriter writer;
+  writer.WriteMeshDataArray(std::vector<MeshData>{Triangle()});
+  std::vector<char> bytes = writer.Bytes();
+  uint64_t const count = std::numeric_limits<uint64_t>::max();
+  std::memcpy(bytes.data(), &count, sizeof(count));
+
+  PayloadReader reader(bytes);
+  std::vector<MeshData> decoded;
+  EXPECT_FALSE(reader.ReadMeshDataArray(decoded));
+}
+
 // Switching on an out-of-range enumerator is undefined behaviour, so every enum on the wire is
 // range-checked rather than blindly cast.
 TEST(MochiMeshCliEncoding, ParamsRejectOutOfRangeEnums) {

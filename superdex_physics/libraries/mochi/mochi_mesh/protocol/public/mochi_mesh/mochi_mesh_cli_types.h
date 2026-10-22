@@ -328,4 +328,10 @@ struct MeshDecimateParams {
   double collapseDistance = 0.0;
 };
 
+/// @brief Boolean union parameters.
+struct MeshUnionParams {
+  /// When the exact union fails, alpha-wrap the combined inputs instead of failing.
+  bool wrapFallback = true;
+};
+
 } // namespace mochi::mesh

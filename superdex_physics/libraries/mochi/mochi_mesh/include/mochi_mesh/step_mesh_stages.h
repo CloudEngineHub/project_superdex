@@ -18,6 +18,7 @@
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/error.h>
+#include <mochi_core/utils/span.h>
 #include <mochi_mesh/mochi_mesh_cli_types.h>
 
 // Mesh-level processing stages of the Model Editor's CAD pipeline (Stages 2-5). Each operates on a
@@ -72,5 +73,25 @@ CloseMesh(MeshDataView const& mesh, MeshClosureParams const& params, Error& erro
 /// @return Decimated triangle mesh; empty on error.
 [[nodiscard]] MeshData
 DecimateMesh(MeshDataView const& mesh, MeshDecimateParams const& params, Error& error);
+
+/// @brief Result of @ref UnionMeshes.
+struct MeshUnionResult {
+  /// The union's surface; empty on error.
+  MeshData mesh;
+  /// True if part of the surface was alpha-wrapped rather than computed exactly.
+  bool usedFallback = false;
+};
+
+/// @brief Boolean union of several triangle meshes into one closed surface (CGAL corefinement).
+///
+/// @details Each input is repaired and hole-filled first; one still open or self-intersecting is
+/// alpha-wrapped on its own, and one enclosing no volume is dropped.
+///
+/// @param[in] meshes Input triangle meshes, in a shared frame. Empty meshes are ignored.
+/// @param[in] params Union parameters.
+/// @param[in,out] error Error status.
+/// @return The union; its mesh is empty on error.
+[[nodiscard]] MeshUnionResult
+UnionMeshes(Span<MeshDataView const> meshes, MeshUnionParams const& params, Error& error);
 
 } // namespace mochi::mesh

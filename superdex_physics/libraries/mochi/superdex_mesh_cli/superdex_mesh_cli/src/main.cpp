@@ -217,6 +217,27 @@ std::vector<char> DispatchCloseMesh(std::vector<char> const& payload) {
   return MakeMeshResponse(result);
 }
 
+std::vector<char> DispatchUnionMeshes(std::vector<char> const& payload) {
+  PayloadReader reader(payload);
+  std::vector<MeshData> inputMeshes;
+  MeshUnionParams params;
+  if (!reader.ReadMeshDataArray(inputMeshes) || !reader.ReadMeshUnionParams(params) ||
+      !reader.AtEnd()) {
+    return MakeErrorResponse(1, "superdex_mesh_cli: malformed UnionMeshes request");
+  }
+
+  CliError error;
+  bool usedFallback = false;
+  MeshData const result = UnionMeshes(inputMeshes, params, usedFallback, error);
+  if (!error.IsOK()) {
+    return MakeErrorResponse(error);
+  }
+  PayloadWriter writer;
+  writer.WriteMeshData(result);
+  writer.WriteBool(usedFallback);
+  return EncodeResponseFrame(0, writer.Bytes());
+}
+
 std::vector<char> DispatchEdgeSwapMesh(std::vector<char> const& payload) {
   PayloadReader reader(payload);
   MeshData inputMesh;
@@ -323,6 +344,8 @@ std::vector<char> Dispatch(GeometryOp op, std::vector<char> const& payload) {
       return DispatchReadStepFaceColors(payload);
     case GeometryOp::TessellateStepByColor:
       return DispatchTessellateStepByColor(payload);
+    case GeometryOp::UnionMeshes:
+      return DispatchUnionMeshes(payload);
   }
   return MakeErrorResponse(1, "superdex_mesh_cli: unknown operation");
 }

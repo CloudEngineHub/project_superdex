@@ -64,10 +64,11 @@ enum class GeometryOp : uint32_t {
                          ///< STEP is loaded and tessellated once for the whole request.
   ReadStepFaceColors = 11, ///< List the distinct resolved face colors of a STEP file.
   TessellateStepByColor = 12, ///< As TessellateStep, but one mesh per resolved face color.
+  UnionMeshes = 13, ///< Boolean union of several meshes into one closed surface.
 };
 
 inline constexpr uint32_t kFrameMagic = 0x53445832u; ///< Frame magic ("SDX2").
-inline constexpr uint32_t kProtocolVersion = 4u; ///< Wire protocol version.
+inline constexpr uint32_t kProtocolVersion = 5u; ///< Wire protocol version.
 
 // Plain mesh data transmitted over the wire.
 struct MeshData {
@@ -128,6 +129,7 @@ class PayloadWriter {
   void WriteInt32Array(std::span<int32_t const> values); ///< [u64 count][count int32s]
   void WriteByteArray(std::span<char const> bytes); ///< [u64 count][count bytes]
   void WriteMeshData(MeshData const& mesh); ///< [u32 nodesPerElement][coordinates][connectivity]
+  void WriteMeshDataArray(std::span<MeshData const> meshes); ///< [u64 count][count meshes]
   /// [u64 count][count x ([u32 format][byte-array path])]
   void WriteVisualExportOutputs(std::span<VisualExportOutput const> outputs);
   /// [u64 count][count x u32 status]
@@ -151,6 +153,7 @@ class PayloadWriter {
   void WriteMeshClosureParams(MeshClosureParams const& params);
   void WriteMeshEdgeSwapParams(MeshEdgeSwapParams const& params);
   void WriteMeshDecimateParams(MeshDecimateParams const& params);
+  void WriteMeshUnionParams(MeshUnionParams const& params);
 
   [[nodiscard]] std::vector<char> const& Bytes() const {
     return _bytes;
@@ -175,6 +178,8 @@ class PayloadReader {
   [[nodiscard]] bool ReadInt32Array(std::vector<int32_t>& outValues);
   [[nodiscard]] bool ReadByteArray(std::vector<char>& outBytes);
   [[nodiscard]] bool ReadMeshData(MeshData& outMesh);
+  /// Rejects a count larger than the remaining bytes could describe.
+  [[nodiscard]] bool ReadMeshDataArray(std::vector<MeshData>& outMeshes);
   /// Rejects an out-of-range format and a count larger than the remaining bytes could describe.
   [[nodiscard]] bool ReadVisualExportOutputs(std::vector<VisualExportOutput>& outOutputs);
   [[nodiscard]] bool ReadVisualExportStatuses(std::vector<VisualExportStatus>& outStatuses);
@@ -195,6 +200,7 @@ class PayloadReader {
   [[nodiscard]] bool ReadMeshClosureParams(MeshClosureParams& outParams);
   [[nodiscard]] bool ReadMeshEdgeSwapParams(MeshEdgeSwapParams& outParams);
   [[nodiscard]] bool ReadMeshDecimateParams(MeshDecimateParams& outParams);
+  [[nodiscard]] bool ReadMeshUnionParams(MeshUnionParams& outParams);
 
   /// True once every byte has been consumed. Callers must check this after reading the last value
   /// they expect; a payload with trailing bytes is malformed.

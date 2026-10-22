@@ -192,6 +192,14 @@ void PayloadWriter::WriteMeshData(MeshData const& mesh) {
   WriteInt32Array(mesh.connectivity);
 }
 
+// Mirror of ReadMeshDataArray.
+void PayloadWriter::WriteMeshDataArray(std::span<MeshData const> meshes) {
+  WriteU64(static_cast<uint64_t>(meshes.size()));
+  for (MeshData const& mesh : meshes) {
+    WriteMeshData(mesh);
+  }
+}
+
 // Mirror of ReadVisualExportOutputs.
 void PayloadWriter::WriteVisualExportOutputs(std::span<VisualExportOutput const> outputs) {
   WriteU64(static_cast<uint64_t>(outputs.size()));
@@ -348,6 +356,11 @@ void PayloadWriter::WriteMeshDecimateParams(MeshDecimateParams const& params) {
   WriteDouble(collapseDistance);
 }
 
+void PayloadWriter::WriteMeshUnionParams(MeshUnionParams const& params) {
+  auto const& [wrapFallback] = params;
+  WriteBool(wrapFallback);
+}
+
 bool PayloadReader::ReadU32(uint32_t& outValue) {
   return ReadPod(_data, _pos, outValue);
 }
@@ -425,6 +438,26 @@ bool PayloadReader::ReadMeshData(MeshData& outMesh) {
   outMesh = {};
   return ReadU32(outMesh.nodesPerElement) && ReadDoubleArray(outMesh.coordinates) &&
       ReadInt32Array(outMesh.connectivity);
+}
+
+bool PayloadReader::ReadMeshDataArray(std::vector<MeshData>& outMeshes) {
+  outMeshes.clear();
+  uint64_t count = 0;
+  if (!ReadU64(count)) {
+    return false;
+  }
+  // Each mesh is at least its header: nodesPerElement plus two array lengths.
+  uint64_t constexpr kMinBytesPerMesh = sizeof(uint32_t) + 2 * sizeof(uint64_t);
+  if (count > (_data.size() - _pos) / kMinBytesPerMesh) {
+    return false;
+  }
+  outMeshes.resize(count);
+  for (MeshData& mesh : outMeshes) {
+    if (!ReadMeshData(mesh)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool PayloadReader::ReadVisualExportOutputs(std::vector<VisualExportOutput>& outOutputs) {
@@ -629,4 +662,10 @@ bool PayloadReader::ReadMeshDecimateParams(MeshDecimateParams& outParams) {
   outParams = {};
   auto& [collapseDistance] = outParams;
   return ReadDouble(collapseDistance);
+}
+
+bool PayloadReader::ReadMeshUnionParams(MeshUnionParams& outParams) {
+  outParams = {};
+  auto& [wrapFallback] = outParams;
+  return ReadBool(wrapFallback);
 }
