@@ -918,6 +918,14 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
   // Whether the colliding soft cube contacts through a linear contact skin.
   bool _useContactSkin = false;
 
+  // Boundary element type of the colliding contact skin or articulated skin.
+  ActorBoundaryElementType _collidingBoundaryElementType = ActorBoundaryElementType::P1Q3;
+
+  // Whether colliders are enlarged about the origin of their transform, so that they contain the
+  // colliding unit cube and all its samples are in contact.
+  bool _largeColliders = false;
+  static constexpr real kLargeColliderScale = 3_r;
+
  public:
   virtual void InitState() = 0;
 
@@ -1135,6 +1143,16 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     EXPECT_FALSE(CollidingHasContact<!kIsSync>());
   }
 
+  // Removes the linear element map of the colliding contact skin, so that its contact is assembled
+  // through colliding contact Jacobians.
+  void RemoveLinearContactSkinMap() {
+    auto& reg = GetRegistry();
+    InitializeContactSkinningColumnCoalescingMap(
+        reg.get<CFemSurfaceDiscretization const>(_colliding),
+        reg.get<CContactSkinningData>(_colliding));
+    reg.remove<CLinearContactSkinElementMap>(_colliding);
+  }
+
   // Compares the mapped contact-skin assembly with the legacy one through colliding contact
   // Jacobians, which runs once the linear element map is removed.
   void RunMappedVsLegacyContactSkinTest() {
@@ -1147,11 +1165,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     ColumnVector<real> const mappedResidual = _residual.Duplicate();
     SparseMatrix<real> const mappedDResidual = _dresidual.Duplicate();
 
-    auto& reg = GetRegistry();
-    InitializeContactSkinningColumnCoalescingMap(
-        reg.get<CFemSurfaceDiscretization const>(_colliding),
-        reg.get<CContactSkinningData>(_colliding));
-    reg.remove<CLinearContactSkinElementMap>(_colliding);
+    RemoveLinearContactSkinMap();
     InitState();
     PreStep();
     ComputeResponse(gradTarget);
@@ -1169,12 +1183,62 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     EXPECT_LE(dresDelta.Norm(), kRelTol * mappedDResidual.Norm());
   }
 
+  // Adds worker threads, densifies the colliding samples and enlarges the colliders, so that
+  // contact pairs are expensive enough to be split across tasks. Must be called before SetUp.
+  void UseParallelDenseContact() {
+    _numWorkerThreads = 4;
+    _collidingBoundaryElementType = ActorBoundaryElementType::ExperimentalP1Q16;
+    _largeColliders = true;
+  }
+
+  // Compares contact assembly split across tasks with serial assembly, including the contact forces
+  // retained for queries. If removeLinearContactSkinMap, the colliding contact skin is assembled
+  // through colliding contact Jacobians.
+  void RunSerialVsParallelTest(bool removeLinearContactSkinMap = false) {
+    InitializeSceneFromParams();
+    if (removeLinearContactSkinMap) {
+      RemoveLinearContactSkinMap();
+    }
+    GetRegistry().emplace_or_replace<TagQueryActiveContacts>(_colliding);
+    ThreadedAssembly const serial = AssembleWithThreading(/*singleThreaded*/ true);
+    ThreadedAssembly const parallel = AssembleWithThreading(/*singleThreaded*/ false);
+
+    // Both evaluate the same contacts and differ only in summation order.
+    real constexpr kRelTol = MOCHI_USE_DOUBLE_PRECISION ? 1e-12_r : 1e-5_r;
+    EXPECT_NEAR(
+        serial.island.objective, parallel.island.objective, kRelTol * Abs(serial.island.objective));
+    ColumnVector<real> const resDelta = serial.island.residual - parallel.island.residual;
+    EXPECT_LE(resDelta.Norm(), kRelTol * serial.island.residual.Norm());
+    Matrix<real> const dresDelta{serial.island.dresidual - parallel.island.dresidual};
+    EXPECT_LE(dresDelta.Norm(), kRelTol * serial.island.dresidual.Norm());
+
+    ASSERT_EQ(serial.forces.size(), parallel.forces.size());
+    real forceScale = 0_r;
+    for (auto const& forces : serial.forces) {
+      for (Real3 const& force : forces) {
+        for (int i = 0; i < kSpaceDim3; ++i) {
+          forceScale = Max(forceScale, Abs(force[i]));
+        }
+      }
+    }
+    EXPECT_GT(forceScale, 0_r);
+    for (int c = 0; c < isize(serial.forces); ++c) {
+      ASSERT_EQ(serial.forces[c].size(), parallel.forces[c].size());
+      for (int p = 0; p < isize(serial.forces[c]); ++p) {
+        for (int i = 0; i < kSpaceDim3; ++i) {
+          EXPECT_NEAR(serial.forces[c][p][i], parallel.forces[c][p][i], kRelTol * forceScale);
+        }
+      }
+    }
+  }
+
   Actor* InitStaticCube(
       real scale,
       TransformRT transform,
       real coulombCoefficient,
       real viscousCoefficient,
       real dampingCoefficient) {
+    EnlargeColliderIfRequested(scale, transform);
     RigidActorParams params;
     params.isStatic = true;
     params.layer = "Collider";
@@ -1202,6 +1266,9 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
       real viscousCoefficient,
       real dampingCoefficient) {
     auto& reg = GetRegistry();
+    if (isCollider) {
+      EnlargeColliderIfRequested(scale, transform);
+    }
 
     RigidActorParams params;
     params.density = 1e-10_r; // Negligible density to isolate contact forces from inertia.
@@ -1246,7 +1313,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
           _scene->GetContext()->CreateModelShape(CreateMixedContactSkinModel(), test::ExpectOK{});
       caparams.useContactSkin = true;
       // Several samples per element, so element blocks accumulate more than one sample.
-      caparams.boundaryElementType = ActorBoundaryElementType::P1Q3;
+      caparams.boundaryElementType = _collidingBoundaryElementType;
     } else {
       auto&& [unitCubeCoordinates, unitCubeConnectivity] = test::CreateMinimalTetMeshUnitCube();
       caparams.shape = _scene->GetContext()->CreateTetMeshShape(
@@ -1337,6 +1404,48 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
 
     // Set up the tetrahedral map at stage start
     ecs::TryInvokeOnEntity(soft::UpdateMap<TimeStep::StageStart>, reg, e);
+  }
+
+ protected:
+  void EnlargeColliderIfRequested(real& scale, TransformRT& transform) const {
+    if (_largeColliders) {
+      scale *= kLargeColliderScale;
+      real const halfScale = 0.5_r * scale;
+      transform = transform * TransformRT{Real3{-halfScale, -halfScale, -halfScale}};
+    }
+  }
+
+ private:
+  struct ThreadedAssembly {
+    IslandAssembly island;
+    // Contact forces of each collision of the colliding actor, sync then async.
+    DynamicArray<DynamicArray<Real3>> forces;
+  };
+
+  ThreadedAssembly AssembleWithThreading(bool singleThreaded) {
+    auto& reg = GetRegistry();
+    auto const forEachCollision = [&](auto&& fn) {
+      auto* const syncCollisions =
+          reg.try_get<CActiveCollisions</*kIsSync*/ true, TimeStep::Current>>(_colliding);
+      auto* const asyncCollisions =
+          reg.try_get<CActiveCollisions</*kIsSync*/ false, TimeStep::Current>>(_colliding);
+      if (syncCollisions) {
+        std::ranges::for_each(*syncCollisions, fn);
+      }
+      if (asyncCollisions) {
+        std::ranges::for_each(*asyncCollisions, fn);
+      }
+    };
+    forEachCollision([](auto& collision) { collision.collisionResult.forcePerUnitArea.clear(); });
+
+    _mochiContext->SetIsSingleThreaded(singleThreaded);
+    InitState();
+    PreStep();
+    ThreadedAssembly result{.island = AssembleSingleIsland(reg, GradTarget::Current), .forces = {}};
+    forEachCollision([&](auto const& collision) {
+      result.forces.push_back(collision.collisionResult.forcePerUnitArea);
+    });
+    return result;
   }
 };
 
@@ -1649,7 +1758,12 @@ class MochiSkinnedArticulatedStaticContact : public MochiContactTestBase {
   void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
       override {
     Actor* const articulatedActor = CreateThreeBoneSkinnedActor(
-        _mochiContext, _scene, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+        _mochiContext,
+        _scene,
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient,
+        _collidingBoundaryElementType);
 
     TransformRT const colliderTransform{
         Quaternion::FromRotationVector(Real3{0.1_r, -0.1_r, 0.2_r}), Real3{0.6_r, 0.6_r, 0.6_r}};
@@ -1686,6 +1800,24 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 2e-3_r, 2.6e-1_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
+// Async contact sums of the skin, split across tasks.
+class MochiParallelSkinnedArticulatedStaticContact : public MochiSkinnedArticulatedStaticContact {
+ public:
+  MochiParallelSkinnedArticulatedStaticContact() {
+    UseParallelDenseContact();
+  }
+};
+
+TEST_P(MochiParallelSkinnedArticulatedStaticContact, MatchesSerialAssembly) {
+  RunSerialVsParallelTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiParallelSkinnedArticulatedStaticContact,
+    ::testing::Values(TestParams{.name = "NoFriction"}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
 // A skinned articulated actor against a dynamic rigid box, in sync contact.
 class MochiSkinnedArticulatedRigidContact : public MochiContactTestBase {
   ColumnVector<real> _pose;
@@ -1701,7 +1833,12 @@ class MochiSkinnedArticulatedRigidContact : public MochiContactTestBase {
   void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
       override {
     Actor* const articulatedActor = CreateThreeBoneSkinnedActor(
-        _mochiContext, _scene, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+        _mochiContext,
+        _scene,
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient,
+        _collidingBoundaryElementType);
 
     TransformRT const boxTransform{
         Quaternion::FromRotationVector(Real3{0.1_r, -0.1_r, 0.2_r}), Real3{0.6_r, 0.6_r, 0.6_r}};
@@ -1757,6 +1894,24 @@ INSTANTIATE_TEST_SUITE_P(
             .ignoreColliderRotDres = true}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
+// Sync contact sums of the skin and the rigid collider, split across tasks.
+class MochiParallelSkinnedArticulatedRigidContact : public MochiSkinnedArticulatedRigidContact {
+ public:
+  MochiParallelSkinnedArticulatedRigidContact() {
+    UseParallelDenseContact();
+  }
+};
+
+TEST_P(MochiParallelSkinnedArticulatedRigidContact, MatchesSerialAssembly) {
+  RunSerialVsParallelTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiParallelSkinnedArticulatedRigidContact,
+    ::testing::Values(TestParams{.name = "NoFriction"}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
 // A skinned articulated actor against a link of another articulated actor, in sync contact. The
 // collider slice maps the rigid DoFs of the link to the articulated DoFs through its auxiliary
 // Jacobian.
@@ -1792,25 +1947,38 @@ class MochiSkinnedArticulatedLinkContact : public MochiContactTestBase {
   void InitializeScene(real coulombCoefficient, real viscousCoefficient, real dampingCoefficient)
       override {
     Actor* const skinnedActor = CreateThreeBoneSkinnedActor(
-        _mochiContext, _scene, coulombCoefficient, viscousCoefficient, dampingCoefficient);
+        _mochiContext,
+        _scene,
+        coulombCoefficient,
+        viscousCoefficient,
+        dampingCoefficient,
+        _collidingBoundaryElementType);
 
     // The child link overlaps the skin, and the root link is away from it.
     TransformRT const rootTransform{Real3{1.8_r, 0.6_r, 0.6_r}};
-    TransformRT const childTransform{
+    TransformRT childTransform{
         Quaternion::FromRotationVector(Real3{0.1_r, -0.1_r, 0.2_r}), Real3{0.6_r, 0.6_r, 0.6_r}};
+    real childScale = 1_r;
+    EnlargeColliderIfRequested(childScale, childTransform);
     ArticulatedActorParams colliderParams;
     colliderParams.joints.resize(2);
     colliderParams.joints[0].type = ArticulatedJointType::Free;
     colliderParams.joints[0].parentLinkFromJoint = rootTransform;
     colliderParams.joints[1].type = ArticulatedJointType::Spherical;
     colliderParams.joints[1].parentLinkFromJoint = Invert(rootTransform) * childTransform;
-    ShapeHandle const linkShape = _mochiContext->LoadShapeFromFile(
-        test::GetAssetPath("cube/cube_mesh.mochi.json"), test::ExpectOK{});
+    auto const loadLinkShape = [&](real scale) {
+      return _mochiContext->LoadShapeFromFile(
+          test::GetAssetPath("cube/cube_mesh.mochi.json"),
+          Real3{scale, scale, scale},
+          TransformRT::Identity(),
+          test::ExpectOK{});
+    };
+    std::array<ShapeHandle, 2> const linkShapes{loadLinkShape(1_r), loadLinkShape(childScale)};
     colliderParams.links.resize(2);
     for (int i = 0; i < 2; ++i) {
       auto& link = colliderParams.links[i];
       link.parentLink = i - 1;
-      link.shape = linkShape;
+      link.shape = linkShapes[i];
       link.layer = "Collider";
       link.colliderType = ColliderType::Box;
       link.hasGravity = false;
@@ -1871,6 +2039,25 @@ INSTANTIATE_TEST_SUITE_P(
     MochiSkinnedArticulatedLinkContact,
     ::testing::Values(
         TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 2e-3_r, 2.6e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// Sync contact sums of the skin and the link slice, split across tasks, so that both sides of the
+// pair write link-space residuals.
+class MochiParallelSkinnedArticulatedLinkContact : public MochiSkinnedArticulatedLinkContact {
+ public:
+  MochiParallelSkinnedArticulatedLinkContact() {
+    UseParallelDenseContact();
+  }
+};
+
+TEST_P(MochiParallelSkinnedArticulatedLinkContact, MatchesSerialAssembly) {
+  RunSerialVsParallelTest();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiParallelSkinnedArticulatedLinkContact,
+    ::testing::Values(TestParams{.name = "NoFriction"}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 // The contact of a soft-skinned actor with zero soft displacement matches the contact of an
@@ -2074,7 +2261,8 @@ class MochiSoftSkinnedStaticContact : public MochiContactTestBase {
         worldFromRoot,
         coulombCoefficient,
         viscousCoefficient,
-        dampingCoefficient);
+        dampingCoefficient,
+        _collidingBoundaryElementType);
     _articulated = GetEntity(articulatedActor->GetHandle());
     auto const& softHandles = articulatedActor->GetNestedSoftActors(test::ExpectOK{});
     ASSERT_EQ(1, isize(softHandles));
@@ -2249,21 +2437,23 @@ INSTANTIATE_TEST_SUITE_P(
 class MochiPartiallyBlendedStaticContact : public MochiSoftSkinnedStaticContact {
  public:
   MochiPartiallyBlendedStaticContact() : MochiSoftSkinnedStaticContact(Mode::PartiallyBlendedFom) {}
+
+  void ExpectSumsAndGenericPartitionsInContact() const {
+    int numSumsJacs = 0;
+    int numGenericJacs = 0;
+    for (auto const& jac : GetRegistry().get<CCollJacs<CollRole::Colliding> const>(_colliding)) {
+      if (jac.query && !jac.query->sampleIndices.empty()) {
+        ++(jac.useContactSums ? numSumsJacs : numGenericJacs);
+      }
+    }
+    EXPECT_GT(numSumsJacs, 0);
+    EXPECT_GT(numGenericJacs, 0);
+  }
 };
 
 TEST_P(MochiPartiallyBlendedStaticContact, ContactAssembly) {
   RunTest();
-
-  // Both kinds of partition must be in contact.
-  int numSumsJacs = 0;
-  int numGenericJacs = 0;
-  for (auto const& jac : GetRegistry().get<CCollJacs<CollRole::Colliding> const>(_colliding)) {
-    if (jac.query && !jac.query->sampleIndices.empty()) {
-      ++(jac.useContactSums ? numSumsJacs : numGenericJacs);
-    }
-  }
-  EXPECT_GT(numSumsJacs, 0);
-  EXPECT_GT(numGenericJacs, 0);
+  ExpectSumsAndGenericPartitionsInContact();
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -2271,6 +2461,25 @@ INSTANTIATE_TEST_SUITE_P(
     MochiPartiallyBlendedStaticContact,
     ::testing::Values(
         TestParams{"NoFriction", GradTarget::Current, 0_r, 0_r, 0_r, false, 3e-3_r, 3e-1_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// Async contact sums and generic assembly with grouped shared DoFs, split across tasks.
+class MochiParallelPartiallyBlendedStaticContact : public MochiPartiallyBlendedStaticContact {
+ public:
+  MochiParallelPartiallyBlendedStaticContact() {
+    UseParallelDenseContact();
+  }
+};
+
+TEST_P(MochiParallelPartiallyBlendedStaticContact, MatchesSerialAssembly) {
+  RunSerialVsParallelTest();
+  ExpectSumsAndGenericPartitionsInContact();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultipleBones,
+    MochiParallelPartiallyBlendedStaticContact,
+    ::testing::Values(TestParams{.name = "NoFriction"}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 class MochiSoftStaticContact : public MochiContactTestBase {
@@ -2405,6 +2614,29 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 1_r, 0_r, true, 1e-3_r, 2e-3_r},
         TestParams{"CoulombExplicit", GradTarget::Current, 0.5_r, 0_r, 0_r, true, 1e-3_r, 2e-3_r},
         TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 1_r, true, 1e-3_r, 2e-3_r}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// Async contact of the soft contact skin, split across tasks.
+class MochiParallelSkinnedSoftStaticContact : public MochiSkinnedSoftStaticContact {
+ public:
+  MochiParallelSkinnedSoftStaticContact() {
+    UseParallelDenseContact();
+  }
+};
+
+TEST_P(MochiParallelSkinnedSoftStaticContact, MappedMatchesSerialAssembly) {
+  RunSerialVsParallelTest();
+  ExpectMappedContactSkinCollisions</*kIsSync*/ false>();
+}
+
+TEST_P(MochiParallelSkinnedSoftStaticContact, LegacyMatchesSerialAssembly) {
+  RunSerialVsParallelTest(/*removeLinearContactSkinMap*/ true);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiParallelSkinnedSoftStaticContact,
+    ::testing::Values(TestParams{.name = "Coulomb", .coulombCoefficient = 0.5_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 // A skinned soft cube against the moving static cube takes the async mapped assembly, which must
@@ -2620,6 +2852,25 @@ INSTANTIATE_TEST_SUITE_P(
             1e-3_r,
             1e-3_r,
             true}),
+    [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
+
+// Sync contact of the soft contact skin, split across tasks.
+class MochiParallelSkinnedSoftRigidContact : public MochiSkinnedSoftRigidContact {
+ public:
+  MochiParallelSkinnedSoftRigidContact() {
+    UseParallelDenseContact();
+  }
+};
+
+TEST_P(MochiParallelSkinnedSoftRigidContact, MappedMatchesSerialAssembly) {
+  RunSerialVsParallelTest();
+  ExpectMappedContactSkinCollisions</*kIsSync*/ true>();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FrictionVariations,
+    MochiParallelSkinnedSoftRigidContact,
+    ::testing::Values(TestParams{.name = "Coulomb", .coulombCoefficient = 0.5_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 class MochiRigidSoftContact : public MochiContactTestBase {

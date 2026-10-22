@@ -556,7 +556,15 @@ WrenchCase SoftSkinnedCase(char const* name, test::ThreeBoneSoftSkinnedMode mode
           [mode](Context* context, Scene* scene) {
             test::AddThreeBoneSkinCollider(scene, /*isStatic*/ true);
             return test::CreateThreeBoneSoftSkinnedActor(
-                context, scene, mode, TransformRT::Identity(), 0_r, 0_r, 0_r, kSteppableThreeBone);
+                context,
+                scene,
+                mode,
+                TransformRT::Identity(),
+                0_r,
+                0_r,
+                0_r,
+                ActorBoundaryElementType::Default,
+                kSteppableThreeBone);
           },
       .usesWorkerThreads = true};
 }
@@ -633,16 +641,18 @@ DynamicArray<WrenchCase> GetWrenchCases() {
              return actor;
            },
        .numSteps = 3});
-  cases.push_back({.name = "SkinContactAsync", .build = [](Context* context, Scene* scene) {
-                     test::AddThreeBoneSkinCollider(scene, /*isStatic*/ true);
-                     return test::CreateThreeBoneSkinnedActor(
-                         context, scene, 0_r, 0_r, 0_r, kSteppableThreeBone);
-                   }});
-  cases.push_back({.name = "SkinContactSync", .build = [](Context* context, Scene* scene) {
-                     test::AddThreeBoneSkinCollider(scene, /*isStatic*/ false);
-                     return test::CreateThreeBoneSkinnedActor(
-                         context, scene, 0_r, 0_r, 0_r, kSteppableThreeBone);
-                   }});
+  cases.push_back(
+      {.name = "SkinContactAsync", .build = [](Context* context, Scene* scene) {
+         test::AddThreeBoneSkinCollider(scene, /*isStatic*/ true);
+         return test::CreateThreeBoneSkinnedActor(
+             context, scene, 0_r, 0_r, 0_r, ActorBoundaryElementType::Default, kSteppableThreeBone);
+       }});
+  cases.push_back(
+      {.name = "SkinContactSync", .build = [](Context* context, Scene* scene) {
+         test::AddThreeBoneSkinCollider(scene, /*isStatic*/ false);
+         return test::CreateThreeBoneSkinnedActor(
+             context, scene, 0_r, 0_r, 0_r, ActorBoundaryElementType::Default, kSteppableThreeBone);
+       }});
   cases.push_back(SoftSkinnedCase("SoftSkinnedUnposed", ThreeBoneSoftSkinnedMode::Fom));
   cases.push_back(SoftSkinnedCase("SoftSkinnedPosed", ThreeBoneSoftSkinnedMode::PosedFom));
   cases.push_back(SoftSkinnedCase("Blended", ThreeBoneSoftSkinnedMode::BlendedFom));

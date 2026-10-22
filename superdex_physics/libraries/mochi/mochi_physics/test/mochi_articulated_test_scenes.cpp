@@ -146,11 +146,13 @@ Actor* CreateThreeBoneSkinnedActor(
     real coulombCoefficient,
     real viscousCoefficient,
     real dampingCoefficient,
+    ActorBoundaryElementType boundaryElementType,
     ThreeBoneOptions const& options) {
   ArticulatedActorParams params = MakeThreeBoneSkeletonParams(context, options);
   ArticulatedSkinParams skinParams;
   skinParams.shape = CreateThreeBoneShape(context);
   skinParams.layer = "Colliding";
+  skinParams.boundaryElementType = boundaryElementType;
   skinParams.contact.coulombFrictionCoefficient = coulombCoefficient;
   skinParams.contact.viscousFrictionCoefficient = viscousCoefficient;
   skinParams.contact.normalViscousDampingCoefficient = dampingCoefficient;
@@ -166,6 +168,7 @@ Actor* CreateThreeBoneSoftSkinnedActor(
     real coulombCoefficient,
     real viscousCoefficient,
     real dampingCoefficient,
+    ActorBoundaryElementType boundaryElementType,
     ThreeBoneOptions const& options) {
   bool const isPosed = mode == ThreeBoneSoftSkinnedMode::PosedFom;
   SoftSkinnedActorParams params;
@@ -183,6 +186,7 @@ Actor* CreateThreeBoneSoftSkinnedActor(
         mode == ThreeBoneSoftSkinnedMode::PartiallyBlendedFom ? 0.5_r
                                                               : std::numeric_limits<real>::max());
     skinParams.layer = "Colliding";
+    skinParams.boundaryElementType = boundaryElementType;
     skinParams.contact.coulombFrictionCoefficient = coulombCoefficient;
     skinParams.contact.viscousFrictionCoefficient = viscousCoefficient;
     skinParams.contact.normalViscousDampingCoefficient = dampingCoefficient;

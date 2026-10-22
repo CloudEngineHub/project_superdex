@@ -1071,7 +1071,7 @@ static void TestNodeContactForces(Scene* scene, Actor* bodyA, Actor* bodyB) {
   scene->SetGravity(gravity);
   // The near-vertical force check relies on backward Euler's damping to settle the stack.
   test::SetSceneIntegrationMethod(scene, IntegrationMethod::BackwardEuler);
-  for (int i = 0; i < 75; ++i) {
+  for (int i = 0; i < 100; ++i) {
     scene->Step(0.01);
   }
 
@@ -1161,6 +1161,29 @@ TEST_P(NodeContactForcesTest, DynamicSoft_on_DynamicRigid) {
   constexpr real kStartingGap = 0.05_r;
   Actor* softTopCube = CreateSoftCube(
       _scene, 0.5_r, Real3{0_r, kBoundaryHeight + kStartingGap, 0_r}, params.topRotation);
+  Actor* rigidBottomCube = CreateRigidCube(
+      _scene,
+      kBoundaryHeight,
+      Real3{0_r, kGroundHeight, 0_r},
+      false,
+      ColliderType::Box,
+      params.bottomRotation);
+  CreateStaticGroundPlane(_scene, kGroundHeight);
+  TestNodeContactForces(_scene, softTopCube, rigidBottomCube);
+}
+
+TEST_P(NodeContactForcesTest, DynamicSoftContactSkin_on_DynamicRigid) {
+  // Same as DynamicSoft_on_DynamicRigid, but with linear contact-skin sync contact assembly.
+  auto params = GetParam();
+  constexpr real kGroundHeight = 0_r;
+  constexpr real kBoundaryHeight = kGroundHeight + 1_r;
+  constexpr real kStartingGap = 0.05_r;
+  Actor* softTopCube = CreateSoftCube(
+      _scene,
+      0.5_r,
+      Real3{0_r, kBoundaryHeight + kStartingGap, 0_r},
+      params.topRotation,
+      /*useContactSkin=*/true);
   Actor* rigidBottomCube = CreateRigidCube(
       _scene,
       kBoundaryHeight,

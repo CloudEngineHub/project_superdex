@@ -1068,31 +1068,11 @@ void SetupContactSkinCollidingJacobians(
     CContactSkinningData const& skinningData,
     CCollJacs<CollRole::Colliding>& outJacobians);
 
-// Assemble async contact for a linear soft/shell contact skin directly through its element map.
-void AssembleAsyncLinearContactSkin(
-    AssemblyParams const& params,
-    bool useBlockSparse3x3,
-    ecs::Included<TagSkinnedContact, TagUseContact>,
-    ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
-    entt::registry const& reg,
-    entt::entity e,
-    ecs::CtxGlobal<CSimulationParams const> simParams,
-    CActiveCollisions</*kIsSync*/ false, TimeStep::Current>& activeCollisions,
-    CIslandMemberInfo const& islandMember,
-    CTimeIntegratorState const& intState,
-    CContactSamples<TimeStep::Current> const& samples,
-    CColliderInfo const& colliderInfo,
-    CRootTransform const& rootTransform,
-    CDofOffset const& dofOffset,
-    CFemSurfaceDiscretization const& surfaceDisc,
-    CLinearContactSkinElementMap const& linearElementMap,
-    CSkinnedContactSnle& outContactSnle);
-
 // Assemble async contact for a single colliding actor whose contact samples are tied to its DoFs
 // through skinning/embedding (i.e. it carries CSkinnedContactSnle). Currently used for articulated
 // actors with skinned contact meshes, nested soft actors configured as colliding actors, and
-// deformable actors whose contact skin has no linear element map (see
-// AssembleAsyncLinearContactSkin). Results are written to CSkinnedContactSnle,
+// deformable actors that use contact-skin contact, through their linear element map if they have
+// one. Results are written to CSkinnedContactSnle,
 // except for link residuals, which are written to CArticulatedAsyncContactLinkResidual and are
 // projected later by articulated::compound::ProjectFullResidual. The island-sized residual is not
 // registered for non-blended articulated actors, whose slices all have link residuals.
@@ -1100,7 +1080,6 @@ void AssembleAsyncSkinnedContact(
     AssemblyParams const& params,
     bool useBlockSparse3x3,
     ecs::RequiredTag<TagSkinnedContact>,
-    ecs::Excluded<CLinearContactSkinElementMap>,
     ecs::OptionalTag<TagQueryActiveContacts> queryActiveContacts,
     entt::registry const& reg,
     entt::entity e,
@@ -1109,9 +1088,9 @@ void AssembleAsyncSkinnedContact(
     CIslandMemberInfo const& islandMember, // TODO: Need a better way to determine the size of
                                            // the interaction residual
     CTimeIntegratorState const& intState,
-    CContactSamples<TimeStep::Current> const& samples,
     CColliderInfo const& colliderInfo,
     CCollJacs<CollRole::Colliding> const& collJacs,
+    CLinearContactSkinElementMap const* linearElementMap,
     CSkinnedContactSnle& outContactSnle,
     CArticulatedAsyncContactLinkResidual* outLinkResidual);
 

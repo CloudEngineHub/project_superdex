@@ -67,6 +67,7 @@ Actor* CreateThreeBoneSkinnedActor(
     real coulombCoefficient,
     real viscousCoefficient,
     real dampingCoefficient,
+    ActorBoundaryElementType boundaryElementType,
     ThreeBoneOptions const& options = {});
 
 // Variants of a soft-skinned actor with the skeleton of MakeThreeBoneSkeletonParams and a nested
@@ -106,6 +107,7 @@ Actor* CreateThreeBoneSoftSkinnedActor(
     real coulombCoefficient,
     real viscousCoefficient,
     real dampingCoefficient,
+    ActorBoundaryElementType boundaryElementType,
     ThreeBoneOptions const& options = {});
 
 // A box-colliding rigid unit cube in the "Collider" layer, overlapping the face x = 1 of the
