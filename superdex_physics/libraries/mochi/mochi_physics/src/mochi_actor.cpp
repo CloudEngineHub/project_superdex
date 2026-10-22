@@ -2051,6 +2051,10 @@ class ActorInterfaceImpl : public ActorInterface {
         reg.any_of<TagNestedSoftActor>(e),
         error,
         "Boundary condition setters are not supported for nested soft actors.");
+    MOCHI_ERROR_IF(
+        reg.any_of<TagArticulatedLinkActor>(e),
+        error,
+        "Boundary condition setters are not supported for nested link actors. Set boundary conditions on the articulated actor instead.");
   }
 
   void AddBoundaryConditionDofsWorldImpl(

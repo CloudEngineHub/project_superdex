@@ -10740,8 +10740,9 @@ class Actor:
             :class:`~superdex.physics.Error`: If an error occurs.
 
         Note:
-            Not supported for nested soft actors (see
-            :meth:`~superdex.physics.Actor.get_nested_soft_actors`).
+            Not supported for nested link actors (see
+            :meth:`~superdex.physics.Actor.get_nested_link_actors`) or nested soft
+            actors (see :meth:`~superdex.physics.Actor.get_nested_soft_actors`).
 
         Note:
             Not supported in differentiable scenes
@@ -10834,8 +10835,9 @@ class Actor:
             :class:`~superdex.physics.Error`: If an error occurs.
 
         Note:
-            Not supported for nested soft actors (see
-            :meth:`~superdex.physics.Actor.get_nested_soft_actors`).
+            Not supported for nested link actors (see
+            :meth:`~superdex.physics.Actor.get_nested_link_actors`) or nested soft
+            actors (see :meth:`~superdex.physics.Actor.get_nested_soft_actors`).
 
         Note:
             Not supported in differentiable scenes

@@ -5631,7 +5631,7 @@
 /// @param[in] dofValuesWorld Target values in the actor-specific representations described below. Length must equal @p dofIndices. Values must be finite.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
-/// @note Not supported for nested soft actors (see @ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
+/// @note Not supported for nested link actors (see @ref mochi::Actor::GetNestedLinkActors "GetNestedLinkActors") or nested soft actors (see @ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
 /// @note Not supported in differentiable scenes (`diffsim::MakeSceneDifferentiable`) or for ROM actors.
 /// @note For soft and shell actors, each node has 3 consecutive DoFs containing its target x, y, and z position [m] in the world frame. All 3 must be specified together. Consider @ref mochi::Actor::AddBoundaryConditionNodesWorld "AddBoundaryConditionNodesWorld" as a more convenient alternative.
 /// @note For rigid and articulated actors, the DoF indices within each call must be sorted in strictly increasing order (no duplicate indices).
@@ -5655,7 +5655,7 @@
 /// @param[in] dofValuesWorld Target values in the actor-specific representations documented by @ref mochi::Actor::AddBoundaryConditionDofsWorld "AddBoundaryConditionDofsWorld". Length must equal @p dofIndices. Values must be finite.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
-/// @note Not supported for nested soft actors (see @ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
+/// @note Not supported for nested link actors (see @ref mochi::Actor::GetNestedLinkActors "GetNestedLinkActors") or nested soft actors (see @ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
 /// @note Not supported in differentiable scenes (`diffsim::MakeSceneDifferentiable`) or for ROM actors.
 /// @note Same as @ref mochi::Actor::AddBoundaryConditionDofsWorld "AddBoundaryConditionDofsWorld", except boundary conditions cannot be cleared.
 /// @note If a clearable entry is later added for the same DoF, that clearable entry is the effective value until @ref mochi::Actor::ClearBoundaryConditions "ClearBoundaryConditions" removes it. The permanent entry is then the effective value again.

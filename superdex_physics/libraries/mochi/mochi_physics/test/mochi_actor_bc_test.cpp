@@ -471,7 +471,7 @@ TEST_F(MochiActorBC, AddBoundaryConditionConstrainedNodesAtRest) {
   simulateAndVerifyConstraints();
 }
 
-TEST_F(MochiActorBC, BoundaryConditionSettersRejectNestedSoftActors) {
+TEST_F(MochiActorBC, BoundaryConditionSettersRejectNestedActors) {
   SoftSkinnedActorParams params;
   auto& skeleton = params.skeletonParams;
   skeleton.joints = {{.type = ArticulatedJointType::Free}};
@@ -488,45 +488,53 @@ TEST_F(MochiActorBC, BoundaryConditionSettersRejectNestedSoftActors) {
   Actor* nestedSoftActor = _scene->GetActor(nestedSoftActors[0]);
   ASSERT_NE(nullptr, nestedSoftActor);
   EXPECT_TRUE(nestedSoftActor->IsNestedSoftActor());
-
-  auto const expectRejected = [&](auto setBoundaryCondition) {
-    auto const numDofIndicesBefore = nestedSoftActor->GetBoundaryConditionDofIndices().size();
-    auto const numDofValuesBefore = nestedSoftActor->GetBoundaryConditionDofValuesWorld().size();
-
-    Error error;
-    setBoundaryCondition(error);
-    EXPECT_FALSE(error.IsOK());
-    EXPECT_STREQ(
-        "Boundary condition setters are not supported for nested soft actors.",
-        error.GetDescription());
-    EXPECT_EQ(numDofIndicesBefore, nestedSoftActor->GetBoundaryConditionDofIndices().size());
-    EXPECT_EQ(numDofValuesBefore, nestedSoftActor->GetBoundaryConditionDofValuesWorld().size());
-  };
+  Actor* nestedLinkActor = _scene->GetActor(actor->GetNestedLinkActors(test::ExpectOK{})[0]);
+  ASSERT_NE(nullptr, nestedLinkActor);
+  EXPECT_TRUE(nestedLinkActor->IsNestedLinkActor());
 
   int const dofIndices[] = {0, 1, 2};
   int const nodeIndex = 0;
   Real3 const positionWorld{};
 
-  expectRejected([&](Error& error) {
-    nestedSoftActor->AddBoundaryConditionDofsWorld(MakeConstSpan(dofIndices), positionWorld, error);
-  });
-  expectRejected([&](Error& error) {
-    nestedSoftActor->AddBoundaryConditionDofsWorldPermanent(
-        MakeConstSpan(dofIndices), positionWorld, error);
-  });
-  expectRejected([&](Error& error) {
-    nestedSoftActor->AddBoundaryConditionNodesWorld(
-        MakeSingletonConstSpan(nodeIndex), positionWorld, error);
-  });
-  expectRejected([&](Error& error) {
-    nestedSoftActor->AddBoundaryConditionNodesWorldPermanent(
-        MakeSingletonConstSpan(nodeIndex), positionWorld, error);
-  });
-  expectRejected(
-      [&](Error& error) { nestedSoftActor->AddBoundaryConditionConstrainedNodesAtRest(error); });
-  expectRejected([&](Error& error) {
-    nestedSoftActor->AddBoundaryConditionConstrainedNodesAtRestPermanent(error);
-  });
+  auto const expectSettersRejected = [&](Actor* nestedActor, char const* message) {
+    auto const expectRejected = [&](auto setBoundaryCondition) {
+      auto const numDofIndicesBefore = nestedActor->GetBoundaryConditionDofIndices().size();
+      auto const numDofValuesBefore = nestedActor->GetBoundaryConditionDofValuesWorld().size();
+
+      Error error;
+      setBoundaryCondition(error);
+      EXPECT_FALSE(error.IsOK());
+      EXPECT_STREQ(message, error.GetDescription());
+      EXPECT_EQ(numDofIndicesBefore, nestedActor->GetBoundaryConditionDofIndices().size());
+      EXPECT_EQ(numDofValuesBefore, nestedActor->GetBoundaryConditionDofValuesWorld().size());
+    };
+
+    expectRejected([&](Error& error) {
+      nestedActor->AddBoundaryConditionDofsWorld(MakeConstSpan(dofIndices), positionWorld, error);
+    });
+    expectRejected([&](Error& error) {
+      nestedActor->AddBoundaryConditionDofsWorldPermanent(
+          MakeConstSpan(dofIndices), positionWorld, error);
+    });
+    expectRejected([&](Error& error) {
+      nestedActor->AddBoundaryConditionNodesWorld(
+          MakeSingletonConstSpan(nodeIndex), positionWorld, error);
+    });
+    expectRejected([&](Error& error) {
+      nestedActor->AddBoundaryConditionNodesWorldPermanent(
+          MakeSingletonConstSpan(nodeIndex), positionWorld, error);
+    });
+    expectRejected(
+        [&](Error& error) { nestedActor->AddBoundaryConditionConstrainedNodesAtRest(error); });
+    expectRejected([&](Error& error) {
+      nestedActor->AddBoundaryConditionConstrainedNodesAtRestPermanent(error);
+    });
+  };
+  expectSettersRejected(
+      nestedSoftActor, "Boundary condition setters are not supported for nested soft actors.");
+  expectSettersRejected(
+      nestedLinkActor,
+      "Boundary condition setters are not supported for nested link actors. Set boundary conditions on the articulated actor instead.");
 }
 
 TEST_F(MochiActorBC, BoundaryConditionSettersRejectPartialRotations) {

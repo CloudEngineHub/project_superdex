@@ -795,7 +795,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // re-adding without an intervening @ref ClearBoundaryConditions grows the per-step cost without
   // bound. To update a boundary condition, call @ref ClearBoundaryConditions and add it again.
   //
-  // @note Not supported for nested soft actors (see @ref GetNestedSoftActors).
+  // @note Not supported for nested link actors (see @ref GetNestedLinkActors) or nested soft
+  // actors (see @ref GetNestedSoftActors).
   // @note Not supported in differentiable scenes (@ref diffsim::MakeSceneDifferentiable) or for ROM
   // actors.
   // @note For soft and shell actors, each node has 3 consecutive DoFs containing its target x, y,
@@ -841,7 +842,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // DoF more than once is legal but strongly discouraged. The duplicates can never be cleared and
   // irreversibly grow the per-step cost. Add each permanent boundary condition only once.
   //
-  // @note Not supported for nested soft actors (see @ref GetNestedSoftActors).
+  // @note Not supported for nested link actors (see @ref GetNestedLinkActors) or nested soft
+  // actors (see @ref GetNestedSoftActors).
   // @note Not supported in differentiable scenes (@ref diffsim::MakeSceneDifferentiable) or for ROM
   // actors.
   // @note Same as @ref AddBoundaryConditionDofsWorld, except boundary conditions cannot be cleared.
