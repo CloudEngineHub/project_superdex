@@ -4076,13 +4076,13 @@ static void AssembleContactPairRanges(
         int const nDofsInternalA = allJacs[a]->nDoFsInternal;
         int const nDofsStateA = allJacs[a]->nDoFsState;
         pair.costPerPoint += 2 * averageMappedDofs * nDofsStateA;
-        pair.costPerPoint += nDofsInternalA * nDofsInternalA * (1 + alpha);
+        pair.costPerPoint += static_cast<double>(nDofsInternalA) * nDofsInternalA * (1 + alpha);
         for (int b = pair.jacRange.Min(); b < a; ++b) {
           double const beta = allJacs[a]->hasSharedDoFs && allJacs[b]->hasSharedDoFs ? 1 : 0;
           int const nDofsInternalB = allJacs[b]->nDoFsInternal;
           int const nDofsStateB = allJacs[b]->nDoFsState;
-          pair.costPerPoint += nDofsInternalA * nDofsInternalB * beta;
-          pair.costPerPoint += nDofsStateA * nDofsStateB * (1 - beta + alpha);
+          pair.costPerPoint += static_cast<double>(nDofsInternalA) * nDofsInternalB * beta;
+          pair.costPerPoint += static_cast<double>(nDofsStateA) * nDofsStateB * (1 - beta + alpha);
         }
       }
     }
@@ -4106,7 +4106,8 @@ static void AssembleContactPairRanges(
   int constexpr kTargetCostPerTask = 10000;
   int constexpr kMaxTasks = 12;
   int const maxTasks = Min(kMaxTasks, TaskScheduler::StaticGetNumOtherThreads() + 1);
-  int const numTargetTasks = Min(static_cast<int>(Ceil(totalCost / kTargetCostPerTask)), maxTasks);
+  int const numTargetTasks =
+      static_cast<int>(Min<double>(Ceil(totalCost / kTargetCostPerTask), maxTasks));
 
   // Work to be done for a contact pair.
   struct PairWork {
@@ -4145,8 +4146,8 @@ static void AssembleContactPairRanges(
       }
       auto& currentTaskWork = taskWork.back();
       double const taskRemainingCost = targetCostPerTask - currentTaskWork.cost;
-      int const numPointsToAdd = Min(
-          static_cast<int>(Ceil(taskRemainingCost / pair.costPerPoint)), pointsRemaining.Size());
+      int const numPointsToAdd = static_cast<int>(
+          Min<double>(Ceil(taskRemainingCost / pair.costPerPoint), pointsRemaining.Size()));
       MOCHI_ASSERT(numPointsToAdd > 0 && numPointsToAdd <= pointsRemaining.Size());
       Interval<int> const subRange{pointsRemaining.Min(), pointsRemaining.Min() + numPointsToAdd};
       currentTaskWork.pairWork.emplace_back(&pair, subRange);

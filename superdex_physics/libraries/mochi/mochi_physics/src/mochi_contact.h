@@ -416,7 +416,7 @@ struct CLinearContactSkinElementMap : public NoCopy {
   }
 
   [[nodiscard]] double AverageDofsPerElement() const {
-    return static_cast<double>(kSpaceDim3 * weights.NumNonZeros()) / NumElements();
+    return static_cast<double>(kSpaceDim3) * weights.NumNonZeros() / NumElements();
   }
 };
 
