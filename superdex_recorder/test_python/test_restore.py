@@ -18,11 +18,18 @@ import math
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
+import pyarrow.compute as pc
+import rerun as rr
+import rerun.experimental as rr_experimental
 import superdex.physics as sdp
 import superdex.recorder as recorder
 from superdex.physics.utils.scene_helpers import create_scene_from_prefab, find_actor
 from superdex.recorder.reader import EpisodeReader
+
+# The Rerun wheel does not expose its experimental API to static type checkers.
+_rr_experimental: Any = rr_experimental
 
 DT = 0.01
 # Integration methods the restore tests run under.
@@ -179,6 +186,40 @@ class EpisodeRestorerTest(unittest.TestCase):
         episode.commit()
         return recording
 
+    def copy_with_cube_states(
+        self, source: Path, chunks: list[list[tuple[int, int]]]
+    ) -> EpisodeReader:
+        """Copy a cube recording, writing the cube's states as ``chunks``.
+
+        Each chunk lists (frame, recorded frame) rows. The recording must have every
+        frame from 0.
+        """
+        entity_path = "/data/physics/actors/cube"
+        path = Path(tempfile.mkdtemp(dir=self.directory)) / "copy.rrd"
+        with rr.RecordingStream("superdex_restore_test") as stream:
+            stream.save(path)
+            for chunk in _rr_experimental.RrdReader(source).stream():
+                if chunk.entity_path == entity_path and not chunk.is_static:
+                    states = chunk.to_record_batch()
+                else:
+                    stream.send_chunks(chunk)
+            for rows in chunks:
+                values = states.take([recorded for _, recorded in rows])
+                stream.send_columns(
+                    entity_path,
+                    indexes=[rr.TimeColumn("frame", sequence=[f for f, _ in rows])],
+                    columns=[
+                        rr.ComponentColumn(
+                            name,
+                            rr.AnyBatchValue(name, pc.list_flatten(values[name])),
+                            lengths=pc.list_value_length(values[name]).to_numpy(),
+                        )
+                        for name in values.schema.names
+                        if name.startswith("superdex.physics.")
+                    ],
+                )
+        return EpisodeReader(path)
+
     def make_pickup_scene(self, method: sdp.IntegrationMethod) -> PickupScene:
         scene = create_scene_from_prefab(
             "bots/internal/tests/zq_robot_arm_pickup/zq_robot_arm_pickup.mochi_scene"
@@ -308,6 +349,32 @@ class EpisodeRestorerTest(unittest.TestCase):
         scene, _ = self.make_cube_scene(method)
         with self.assertRaisesRegex(ValueError, "both bind to scene actor 'ground'"):
             recorder.EpisodeRestorer(EpisodeReader(episode.output_path), scene)
+
+    def test_restores_states_written_out_of_frame_order(self) -> None:
+        method = sdp.IntegrationMethod.BACKWARD_EULER
+        recording = self.record_sliding_cube(method, 4)
+        # Frame 2 is first written with frame 4's state, and then with its own.
+        chunks = [[(4, 4), (2, 4), (3, 3)], [(2, 2), (0, 0)]]
+        scene, cube = self.make_cube_scene(method)
+        with self.assertRaisesRegex(
+            ValueError, "'cube' has no 'root_quaternion_xyzw' at frame 1"
+        ):
+            recorder.EpisodeRestorer(
+                self.copy_with_cube_states(recording.path, chunks), scene
+            )
+
+        restorer = recorder.EpisodeRestorer(
+            self.copy_with_cube_states(recording.path, [*chunks, [(1, 1)]]), scene
+        )
+        for frame in range(1, 5):
+            restorer.restore_frame(frame)
+            self.assert_values_near(
+                cube.get_root_transform().translation.tolist(),
+                recording.translations[frame],
+                1e-6,
+            )
+        with self.assertRaisesRegex(ValueError, "has a row without a frame"):
+            EpisodeReader(recording.path)._component_columns(["superdex.physics.mass"])
 
     def test_restored_robot_frames_match_the_live_run(self) -> None:
         for method in METHODS:
