@@ -78,7 +78,8 @@ auto Aggregate(Graph const& g) {
   }
 
   // Step 2: Add each remaining vertex to one of the sets already selected to which it
-  // is connected
+  // is connected. Step 1 skipped each remaining vertex because one of its neighbors was already in
+  // a set, so this assigns every vertex.
   auto const firstPassAggCount = agg;
   for (Idx v = 0; v < numVertices; ++v) {
     if (assigned[v] == unassignedFlag) {
@@ -88,21 +89,7 @@ auto Aggregate(Graph const& g) {
           break;
         }
       }
-    }
-  }
-
-  // Step 3: Group the remaining vertices into aggregates that consist of subsets of
-  // coupled neighborhoods
-  /// TODO Add a unit test where this step is required.
-  for (Idx v = 0; v < numVertices; ++v) {
-    if (assigned[v] == unassignedFlag) {
-      assigned[v] = agg;
-      for (Idx neighbor : g[v]) {
-        if (assigned[neighbor] == unassignedFlag) {
-          assigned[neighbor] = agg;
-        }
-      }
-      ++agg;
+      MOCHI_ASSERT_VERBOSE(assigned[v] != unassignedFlag, "Every vertex must be assigned.");
     }
   }
   return std::pair{std::move(assigned), agg};
