@@ -839,6 +839,8 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
     } while (retry);
 
     // Explosion control
+    // TODO: Assess using a per-actor (possibly weighted) norm when convergenceMode =
+    // NonLinearSolverConvergenceMode::PerActorWeighted.
     if (_params.explosionControl) {
       problem.UpdateResidual();
       status.resNorm = problem.GetResidual().Norm();
