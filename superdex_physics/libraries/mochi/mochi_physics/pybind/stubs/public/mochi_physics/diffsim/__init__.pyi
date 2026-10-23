@@ -100,8 +100,9 @@ def make_scene_differentiable(scene: mochi_physics.Scene) -> None:
     """Make a scene differentiable.
 
     For accuracy reasons, differentiability is only recommended in double precision.
-    Differentiability is only supported for rigid and articulated actors, and
-    requires :attr:`~superdex.physics.SolverParams.integration_method` to be
+    Differentiability is only supported for rigid and articulated actors without
+    boundary conditions, and requires
+    :attr:`~superdex.physics.SolverParams.integration_method` to be
     :class:`BACKWARD_EULER <superdex.physics.IntegrationMethod>`. It adds internal
     data to support the invocation of the function
     :func:`~superdex.physics.diffsim.back_propagate`. It also calls

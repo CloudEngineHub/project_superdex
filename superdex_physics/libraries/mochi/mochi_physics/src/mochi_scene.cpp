@@ -3432,6 +3432,12 @@ void MakeSceneDifferentiableInternal(Scene* scene, Error& error) {
       MOCHI_ERROR_SET(error, "Actor type is not differentiable.");
     }
   });
+  sceneImpl->ForEachActor([&](Actor* actor) {
+    MOCHI_ERROR_IF(
+        !actor->GetBoundaryConditionDofIndices().empty(),
+        error,
+        "Dirichlet boundary conditions are not supported in differentiable scenes.");
+  });
   MOCHI_ERROR_RETURN(error);
 
   // Apply robust convergence settings. Log warnings if scene or actor settings are overridden.

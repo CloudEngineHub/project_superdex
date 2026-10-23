@@ -207,6 +207,10 @@ TEST_F(MochiActorBC, RigidPermanentRotationSurvivesClear) {
   Real3 rotationValuesAfterTorque;
   box->GetDofValues(rotationDofIndices, rotationValuesAfterTorque, test::ExpectOK{});
   EXPECT_NEAR_EQ(rotationValues, rotationValuesAfterTorque);
+
+  // The permanent boundary conditions keep the scene from becoming differentiable.
+  test::SetSceneIntegrationMethod(_scene, IntegrationMethod::BackwardEuler);
+  MakeSceneDifferentiableInternal(_scene, test::ExpectNotOK{});
 }
 
 TEST_F(MochiActorBC, MultiplePermanentRangesSurviveClear) {
