@@ -31,6 +31,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -2026,4 +2027,73 @@ TEST_F(ActorQueryTest, QueryNodesInVolumeLocal) {
     MOCHI_DEFER(rigidActor->CancelQuery(query));
     EXPECT_EQ(compactBoundaryNodes, queryIndices(rigidActor, enclosingAabb, true));
   }
+}
+
+static Actor* CreateArticulatedChain(
+    Scene* scene,
+    Real3 position,
+    Span<ArticulatedJointType const> jointTypes = std::array{
+        ArticulatedJointType::Free,
+        ArticulatedJointType::Revolute,
+        ArticulatedJointType::Spherical}) {
+  ShapeHandle const shape = CreateCubeShape(scene, 0.05_r);
+  ArticulatedActorParams params;
+  params.name = "Chain";
+  params.worldFromRoot = TransformRT{position};
+  params.joints.resize(jointTypes.size());
+  params.links.resize(jointTypes.size());
+  for (int i = 0; i < isize(jointTypes); ++i) {
+    auto& joint = params.joints[i];
+    joint.type = jointTypes[i];
+    joint.axis = Real3{0_r, 0_r, 1_r};
+    if (i > 0) {
+      joint.parentLinkFromJoint = TransformRT{Real3{0.06_r, 0_r, 0_r}};
+      joint.friction = ArticulatedJointFrictionParams{.viscous = 0.1_r};
+      joint.inertia = 0.1_r;
+    }
+    auto& link = params.links[i];
+    link.parentLink = i - 1;
+    link.shape = shape;
+    link.colliderType = ColliderType::Box;
+    link.density = 1000_r;
+    link.contact.penaltyCoefficient = 1e8_r;
+    link.contact.penaltyThresholdDefault = 0.005_r;
+    link.contact.viscousFrictionCoefficient = 2_r;
+  }
+  return scene->CreateArticulatedActor(params, ErrorAssert{});
+}
+
+TEST_F(ActorQueryTest, CenterOfMassTransformRequiresAStandaloneDynamicRigidActor) {
+  Actor* const chain = CreateArticulatedChain(_scene, Real3{0.3_r, 0.1_r, 0_r});
+  Actor* const link = _scene->GetActor(chain->GetNestedLinkActors(ErrorAssert{})[0]);
+  Actor* const staticCube =
+      CreateRigidCube(_scene, 0.1_r, Real3{0_r, 0.1_r, 0_r}, /*isStatic=*/true);
+  Actor* const softCube = CreateSoftCube(_scene, 0.1_r, Real3{0_r, 0.5_r, 0_r});
+  for (Actor* const actor : {link, chain, staticCube, softCube}) {
+    SCOPED_TRACE(actor->GetName());
+    Real3 const translation = actor->GetRootTransform().GetTranslation();
+    actor->SetCenterOfMassTransform(TransformRT{Real3{1_r, 2_r, 3_r}}, test::ExpectNotOK{});
+    EXPECT_EQ(actor->GetRootTransform().GetTranslation(), translation);
+  }
+}
+
+TEST_F(ActorQueryTest, SimulationTimeRoundTripsUnlessRejected) {
+  // Binary fractions keep the clock's arithmetic exact.
+  SetSimulationTime(_scene, 1.25, 0.0078125, test::ExpectOK{});
+  EXPECT_EQ(_scene->GetTotalSimulationTime(), 1.25);
+  EXPECT_EQ(_scene->GetLastTimeStep(), 0.0078125);
+
+  double const nan = std::numeric_limits<double>::quiet_NaN();
+  SetSimulationTime(nullptr, 1.0, 0.01, test::ExpectNotOK{});
+  SetSimulationTime(_scene, nan, 0.01, test::ExpectNotOK{});
+  SetSimulationTime(_scene, 1.0, nan, test::ExpectNotOK{});
+  SetSimulationTime(_scene, 1.0, 0.0, test::ExpectNotOK{});
+  SetSimulationTime(_scene, 1.0, -0.01, test::ExpectNotOK{});
+  EXPECT_EQ(_scene->GetTotalSimulationTime(), 1.25);
+  EXPECT_EQ(_scene->GetLastTimeStep(), 0.0078125);
+
+  // The clock ends a step, so the next step starts from it.
+  _scene->Step(0.015625);
+  EXPECT_EQ(_scene->GetTotalSimulationTime(), 1.265625);
+  EXPECT_EQ(_scene->GetLastTimeStep(), 0.015625);
 }
