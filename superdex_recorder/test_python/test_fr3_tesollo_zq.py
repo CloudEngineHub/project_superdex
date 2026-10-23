@@ -165,6 +165,31 @@ class Fr3TesolloZqTest(unittest.TestCase):
     def test_grasp_with_bdf3(self) -> None:
         self.assert_grasp_restores(sdp.IntegrationMethod.BDF3)
 
+    def test_robotics_record_fails_after_the_robot_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            loaded = None
+            controllers = None
+            try:
+                loaded = load_test_scene(sdp.IntegrationMethod.BACKWARD_EULER)
+                bot = loaded.bot_scene.get_bot("robot")
+                assert bot is not None
+                with recorder.Recorder(
+                    recorder.RecorderConfig(Path(directory_string))
+                ).begin_episode() as episode:
+                    controllers = recorder.RoboticsRecorder(episode, bot)
+                    controllers.record(0, 0.0)
+
+                    loaded.bot_scene.remove_bot("robot")
+
+                    with self.assertRaisesRegex(sdp.Error, "destroyed"):
+                        controllers.record(1, 0.005)
+            finally:
+                controllers = None
+                loaded = None
+                gc.collect()
+                sdp.shutdown()
+
     def assert_grasp_restores(self, method: sdp.IntegrationMethod) -> None:
         with tempfile.TemporaryDirectory() as directory_string:
             sdp.initialize(num_worker_threads=0)
