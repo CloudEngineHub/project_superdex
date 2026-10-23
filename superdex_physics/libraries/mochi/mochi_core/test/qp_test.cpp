@@ -96,9 +96,12 @@ void TestNoConstraint(bool output) {
   // Dense
   auto results2 = SolveNoConstraint<d, T, false>(output);
   // Compare
+  auto const targets = GenerateTargetList<d, T>();
   for (int i = 0; i < isize(results1); i++) {
     ColumnVector<T> diff;
     diff = results1[i] - results2[i];
+    EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
+    diff = results1[i] - AsConstView(targets[i]);
     EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
   }
 }
@@ -140,6 +143,7 @@ void TestClosestInBox(bool output) {
   auto results3 = SolveClosestInBox<d, T, true, false>(output);
   auto results4 = SolveClosestInBox<d, T, false, false>(output);
   // Compare
+  auto const targets = GenerateTargetList<d, T>();
   for (int i = 0; i < isize(results1); i++) {
     ColumnVector<T> diff;
     diff = results1[i] - results2[i];
@@ -147,6 +151,9 @@ void TestClosestInBox(bool output) {
     diff = results1[i] - results3[i];
     EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
     diff = results1[i] - results4[i];
+    EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
+    NdArray<T, d> const exact = Clamp(targets[i], T(-1), T(1));
+    diff = results1[i] - AsConstView(exact);
     EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
   }
 }
@@ -185,9 +192,15 @@ void TestClosestInOctagon(bool output) {
   // Dense
   auto results2 = SolveClosestInOctagon<d, T, false>(output);
   // Compare
+  auto const targets = GenerateTargetList<d, T>();
   for (int i = 0; i < isize(results1); i++) {
     ColumnVector<T> diff;
     diff = results1[i] - results2[i];
+    EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
+    // The feasible set is the unit L1 ball. Each target's nonzero entries have equal magnitude, so
+    // its projection is the target scaled onto the ball's surface.
+    NdArray<T, d> const exact = targets[i] / Sum(Abs(targets[i]));
+    diff = results1[i] - AsConstView(exact);
     EXPECT_NEAR(diff.Norm(), 0_r, 1e-3_r);
   }
 }
