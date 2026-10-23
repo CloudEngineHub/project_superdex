@@ -395,7 +395,7 @@ void DebugDraw::DrawSolidSphere(
     filament::math::float3 center,
     float radius,
     filament::math::float4 color) {
-  _sphereData.push_back({center, radius});
+  _sphereData.emplace_back(center, radius);
   _sphereData.push_back(color);
   _sphereDirty = true;
 }
