@@ -548,9 +548,9 @@ void NewtonSolver<T>::AddLowRankUpdate(bool projectPsd, AnyLinearOperator& outLi
             T const c1 = _workspace.deltaSol.Dot(_workspace.deltaRes);
             T const c2 = _workspace.deltaSol.Dot(_workspace.y);
             T const deltaSolNorm = _workspace.deltaSol.Norm();
-            if ((Abs(c1) > kEpsilon * deltaSolNorm * _workspace.deltaRes.Norm()) &&
+            if ((c1 > kEpsilon * deltaSolNorm * _workspace.deltaRes.Norm()) &&
                 (Abs(c2) > kEpsilon * deltaSolNorm * _workspace.y.Norm()) &&
-                (!projectPsd || (c1 > 0 && c2 > 0))) {
+                (!projectPsd || c2 > 0)) {
               _workspace.U.template LeftCols<1>(1) = _workspace.deltaRes;
               _workspace.U.template RightCols<1>(1) = _workspace.y;
               _workspace.V.template LeftCols<1>(1) = _workspace.deltaRes * (1 / c1);

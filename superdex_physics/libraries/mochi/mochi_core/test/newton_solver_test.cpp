@@ -33,9 +33,9 @@ using namespace mochi;
 // ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
 
 /**
- * Implements a very simple non-linear problem to test.
+ * One-DoF problem with objective f, gradient df and Hessian ddf.
  */
-static SnleProblem<real> GetTestProblem() {
+static SnleProblem<real> GetTestProblem(real (*f)(real), real (*df)(real), real (*ddf)(real)) {
   // Some SNLE data
   auto residual = ColumnVector<real>{1};
   auto dresidual = AnyMatrix<real>{Matrix<real>{1, 1}};
@@ -47,19 +47,16 @@ static SnleProblem<real> GetTestProblem() {
     auto solution = problem.GetSolution();
     real x = solution[0];
 
-    // Evaluate f(x) and ∂f/∂x(x)
-    real const fx = -(x * x) / 10.0_r - x * Cos(x); // gradient
-    real const dfdx = -x / 5.0_r - Cos(x) + x * Sin(x); // Hessian
     double objective = 0.0;
     if (params.assemObj) {
-      objective = -(x * x * x) / 30.0_r - x * Sin(x) - Cos(x);
+      objective = f(x);
     }
     if (params.assemRes) {
-      residual[0] = fx;
+      residual[0] = df(x);
     }
     if (params.assemDRes) {
       auto& dresMat = std::get<Matrix<real>>(dresidual);
-      dresMat(0, 0) = dfdx;
+      dresMat(0, 0) = ddf(x);
     }
 
     // Add SNLE data to the problem, as if it came from a single actor
@@ -254,7 +251,10 @@ TEST(NewtonSolver, SmoothLocalMinimum) {
   constexpr auto kEpsilon = std::numeric_limits<real>::epsilon();
   constexpr real kAbsTol = 1e3_r * kEpsilon;
 
-  SnleProblem<real> problem = GetTestProblem();
+  SnleProblem<real> problem = GetTestProblem(
+      [](real x) { return -(x * x * x) / 30.0_r - x * Sin(x) - Cos(x); },
+      [](real x) { return -(x * x) / 10.0_r - x * Cos(x); },
+      [](real x) { return -x / 5.0_r - Cos(x) + x * Sin(x); });
   for (auto solverType :
        {NonLinearSolverType::Newton, NonLinearSolverType::BFGS, NonLinearSolverType::SR1}) {
     for (auto dResidualAssemblyPeriod : {1, 2, 4, 8}) {
@@ -362,7 +362,8 @@ TEST(NewtonSolver, SmoothLocalMinimum) {
 }
 
 TEST(NewtonSolver, QuasiNewton) {
-  // Verify quasi-Newton updates help convergence on multi-dimensional Broyden problems.
+  // Verify quasi-Newton updates help convergence on multi-dimensional Broyden problems, and that
+  // BFGS skips the updates of steps without positive curvature.
   constexpr real kEpsilon = std::numeric_limits<real>::epsilon();
   constexpr real kAbsTol = 1e3_r * kEpsilon;
 
@@ -405,6 +406,19 @@ TEST(NewtonSolver, QuasiNewton) {
     EXPECT_EQ(ConvergenceStatus::Converged, resultQuasiNewton.convergence);
     EXPECT_LT(resultQuasiNewton.numIterDone, resultNewton.numIterDone);
   }
+
+  // The BFGS update of a step without positive curvature can make the operator indefinite. From
+  // x = 0, Armijo accepts the Newton step of E(x) = x⁴/2 - 3x³/2 + x²/2 - x to x = 1, where the
+  // gradient drops from -1 to -5/2.
+  SnleProblem<real> quartic = GetTestProblem(
+      [](real x) { return 0.5_r * x * x * x * x - 1.5_r * x * x * x + 0.5_r * x * x - x; },
+      [](real x) { return 2_r * x * x * x - 4.5_r * x * x + x - 1_r; },
+      [](real x) { return 6_r * x * x - 9_r * x + 1_r; });
+  quartic.SetSolution(ColumnVector<real, 1>(0_r));
+  params.solverType = NonLinearSolverType::BFGS;
+  params.lineSearch.type = LineSearchType::Armijo;
+  solver.SetParams(params);
+  EXPECT_EQ(solver.Solve(quartic).convergence, ConvergenceStatus::Converged);
 }
 
 TEST(NewtonSolver, LinearToleranceStrategy) {
