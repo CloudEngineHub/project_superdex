@@ -256,6 +256,8 @@ class QPSolver {
     params.absTolRes = 1e-4_r;
     params.relTolRes = 1e-8_r;
     params.psdProjMode = PsdProjectionMode::Never;
+    // The QP has no saturation terms, so a retry with fitted Hessians would repeat the same solve.
+    params.fittedSaturationHessian = SaturationHessianParams::All(true);
     params.maxIter = 1e3;
     params.lParams.preconditionerType = PreconditionerType::None;
     params.lParams.solverType = LinearSolverType::LDLT;
@@ -349,8 +351,8 @@ class QPSolver {
     _ATDenseOrASparse = A;
   }
 
-  // Set the objective function. The Hessian storage type must match the storage type of A, if A has
-  // been set.
+  // Set the objective function. The Hessian must be symmetric positive definite. The Hessian
+  // storage type must match the storage type of A, if A has been set.
   void SetObjective(AnyMatrixView<T const> h, ColumnVectorView<T const> g, Error& error) {
     int n = GetNumVariables();
     MOCHI_ERROR_IF(GetNumRows(h) != n || GetNumCols(h) != n, error, "Incorrect Hessian size.");
