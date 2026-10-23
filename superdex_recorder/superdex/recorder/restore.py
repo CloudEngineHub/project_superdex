@@ -82,6 +82,7 @@ def _scene_actors_by_name(scene: sdp.Scene) -> dict[str, sdp.Actor]:
 
 def _bind_actors(reader: EpisodeReader, scene: sdp.Scene) -> list[RecordedActor]:
     runtime_names = _static_values(reader, "superdex.physics.runtime_name")
+    spawn_names = _static_values(reader, "superdex.physics.spawn_name")
     actor_types = _static_values(reader, "superdex.physics.actor_type")
     static_flags = _static_values(reader, "superdex.physics.is_static")
     if not runtime_names.keys() == actor_types.keys() == static_flags.keys():
@@ -91,9 +92,19 @@ def _bind_actors(reader: EpisodeReader, scene: sdp.Scene) -> list[RecordedActor]
     bound_paths: dict[sdp.ActorHandle, str] = {}
     actors = []
     for path, runtime_name in sorted(runtime_names.items()):
-        actor = scene_actors.get(runtime_name)
+        spawn_name = spawn_names.get(path)
+        # Loading a task names a spawn's bodies "<spawn name>/<name>", and a spawned bot after
+        # its spawn.
+        names = (
+            [runtime_name]
+            if spawn_name is None
+            else [f"{spawn_name}/{runtime_name}", spawn_name, runtime_name]
+        )
+        actor = next(
+            (scene_actors[name] for name in names if name in scene_actors), None
+        )
         if actor is None:
-            raise ValueError(f"Scene is missing recorded actor {runtime_name!r}.")
+            raise ValueError(f"Scene is missing recorded actor {names[0]!r}.")
         handle = actor.get_handle()
         if handle in bound_paths:
             raise ValueError(
@@ -121,10 +132,12 @@ def _bind_actors(reader: EpisodeReader, scene: sdp.Scene) -> list[RecordedActor]
 class EpisodeRestorer:
     """Restores a scene to the state recorded at any frame of an episode.
 
-    The scene must contain the recorded actors, matched by runtime name, with static
-    actors at their recorded poses. No two recorded actors may bind to the same
-    scene actor, and scene actors that were not recorded must be static or nested,
-    such as robot links.
+    The scene must contain the recorded actors, with static actors at their recorded
+    poses. An actor recorded with a spawn name binds to the scene actor named
+    ``<spawn name>/<runtime name>``, or else ``<spawn name>``, or else its runtime
+    name, and other actors bind by runtime name. No two recorded actors may bind to
+    the same scene actor, and scene actors that were not recorded must be static or
+    nested, such as robot links.
 
     Restoring a frame sets the scene clock and each dynamic actor's pose, velocity
     and pose-controller target through the public setters, then takes a zero step to
