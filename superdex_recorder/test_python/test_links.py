@@ -481,6 +481,22 @@ class LinkRecordingTest(unittest.TestCase):
         # Decoded Arrow bytes, not the LZ4-compressed bytes in the file.
         self.assertLess(sum(batch.nbytes for batch in batches) / NUM_FRAMES, 400)
 
+    def test_restoring_and_rebuilding_ignore_skeleton_shadows(self) -> None:
+        path, _, last_poses = self.record_tracked_hand()
+
+        rebuilt = recorder.rebuild_scene(
+            EpisodeReader(path), BOT_SCENE_PATH, self.robotics_context
+        )
+        scene = rebuilt.bot_scene.get_scene()
+        bot = rebuilt.bot_scene.get_bot(ROBOT_NAME)
+        assert scene is not None and bot is not None
+        robot = bot.get_articulated_actor()
+        assert robot is not None
+        restorer = recorder.EpisodeRestorer(EpisodeReader(path), scene)
+        restorer.restore_frame(restorer.frames[-1])
+
+        self.assert_poses_near(link_poses(link_actors(scene, robot)), last_poses)
+
     def test_robot_id_is_the_recorded_physics_actor_name(self) -> None:
         episode = self.episode_recorder.begin_episode()
         physics = recorder.PhysicsRecorder(episode, self.scene)
