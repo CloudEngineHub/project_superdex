@@ -231,25 +231,25 @@ void TestInfeasible(bool output) {
 }
 } // namespace
 
-TEST_IF(MOCHI_USE_DOUBLE_PRECISION, QP, Infeasible) {
+TEST(QP, Infeasible) {
   bool output = false;
   TestInfeasible<2, real>(output);
   TestInfeasible<3, real>(output);
 }
 
-TEST_IF(MOCHI_USE_DOUBLE_PRECISION, QP, NoConstraint) {
+TEST(QP, NoConstraint) {
   bool output = false;
   TestNoConstraint<2, real>(output);
   TestNoConstraint<3, real>(output);
 }
 
-TEST_IF(MOCHI_USE_DOUBLE_PRECISION, QP, ClosestInBox) {
+TEST(QP, ClosestInBox) {
   bool output = false;
   TestClosestInBox<2, real>(output);
   TestClosestInBox<3, real>(output);
 }
 
-TEST_IF(MOCHI_USE_DOUBLE_PRECISION, QP, ClosestInOctagon) {
+TEST(QP, ClosestInOctagon) {
   bool output = false;
   TestClosestInOctagon<2, real>(output);
   TestClosestInOctagon<3, real>(output);
