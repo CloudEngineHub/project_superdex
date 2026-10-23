@@ -153,6 +153,41 @@ class EpisodeReader:
             for component, component_samples in samples.items()
         }
 
+    def _component_columns(
+        self, components: Sequence[str]
+    ) -> dict[tuple[str, str], pa.Table]:
+        """Return each entity's rows of ``components`` as Arrow tables.
+
+        Tables are keyed by (entity path, component), have ``frame`` and ``value``
+        columns, are sorted by frame, and have no rows without a value. Rows at the
+        same frame keep their recorded order. Unlike :meth:`component_samples_many`,
+        nothing is converted to Python, which makes reading whole components much
+        faster. Raises ValueError if a row has no frame, such as a static row.
+        """
+        tables: dict[tuple[str, str], list[pa.Table]] = {}
+        for chunk in self._reader.stream().filter(components=components):
+            batch = chunk.to_record_batch()
+            frame_index = batch.schema.get_field_index("frame")
+            for component in components:
+                component_index = batch.schema.get_field_index(component)
+                if component_index < 0:
+                    continue
+                values = batch.column(component_index)
+                if values.null_count == len(values):
+                    continue
+                if frame_index < 0:
+                    raise ValueError(
+                        f"{chunk.entity_path!r} has a row without a frame."
+                    )
+                table = pa.table({"frame": batch.column(frame_index), "value": values})
+                tables.setdefault((chunk.entity_path, component), []).append(
+                    table.filter(values.is_valid())
+                )
+        return {
+            key: pa.concat_tables(parts).sort_by("frame")
+            for key, parts in tables.items()
+        }
+
     def read_static_value(self, component: str) -> Any:
         """Read the sole static value for ``component``.
 

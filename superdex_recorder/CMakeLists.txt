@@ -41,8 +41,10 @@ set_target_properties(superdex_recorder_core PROPERTIES POSITION_INDEPENDENT_COD
 
 add_library(superdex_recorder_physics STATIC
     src/contact_collector.cpp
+    src/episode_restorer.cpp
     src/physics_recorder.cpp
     include/superdex_recorder/contact_collector.h
+    include/superdex_recorder/episode_restorer.h
     include/superdex_recorder/physics_recorder.h
 )
 target_include_directories(superdex_recorder_physics PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

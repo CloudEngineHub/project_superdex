@@ -615,19 +615,6 @@ void mochi::DefineMochiPhysics_MochiPhysicsExperimental([[maybe_unused]] nb::mod
     )
   ;
 
-    m_experimental.def("set_simulation_time", [](mochi::Scene* scene, double total_simulation_time_sec, double last_time_step_sec) {
-      mochi::Error error;
-      mochi::experimental::SetSimulationTime(scene, total_simulation_time_sec, last_time_step_sec, error);
-      if (!error.IsOK()) {
-        throw MochiErrorException(error);
-      }
-    }
-      , nb::arg("scene").none()
-      , nb::arg("total_simulation_time_sec")
-      , nb::arg("last_time_step_sec")
-      , "Set the scene clock to the end of a step.\n\nAfter this call, :meth:`~superdex.physics.Scene.get_last_time_step` returns the\ngiven step duration, and\n:meth:`~superdex.physics.Scene.get_total_simulation_time` returns the given\ntotal time up to rounding.\n\nArgs:\n    scene (Scene): Scene whose clock to set.\n    total_simulation_time_sec (float): Total simulated time [s] at the end of\n        the step.\n    last_time_step_sec (float): Duration [s] of the last step, as returned by\n        :meth:`~superdex.physics.Scene.get_last_time_step` when the state was\n        recorded.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs."
-    );
-
     m_experimental.def("restore_state_from_scene", [](mochi::Scene* scene_to, mochi::Scene const* scene_from, mochi::StateHandle handle_from) {
       mochi::Error error;
       mochi::experimental::RestoreStateFromScene(scene_to, scene_from, handle_from, error);

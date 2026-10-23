@@ -20,9 +20,12 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+import pyarrow.compute as pc
 import superdex.physics as sdp
 
-from .reader import ComponentSample, EpisodeReader
+from . import _extension
+from .reader import EpisodeReader
 
 _FRAME_PATH = "data/physics/frames"
 _STATIC_POSE_TOLERANCE = 1e-5
@@ -59,18 +62,6 @@ def _static_values(reader: EpisodeReader, component: str) -> dict[str, Any]:
         if not isinstance(sample.value, list) or len(sample.value) != 1:
             raise ValueError(f"Expected one value for {component!r}.")
         result[_normalized(sample.entity_path)] = sample.value[0]
-    return result
-
-
-def _values_by_path_and_frame(
-    samples: list[ComponentSample],
-) -> dict[tuple[str, int], Any]:
-    result = {}
-    for sample in samples:
-        frame = sample.timelines.get("frame")
-        if not isinstance(frame, int):
-            raise ValueError(f"{sample.entity_path!r} has a row without a frame.")
-        result[(_normalized(sample.entity_path), frame)] = sample.value
     return result
 
 
@@ -139,25 +130,40 @@ class EpisodeRestorer:
     and pose-controller target through the public setters, then takes a zero step to
     refresh actor queries. A positive step then continues the episode. The integrator
     starts afresh from the restored state, as at the start of a simulation, so a
-    resumed run stays close to the original but doesn't match it bit for bit. Actors
-    that were spawned or destroyed during the episode are not supported.
+    resumed run stays close to the original but doesn't match it bit for bit.
+
+    Restoring a frame also sets each recorded robot's external forces to the joint
+    effort recorded for the step after the frame, and clears other dynamic actors'
+    external forces. At frames without a recorded effort, such as the last frame, a
+    robot keeps its latest earlier effort, because Mochi applies an external force
+    until it is replaced. Before its first recorded effort, a robot has none.
+
+    Actors that were spawned or destroyed during the episode are not
+    supported.
     """
 
     def __init__(self, recording: EpisodeReader, scene: sdp.Scene) -> None:
-        self._scene = scene
         self._actors = _bind_actors(recording, scene)
         self._validate_unrecorded_actors(scene)
         self._read_frames(recording)
-        samples = recording.component_samples_many(
-            [f"superdex.physics.{component}" for component in _STATE_COMPONENTS]
-        )
+        self._read_efforts(recording)
         self._states = {
-            component: _values_by_path_and_frame(
-                samples[f"superdex.physics.{component}"]
-            )
-            for component in _STATE_COMPONENTS
+            (_normalized(path), component): rows
+            for (path, component), rows in recording._component_columns(
+                [f"superdex.physics.{component}" for component in _STATE_COMPONENTS]
+            ).items()
         }
         self._validate_static_poses()
+        self._native = _extension._EpisodeRestorer(
+            scene,
+            np.asarray(self._times_sec, dtype=np.float64),
+            np.asarray(self._step_dts_sec, dtype=np.float64),
+            [
+                self._native_actor(recorded)
+                for recorded in self._actors
+                if not recorded.is_static
+            ],
+        )
 
     @property
     def frames(self) -> list[int]:
@@ -170,26 +176,14 @@ class EpisodeRestorer:
         return list(self._actors)
 
     def restore_frame(self, frame: int) -> None:
-        """Restore the scene to the end of the step recorded at ``frame``."""
+        """Restore the scene to the end of the step recorded at ``frame``.
+
+        Recorded robots get the joint efforts recorded for the next step.
+        """
         index = self._frame_indices.get(frame)
         if index is None:
             raise ValueError(f"Frame {frame} was not recorded.")
-        sdp.experimental.set_simulation_time(
-            self._scene, self._times_sec[index], self._step_dts_sec[index]
-        )
-        for recorded in self._actors:
-            if recorded.is_static:
-                continue
-            if not recorded.is_articulated:
-                self._restore_rigid(recorded, frame)
-                continue
-            self._restore_articulated(recorded, frame)
-            target = self._states["controller_target_positions"].get(
-                (recorded.path, frame)
-            )
-            if target is not None:
-                recorded.actor.set_articulated_target_pose(target)
-        self._scene.step(0.0)
+        self._native.restore_frame(index)
 
     def _read_frames(self, recording: EpisodeReader) -> None:
         self._frames: list[int] = []
@@ -202,52 +196,113 @@ class EpisodeRestorer:
             time_ns = sample.timelines.get("sim_time")
             if not isinstance(frame, int) or not isinstance(time_ns, int):
                 raise ValueError("Recorded frame timing is missing its timelines.")
-            time_sec = time_ns / 1e9
-            step_dt_sec = float(sample.value[0])
             self._frames.append(frame)
-            self._times_sec.append(time_sec)
-            self._step_dts_sec.append(step_dt_sec)
+            self._times_sec.append(time_ns / 1e9)
+            self._step_dts_sec.append(float(sample.value[0]))
         if not self._frames:
             raise ValueError("The recording has no physics frames.")
         self._frame_indices = {frame: i for i, frame in enumerate(self._frames)}
 
-    def _value(self, component: str, recorded: RecordedActor, frame: int) -> Any:
-        try:
-            return self._states[component][(recorded.path, frame)]
-        except KeyError as error:
+    def _read_efforts(self, recording: EpisodeReader) -> None:
+        robot_ids = _static_values(recording, "superdex.robotics.robot_id")
+        runtime_names = _static_values(recording, "superdex.physics.runtime_name")
+        robots = {
+            path: [
+                recorded
+                for recorded in self._actors
+                if recorded.is_articulated and runtime_names[recorded.path] == robot_id
+            ]
+            for path, robot_id in robot_ids.items()
+        }
+        self._efforts: dict[str, np.ndarray] = {}
+        for (entity_path, _), rows in recording._component_columns(
+            ("superdex.robotics.applied_joint_effort",)
+        ).items():
+            matches = robots.get(_normalized(entity_path).rsplit("/", 1)[0], [])
+            if len(matches) != 1:
+                raise ValueError(f"{entity_path!r} has no unique recorded robot.")
+            frames = rows["frame"].to_numpy()
+            unrecorded = ~np.isin(frames, self._frames)
+            if unrecorded.any():
+                raise ValueError(
+                    f"{entity_path!r} has an effort at unrecorded frame "
+                    f"{frames[unrecorded][0]}."
+                )
+            values = pc.list_flatten(rows["value"]).to_numpy().reshape(len(frames), -1)
+            # Mochi keeps an external force until it is replaced, so each effort holds until
+            # the next one.
+            latest = np.searchsorted(frames, self._frames, side="right") - 1
+            held = latest >= 0
+            efforts = np.zeros((len(self._frames), values.shape[1]))
+            efforts[held] = values[latest[held]]
+            self._efforts[matches[0].path] = efforts
+
+    def _values(
+        self, component: str, recorded: RecordedActor, frames: np.ndarray
+    ) -> np.ndarray:
+        rows = self._states.get((recorded.path, f"superdex.physics.{component}"))
+        recorded_frames = np.zeros(0) if rows is None else rows["frame"].to_numpy()
+        missing = ~np.isin(frames, recorded_frames)
+        if rows is None or missing.any():
             raise ValueError(
                 f"Actor {recorded.actor.get_name()!r} has no {component!r} at "
-                f"frame {frame}."
-            ) from error
+                f"frame {frames[missing][0]}."
+            )
+        # Use the last row at each frame.
+        indices = np.searchsorted(recorded_frames, frames, side="right") - 1
+        return np.asarray(
+            pc.list_flatten(rows["value"].take(indices)).to_numpy(), dtype=np.float64
+        )
+
+    def _value(self, component: str, recorded: RecordedActor, frame: int) -> Any:
+        return self._values(component, recorded, np.array([frame])).tolist()
+
+    def _column(self, component: str, recorded: RecordedActor) -> np.ndarray:
+        return self._values(component, recorded, np.asarray(self._frames))
+
+    def _native_actor(self, recorded: RecordedActor) -> Any:
+        empty = np.zeros(0)
+        rigid = not recorded.is_articulated
+        articulated = recorded.is_articulated
+        # Targets are recorded at every frame or at none; _column rejects gaps.
+        has_targets = articulated and (
+            (recorded.path, "superdex.physics.controller_target_positions")
+            in self._states
+        )
+        return _extension._RestoredActor(
+            handle=recorded.actor.get_handle(),
+            is_articulated=articulated,
+            root_rotations=self._column("root_quaternion_xyzw", recorded),
+            com_translations=(
+                self._column("com_translation_xyz", recorded) if rigid else empty
+            ),
+            linear_velocities=(
+                self._column("linear_velocity_xyz", recorded) if rigid else empty
+            ),
+            angular_velocities=(
+                self._column("angular_velocity_xyz", recorded) if rigid else empty
+            ),
+            root_translations=(
+                self._column("root_translation_xyz", recorded) if articulated else empty
+            ),
+            joint_positions=(
+                self._column("joint_positions", recorded) if articulated else empty
+            ),
+            joint_velocities=(
+                self._column("joint_velocities", recorded) if articulated else empty
+            ),
+            controller_targets=(
+                self._column("controller_target_positions", recorded)
+                if has_targets
+                else empty
+            ),
+            joint_efforts=self._efforts.get(recorded.path, empty).reshape(-1),
+        )
 
     def _transform(self, recorded: RecordedActor, frame: int) -> sdp.TransformRT:
         return sdp.TransformRT(
             rotation=self._value("root_quaternion_xyzw", recorded, frame),
             translation=self._value("root_translation_xyz", recorded, frame),
-        )
-
-    def _world_from_com(self, recorded: RecordedActor, frame: int) -> sdp.TransformRT:
-        return sdp.TransformRT(
-            rotation=self._value("root_quaternion_xyzw", recorded, frame),
-            translation=self._value("com_translation_xyz", recorded, frame),
-        )
-
-    def _restore_rigid(self, recorded: RecordedActor, frame: int) -> None:
-        recorded.actor.set_center_of_mass_transform(
-            self._world_from_com(recorded, frame)
-        )
-        recorded.actor.set_velocity(
-            self._value("linear_velocity_xyz", recorded, frame),
-            self._value("angular_velocity_xyz", recorded, frame),
-        )
-
-    def _restore_articulated(self, recorded: RecordedActor, frame: int) -> None:
-        recorded.actor.set_root_transform(self._transform(recorded, frame))
-        recorded.actor.set_articulated_pose_from_joints(
-            self._value("joint_positions", recorded, frame)
-        )
-        recorded.actor.set_articulated_joint_velocities(
-            self._value("joint_velocities", recorded, frame)
         )
 
     def _validate_unrecorded_actors(self, scene: sdp.Scene) -> None:
