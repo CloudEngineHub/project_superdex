@@ -1,0 +1,283 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Restore a Mochi scene to the recorded frames of a SuperDex episode."""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Any
+
+import superdex.physics as sdp
+
+from .reader import ComponentSample, EpisodeReader
+
+_FRAME_PATH = "data/physics/frames"
+_STATIC_POSE_TOLERANCE = 1e-5
+_STATE_COMPONENTS = (
+    "root_translation_xyz",
+    "root_quaternion_xyzw",
+    "linear_velocity_xyz",
+    "angular_velocity_xyz",
+    "com_translation_xyz",
+    "joint_positions",
+    "joint_velocities",
+    "controller_target_positions",
+)
+
+
+@dataclass(frozen=True)
+class RecordedActor:
+    """A recorded actor and the scene actor that it is restored to."""
+
+    path: str
+    """Recorded data path, such as ``data/physics/actors/cube``."""
+    actor: sdp.Actor
+    is_articulated: bool
+    is_static: bool
+
+
+def _normalized(path: str) -> str:
+    return path.lstrip("/")
+
+
+def _static_values(reader: EpisodeReader, component: str) -> dict[str, Any]:
+    result = {}
+    for sample in reader.component_samples(component):
+        if not isinstance(sample.value, list) or len(sample.value) != 1:
+            raise ValueError(f"Expected one value for {component!r}.")
+        result[_normalized(sample.entity_path)] = sample.value[0]
+    return result
+
+
+def _values_by_path_and_frame(
+    samples: list[ComponentSample],
+) -> dict[tuple[str, int], Any]:
+    result = {}
+    for sample in samples:
+        frame = sample.timelines.get("frame")
+        if not isinstance(frame, int):
+            raise ValueError(f"{sample.entity_path!r} has a row without a frame.")
+        result[(_normalized(sample.entity_path), frame)] = sample.value
+    return result
+
+
+def _scene_actors_by_name(scene: sdp.Scene) -> dict[str, sdp.Actor]:
+    actors: dict[str, sdp.Actor] = {}
+
+    def collect(actor: sdp.Actor) -> None:
+        if actor.is_nested_link_actor() or actor.is_nested_soft_actor():
+            return
+        name = actor.get_name()
+        if name in actors:
+            raise ValueError(f"Restoring requires unique actor names: {name!r}")
+        actors[name] = actor
+
+    scene.for_each_actor(collect)
+    return actors
+
+
+def _bind_actors(reader: EpisodeReader, scene: sdp.Scene) -> list[RecordedActor]:
+    runtime_names = _static_values(reader, "superdex.physics.runtime_name")
+    actor_types = _static_values(reader, "superdex.physics.actor_type")
+    static_flags = _static_values(reader, "superdex.physics.is_static")
+    if not runtime_names.keys() == actor_types.keys() == static_flags.keys():
+        raise ValueError("Recorded actor metadata is incomplete.")
+
+    scene_actors = _scene_actors_by_name(scene)
+    bound_paths: dict[sdp.ActorHandle, str] = {}
+    actors = []
+    for path, runtime_name in sorted(runtime_names.items()):
+        actor = scene_actors.get(runtime_name)
+        if actor is None:
+            raise ValueError(f"Scene is missing recorded actor {runtime_name!r}.")
+        handle = actor.get_handle()
+        if handle in bound_paths:
+            raise ValueError(
+                f"Recorded actors {bound_paths[handle]!r} and {path!r} both bind to "
+                f"scene actor {actor.get_name()!r}."
+            )
+        bound_paths[handle] = path
+        expected_type = {
+            "rigid": sdp.ActorType.RIGID,
+            "articulated": sdp.ActorType.ARTICULATED,
+        }.get(actor_types[path])
+        if actor.get_type() != expected_type:
+            raise ValueError(f"Actor type mismatch for {runtime_name!r}.")
+        actors.append(
+            RecordedActor(
+                path,
+                actor,
+                expected_type == sdp.ActorType.ARTICULATED,
+                bool(static_flags[path]),
+            )
+        )
+    return actors
+
+
+class EpisodeRestorer:
+    """Restores a scene to the state recorded at any frame of an episode.
+
+    The scene must contain the recorded actors, matched by runtime name, with static
+    actors at their recorded poses. No two recorded actors may bind to the same
+    scene actor, and scene actors that were not recorded must be static or nested,
+    such as robot links.
+
+    Restoring a frame sets the scene clock and each dynamic actor's pose, velocity
+    and pose-controller target through the public setters, then takes a zero step to
+    refresh actor queries. A positive step then continues the episode. The integrator
+    starts afresh from the restored state, as at the start of a simulation, so a
+    resumed run stays close to the original but doesn't match it bit for bit. Actors
+    that were spawned or destroyed during the episode are not supported.
+    """
+
+    def __init__(self, recording: EpisodeReader, scene: sdp.Scene) -> None:
+        self._scene = scene
+        self._actors = _bind_actors(recording, scene)
+        self._validate_unrecorded_actors(scene)
+        self._read_frames(recording)
+        samples = recording.component_samples_many(
+            [f"superdex.physics.{component}" for component in _STATE_COMPONENTS]
+        )
+        self._states = {
+            component: _values_by_path_and_frame(
+                samples[f"superdex.physics.{component}"]
+            )
+            for component in _STATE_COMPONENTS
+        }
+        self._validate_static_poses()
+
+    @property
+    def frames(self) -> list[int]:
+        """Recorded frame numbers, in recording order."""
+        return list(self._frames)
+
+    @property
+    def actors(self) -> list[RecordedActor]:
+        """Recorded actors, sorted by path."""
+        return list(self._actors)
+
+    def restore_frame(self, frame: int) -> None:
+        """Restore the scene to the end of the step recorded at ``frame``."""
+        index = self._frame_indices.get(frame)
+        if index is None:
+            raise ValueError(f"Frame {frame} was not recorded.")
+        sdp.experimental.set_simulation_time(
+            self._scene, self._times_sec[index], self._step_dts_sec[index]
+        )
+        for recorded in self._actors:
+            if recorded.is_static:
+                continue
+            if not recorded.is_articulated:
+                self._restore_rigid(recorded, frame)
+                continue
+            self._restore_articulated(recorded, frame)
+            target = self._states["controller_target_positions"].get(
+                (recorded.path, frame)
+            )
+            if target is not None:
+                recorded.actor.set_articulated_target_pose(target)
+        self._scene.step(0.0)
+
+    def _read_frames(self, recording: EpisodeReader) -> None:
+        self._frames: list[int] = []
+        self._times_sec: list[float] = []
+        self._step_dts_sec: list[float] = []
+        for sample in recording.component_samples(
+            "superdex.physics.step_dt_sec", entity_path=_FRAME_PATH
+        ):
+            frame = sample.timelines.get("frame")
+            time_ns = sample.timelines.get("sim_time")
+            if not isinstance(frame, int) or not isinstance(time_ns, int):
+                raise ValueError("Recorded frame timing is missing its timelines.")
+            time_sec = time_ns / 1e9
+            step_dt_sec = float(sample.value[0])
+            self._frames.append(frame)
+            self._times_sec.append(time_sec)
+            self._step_dts_sec.append(step_dt_sec)
+        if not self._frames:
+            raise ValueError("The recording has no physics frames.")
+        self._frame_indices = {frame: i for i, frame in enumerate(self._frames)}
+
+    def _value(self, component: str, recorded: RecordedActor, frame: int) -> Any:
+        try:
+            return self._states[component][(recorded.path, frame)]
+        except KeyError as error:
+            raise ValueError(
+                f"Actor {recorded.actor.get_name()!r} has no {component!r} at "
+                f"frame {frame}."
+            ) from error
+
+    def _transform(self, recorded: RecordedActor, frame: int) -> sdp.TransformRT:
+        return sdp.TransformRT(
+            rotation=self._value("root_quaternion_xyzw", recorded, frame),
+            translation=self._value("root_translation_xyz", recorded, frame),
+        )
+
+    def _world_from_com(self, recorded: RecordedActor, frame: int) -> sdp.TransformRT:
+        return sdp.TransformRT(
+            rotation=self._value("root_quaternion_xyzw", recorded, frame),
+            translation=self._value("com_translation_xyz", recorded, frame),
+        )
+
+    def _restore_rigid(self, recorded: RecordedActor, frame: int) -> None:
+        recorded.actor.set_center_of_mass_transform(
+            self._world_from_com(recorded, frame)
+        )
+        recorded.actor.set_velocity(
+            self._value("linear_velocity_xyz", recorded, frame),
+            self._value("angular_velocity_xyz", recorded, frame),
+        )
+
+    def _restore_articulated(self, recorded: RecordedActor, frame: int) -> None:
+        recorded.actor.set_root_transform(self._transform(recorded, frame))
+        recorded.actor.set_articulated_pose_from_joints(
+            self._value("joint_positions", recorded, frame)
+        )
+        recorded.actor.set_articulated_joint_velocities(
+            self._value("joint_velocities", recorded, frame)
+        )
+
+    def _validate_unrecorded_actors(self, scene: sdp.Scene) -> None:
+        bound = {recorded.actor.get_handle() for recorded in self._actors}
+        unrecorded = sorted(
+            name
+            for name, actor in _scene_actors_by_name(scene).items()
+            if not actor.is_static() and actor.get_handle() not in bound
+        )
+        if unrecorded:
+            raise ValueError(f"Scene has unrecorded dynamic actors {unrecorded}.")
+
+    def _validate_static_poses(self) -> None:
+        for recorded in self._actors:
+            if not recorded.is_static:
+                continue
+            pose = recorded.actor.get_root_transform()
+            recorded_pose = self._transform(recorded, self._frames[0])
+            rotation = pose.rotation.tolist()
+            recorded_rotation = recorded_pose.rotation.tolist()
+            # q and -q are the same rotation.
+            rotation_error = min(
+                math.dist(rotation, recorded_rotation),
+                math.dist(rotation, [-value for value in recorded_rotation]),
+            )
+            translation_error = math.dist(
+                pose.translation.tolist(), recorded_pose.translation.tolist()
+            )
+            if max(rotation_error, translation_error) > _STATIC_POSE_TOLERANCE:
+                raise ValueError(
+                    f"Static actor {recorded.actor.get_name()!r} differs from its "
+                    "recorded pose."
+                )

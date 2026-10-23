@@ -39,8 +39,12 @@ from .reader import (  # noqa: F401
     ComponentSample as ComponentSample,
     EpisodeReader as EpisodeReader,
 )
+from .restore import (  # noqa: F401
+    EpisodeRestorer as EpisodeRestorer,
+    RecordedActor as RecordedActor,
+)
 
-__all__.extend(["ComponentSample", "EpisodeReader"])
+__all__.extend(["ComponentSample", "EpisodeReader", "EpisodeRestorer", "RecordedActor"])
 
 if TYPE_CHECKING:
     from superdex_recorder import *  # noqa: F401,F403
