@@ -396,7 +396,9 @@ class MochiShellActorContactScene : public test::MochiSceneTestBase,
   static real constexpr kScale = 1_r;
   static int constexpr kM = MOCHI_DEBUG ? 8 : 16;
   static int constexpr kN = MOCHI_DEBUG ? 8 : 16;
-  static real constexpr kGravityMagnitude = 10_r;
+  // Debug builds double the time step and the contact radius. Halving gravity keeps the free fall
+  // per step, relative to the contact radius, the same as in optimized builds.
+  static real constexpr kGravityMagnitude = MOCHI_DEBUG ? 5_r : 10_r;
   static real constexpr kBcEps = 1e-3_r;
   static real constexpr kContactRadius = kScale / (real)Min(kM, kN);
   static real constexpr kContactPenalty = 1e7_r;
