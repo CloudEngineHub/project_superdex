@@ -36,33 +36,33 @@ class Aabb final {
   // clang-format off
 
   MOCHI_FORCE_INLINE Aabb() = default;
-  MOCHI_FORCE_INLINE Aabb(Real3 const& min, Real3 const& max) : _min(ToSimd(min, 1_r)), _max(ToSimd(max, 1_r)) {}
-  MOCHI_FORCE_INLINE Aabb(Vec4r min, Vec4r max) : _min(ToSimdPoint(min)), _max(ToSimdPoint(max)) {}
+  MOCHI_FORCE_INLINE Aabb(Real3 const& min, Real3 const& max) : _min{min[0], min[1], min[2], 1_r}, _max{max[0], max[1], max[2], 1_r} {}
+  MOCHI_FORCE_INLINE Aabb(Vec4r min, Vec4r max) : Aabb(ToReal3(min), ToReal3(max)) {}
 
   // SIMD accessors (note that the 4th component is always 1 by convention)
-  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetMin() const { return _min; }
-  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetMax() const { return _max; }
+  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetMin() const { return ToSimd(_min); }
+  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetMax() const { return ToSimd(_max); }
   [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetHalfExtents() const { return 0.5_r * VGetSize(); }
-  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetCenter() const { return 0.5_r * (_max + _min); }
-  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetSize() const { return _max - _min; }
+  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetCenter() const { return 0.5_r * (VGetMax() + VGetMin()); }
+  [[nodiscard]] MOCHI_FORCE_INLINE Vec4r VGetSize() const { return VGetMax() - VGetMin(); }
 
   // Scalar accessors
-  [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetMin() const { return ToReal3(_min); }
-  MOCHI_FORCE_INLINE void SetMin(Real3 const& min) { _min = ToSimd(min, 1_r); }
-  [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetMax() const { return ToReal3(_max); }
-  MOCHI_FORCE_INLINE void SetMax(Real3 const& max) { _max = ToSimd(max, 1_r); }
+  [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetMin() const { return Real3{_min[0], _min[1], _min[2]}; }
+  MOCHI_FORCE_INLINE void SetMin(Real3 const& min) { _min = Real4{min[0], min[1], min[2], 1_r}; }
+  [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetMax() const { return Real3{_max[0], _max[1], _max[2]}; }
+  MOCHI_FORCE_INLINE void SetMax(Real3 const& max) { _max = Real4{max[0], max[1], max[2], 1_r}; }
   [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetHalfExtents() const { return ToReal3(VGetHalfExtents()); }
   [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetCenter() const { return ToReal3(VGetCenter()); }
   [[nodiscard]] MOCHI_FORCE_INLINE Real3 GetSize() const { return ToReal3(VGetSize()); }
 
   // Exact equality
-  [[nodiscard]] MOCHI_FORCE_INLINE bool operator==(Aabb const& rhs) const { return AllTrue<3>(VEqual(_min, rhs._min) & VEqual(_max, rhs._max)); }
+  [[nodiscard]] MOCHI_FORCE_INLINE bool operator==(Aabb const& rhs) const { return AllTrue<3>(VEqual(VGetMin(), rhs.VGetMin()) & VEqual(VGetMax(), rhs.VGetMax())); }
   [[nodiscard]] MOCHI_FORCE_INLINE bool operator!=(Aabb const& rhs) const { return !(*this == rhs); }
 
   // clang-format on
  private:
-  Vec4r _min = ToSimdPoint(SimdZero());
-  Vec4r _max = ToSimdPoint(SimdZero());
+  Real4 _min{0_r, 0_r, 0_r, 1_r};
+  Real4 _max{0_r, 0_r, 0_r, 1_r};
 
 #if MOCHI_USE_REFLECTION
   template <typename T>
