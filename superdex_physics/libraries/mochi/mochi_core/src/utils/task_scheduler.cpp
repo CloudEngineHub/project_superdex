@@ -16,7 +16,6 @@
 
 #include <mochi_core/utils/debug.h>
 #include <mochi_core/utils/defer.h>
-#include <mochi_core/utils/error.h>
 #include <mochi_core/utils/math_utils.h>
 #include <mochi_core/utils/profile.h>
 #include <mochi_core/utils/string_utils.h>
@@ -39,8 +38,15 @@
 #if MOCHI_PLATFORM_WINDOWS
 #include <winnt.h>
 #elif MOCHI_PLATFORM_LINUX
-#include <sys/sysinfo.h>
+#include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/span.h>
+
+#include <sched.h>
+#include <cerrno>
+#include <charconv>
 #include <cstdio>
+#include <limits>
+#include <system_error>
 #include <unordered_set>
 #endif
 
@@ -51,8 +57,180 @@ namespace {
 // Should match marl::Scheduler::MaxWorkerThreads, which is not public.
 constexpr int kMaxThreadsSupportedByMarl = 256;
 
+#if MOCHI_PLATFORM_LINUX
+DynamicArray<int> GetLinuxAllowedCpus() {
+  cpu_set_t stackMask;
+  cpu_set_t* mask = &stackMask;
+  int capacity = CPU_SETSIZE;
+  MOCHI_DEFER(if (mask != &stackMask) { CPU_FREE(mask); });
+  while (true) {
+    size_t const maskSize = CPU_ALLOC_SIZE(capacity);
+    CPU_ZERO_S(maskSize, mask);
+    if (sched_getaffinity(0, maskSize, mask) == 0) {
+      DynamicArray<int> cpus;
+      cpus.reserve(CPU_COUNT_S(maskSize, mask));
+      for (int cpu = 0; cpu < capacity; ++cpu) {
+        if (CPU_ISSET_S(cpu, maskSize, mask)) {
+          cpus.push_back(cpu);
+        }
+      }
+      return cpus;
+    }
+    if (errno != EINVAL || capacity > std::numeric_limits<int>::max() / 2) {
+      return {};
+    }
+    capacity *= 2;
+    if (mask != &stackMask) {
+      CPU_FREE(mask);
+    }
+    mask = CPU_ALLOC(capacity);
+    if (!mask) {
+      return {};
+    }
+  }
+}
+
+std::string ReadLinuxSystemFile(std::string const& filename) {
+  FILE* file = fopen(filename.c_str(), "r");
+  if (!file) {
+    return {};
+  }
+  MOCHI_DEFER(fclose(file));
+
+  // sysfs files must be read sequentially rather than sized using seek.
+  std::string content;
+  char buffer[1024];
+  while (fgets(buffer, sizeof(buffer), file) != nullptr) {
+    content += buffer;
+  }
+  return ferror(file) ? std::string{} : content;
+}
+
+std::string ReadLinuxCpuTopology(int cpu) {
+  return ReadLinuxSystemFile(
+      Format("/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list", cpu));
+}
+
+int CountLinuxPhysicalCoresFromCpuinfo(Span<int const> cpus, std::string_view contents) {
+  std::unordered_set<int> seenCpus;
+  std::unordered_set<std::string> cores;
+  int cpu = -1;
+  std::string_view packageId;
+  std::string_view coreId;
+  auto finishCpu = [&]() {
+    bool allowed = cpus.empty();
+    for (int allowedCpu : cpus) {
+      if (cpu == allowedCpu) {
+        allowed = true;
+        break;
+      }
+    }
+    if (cpu >= 0 && allowed) {
+      if (packageId.empty() || coreId.empty() || !seenCpus.insert(cpu).second) {
+        return false;
+      }
+      cores.insert(std::string{packageId} + ":" + std::string{coreId});
+    }
+    cpu = -1;
+    packageId = {};
+    coreId = {};
+    return true;
+  };
+
+  for (auto line : Split(contents, "\n", true)) {
+    line = Trim(line);
+    if (line.empty()) {
+      if (!finishCpu()) {
+        return -1;
+      }
+      continue;
+    }
+    auto const colon = line.find(':');
+    if (colon == std::string_view::npos) {
+      continue;
+    }
+    auto const key = Trim(line.substr(0, colon));
+    auto const value = Trim(line.substr(colon + 1));
+    if (key == "processor") {
+      auto const parsed = std::from_chars(value.data(), value.data() + value.size(), cpu);
+      if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || cpu < 0) {
+        return -1;
+      }
+    } else if (key == "physical id") {
+      packageId = value;
+    } else if (key == "core id") {
+      coreId = value;
+    }
+  }
+  if (!finishCpu() || (!cpus.empty() && seenCpus.size() != cpus.size())) {
+    return -1;
+  }
+  return cores.empty() ? -1 : static_cast<int>(cores.size());
+}
+
+// Kernel sibling lists are sorted CPU IDs/ranges. Their first CPU identifies the core,
+// even if that CPU is not in the calling thread's affinity mask.
+int ParseLinuxCoreId(int cpu, std::string_view list) {
+  list = Trim(list);
+  int coreId = -1;
+  int previousEnd = -1;
+  bool containsCpu = false;
+  while (!list.empty()) {
+    int begin = 0;
+    auto parsed = std::from_chars(list.data(), list.data() + list.size(), begin);
+    if (parsed.ec != std::errc{} || begin <= previousEnd) {
+      return -1;
+    }
+    list.remove_prefix(parsed.ptr - list.data());
+    int end = begin;
+    if (!list.empty() && list.front() == '-') {
+      list.remove_prefix(1);
+      parsed = std::from_chars(list.data(), list.data() + list.size(), end);
+      if (parsed.ec != std::errc{} || end < begin) {
+        return -1;
+      }
+      list.remove_prefix(parsed.ptr - list.data());
+    }
+    if (coreId < 0) {
+      coreId = begin;
+    }
+    containsCpu |= cpu >= begin && cpu <= end;
+    previousEnd = end;
+    if (!list.empty()) {
+      if (list.front() != ',' || list.size() == 1) {
+        return -1;
+      }
+      list.remove_prefix(1);
+    }
+  }
+  return containsCpu ? coreId : -1;
+}
+
+int CountLinuxPhysicalCores(Span<int const> cpus) {
+  std::unordered_set<int> cores;
+  for (int cpu : cpus) {
+    int const coreId = ParseLinuxCoreId(cpu, ReadLinuxCpuTopology(cpu));
+    if (coreId < 0) {
+      // Partial topology would silently undercount.
+      return -1;
+    }
+    cores.insert(coreId);
+  }
+  return static_cast<int>(cores.size());
+}
+
+#endif // MOCHI_PLATFORM_LINUX
+
 int GetNumLogicalProcessors() {
+#if MOCHI_PLATFORM_LINUX
+  auto const cpus = GetLinuxAllowedCpus();
+  if (!cpus.empty()) {
+    return isize(cpus);
+  }
+  return Max(1, static_cast<int>(std::thread::hardware_concurrency()));
+#else
   return std::thread::hardware_concurrency();
+#endif
 }
 
 } // namespace
@@ -116,105 +294,26 @@ int TaskScheduler::GetNumSupportedLogicalProcessors() {
   return Min(kMaxThreadsSupportedByMarl, GetNumLogicalProcessors());
 }
 
-#if MOCHI_PLATFORM_LINUX
-
-// Linux system files like "/proc/cpuinfo" are not normal files. We can't use mochi::ReadFileString
-// because it expects to be able to seek to the end of the file to determine the file size up front.
-// That doesn't work in this case. We have to read the pipe sequentially until we hit the end.
-static std::string Linux_ReadSystemFile(std::string const& filename, Error& error) {
-  MOCHI_ERROR_RETURN(error, {});
-  FILE* file = fopen(filename.c_str(), "r");
-  if (!file) {
-    MOCHI_ERROR_SET(error, "Failed to open file for reading");
-    return {};
-  }
-  MOCHI_DEFER(fclose(file));
-
-  std::string content;
-  char buffer[1024];
-  while (fgets(buffer, sizeof(buffer), file) != nullptr) {
-    content += buffer;
-  }
-  return content;
-}
-
-// Parse physical core count from "/proc/cpuinfo" using physical id + core id pairs
-static int Linux_GetPhysicalCoresFromCpuinfo(Error& error) {
-  MOCHI_ERROR_RETURN(error, -1);
-
-  // Read the entire file into a string
-  std::string contents = Linux_ReadSystemFile("/proc/cpuinfo", error);
-  MOCHI_ERROR_IF(contents.empty(), error, "Empty cpuinfo");
-  MOCHI_ERROR_RETURN(error, -1);
-
-  // Split lines and trim whitespace
-  auto lines = Split(contents, "\n");
-  for (auto& line : lines) {
-    line = Trim(line);
-  }
-
-  std::unordered_set<std::string> uniqueCores;
-  std::string currentPhysicalId;
-  std::string currentCoreId;
-
-  // Parse line by line
-  for (auto const& line : lines) {
-    if (line.find("physical id") == 0) {
-      size_t colonPos = line.find(':');
-      if (colonPos != std::string::npos) {
-        currentPhysicalId = Trim(line.substr(colonPos + 1));
-      }
-    } else if (line.find("core id") == 0) {
-      size_t colonPos = line.find(':');
-      if (colonPos != std::string::npos) {
-        currentCoreId = Trim(line.substr(colonPos + 1));
-
-        // When we have both physical id and core id, add to unique set
-        if (!currentPhysicalId.empty() && !currentCoreId.empty()) {
-          uniqueCores.insert(Format("%s:%s", currentPhysicalId.c_str(), currentCoreId.c_str()));
-          currentPhysicalId = "";
-          currentCoreId = "";
-        }
-      }
-    }
-  }
-
-  return uniqueCores.empty() ? -1 : isize(uniqueCores);
-}
-
-// Try to get physical cores from CPU topology
-static int Linux_GetPhysicalCoresFromCpuTopology(Error& error) {
-  MOCHI_ERROR_RETURN(error, -1);
-  std::unordered_set<std::string> uniqueCores;
-
-  for (int cpu = 0; cpu < 1024; ++cpu) { // reasonable upper limit
-    Error readError;
-    std::string physicalId = Linux_ReadSystemFile(
-        Format("/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu), readError);
-    std::string coreId = Linux_ReadSystemFile(
-        Format("/sys/devices/system/cpu/cpu%d/topology/core_id", cpu), readError);
-    if (!readError.IsOK()) {
-      break;
-    }
-
-    physicalId = Trim(physicalId);
-    coreId = Trim(coreId);
-
-    if (!physicalId.empty() && !coreId.empty()) {
-      uniqueCores.insert(Format("%s:%s", physicalId.c_str(), coreId.c_str()));
-    } else {
-      // No more CPUs found
-      break;
-    }
-  }
-
-  MOCHI_ERROR_IF(uniqueCores.empty(), error, "Failed to get physical core count from sysfs");
-  return uniqueCores.empty() ? -1 : isize(uniqueCores);
-}
-#endif // MOCHI_PLATFORM_LINUX
-
 // Static function
 int TaskScheduler::GetNumSupportedPhysicalProcessors() {
+#if MOCHI_PLATFORM_LINUX
+  auto const cpus = GetLinuxAllowedCpus();
+  if (cpus.empty()) {
+    int const machineCores =
+        CountLinuxPhysicalCoresFromCpuinfo({}, ReadLinuxSystemFile("/proc/cpuinfo"));
+    int const numLogicalProcessors = GetNumSupportedLogicalProcessors();
+    return machineCores > 0 ? Min(machineCores, numLogicalProcessors) : numLogicalProcessors;
+  }
+  int numCores = CountLinuxPhysicalCores(MakeConstSpan(cpus));
+  if (numCores <= 0) {
+    numCores = CountLinuxPhysicalCoresFromCpuinfo(
+        MakeConstSpan(cpus), ReadLinuxSystemFile("/proc/cpuinfo"));
+  }
+  if (numCores <= 0) {
+    numCores = isize(cpus);
+  }
+  return Min(numCores, kMaxThreadsSupportedByMarl);
+#else
   static int const numCores = []() {
 #if MOCHI_PLATFORM_WINDOWS
     // Call WIN32 API to get the buffer size IN BYTES required to receive processor info.
@@ -239,29 +338,6 @@ int TaskScheduler::GetNumSupportedPhysicalProcessors() {
     } else {
       MOCHI_ASSERT(false, "GetLogicalProcessorInformation failed");
     }
-#elif MOCHI_PLATFORM_LINUX
-    // Linux environments vary, so we have two ways of possibly determining the physical processor
-    // count. First, try to parse the system file, "/proc/cpuinfo".
-    Error error;
-    int physicalCores = Linux_GetPhysicalCoresFromCpuinfo(error);
-    if (error.IsOK()) {
-      MOCHI_ASSERT(physicalCores > 0);
-      return physicalCores;
-    }
-
-    // If that fails, then try this fallback method
-    error = Error{}; // clear error
-    physicalCores = Linux_GetPhysicalCoresFromCpuTopology(error);
-    if (error.IsOK()) {
-      MOCHI_ASSERT(physicalCores > 0);
-      return physicalCores;
-    }
-
-    // If all methods fail, log a warning and fall back to logical processor count
-    MOCHI_LOG_WARNING(
-        "Failed to determine number of physical vs logical processors. "
-        "The same value (%d processors) will be returned for both.",
-        GetNumLogicalProcessors());
 #else
   // APIs may exist to differentiate between logical and physical processors on other platforms.
   // Feel free to add them here. At the time of writing, this was a non-issue for ARM-based Mac
@@ -270,6 +346,7 @@ int TaskScheduler::GetNumSupportedPhysicalProcessors() {
     return GetNumLogicalProcessors();
   }();
   return Min(numCores, kMaxThreadsSupportedByMarl);
+#endif
 }
 
 // Static function

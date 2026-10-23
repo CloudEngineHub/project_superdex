@@ -93,6 +93,9 @@ class TaskScheduler final {
   /**
     Get the number of independent CPU cores in this machine, capped to the maximum worker thread
     count supported by the task scheduler implementation.
+    On Linux, counts cores available through the calling thread's current CPU affinity. If kernel
+    topology is unavailable, returns the available logical processor count instead. CPU-time quotas
+    do not change the number of cores counted here.
   */
   static int GetNumSupportedPhysicalProcessors();
 
@@ -100,7 +103,8 @@ class TaskScheduler final {
     Get the number of logical processors capped to the maximum worker thread count supported by the
     task scheduler implementation.
     This number may be greater than GetNumSupportedPhysicalProcessors() due to technologies like
-    hyperthreading.
+    hyperthreading. On Linux, honors the calling thread's current CPU affinity, including cpuset
+    restrictions, and returns at least one processor if availability cannot be determined.
   */
   static int GetNumSupportedLogicalProcessors();
 
