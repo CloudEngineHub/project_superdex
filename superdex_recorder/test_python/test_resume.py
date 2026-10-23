@@ -29,6 +29,8 @@ import superdex.robotics as sdr
 from superdex.physics.paths import resolve_asset
 from superdex.recorder.reader import EpisodeReader
 
+from . import rrd_verify
+
 BOT = "bots/arm_hand_combos/fr3_dg5f_short/right/fr3_dg5f_short_right.superdex_bot"
 METHODS = (
     sdp.IntegrationMethod.BACKWARD_EULER,
@@ -237,6 +239,7 @@ class ResumeTest(unittest.TestCase):
             physics.record(step + 1, source.scene.get_total_simulation_time())
             recording.efforts.append(applied)
         episode.commit()
+        rrd_verify.assert_rerun_accepts(episode.output_path)
         return recording
 
     def restore(
