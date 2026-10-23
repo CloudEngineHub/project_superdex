@@ -3482,6 +3482,21 @@ void diffsim::MakeSceneDifferentiable(Scene* scene, Error& error) {
   MakeSceneDifferentiableInternal(scene, error);
 }
 
+void experimental::SetSimulationTime(
+    Scene* scene,
+    double totalSimulationTimeSec,
+    double lastTimeStepSec,
+    Error& error) {
+  MOCHI_ERROR_IF(!scene, error, "Invalid scene.");
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(totalSimulationTimeSec) && IsFinite(lastTimeStepSec) && lastTimeStepSec > 0.0,
+      error,
+      "Simulation time must be finite, with a positive last time step.");
+  MOCHI_ERROR_RETURN(error);
+  assert_cast<SceneImpl*>(scene)->GetRegistry().ctx<CSceneTime>().Reset(
+      totalSimulationTimeSec - lastTimeStepSec, 0.0, lastTimeStepSec);
+}
+
 void experimental::RestoreStateFromScene(
     Scene* sceneTo,
     Scene const* sceneFrom,

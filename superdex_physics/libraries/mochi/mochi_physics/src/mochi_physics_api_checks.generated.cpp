@@ -494,6 +494,9 @@ static_assert(std::is_same_v<decltype(&mochi::experimental::RecordingParams::All
 // free function mochi::experimental::AddToScene
 static_assert(std::is_same_v<decltype(&mochi::experimental::AddToScene), mochi::prefab::AddToSceneResult (*)(std::string_view, std::string_view, mochi::Scene*, mochi::prefab::PrefabParams const&, mochi::experimental::RomParams const&, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::AddToScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
+// free function mochi::experimental::SetSimulationTime
+static_assert(std::is_same_v<decltype(&mochi::experimental::SetSimulationTime), void (*)(mochi::Scene*, double, double, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::SetSimulationTime is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
 // free function mochi::experimental::RestoreStateFromScene
 static_assert(std::is_same_v<decltype(&mochi::experimental::RestoreStateFromScene), void (*)(mochi::Scene*, mochi::Scene const*, mochi::StateHandle, mochi::Error&)>, "\n  ERROR: Function mochi::experimental::RestoreStateFromScene is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 

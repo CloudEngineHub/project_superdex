@@ -40,6 +40,17 @@ struct experimental::RomParams [equality(default), no_cpp_definition, no_reflect
 // @see prefab::AddToScene, experimental::RomParams
 fn experimental::AddToScene(StringView prefabPath, StringView rootPath, Scene* scene, prefab::PrefabParams const& params, experimental::RomParams const& romParams) -> prefab::AddToSceneResult [mochi_error, no_capi, no_python];
 
+// @brief Set the scene clock to the end of a step.
+//
+// @param[in] scene Scene whose clock to set.
+// @param[in] totalSimulationTimeSec Total simulated time [s] at the end of the step.
+// @param[in] lastTimeStepSec Duration [s] of the last step, as returned by @ref
+// Scene::GetLastTimeStep when the state was recorded.
+//
+// @details After this call, @ref Scene::GetLastTimeStep returns the given step duration, and
+// @ref Scene::GetTotalSimulationTime returns the given total time up to rounding.
+fn experimental::SetSimulationTime(Scene* scene, double totalSimulationTimeSec [units("s")], double lastTimeStepSec [units("s")]) -> void [mochi_error];
+
 fn experimental::RestoreStateFromScene(Scene* sceneTo, Scene const* sceneFrom, StateHandle handleFrom) -> void [mochi_error];
 fn experimental::ApplyImprovedConvergenceSettings(Scene* scene) -> void [mochi_error];
 

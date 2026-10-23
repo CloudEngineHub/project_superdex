@@ -345,7 +345,7 @@ class ActorInterfaceImpl : public ActorInterface {
   void SetCenterOfMassTransform(TransformRT const& worldFromCom, Error& error) override {
     MOCHI_ERROR_RETURN(error);
     auto const* rbInertia = reg.try_get<CRigidBodyInertia const>(e);
-    MOCHI_ERROR_IF_NOT(rbInertia, error, "This is not a dynamic rigid actor");
+    MOCHI_ERROR_IF_NOT(rbInertia, error, "Only supported for dynamic rigid actors");
     MOCHI_ERROR_RETURN(error);
     TransformRT rootTransform;
     rigid::RigidStateToRootTransform(
