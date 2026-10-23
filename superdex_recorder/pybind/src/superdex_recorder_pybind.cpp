@@ -23,6 +23,7 @@
 
 #include <mochi_physics/pybind/core/pybind_core.h>
 #include <superdex_robotics/superdex_robotics.h>
+#include <superdex_robotics/utils/file_utils.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -254,6 +255,16 @@ NB_MODULE(SUPERDEX_RECORDER_MODULE_NAME, module) {
             CallWithError([&](mochi::Error& error) { self.RestoreFrame(frameIndex, error); });
           },
           nb::arg("frame_index"));
+
+  // Content hash that the Unreal recorder stores for the scene archive and task files.
+  module.def(
+      "_hash_file",
+      [](std::string const& path) {
+        auto const hash = CallWithErrorResult(
+            [&](mochi::Error& error) { return superdex::robotics::HashGenericFile(path, error); });
+        return std::string{hash.c_str(), hash.size()};
+      },
+      nb::arg("path"));
 
   nb::class_<RoboticsRecorder>(module, "RoboticsRecorder")
       .def(

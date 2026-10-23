@@ -39,12 +39,27 @@ from .reader import (  # noqa: F401
     ComponentSample as ComponentSample,
     EpisodeReader as EpisodeReader,
 )
+from .rebuild import (  # noqa: F401
+    apply_recorded_physics as apply_recorded_physics,
+    rebuild_scene as rebuild_scene,
+    RebuiltScene as RebuiltScene,
+)
 from .restore import (  # noqa: F401
     EpisodeRestorer as EpisodeRestorer,
     RecordedActor as RecordedActor,
 )
 
-__all__.extend(["ComponentSample", "EpisodeReader", "EpisodeRestorer", "RecordedActor"])
+__all__.extend(
+    [
+        "ComponentSample",
+        "EpisodeReader",
+        "EpisodeRestorer",
+        "RebuiltScene",
+        "RecordedActor",
+        "apply_recorded_physics",
+        "rebuild_scene",
+    ]
+)
 
 if TYPE_CHECKING:
     from superdex_recorder import *  # noqa: F401,F403
