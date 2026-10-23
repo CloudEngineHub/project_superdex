@@ -250,6 +250,27 @@ class EpisodeRestorerTest(unittest.TestCase):
         episode.commit()
         return recording
 
+    def make_block_scene(
+        self, names: tuple[str, ...]
+    ) -> tuple[sdp.Scene, list[sdp.Actor]]:
+        """Return a scene with a free block for each name, 1 m apart along x."""
+        scene = sdp.create_scene("blocks")
+        self.addCleanup(sdp.destroy_scene, scene)
+        blocks = []
+        for i, name in enumerate(names):
+            block = scene.create_rigid_actor(
+                name=name,
+                shape=sdp.create_tri_mesh_shape(
+                    coordinates=[0, 0, 0, 0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+                    connectivity=[0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+                ),
+                density=1000,
+                world_from_local=sdp.TransformRT(translation=[i, 0, 0]),
+            )
+            assert block is not None
+            blocks.append(block)
+        return scene, blocks
+
     def assert_force_near(self, actual: sdp.Real3, expected: list[float]) -> None:
         self.assert_values_near(actual.tolist(), expected, 1e-6)
 
@@ -400,3 +421,38 @@ class EpisodeRestorerTest(unittest.TestCase):
                         recording.joint_positions[frame],
                         1e-6,
                     )
+
+    def test_binds_same_named_bodies_by_spawn_name(self) -> None:
+        # Unreal names both blocks after their prefab.
+        live, live_blocks = self.make_block_scene(("foam", "foam"))
+        physics_config = recorder.PhysicsRecorderConfig()
+        physics_config.spawn_names = [
+            (live_blocks[0].get_handle(), "Foam"),
+            (live_blocks[1].get_handle(), "Foam2"),
+        ]
+        config = recorder.RecorderConfig(self.directory)
+        episode = recorder.Recorder(config).begin_episode()
+        physics = recorder.PhysicsRecorder(episode, live, physics_config)
+        physics.record(0, live.get_total_simulation_time())
+        live.step(DT)
+        physics.record(1, live.get_total_simulation_time())
+        episode.commit()
+
+        # Named as a rebuilt task names them, and created in the other order, so
+        # restoring must move each block to its own state.
+        scene, blocks = self.make_block_scene(("Foam2/foam", "Foam/foam"))
+        restorer = recorder.EpisodeRestorer(EpisodeReader(episode.output_path), scene)
+        self.assertEqual(
+            {recorded.path: recorded.actor.get_name() for recorded in restorer.actors},
+            {
+                "data/physics/actors/Foam": "Foam/foam",
+                "data/physics/actors/Foam2": "Foam2/foam",
+            },
+        )
+        restorer.restore_frame(1)
+        for block, live_block in zip(blocks, reversed(live_blocks), strict=True):
+            self.assert_values_near(
+                block.get_root_transform().translation.tolist(),
+                live_block.get_root_transform().translation.tolist(),
+                1e-6,
+            )
