@@ -1327,44 +1327,45 @@ void mochi::model::BakeSdf(ModelData& data, GridSdfParams const& params, Error& 
   data.sdf = std::move(gridSdfData);
 }
 
-void mochi::model::GenerateVisualMeshEmbedding(ModelData& data, Error& error) {
+void mochi::model::EmbedInTetrahedralMesh(
+    MeshDataView const& tetMesh,
+    MeshData& outMesh,
+    Error& error) {
   MOCHI_ERROR_RETURN(error);
   MOCHI_ERROR_IF_NOT(
-      data.mesh && data.mesh->nodesPerElement == 4,
+      tetMesh.nodesPerElement == 4,
       error,
-      "GenerateVisualMeshEmbedding requires a tetrahedral simulation mesh.");
-  MOCHI_ERROR_IF_NOT(
-      data.visualMesh && !data.visualMesh->coordinates.empty(),
-      error,
-      "GenerateVisualMeshEmbedding requires a visual mesh with coordinates.");
+      "EmbedInTetrahedralMesh requires a tetrahedral mesh to embed into.");
+  MOCHI_ERROR_IF(tetMesh.connectivity.empty(), error, "Tetrahedral mesh has no elements.");
   MOCHI_ERROR_RETURN(error);
-  ValidateMesh(*data.mesh, /* numSkinningSources */ INT_MAX, error);
-  ValidateMesh(*data.visualMesh, /* numSkinningSources */ INT_MAX, error);
+  // Any existing skinning is about to be replaced, so it need not match the current nodes.
+  MeshDataView meshWithoutSkinning = outMesh;
+  meshWithoutSkinning.skinning.reset();
+  ValidateMesh(tetMesh, /* numSkinningSources */ INT_MAX, error);
+  ValidateMesh(meshWithoutSkinning, /* numSkinningSources */ INT_MAX, error);
   MOCHI_ERROR_RETURN(error);
 
-  auto const tetCoords = Unflatten<Real3 const>(MakeConstSpan(data.mesh->coordinates));
-  auto const tetConn = Unflatten<Int4 const>(MakeConstSpan(data.mesh->connectivity));
-  MOCHI_ERROR_IF(tetConn.empty(), error, "Tetrahedral mesh has no elements.");
-  MOCHI_ERROR_RETURN(error);
+  auto const tetCoords = Unflatten<Real3 const>(tetMesh.coordinates);
+  auto const tetConn = Unflatten<Int4 const>(tetMesh.connectivity);
 
-  auto const tetMesh = std::make_shared<TetrahedralMesh>(tetCoords, tetConn);
-  TetrahedralMeshAabbObject bvhObject(tetMesh);
+  auto const tetrahedra = std::make_shared<TetrahedralMesh>(tetCoords, tetConn);
+  TetrahedralMeshAabbObject bvhObject(tetrahedra);
   AabbTree tree(&bvhObject, BvhTreeParams{});
 
-  auto const visCoords = Unflatten<Real3 const>(MakeConstSpan(data.visualMesh->coordinates));
-  int const numVis = isize(visCoords);
+  auto const nodeCoords = Unflatten<Real3 const>(outMesh.coordinates);
+  int const numNodes = isize(nodeCoords);
   int constexpr kWeightsPerNode = 4;
 
   SkinningData skinning;
   skinning.weightsPerNode = kWeightsPerNode;
-  skinning.indices.resize_noinit(static_cast<size_t>(numVis) * kWeightsPerNode);
-  skinning.weights.resize_noinit(static_cast<size_t>(numVis) * kWeightsPerNode);
+  skinning.indices.resize_noinit(static_cast<size_t>(numNodes) * kWeightsPerNode);
+  skinning.weights.resize_noinit(static_cast<size_t>(numNodes) * kWeightsPerNode);
 
-  ParallelForN("GenerateVisualMeshEmbedding", numVis, 256, [&](int i) {
-    int const tetIdx = tree.FindClosest(visCoords[i]); // const, thread-safe
+  ParallelForN("EmbedInTetrahedralMesh", numNodes, 256, [&](int i) {
+    int const tetIdx = tree.FindClosest(nodeCoords[i]); // const, thread-safe
     Int4 const tet = tetConn[tetIdx];
     NdArray<real, 4> const w = BarycentricCoords4(
-        tetCoords[tet[0]], tetCoords[tet[1]], tetCoords[tet[2]], tetCoords[tet[3]], visCoords[i]);
+        tetCoords[tet[0]], tetCoords[tet[1]], tetCoords[tet[2]], tetCoords[tet[3]], nodeCoords[i]);
     size_t const base = static_cast<size_t>(i) * kWeightsPerNode;
     for (int j = 0; j < kWeightsPerNode; ++j) {
       skinning.indices[base + j] = tet[j];
@@ -1372,18 +1373,18 @@ void mochi::model::GenerateVisualMeshEmbedding(ModelData& data, Error& error) {
     }
   });
 
-  // Warn if any visual node extrapolates by more than a tetrahedron's vertex-to-face height.
-  real const largestExtrapolation = MaxVisualMeshExtrapolation(skinning);
+  // Warn if any node extrapolates by more than a tetrahedron's vertex-to-face height.
+  real const largestExtrapolation = MaxAuxiliaryMeshExtrapolation(skinning);
   if (largestExtrapolation > 1_r) {
     MOCHI_LOG_WARNING(
-        "Some visual nodes lie up to %.2f element-heights outside the tetrahedral mesh.",
+        "Some embedded nodes lie up to %.2f element-heights outside the tetrahedral mesh.",
         largestExtrapolation);
   }
 
-  data.visualMesh->skinning = std::move(skinning);
+  outMesh.skinning = std::move(skinning);
 }
 
-real mochi::model::MaxVisualMeshExtrapolation(SkinningDataView const& skinning) {
+real mochi::model::MaxAuxiliaryMeshExtrapolation(SkinningDataView const& skinning) {
   real largest = 0_r;
   for (real const w : skinning.weights) {
     largest = Max(largest, -w);

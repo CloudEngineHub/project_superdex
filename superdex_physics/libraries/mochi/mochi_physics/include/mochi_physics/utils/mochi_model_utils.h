@@ -79,7 +79,7 @@ MOCHI_API void BakeCoordinateSpaceTransform(
     CoordinateSpace const& toSpace,
     Error& error);
 MOCHI_API void BakeSdf(ModelData& data, GridSdfParams const& params, Error& error);
-MOCHI_API void GenerateVisualMeshEmbedding(ModelData& data, Error& error);
+MOCHI_API void EmbedInTetrahedralMesh(MeshDataView const& tetMesh, MeshData& outMesh, Error& error);
 MOCHI_API void FlipWindingOrder(MeshData& data, Error& error);
 MOCHI_API void FlipWindingOrder(ModelData& data, Error& error);
 } // namespace mochi::model_utils

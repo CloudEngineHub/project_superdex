@@ -102,8 +102,11 @@ void model_utils::BakeSdf(ModelData& data, GridSdfParams const& params, Error& e
   return model::BakeSdf(data, params, error);
 }
 
-void model_utils::GenerateVisualMeshEmbedding(ModelData& data, Error& error) {
-  return model::GenerateVisualMeshEmbedding(data, error);
+void model_utils::EmbedInTetrahedralMesh(
+    MeshDataView const& tetMesh,
+    MeshData& outMesh,
+    Error& error) {
+  return model::EmbedInTetrahedralMesh(tetMesh, outMesh, error);
 }
 
 void model_utils::FlipWindingOrder(MeshData& data, Error& error) {

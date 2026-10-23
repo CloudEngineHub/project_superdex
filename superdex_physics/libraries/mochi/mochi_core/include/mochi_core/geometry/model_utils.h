@@ -317,32 +317,35 @@ void BakeCoordinateSpaceTransform(
 void BakeSdf(ModelData& data, GridSdfParams const& params, Error& error);
 
 /**
- * @brief Generate a linear skinning embedding of the visual mesh into the tetrahedral simulation
- * mesh, filling @ref ModelData::visualMesh 's @ref MeshData::skinning (weightsPerNode = 4).
+ * @brief Embed a mesh into a tetrahedral mesh by linear skinning, filling @p outMesh 's
+ * @ref MeshData::skinning (weightsPerNode = 4).
  *
- * @details For each visual node, finds the containing tetrahedron (or nearest tet if outside all
- * tets) via a BVH over @ref ModelData::mesh, and computes 4 barycentric weights. Weights are not
- * clamped (exterior nodes extrapolate affinely) and sum to 1. Overwrites any existing skinning.
- * The simulation and visual meshes must already share the same coordinate frame.
+ * @details For each node of @p outMesh, finds the containing tetrahedron (or nearest tet if outside
+ * all tets) via a BVH over @p tetMesh, and computes 4 barycentric weights. Weights are not clamped
+ * (exterior nodes extrapolate affinely) and sum to 1. Overwrites any existing skinning. Use it to
+ * embed a model's auxiliary meshes (@ref ModelData::visualMesh, @ref ModelData::contactSkinMesh)
+ * into its tetrahedral @ref ModelData::mesh. Both meshes must already share the same coordinate
+ * frame.
  *
- * @param[in,out] data Model with a tetrahedral @ref ModelData::mesh (nodesPerElement == 4) and a
- * @ref ModelData::visualMesh that has coordinates. On success, visualMesh->skinning is populated.
- * @param[in,out] error Set if mesh/visualMesh preconditions are not met or the tet mesh is empty.
+ * @param[in] tetMesh Tetrahedral mesh (nodesPerElement == 4) to embed into.
+ * @param[in,out] outMesh Mesh to embed; must have coordinates. On success, its skinning is
+ * populated.
+ * @param[in,out] error Set if either mesh is invalid or @p tetMesh has no elements.
  */
-void GenerateVisualMeshEmbedding(ModelData& data, Error& error);
+void EmbedInTetrahedralMesh(MeshDataView const& tetMesh, MeshData& outMesh, Error& error);
 
 /**
- * @brief Return how far a visual-mesh embedding extrapolates outside the tetrahedral mesh,
+ * @brief Return how far an auxiliary-mesh embedding extrapolates outside the tetrahedral mesh,
  * normalized by element height.
  *
  * @details A node's negative barycentric weight means it lies beyond the face opposite that vertex.
  * The weight's magnitude is the distance past that face expressed as a fraction of the tet's height
  * from the vertex to it. This returns the largest fraction over all nodes.
  *
- * @param[in] skinning Stored weights, e.g. from @ref GenerateVisualMeshEmbedding.
+ * @param[in] skinning Stored weights, e.g. from @ref EmbedInTetrahedralMesh.
  * @return Largest extrapolation, or @c 0 if all nodes are interior or the weights are empty.
  */
-[[nodiscard]] real MaxVisualMeshExtrapolation(SkinningDataView const& skinning);
+[[nodiscard]] real MaxAuxiliaryMeshExtrapolation(SkinningDataView const& skinning);
 
 /**
  * @brief Flip mesh winding order by swapping the connectivity indices within each element.

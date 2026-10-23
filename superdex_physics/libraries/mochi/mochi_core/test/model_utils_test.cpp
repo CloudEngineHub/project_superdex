@@ -2512,11 +2512,11 @@ static Real3 ReconstructVisualNode(ModelData const& model, int i) {
   return p;
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_InteriorReconstruction) {
+TEST(ModelUtils, EmbedInTetrahedralMesh_InteriorReconstruction) {
   ModelData model = MakeUnitCubeTetModel();
   Real3 const interior{0.3_r, 0.4_r, 0.5_r};
   SetVisualPointOfInterest(model, interior);
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
 
   ASSERT_TRUE(model.visualMesh->skinning.has_value());
   auto const& skin = *model.visualMesh->skinning;
@@ -2533,11 +2533,11 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_InteriorReconstruction) {
   EXPECT_NEAR_EQ(interior, ReconstructVisualNode(model, 0));
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_VertexCoincidence) {
+TEST(ModelUtils, EmbedInTetrahedralMesh_VertexCoincidence) {
   ModelData model = MakeUnitCubeTetModel();
   Real3 const vertex{0_r, 0_r, 0_r}; // Node 0 of the unit cube.
   SetVisualPointOfInterest(model, vertex);
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
 
   auto const& skin = *model.visualMesh->skinning;
   auto const tetCoords = Unflatten<Real3 const>(MakeConstSpan(model.mesh->coordinates));
@@ -2550,12 +2550,12 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_VertexCoincidence) {
   EXPECT_NEAR_EQ(vertex, ReconstructVisualNode(model, 0));
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_ExteriorExtrapolation) {
+TEST(ModelUtils, EmbedInTetrahedralMesh_ExteriorExtrapolation) {
   ModelData model = MakeUnitCubeTetModel();
   Real3 const exterior{1.2_r, 0.5_r, 0.5_r}; // Just outside the +x face.
   SetVisualPointOfInterest(model, exterior);
   auto noWarn = test::SuppressLogWarning(); // The exterior node may trip the embedding warning.
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
 
   auto const& skin = *model.visualMesh->skinning;
 
@@ -2572,35 +2572,30 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_ExteriorExtrapolation) {
   EXPECT_NEAR_EQ(exterior, ReconstructVisualNode(model, 0));
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_Preconditions) {
-  // A non-tetrahedral simulation mesh (triangles) is rejected.
+TEST(ModelUtils, EmbedInTetrahedralMesh_Preconditions) {
+  // A non-tetrahedral mesh (triangles) to embed into is rejected.
   {
     ModelData model = model::LoadFromBytes(kTriMeshCubeJson, test::ExpectOK{});
     SetVisualPointOfInterest(model, Real3{0.5_r, 0.5_r, 0.5_r});
-    model::GenerateVisualMeshEmbedding(model, test::ExpectNotOK{});
+    model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectNotOK{});
   }
-  // A missing visual mesh is rejected.
-  {
-    ModelData model = MakeUnitCubeTetModel();
-    model::GenerateVisualMeshEmbedding(model, test::ExpectNotOK{});
-  }
-  // A visual mesh without coordinates is rejected.
+  // A mesh without coordinates is rejected.
   {
     ModelData model = MakeUnitCubeTetModel();
     model.visualMesh.emplace();
     model.visualMesh->nodesPerElement = 3;
-    model::GenerateVisualMeshEmbedding(model, test::ExpectNotOK{});
+    model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectNotOK{});
   }
   // An empty tetrahedral mesh (no elements) is rejected.
   {
     ModelData model = MakeUnitCubeTetModel();
     model.mesh->connectivity.clear();
     SetVisualPointOfInterest(model, Real3{0.5_r, 0.5_r, 0.5_r});
-    model::GenerateVisualMeshEmbedding(model, test::ExpectNotOK{});
+    model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectNotOK{});
   }
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_Shape) {
+TEST(ModelUtils, EmbedInTetrahedralMesh_Shape) {
   ModelData model = MakeUnitCubeTetModel();
   DynamicArray<Real3> const pts = {
       Real3{0.1_r, 0.1_r, 0.1_r},
@@ -2609,7 +2604,7 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_Shape) {
       Real3{0_r, 0_r, 0_r},
       Real3{1_r, 1_r, 1_r}};
   SetVisualNodes(model, pts);
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
 
   int const numVis = isize(pts);
   int const numTetNodes = model.mesh->GetNumNodes();
@@ -2623,35 +2618,41 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_Shape) {
   }
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_AutoCorrectValidate) {
-  ModelData model = MakeUnitCubeTetModel();
+// A valid closed triangle mesh (unit-cube surface) sharing the unit-cube tet mesh's coordinate
+// frame, as either kind of auxiliary mesh.
+static MeshData MakeUnitCubeTriSurface() {
+  auto [coords, conn] = test::CreateMinimalTriMeshUnitCube();
+  MeshData mesh;
+  mesh.nodesPerElement = 3;
+  Span<real> flatCoords = Flatten(MakeSpan(coords));
+  Span<int> flatConn = Flatten(MakeSpan(conn));
+  mesh.coordinates.assign(flatCoords.begin(), flatCoords.end());
+  mesh.connectivity.assign(flatConn.begin(), flatConn.end());
+  return mesh;
+}
 
-  // A valid triangle visual mesh (unit-cube surface) sharing the tet mesh's coordinate frame.
-  auto [visCoords, visConn] = test::CreateMinimalTriMeshUnitCube();
-  model.visualMesh.emplace();
-  model.visualMesh->nodesPerElement = 3;
-  {
-    Span<real> flatCoords = Flatten(MakeSpan(visCoords));
-    Span<int> flatConn = Flatten(MakeSpan(visConn));
-    model.visualMesh->coordinates.assign(flatCoords.begin(), flatCoords.end());
-    model.visualMesh->connectivity.assign(flatConn.begin(), flatConn.end());
-  }
+// The produced sum-to-1 weights survive AutoCorrect (NormalizeWeights) unchanged, and the model
+// validates with the embedded mesh in either auxiliary-mesh role.
+TEST(ModelUtils, EmbedInTetrahedralMesh_AutoCorrectValidate) {
+  for (auto const auxiliaryMesh : {&ModelData::visualMesh, &ModelData::contactSkinMesh}) {
+    ModelData model = MakeUnitCubeTetModel();
+    auto& embedded = model.*auxiliaryMesh;
+    embedded = MakeUnitCubeTriSurface();
 
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
-  ASSERT_TRUE(model.visualMesh->skinning.has_value());
+    model::EmbedInTetrahedralMesh(*model.mesh, *embedded, test::ExpectOK{});
+    ASSERT_TRUE(embedded->skinning.has_value());
 
-  // The produced sum-to-1 weights survive AutoCorrect (NormalizeWeights) unchanged, and the
-  // resulting model validates.
-  DynamicArray<real> const weightsBefore = model.visualMesh->skinning->weights;
-  model::AutoCorrect(model, test::ExpectOK{});
-  model::Validate(model, test::ExpectOK{});
-  ASSERT_EQ(weightsBefore.size(), model.visualMesh->skinning->weights.size());
-  for (int i = 0; i < isize(weightsBefore); ++i) {
-    EXPECT_NEAR_EQ(weightsBefore[i], model.visualMesh->skinning->weights[i]);
+    DynamicArray<real> const weightsBefore = embedded->skinning->weights;
+    model::AutoCorrect(model, test::ExpectOK{});
+    model::Validate(model, test::ExpectOK{});
+    ASSERT_EQ(weightsBefore.size(), embedded->skinning->weights.size());
+    for (int i = 0; i < isize(weightsBefore); ++i) {
+      EXPECT_NEAR_EQ(weightsBefore[i], embedded->skinning->weights[i]);
+    }
   }
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_ParallelReconstruction) {
+TEST(ModelUtils, EmbedInTetrahedralMesh_ParallelReconstruction) {
   // Exercise the multi-threaded ParallelForN path (minPerTask = 256) with a visual mesh large
   // enough to split the work across tasks, and verify every node reconstructs from its weights.
   TaskScheduler scheduler;
@@ -2673,7 +2674,7 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_ParallelReconstruction) {
     }
   }
   SetVisualNodes(model, pts);
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
 
   int const numVis = isize(pts);
   auto const& skin = *model.visualMesh->skinning;
@@ -2696,35 +2697,49 @@ static SkinningData MakeSkinning(DynamicArray<real> const& weights) {
   return skin;
 }
 
-TEST(ModelUtils, MaxVisualMeshExtrapolation_Value) {
+// Re-embedding replaces skinning left over from different nodes, e.g. after the mesh is rebuilt.
+TEST(ModelUtils, EmbedInTetrahedralMesh_ReplacesStaleSkinning) {
+  ModelData model = MakeUnitCubeTetModel();
+  DynamicArray<Real3> const pts = {
+      Real3{0.3_r, 0.4_r, 0.5_r}, Real3{0.6_r, 0.2_r, 0.3_r}, Real3{}, Real3{1_r, 1_r, 1_r}};
+  SetVisualNodes(model, pts);
+  model.visualMesh->skinning = MakeSkinning({0.25_r, 0.25_r, 0.25_r, 0.25_r}); // one stale node
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
+
+  for (int i = 0; i < isize(pts); ++i) {
+    EXPECT_NEAR_EQ(pts[i], ReconstructVisualNode(model, i));
+  }
+}
+
+TEST(ModelUtils, MaxAuxiliaryMeshExtrapolation_Value) {
   // The result is the largest -weight over all nodes: 0 when every weight is non-negative, and the
   // magnitude of the most-negative weight otherwise (here node 2's -0.5 dominates node 0's -0.2).
   EXPECT_NEAR_EQ(
-      0_r, model::MaxVisualMeshExtrapolation(MakeSkinning({0.25_r, 0.25_r, 0.25_r, 0.25_r})));
+      0_r, model::MaxAuxiliaryMeshExtrapolation(MakeSkinning({0.25_r, 0.25_r, 0.25_r, 0.25_r})));
   EXPECT_NEAR_EQ(
       0.5_r,
-      model::MaxVisualMeshExtrapolation(MakeSkinning(
+      model::MaxAuxiliaryMeshExtrapolation(MakeSkinning(
           {1.2_r, -0.2_r, 0_r, 0_r, 0.25_r, 0.25_r, 0.25_r, 0.25_r, 1.5_r, -0.5_r, 0_r, 0_r})));
 }
 
-TEST(ModelUtils, MaxVisualMeshExtrapolation_Empty) {
+TEST(ModelUtils, MaxAuxiliaryMeshExtrapolation_Empty) {
   // Empty weights have no extrapolation.
-  EXPECT_NEAR_EQ(0_r, model::MaxVisualMeshExtrapolation(SkinningData{}));
+  EXPECT_NEAR_EQ(0_r, model::MaxAuxiliaryMeshExtrapolation(SkinningData{}));
 }
 
-TEST(ModelUtils, MaxVisualMeshExtrapolation_FromEmbedding) {
-  // Connection test: an exterior visual point embedded by GenerateVisualMeshEmbedding reports a
+TEST(ModelUtils, MaxAuxiliaryMeshExtrapolation_FromEmbedding) {
+  // Connection test: an exterior visual point embedded by EmbedInTetrahedralMesh reports a
   // positive extrapolation.
   ModelData model = MakeUnitCubeTetModel();
   SetVisualPointOfInterest(model, Real3{1.2_r, 0.5_r, 0.5_r}); // Just outside the +x face.
   auto noWarn = test::SuppressLogWarning(); // The exterior node may trip the embedding warning.
-  model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+  model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
 
   ASSERT_TRUE(model.visualMesh->skinning.has_value());
-  EXPECT_GT(model::MaxVisualMeshExtrapolation(*model.visualMesh->skinning), 0_r);
+  EXPECT_GT(model::MaxAuxiliaryMeshExtrapolation(*model.visualMesh->skinning), 0_r);
 }
 
-TEST(ModelUtils, GenerateVisualMeshEmbedding_WarnsOnGrossExtrapolation) {
+TEST(ModelUtils, EmbedInTetrahedralMesh_WarnsOnGrossExtrapolation) {
   // Run the embedding while capturing Warning-channel logs. Swapping the log callback also bypasses
   // the harness's fail-on-warning behavior.
   auto countWarnings = [](Real3 const& p) {
@@ -2739,7 +2754,7 @@ TEST(ModelUtils, GenerateVisualMeshEmbedding_WarnsOnGrossExtrapolation) {
       }
     });
     MOCHI_DEFER(SetLogCallback(prevFn));
-    model::GenerateVisualMeshEmbedding(model, test::ExpectOK{});
+    model::EmbedInTetrahedralMesh(*model.mesh, *model.visualMesh, test::ExpectOK{});
     return warnCount;
   };
 
