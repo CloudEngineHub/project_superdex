@@ -21,6 +21,7 @@ from pathlib import Path
 
 import superdex.physics as sdp
 import superdex.recorder as recorder
+from superdex.physics.utils.scene_helpers import create_scene_from_prefab, find_actor
 from superdex.recorder.reader import EpisodeReader
 
 DT = 0.01
@@ -38,6 +39,10 @@ DIRK_METHODS = (
     sdp.IntegrationMethod.SYMPLECTIC_DIRK12,
     sdp.IntegrationMethod.SYMPLECTIC_DIRK22,
 )
+PICKUP_DT = 0.005
+PICKUP_OPEN_POSE = (-0.43, -0.06, 0.06)
+PICKUP_CLOSED_POSE = (-0.43, 0.0, 0.0)
+PICKUP_LIFTED_POSE = (-0.1, 0.0, 0.0)
 CUBE_HALF_SIZE = 0.05
 # Off the actor origin, so the root transform is rounded from the simulated COM state.
 CUBE_MESH_OFFSET = (0.0371, 0.0123, -0.0277)
@@ -57,11 +62,44 @@ CUBE_TRIANGLES = (
 )
 
 
+def pickup_target(frame: int) -> list[float]:
+    if frame <= 120:
+        start, end, alpha = PICKUP_OPEN_POSE, PICKUP_CLOSED_POSE, frame / 120
+    else:
+        start, end = PICKUP_CLOSED_POSE, PICKUP_LIFTED_POSE
+        alpha = min(1.0, max(0.0, (frame - 180) / 150))
+    return [(1 - alpha) * a + alpha * b for a, b in zip(start, end)]
+
+
+class PickupScene:
+    def __init__(self, scene: sdp.Scene) -> None:
+        self.scene = scene
+        self.robot = find_actor(scene, "RobotArmHand")
+        self.block = find_actor(scene, "PickupBlock")
+
+    def joint_positions(self) -> list[float]:
+        positions = sdp.DynamicArrayReal(self.robot.get_num_dofs())
+        self.robot.get_articulated_pose(positions)
+        return list(positions)
+
+    def target_pose(self) -> list[float]:
+        pose = sdp.DynamicArrayReal(self.robot.get_num_dofs())
+        self.robot.get_articulated_target_pose(pose)
+        return list(pose)
+
+
 class CubeRecording:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.forces: dict[int, list[float]] = {}
         self.translations: dict[int, list[float]] = {}
+
+
+class PickupRecording:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.block_translations: dict[int, list[float]] = {}
+        self.joint_positions: dict[int, list[float]] = {}
 
 
 class EpisodeRestorerTest(unittest.TestCase):
@@ -141,10 +179,46 @@ class EpisodeRestorerTest(unittest.TestCase):
         episode.commit()
         return recording
 
+    def make_pickup_scene(self, method: sdp.IntegrationMethod) -> PickupScene:
+        scene = create_scene_from_prefab(
+            "bots/internal/tests/zq_robot_arm_pickup/zq_robot_arm_pickup.mochi_scene"
+        )
+        self.addCleanup(sdp.destroy_scene, scene)
+        solver_params = scene.get_solver_params()
+        solver_params.integration_method = method
+        scene.set_solver_params(solver_params)
+        return PickupScene(scene)
+
+    def record_pickup(self, method: sdp.IntegrationMethod) -> PickupRecording:
+        source = self.make_pickup_scene(method)
+        source.robot.set_articulated_pose_from_joints(list(PICKUP_OPEN_POSE))
+        source.robot.set_articulated_target_pose(list(PICKUP_OPEN_POSE))
+        config = recorder.RecorderConfig(self.directory)
+        episode = recorder.Recorder(config).begin_episode()
+        physics = recorder.PhysicsRecorder(episode, source.scene)
+        physics.record(0, source.scene.get_total_simulation_time())
+        recording = PickupRecording(episode.output_path)
+        for frame in range(1, 341):
+            source.robot.set_articulated_target_pose(pickup_target(frame))
+            source.scene.step(PICKUP_DT)
+            physics.record(frame, source.scene.get_total_simulation_time())
+            recording.block_translations[frame] = (
+                source.block.get_root_transform().translation.tolist()
+            )
+            recording.joint_positions[frame] = source.joint_positions()
+        episode.commit()
+        return recording
+
     def assert_force_near(self, actual: sdp.Real3, expected: list[float]) -> None:
-        tolerance = max(1.0, math.hypot(*expected)) * 1e-6
-        for actual_value, expected_value in zip(actual.tolist(), expected):
-            self.assertAlmostEqual(actual_value, expected_value, delta=tolerance)
+        self.assert_values_near(actual.tolist(), expected, 1e-6)
+
+    def assert_values_near(
+        self, actual: list[float], expected: list[float], tolerance: float
+    ) -> None:
+        self.assertEqual(len(actual), len(expected))
+        scaled_tolerance = max(1.0, math.hypot(*expected)) * tolerance
+        for actual_value, expected_value in zip(actual, expected):
+            self.assertAlmostEqual(actual_value, expected_value, delta=scaled_tolerance)
 
     def test_restored_frames_match_the_recording(self) -> None:
         for method in METHODS:
@@ -234,3 +308,28 @@ class EpisodeRestorerTest(unittest.TestCase):
         scene, _ = self.make_cube_scene(method)
         with self.assertRaisesRegex(ValueError, "both bind to scene actor 'ground'"):
             recorder.EpisodeRestorer(EpisodeReader(episode.output_path), scene)
+
+    def test_restored_robot_frames_match_the_live_run(self) -> None:
+        for method in METHODS:
+            with self.subTest(method=method.name):
+                recording = self.record_pickup(method)
+                restored = self.make_pickup_scene(method)
+                restorer = recorder.EpisodeRestorer(
+                    EpisodeReader(recording.path), restored.scene
+                )
+                # The block's center of mass is off its origin, and it rests before the grasp.
+                for frame in range(1, 341):
+                    restorer.restore_frame(frame)
+                    self.assert_values_near(
+                        restored.target_pose(), pickup_target(frame), 1e-6
+                    )
+                    self.assert_values_near(
+                        restored.block.get_root_transform().translation.tolist(),
+                        recording.block_translations[frame],
+                        1e-6,
+                    )
+                    self.assert_values_near(
+                        restored.joint_positions(),
+                        recording.joint_positions[frame],
+                        1e-6,
+                    )
