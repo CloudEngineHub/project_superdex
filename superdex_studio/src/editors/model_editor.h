@@ -320,12 +320,11 @@ class ModelEditor : public AssetEditor {
   void RebuildMochiModelSurfaceMesh();
   void RebuildMochiModelWireframeMesh();
   void DestroyMochiModelWireframeMesh();
-  // Reconstructs the SDF surface once (a CLI subprocess) and builds both the SDF surface and
-  // wireframe meshes from that shared geometry.
+  // Builds both the SDF surface and wireframe meshes from the asset's cached SDF surface
+  // (reconstructing it first if no viewport has yet).
   void RebuildSdfMeshes();
   void DestroySdfMesh();
   void DestroySdfWireframeMesh();
-  bool BuildSdfSurfaceGeometry(std::vector<float>& positions, std::vector<int>& indices) const;
   void ApplyModelTransform();
   // Launches a hidden background task computing the approximate Hausdorff distance between a
   // modifier's @p input and @p output meshes (via the mesh CLI), tagged with the modifier's id +

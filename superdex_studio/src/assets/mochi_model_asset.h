@@ -22,12 +22,15 @@
 #include <mochi_renderer/resource.h>
 #include <mochi_renderer/scene.h>
 
+#include <mochi_core/utils/coordinate_space_converter.h>
 #include <mochi_core/utils/span.h>
 
 #include <math/vec3.h>
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +42,10 @@ class WireframeMesh;
 namespace superdex::studio {
 
 class AssetManager;
+
+// Role suffix hashed with a mesh's color seed to color the SDF surface reconstructed from it (see
+// MochiModelAsset::GetSdfSurfaceColor), so SDF surfaces read alike everywhere they are shown.
+inline constexpr std::string_view kSdfSurfaceColorRole = " output SDF";
 
 //--------------------------------------------------------------------------------------------------
 // MOCHI MODEL ASSET
@@ -87,6 +94,40 @@ class MochiModelAsset : public Asset {
       int boneCount,
       std::unique_ptr<mochi_renderer::WireframeMesh>& outWireframe);
 
+  // The zero isosurface of the model's SDF grid, in renderer space in the same frame as the model's
+  // own render geometry.
+  struct SdfSurface {
+    std::vector<float> positions;
+    std::vector<float> normals;
+    std::vector<int> indices;
+  };
+  // Reconstructs the surface of @p sdf through the mesh CLI. Touches no asset state, so it can run
+  // off the main thread. Returns nullopt if reconstruction fails or yields no triangles.
+  static std::optional<SdfSurface> ReconstructSdfSurface(
+      mochi::GridSdfData const& sdf,
+      mochi::CoordinateSpaceConverter const& converter);
+
+  // The SDF surface is reconstructed on demand and cached, as one mesh that every viewport
+  // instances (see GetSdfRenderModelInstance). ReloadFromDisk rebuilds it in place when it was
+  // built, so every staged instance follows a re-meshed or re-baked model.
+  bool HasSdf() const;
+  // True once the SDF surface was reconstructed (successfully or not) for the current model data.
+  bool IsSdfSurfaceBuilt() const;
+  // Bumped whenever the model data is reloaded, so a surface reconstructed in the background from
+  // older data can be told apart and dropped (see SetSdfSurface).
+  int GetSdfGeneration() const;
+  // Reconstructs the SDF surface now unless already built. Returns the cached surface, or null when
+  // the model has no SDF or reconstruction failed.
+  SdfSurface const* EnsureSdfSurface();
+  // Installs a surface reconstructed in the background from this asset's SDF at @p generation.
+  // Ignored if the model was reloaded since.
+  void SetSdfSurface(int generation, std::optional<SdfSurface> surface);
+  // An instance of the shared SDF surface mesh, or null until a surface is built.
+  std::unique_ptr<mochi_renderer::SceneObject> GetSdfRenderModelInstance() const;
+  // The SDF surface color: hashed from the path like GetSurfaceColor, with an extra role suffix, so
+  // the SDF is distinct from the collision surface yet stable everywhere it is shown.
+  filament::math::float3 GetSdfSurfaceColor() const;
+
   // Asset overrides
   char const* GetTypeLabel() const override;
   bool RendersThumbnail() const override;
@@ -131,9 +172,17 @@ class MochiModelAsset : public Asset {
       std::vector<float>& boneWeights,
       int& weightsPerNode,
       int& outMaxBoneIndex);
+  // Caches @p surface as the built SDF surface and points the shared SDF mesh (and so every live
+  // instance) at it.
+  void InstallSdfSurface(std::optional<SdfSurface> surface);
 
  private:
   std::unique_ptr<mochi_renderer::WireframeMesh> _renderModel;
+  std::unique_ptr<mochi_renderer::WireframeMesh> _sdfRenderModel;
+  std::optional<SdfSurface> _sdfSurface;
+  bool _sdfSurfaceBuilt = false;
+  int _sdfGeneration = 0;
+  filament::math::float3 _sdfColor = {1.0f, 0.0f, 0.0f};
   filament::math::float3 _color = {0.5f, 0.7f, 1.0f};
   filament::math::float3 _wireframeColor = {1.0f, 1.0f, 1.0f};
   mochi::ModelData _modelData;

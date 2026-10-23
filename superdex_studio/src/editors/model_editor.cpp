@@ -37,7 +37,6 @@
 #include <mochi_renderer/resource.h> // RenderModel, RenderModelFormat
 #include <mochi_renderer/utils.h>
 
-#include <mochi_mesh/isosurface_reconstruction.h>
 #include <mochi_mesh/mesh_statistics.h>
 #include <mochi_mesh/step_mesh_body.h>
 #include <mochi_mesh/step_mesh_stages.h>
@@ -318,7 +317,7 @@ std::filesystem::file_time_type FileMtimeOrDefault(mochi::DynamicString const& p
 // reconstructed from it get distinct but stable hashed colors. Shared by the Model Viewer's Mochi
 // Model section and the Export Mochi Model modifier so the two reads look identical.
 constexpr std::string_view kInputMeshColorRole = " input mesh";
-constexpr std::string_view kOutputSdfColorRole = " output SDF";
+constexpr std::string_view kOutputSdfColorRole = kSdfSurfaceColorRole;
 
 // Deterministic surface color for a mesh identified by @p seed (a file path or stage label) in a
 // given @p role: hashing seed+role keeps related meshes distinct yet stable across sessions. The
@@ -1616,7 +1615,8 @@ void ModelEditor::UpdateMochiModel() {
     std::string const colorSeed = _mochiModelAsset->GetPath().ToString();
     ImVec4 const mochiHashColor = HashStringToColor(colorSeed);
     _mochiColor = {mochiHashColor.x, mochiHashColor.y, mochiHashColor.z};
-    _sdfColor = HashedMeshColor(colorSeed, kOutputSdfColorRole);
+    filament::math::float3 const sdfColor = _mochiModelAsset->GetSdfSurfaceColor();
+    _sdfColor = {sdfColor.x, sdfColor.y, sdfColor.z};
     // Working geometry backing (for future mesh processing). The surface/wireframe below are still
     // built from the model data directly.
     {
@@ -1797,61 +1797,19 @@ void ModelEditor::DestroyMochiModelWireframeMesh() {
   }
 }
 
-bool ModelEditor::BuildSdfSurfaceGeometry(std::vector<float>& positions, std::vector<int>& indices)
-    const {
-  positions.clear();
-  indices.clear();
-  if (!_mochiModelAsset) {
-    return false;
-  }
-  auto const& modelData = _mochiModelAsset->GetModelData();
-  if (!modelData.sdf) {
-    return false;
-  }
-  mochi::ErrorLog error;
-  mochi::MeshData const surface = mochi::mesh::ReconstructSurfaceFromSdf(*modelData.sdf, error);
-  if (!error.IsOK() || surface.GetNumElements() == 0) {
-    return false;
-  }
-
-  auto const& converter = _studio->GetEditorToRendererSpaceConverter();
-
-  // ReconstructSurfaceFromSdf returns vertices in grid-local space. BakeTransform does not rotate
-  // the axis-aligned grid in place; instead it stores the parent-from-grid transform in the SDF's
-  // scale/rotation/translation fields (applied as scale, then rotation, then translation). Apply it
-  // here so the visualized surface matches the baked model data (and the simulated SDF).
-  using namespace mochi; // for _r literals
-  mochi::GridSdfData const& sdf = *modelData.sdf;
-  Real3 const sdfScale = sdf.scale.value_or(Real3{1_r, 1_r, 1_r});
-  Quaternion const sdfRotation = sdf.rotation.value_or(Quaternion::Identity());
-  Real3 const sdfTranslation = sdf.translation.value_or(Real3{});
-
-  positions.reserve(surface.coordinates.size());
-  for (int i = 0; i < surface.GetNumNodes(); ++i) {
-    Real3 const local{
-        surface.coordinates[i * 3], surface.coordinates[i * 3 + 1], surface.coordinates[i * 3 + 2]};
-    Real3 const parent = sdfRotation * (local * sdfScale) + sdfTranslation;
-    auto const out = StaticCast<mochi::Float3>(converter.TranslationToOutput(parent));
-    positions.push_back(out[0]);
-    positions.push_back(out[1]);
-    positions.push_back(out[2]);
-  }
-  indices.assign(surface.connectivity.begin(), surface.connectivity.end());
-  return true;
-}
-
 void ModelEditor::RebuildSdfMeshes() {
   DestroySdfMesh();
   DestroySdfWireframeMesh();
-  // Reconstruct the SDF surface ONCE (a CLI subprocess -- the expensive part) and build both the
-  // surface and wireframe meshes from the shared geometry.
-  std::vector<float> positions;
-  std::vector<int> indices;
-  if (!BuildSdfSurfaceGeometry(positions, indices)) {
+  // The asset reconstructs the SDF surface (a CLI subprocess -- the expensive part) once and caches
+  // it for every viewport; build both the surface and wireframe meshes from that geometry.
+  MochiModelAsset::SdfSurface const* const sdfSurface =
+      _mochiModelAsset ? _mochiModelAsset->EnsureSdfSurface() : nullptr;
+  if (sdfSurface == nullptr) {
     return; // DestroySdfMesh above already cleared _sdfStats
   }
-  std::vector<float> normals;
-  ComputeVertexNormalsAreaWeighted(positions, indices, normals);
+  std::vector<float> const& positions = sdfSurface->positions;
+  std::vector<float> const& normals = sdfSurface->normals;
+  std::vector<int> const& indices = sdfSurface->indices;
 
   // The reconstructed SDF surface is a single welded mesh, so its statistics are exact. Reuse the
   // geometry (positions/indices are still needed below to build the meshes).

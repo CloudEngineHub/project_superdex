@@ -61,6 +61,8 @@ enum class StageType {
   RenderModelFallbackToMochiModel,
   RenderModelOnly,
   MochiModelOnly,
+  // The collision model's SDF surface where it has one, else the collision model itself.
+  SdfFallbackToMochiModel,
 };
 
 // Identifies which prefab actor a staged render object originated from, so the editor can map a
@@ -108,9 +110,13 @@ struct StagedActor {
   // framing follows what is actually drawn.
   Instance render;
   Instance shape;
-  // The currently-visible (selectable) representation's object -- aliases `render.sceneObject` or
-  // `shape.sceneObject` (null if neither is shown). Selection/picking treat a link as one object,
-  // so callers use this.
+  // The shape's SDF surface: an instance of the collision model's shared SDF mesh, sharing the
+  // shape's model file, offset and scale. Created the first time StageType::SdfFallbackToMochiModel
+  // finds the surface built, then kept like the other two. Never set for deforming actors.
+  Instance sdf;
+  // The currently-visible (selectable) representation's object -- aliases `render.sceneObject`,
+  // `shape.sceneObject` or `sdf.sceneObject` (null if none is shown). Selection/picking treat a
+  // link as one object, so callers use this.
   mochi_renderer::SceneObject* sceneObject = nullptr;
   // Last-applied world transform (default pose, or simulation pose while playing).
   mochi::TransformRT worldTransform = {};
@@ -414,7 +420,18 @@ struct SceneStage {
   // StageBotScene.
   // Returns true if the staged objects were rebuilt (existing SceneObjects destroyed and recreated,
   // invalidating external pointers); false if existing objects were reused.
-  bool ApplyStageRequests(std::vector<StageRequest> const& requests);
+  bool ApplyStageRequests(std::vector<StageRequest> const& requests, StageType stageType);
+
+  // Shows `actor`'s SDF surface in place of its collision model when the stage type asks for it
+  // and the surface is built, creating the instance on first use; otherwise hides it. Updates the
+  // selectable alias; the caller applies the transforms.
+  void ApplySdfVisibility(StagedActor& actor);
+
+  // Under StageType::SdfFallbackToMochiModel, reconstructs the SDF surfaces the staged collision
+  // models have but have not built yet, as a background task batch with a progress modal, then
+  // shows them in place of their collision models (no restage needed). A no-op when nothing is
+  // missing or another batch is running.
+  void BuildMissingSdfSurfaces();
 
 #if MOCHI_INTERNAL
   bool StageBotSceneImpl(
@@ -437,6 +454,10 @@ struct SceneStage {
   mochi_renderer::Scene* _renderScene = nullptr;
   // Whether any highlight clone was shown by the last UpdateHighlights (see HasActiveHighlights).
   bool _hasActiveHighlights = false;
+  // The stage type of the last staging call.
+  StageType _stageType = StageType::RenderModelFallbackToMochiModel;
+  // Expires with the stage, so a background SDF batch finishing after it is gone skips it.
+  std::shared_ptr<bool> _lifetime = std::make_shared<bool>(true);
 };
 
 } // namespace superdex::studio

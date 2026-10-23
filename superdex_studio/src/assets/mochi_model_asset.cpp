@@ -23,6 +23,7 @@
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/reflection.h>
 #include <mochi_core/utils/string_utils.h>
+#include <mochi_mesh/isosurface_reconstruction.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
 #include <mochi_renderer/mesh.h>
 #include <mochi_renderer/resource_manager.h>
@@ -35,6 +36,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace mochi_renderer;
@@ -80,6 +82,8 @@ std::unique_ptr<MochiModelAsset> MochiModelAsset::Create(
   ImVec4 const color = HashStringToColor(colorSeed);
   asset->_color = {color.x, color.y, color.z};
   asset->_wireframeColor = WireframeColorForSurface(asset->_color);
+  ImVec4 const sdfColor = HashStringToColor(colorSeed + std::string(kSdfSurfaceColorRole));
+  asset->_sdfColor = {sdfColor.x, sdfColor.y, sdfColor.z};
 
   // Build the one and only flat-lit + wireframe mesh; GetRenderModelInstance() hands out instances.
   asset->_renderModel = mochi_renderer::WireframeMesh::CreateWireframeMesh(
@@ -380,6 +384,15 @@ bool MochiModelAsset::ReloadFromDisk() {
         mochi::Span<float const>(normals.data(), normals.size()),
         mochi::Span<int const>(indices.data(), indices.size()));
   }
+  // A surface someone already asked for is likely on screen, so rebuild it now (re-pointing its
+  // instances too); otherwise just forget it and let the next request rebuild it.
+  bool const sdfWasBuilt = _sdfSurfaceBuilt;
+  ++_sdfGeneration;
+  _sdfSurfaceBuilt = false;
+  _sdfSurface.reset();
+  if (sdfWasBuilt) {
+    EnsureSdfSurface();
+  }
   MarkThumbnailDirty();
   return true;
 }
@@ -394,6 +407,118 @@ mochi::ModelData& MochiModelAsset::GetModelData() {
 
 filament::math::float3 MochiModelAsset::GetSurfaceColor() const {
   return _color;
+}
+
+std::optional<MochiModelAsset::SdfSurface> MochiModelAsset::ReconstructSdfSurface(
+    mochi::GridSdfData const& sdf,
+    mochi::CoordinateSpaceConverter const& converter) {
+  using namespace mochi;
+  ErrorLog error;
+  MeshData const surface = mesh::ReconstructSurfaceFromSdf(sdf, error);
+  if (!error.IsOK() || surface.GetNumElements() == 0) {
+    return std::nullopt;
+  }
+  // The surface comes back in grid-local space. BakeTransform does not rotate the axis-aligned grid
+  // in place; it stores the parent-from-grid transform in the SDF's scale/rotation/translation
+  // (applied in that order), so apply it to land in the model frame the simulated SDF uses.
+  Real3 const sdfScale = sdf.scale.value_or(Real3{1_r, 1_r, 1_r});
+  Quaternion const sdfRotation = sdf.rotation.value_or(Quaternion::Identity());
+  Real3 const sdfTranslation = sdf.translation.value_or(Real3{});
+  SdfSurface out;
+  out.positions.reserve(surface.coordinates.size());
+  for (int i = 0; i < surface.GetNumNodes(); ++i) {
+    Real3 const local{
+        surface.coordinates[3 * i + 0],
+        surface.coordinates[3 * i + 1],
+        surface.coordinates[3 * i + 2]};
+    Real3 const parent = sdfRotation * (local * sdfScale) + sdfTranslation;
+    auto const p = StaticCast<Float3>(converter.TranslationToOutput(parent));
+    out.positions.insert(out.positions.end(), {p[0], p[1], p[2]});
+  }
+  out.indices.assign(surface.connectivity.begin(), surface.connectivity.end());
+  // A mirrored grid transform (an odd number of negative scale components, as in models baked with
+  // a mirroring scale) turns the reconstructed triangles inside out; rewind them to face outward.
+  if (sdfScale[0] * sdfScale[1] * sdfScale[2] < 0_r) {
+    for (Int3& tri : Unflatten<Int3>(MakeSpan(out.indices))) {
+      std::swap(tri[1], tri[2]);
+    }
+  }
+  ComputeVertexNormalsAreaWeighted(out.positions, out.indices, out.normals);
+  return out;
+}
+
+bool MochiModelAsset::HasSdf() const {
+  return _modelData.sdf.has_value();
+}
+
+bool MochiModelAsset::IsSdfSurfaceBuilt() const {
+  return _sdfSurfaceBuilt;
+}
+
+int MochiModelAsset::GetSdfGeneration() const {
+  return _sdfGeneration;
+}
+
+MochiModelAsset::SdfSurface const* MochiModelAsset::EnsureSdfSurface() {
+  if (!_sdfSurfaceBuilt) {
+    InstallSdfSurface(
+        HasSdf() ? ReconstructSdfSurface(
+                       *_modelData.sdf, _manager->GetStudio()->GetEditorToRendererSpaceConverter())
+                 : std::nullopt);
+  }
+  return _sdfSurface ? &*_sdfSurface : nullptr;
+}
+
+void MochiModelAsset::SetSdfSurface(int generation, std::optional<SdfSurface> surface) {
+  if (generation == _sdfGeneration) {
+    InstallSdfSurface(std::move(surface));
+  }
+}
+
+void MochiModelAsset::InstallSdfSurface(std::optional<SdfSurface> surface) {
+  _sdfSurface = std::move(surface);
+  _sdfSurfaceBuilt = true;
+  if (!_sdfSurface) {
+    // Instances outlive a surface that disappears on reload (the SDF was removed, or no longer
+    // reconstructs); collapse the mesh to a single degenerate triangle so they draw nothing.
+    if (_sdfRenderModel) {
+      std::vector<float> const positions(9, 0.0f);
+      std::vector<float> const normals = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+      std::vector<int> const indices = {0, 1, 2};
+      _sdfRenderModel->UpdateGeometry(
+          mochi::MakeConstSpan(positions),
+          mochi::MakeConstSpan(normals),
+          mochi::MakeConstSpan(indices));
+    }
+    return;
+  }
+  auto const positions = mochi::MakeConstSpan(_sdfSurface->positions);
+  auto const normals = mochi::MakeConstSpan(_sdfSurface->normals);
+  auto const indices = mochi::MakeConstSpan(_sdfSurface->indices);
+  if (_sdfRenderModel) {
+    _sdfRenderModel->UpdateGeometry(positions, normals, indices);
+    return;
+  }
+  ResourceManager& rm = _manager->GetStudio()->GetResourceManager();
+  filament::math::float3 const wireColor = WireframeColorForSurface(_sdfColor);
+  _sdfRenderModel = WireframeMesh::CreateWireframeMesh(
+      rm.GetEngine(),
+      positions,
+      normals,
+      indices,
+      rm.CreateWireframeMaterial({wireColor.x, wireColor.y, wireColor.z, 1.0f}),
+      rm.CreateFlatLitOpaqueMaterial(_sdfColor),
+      /*isClosed=*/true,
+      /*castShadows=*/true,
+      /*isDynamic=*/true);
+}
+
+std::unique_ptr<SceneObject> MochiModelAsset::GetSdfRenderModelInstance() const {
+  return _sdfSurface && _sdfRenderModel ? _sdfRenderModel->GetInstance() : nullptr;
+}
+
+filament::math::float3 MochiModelAsset::GetSdfSurfaceColor() const {
+  return _sdfColor;
 }
 
 char const* MochiModelAsset::GetTypeLabel() const {

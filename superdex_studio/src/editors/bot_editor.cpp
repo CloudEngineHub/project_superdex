@@ -301,6 +301,15 @@ void BotEditor::Initialize() {
            },
        .getState = [this] { return _stageType == StageType::RenderModelFallbackToMochiModel; },
        .shortcut = ImGuiKey_3});
+  _viewport->RegisterShowCommand(
+      {.name = "SDF (Collision Fallback)",
+       .onToggle =
+           [this] {
+             _stageType = StageType::SdfFallbackToMochiModel;
+             RestageBot();
+           },
+       .getState = [this] { return _stageType == StageType::SdfFallbackToMochiModel; },
+       .shortcut = ImGuiKey_4});
   // Initialize Mochi scene and callbacks
   _mochiScene.Initialize(_studio->GetMochiContext(), "BotEditor");
   _mochiScene.SetSettings(_studio->GetAppSettings().physics);

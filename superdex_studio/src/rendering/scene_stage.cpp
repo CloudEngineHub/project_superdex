@@ -30,6 +30,7 @@
 #include "assets/bot_asset.h"
 #include "assets/mochi_model_asset.h"
 #include "assets/mochi_prefab_asset.h"
+#include "core/async_task.h"
 #include "ui/imgui_widgets.h" // HashStringToColor
 
 #include <superdex_robotics/utils/archive_utils.h>
@@ -42,6 +43,12 @@
 #include <mochi_core/utils/vmatrix.h>
 
 #include <mochi_physics/cpp_api/mochi_actor.h>
+
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <set>
+#include <string>
 
 using mochi::operator""_r;
 using namespace mochi_renderer;
@@ -131,6 +138,9 @@ static void ComputeStageVisibility(
       outRenderVisible = hasRender;
       break;
     case StageType::MochiModelOnly:
+    case StageType::SdfFallbackToMochiModel:
+      // SDF mode stages the collision model as the fallback; ApplySdfVisibility swaps in the SDF
+      // surface where there is one.
       outShapeVisible = hasShape;
       break;
     case StageType::RenderModelFallbackToMochiModel:
@@ -579,6 +589,7 @@ static void SetStagedActorWorldTransform(
   };
   applyTo(actor.render);
   applyTo(actor.shape);
+  applyTo(actor.sdf);
   // A skinned skin's other surface is not held in a slot, so it would keep the identity transform
   // and sit at the origin. A hidden object still contributes to the scene AABB, so that stray
   // surface would drag the ground plane, the camera framing and the asset thumbnail. It is the same
@@ -882,7 +893,7 @@ bool SceneStage::StageBot(superdex::robotics::BotPrefab const& prefab, StageType
   }
   std::vector<StageRequest> requests;
   BuildBotRequests(_scene, _studio, prefab, stageType, /*stageSkin=*/true, requests);
-  return ApplyStageRequests(requests);
+  return ApplyStageRequests(requests, stageType);
 }
 
 bool SceneStage::StagePrefab(
@@ -917,7 +928,7 @@ bool SceneStage::StagePrefab(
       -1,
       requests);
 
-  return ApplyStageRequests(requests);
+  return ApplyStageRequests(requests, stageType);
 }
 
 #if MOCHI_INTERNAL
@@ -1054,12 +1065,15 @@ bool SceneStage::StageBotSceneImpl(
     BuildBotRequests(_scene, _studio, botPrefab, stageType, /*stageSkin=*/false, requests);
   }
 
-  return ApplyStageRequests(requests);
+  return ApplyStageRequests(requests, stageType);
 }
 #endif // MOCHI_INTERNAL
 
-bool SceneStage::ApplyStageRequests(std::vector<StageRequest> const& requests) {
+bool SceneStage::ApplyStageRequests(
+    std::vector<StageRequest> const& requests,
+    StageType stageType) {
   using namespace mochi;
+  _stageType = stageType;
   auto& manager = _studio->GetAssetManager();
   auto const& converter = _studio->GetEditorToRendererSpaceConverter();
 
@@ -1280,6 +1294,7 @@ bool SceneStage::ApplyStageRequests(std::vector<StageRequest> const& requests) {
     actor.sceneObject = (req.renderVisible && actor.render.sceneObject) ? actor.render.sceneObject
         : (req.shapeVisible && actor.shape.sceneObject)                 ? actor.shape.sceneObject
                                                                         : nullptr;
+    ApplySdfVisibility(actor);
 
     SetStagedActorWorldTransform(actor, actor.worldTransform, converter);
 
@@ -1301,7 +1316,118 @@ bool SceneStage::ApplyStageRequests(std::vector<StageRequest> const& requests) {
       _nameToIndex[_actors[i].name] = i;
     }
   }
+  BuildMissingSdfSurfaces();
   return !reuse;
+}
+
+// True for an actor whose collision surface deforms (a soft actor or an articulated skin). Its
+// SDF, if any, does not follow the deformation, so it is not shown in SDF mode.
+static bool HasDeformingSurface(StagedActor const& actor) {
+  return actor.dynamicSolidMesh != nullptr || actor.dynamicWireframeMesh != nullptr ||
+      actor.shapeSkinnedSurface != nullptr;
+}
+
+void SceneStage::ApplySdfVisibility(StagedActor& actor) {
+  bool const wanted = _stageType == StageType::SdfFallbackToMochiModel &&
+      actor.shape.sceneObject != nullptr && !HasDeformingSurface(actor);
+  if (wanted && actor.sdf.sceneObject == nullptr) {
+    auto* asset = _studio->GetAssetManager().LoadMochiModelAsset(actor.shape.modelFile);
+    if (auto instance = asset ? asset->GetSdfRenderModelInstance() : nullptr) {
+      instance->SetName(actor.name);
+      actor.sdf.sceneObject = _renderScene->AddSceneObjectToScene(std::move(instance));
+    }
+  }
+  actor.sdf.modelFile = actor.shape.modelFile;
+  actor.sdf.modelTransform = actor.shape.modelTransform;
+  actor.sdf.modelScale = actor.shape.modelScale;
+  actor.sdf.flatShaded = true;
+  actor.sdf.visible = wanted && actor.sdf.sceneObject != nullptr;
+  if (actor.sdf.sceneObject == nullptr) {
+    return;
+  }
+  actor.sdf.sceneObject->SetVisible(actor.sdf.visible);
+  if (actor.sdf.visible) {
+    actor.shape.visible = false;
+    actor.shape.sceneObject->SetVisible(false);
+    actor.sceneObject = actor.sdf.sceneObject;
+  }
+}
+
+void SceneStage::BuildMissingSdfSurfaces() {
+  if (_stageType != StageType::SdfFallbackToMochiModel || !_studio ||
+      _studio->IsAsyncTasksRunning()) {
+    return;
+  }
+  // One job per collision model: the SDF is copied so the workers never touch the asset.
+  struct Job {
+    mochi::Path path;
+    int generation = 0;
+    mochi::GridSdfData sdf;
+    std::optional<MochiModelAsset::SdfSurface> surface;
+    // False if the task was skipped or cancelled, so the next request tries again.
+    bool finished = false;
+  };
+  auto jobs = std::make_shared<std::vector<Job>>();
+  auto& manager = _studio->GetAssetManager();
+  std::set<mochi::Path> seen;
+  for (StagedActor const& actor : _actors) {
+    if (actor.sdf.sceneObject != nullptr || actor.shape.sceneObject == nullptr ||
+        HasDeformingSurface(actor) || !seen.insert(actor.shape.modelFile).second) {
+      continue;
+    }
+    auto* asset = manager.LoadMochiModelAsset(actor.shape.modelFile);
+    if (asset && asset->HasSdf() && !asset->IsSdfSurfaceBuilt()) {
+      jobs->push_back(
+          {.path = actor.shape.modelFile,
+           .generation = asset->GetSdfGeneration(),
+           .sdf = *asset->GetModelData().sdf});
+    }
+  }
+  if (jobs->empty()) {
+    return;
+  }
+
+  auto const& converter = _studio->GetEditorToRendererSpaceConverter();
+  std::vector<AsyncTask> tasks;
+  std::set<std::string> labels;
+  for (int i = 0; i < mochi::isize(*jobs); ++i) {
+    // Task labels identify tasks (e.g. to skip one), so disambiguate same-named files.
+    std::string const fileName =
+        std::filesystem::path((*jobs)[i].path.ToString()).filename().string();
+    std::string label = fileName;
+    for (int n = 2; !labels.insert(label).second; ++n) {
+      label = fileName + " (" + std::to_string(n) + ")";
+    }
+    tasks.push_back(
+        {.label = std::move(label), .work = [jobs, i, &converter](AsyncCancelToken const& cancel) {
+           Job& job = (*jobs)[i];
+           job.surface = MochiModelAsset::ReconstructSdfSurface(job.sdf, converter);
+           job.finished = !cancel.IsCancelRequested();
+           return job.surface.has_value();
+         }});
+  }
+  _studio->BeginAsyncTasks(
+      "Building SDF Surfaces",
+      std::move(tasks),
+      [this, studio = _studio, jobs, lifetime = std::weak_ptr<bool>(_lifetime)](bool) {
+        // Install into the assets even if this stage is gone: other viewports share the cache.
+        for (Job& job : *jobs) {
+          auto* asset = studio->GetAssetManager().FindAssetByPath<MochiModelAsset>(job.path);
+          if (asset != nullptr && job.finished) {
+            asset->SetSdfSurface(job.generation, std::move(job.surface));
+          }
+        }
+        if (lifetime.expired()) {
+          return;
+        }
+        auto const& converter = studio->GetEditorToRendererSpaceConverter();
+        for (StagedActor& actor : _actors) {
+          ApplySdfVisibility(actor);
+          if (actor.sdf.sceneObject != nullptr) {
+            SetStagedActorWorldTransform(actor, actor.worldTransform, converter);
+          }
+        }
+      });
 }
 
 void SceneStage::Clear() {
@@ -1314,6 +1440,12 @@ void SceneStage::Clear() {
       }
       if (actor.shape.highlightClone) {
         _renderScene->DestroySceneObject(actor.shape.highlightClone);
+      }
+      if (actor.sdf.highlightClone) {
+        _renderScene->DestroySceneObject(actor.sdf.highlightClone);
+      }
+      if (actor.sdf.sceneObject) {
+        _renderScene->DestroySceneObject(actor.sdf.sceneObject);
       }
       if (actor.render.sceneObject) {
         _renderScene->DestroySceneObject(actor.render.sceneObject);
@@ -1540,7 +1672,8 @@ int SceneStage::GetSceneObjectIndex(SceneObject const* object) const {
   }
   for (int i = 0; i < static_cast<int>(_actors.size()); ++i) {
     if (_actors[i].render.sceneObject == object || _actors[i].shape.sceneObject == object ||
-        _actors[i].shapeSkinnedSurface == object || _actors[i].shapeSimSurface == object) {
+        _actors[i].sdf.sceneObject == object || _actors[i].shapeSkinnedSurface == object ||
+        _actors[i].shapeSimSurface == object) {
       return i;
     }
   }
@@ -1575,7 +1708,7 @@ void SceneStage::UpdateHighlights() {
   _hasActiveHighlights = false;
   for (auto& actor : _actors) {
     bool const highlighted = actor.highlightRequested;
-    for (auto* inst : {&actor.render, &actor.shape}) {
+    for (auto* inst : {&actor.render, &actor.shape, &actor.sdf}) {
       if (!inst->sceneObject) {
         continue;
       }
