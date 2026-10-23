@@ -225,9 +225,9 @@ DynamicArray<ColumnVector<T>> SolveInfeasible(bool output) {
 template <int d, typename T>
 void TestInfeasible(bool output) {
   // Sparse
-  SolveInfeasible<2, real, true>(output);
+  SolveInfeasible<d, T, true>(output);
   // Dense
-  SolveInfeasible<2, real, false>(output);
+  SolveInfeasible<d, T, false>(output);
 }
 } // namespace
 
