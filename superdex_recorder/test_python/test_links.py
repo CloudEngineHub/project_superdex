@@ -187,6 +187,14 @@ class LinkRecordingTest(unittest.TestCase):
             with self.subTest(link=name):
                 self.assert_transform_near(world[path], poses[name])
 
+    def assert_poses_near(
+        self, actual: dict[str, sdp.TransformRT], expected: dict[str, sdp.TransformRT]
+    ) -> None:
+        self.assertEqual(set(actual), set(expected))
+        for name, pose in actual.items():
+            with self.subTest(link=name):
+                self.assert_transform_near(pose, expected[name])
+
     def create_robot_scene(self, bot_path: str) -> tuple[sdp.Scene, sdp.Actor]:
         scene = sdp.create_scene("robot")
         self.addCleanup(sdp.destroy_scene, scene)
@@ -584,3 +592,28 @@ class LinkRecordingTest(unittest.TestCase):
                     dict.fromkeys(fixed_links, 1),
                 )
                 self.assertTrue(any(counts[path] > 1 for path in link_paths))
+
+    def test_robotiq_gripper_restores_its_recorded_frames(self) -> None:
+        for bot_path in ROBOTIQ_BOTS:
+            with self.subTest(bot=bot_path):
+                scene, robot = self.create_robot_scene(bot_path)
+                episode_path, poses = self.record_frames(
+                    scene, link_actors(scene, robot)
+                )
+
+                restored_scene, restored_robot = self.create_robot_scene(bot_path)
+                restored_links = link_actors(restored_scene, restored_robot)
+                restorer = recorder.EpisodeRestorer(
+                    EpisodeReader(episode_path), restored_scene
+                )
+                for frame in (MIDDLE_FRAME, NUM_FRAMES):
+                    restorer.restore_frame(frame)
+                    with self.subTest(frame=frame):
+                        self.assert_poses_near(link_poses(restored_links), poses[frame])
+                # The restored velocities reproduce the next step.
+                restorer.restore_frame(MIDDLE_FRAME)
+                restored_scene.step(TIME_STEP)
+                with self.subTest(frame=MIDDLE_FRAME + 1):
+                    self.assert_poses_near(
+                        link_poses(restored_links), poses[MIDDLE_FRAME + 1]
+                    )
