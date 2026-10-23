@@ -22,6 +22,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
 import superdex.physics as sdp
 import superdex.recorder as recorder
 import superdex.robotics as sdr
@@ -41,6 +42,10 @@ RANDOMIZED_SPAWN_TRANSLATION = [0.06, 0.01, 0.0]
 FRICTION_SCALE = 1.4
 DENSITY_SCALE = 0.8
 NUM_FRAMES = 100
+NUM_RESUME_FRAMES = 20
+# Rebuilt bodies resumed from the last recorded frame stay this close to the live run
+# [m]. Without the recorded friction and density, the check fails.
+RESUME_TOLERANCE = 1e-5
 TIME_STEP = 0.005
 KNOB_ARCHIVE = (
     "internal/archives/task_items/Knob_M8_50mm_4273T84/"
@@ -73,14 +78,18 @@ def colliding_bodies(scene: sdp.Scene) -> dict[str, sdp.Actor]:
     }
 
 
-def randomize_physics(scene: sdp.Scene) -> None:
+def randomize_physics(
+    scene: sdp.Scene,
+    friction_scale: float = FRICTION_SCALE,
+    density_scale: float = DENSITY_SCALE,
+) -> None:
     for actor in colliding_bodies(scene).values():
         contact = actor.get_contact_params()
-        contact.coulomb_friction_coefficient *= FRICTION_SCALE
-        contact.viscous_friction_coefficient *= FRICTION_SCALE
+        contact.coulomb_friction_coefficient *= friction_scale
+        contact.viscous_friction_coefficient *= friction_scale
         actor.set_contact_params(contact)
         if not actor.is_static():
-            actor.set_density(DENSITY_SCALE * actor.get_density())
+            actor.set_density(density_scale * actor.get_density())
 
 
 def physical_parameters(
@@ -205,6 +214,58 @@ class RebuildSceneTest(unittest.TestCase):
                     physical_parameters(bodies[name], contact_param_names),
                     physical_parameters(live_body, contact_param_names),
                 )
+
+    def test_rebuilt_scene_resumes_randomized_episode(self) -> None:
+        live, spawned = self.load_live_scene(RANDOMIZED_SPAWN_TRANSLATION)
+        live_scene = physics_scene(live)
+        randomize_physics(live_scene)
+        kinematic_path, _ = self.record(live_scene, spawned, NUM_FRAMES)
+        live_bodies = {
+            name: body
+            for name, body in colliding_bodies(live_scene).items()
+            if not body.is_static() and not body.is_nested_link_actor()
+        }
+        live_translations = []
+        for _ in range(NUM_RESUME_FRAMES):
+            live_scene.step(TIME_STEP)
+            live_translations.append(
+                {
+                    name: body.get_center_of_mass_transform().translation.tolist()
+                    for name, body in live_bodies.items()
+                }
+            )
+
+        recording = EpisodeReader(kinematic_path)
+        rebuilt_names = {
+            actor.get_name(): f"{SPAWN_NAME}/{actor.get_name()}" for actor in spawned
+        }
+
+        def resume_error(undo_randomization: bool) -> float:
+            rebuilt = recorder.rebuild_scene(
+                recording, BOT_SCENE_PATH, self.context, bot_task_path=self.task_path
+            )
+            scene = physics_scene(rebuilt.bot_scene)
+            if undo_randomization:
+                randomize_physics(scene, 1 / FRICTION_SCALE, 1 / DENSITY_SCALE)
+            rebuilt_bodies = colliding_bodies(scene)
+            bodies = {
+                name: rebuilt_bodies[rebuilt_names.get(name, name)]
+                for name in live_bodies
+            }
+            recorder.EpisodeRestorer(recording, scene).restore_frame(NUM_FRAMES)
+            error = 0.0
+            for expected in live_translations:
+                scene.step(TIME_STEP)
+                for name, translation in expected.items():
+                    actual = bodies[name].get_center_of_mass_transform().translation
+                    error = max(
+                        error,
+                        float(np.abs(np.subtract(actual.tolist(), translation)).max()),
+                    )
+            return error
+
+        self.assertLess(resume_error(undo_randomization=False), RESUME_TOLERANCE)
+        self.assertGreater(resume_error(undo_randomization=True), RESUME_TOLERANCE)
 
     def test_applies_recorded_contact_parameters_of_a_skinned_hand(self) -> None:
         """A skinned articulation keeps its contact skin's parameters on the root."""

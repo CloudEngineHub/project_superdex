@@ -30,6 +30,16 @@ from superdex.recorder.reader import EpisodeReader
 
 BOT_SCENE = "bots/internal/tests/zq_fr3_tesollo/fr3_tesollo_zq.mochi_bot_scene"
 CHECKPOINT_FRAMES = (40, 60, 120, 180, 240, 300)
+RESUME_START_FRAME = 180
+RESUME_END_FRAME = 240
+# A grasp resumed from a checkpoint stays this close to the live run: the block's
+# translation [m] and the joint positions. Without the restored velocities, each check
+# fails. Restoring sets the pose controller's target velocity to the restored joint
+# velocities, so the first resumed step extrapolates its old target from them instead
+# of using the live previous target. Checked with backward Euler only: a restore starts
+# BDF2 and BDF3 afresh, which costs them up to about 0.7 mm here.
+BLOCK_RESUME_TOLERANCE = 2e-4
+JOINT_RESUME_TOLERANCE = 5e-4
 
 
 class LoadedScene(NamedTuple):
@@ -43,7 +53,14 @@ class LoadedScene(NamedTuple):
 
 class Rollout(NamedTuple):
     path: Path
+    poses: tuple[list[float], list[float], list[float]]
     heights: dict[int, float]
+    block_translations: dict[int, list[float]]
+    joint_positions: dict[int, list[float]]
+
+
+def max_error(actual: list[float], expected: list[float]) -> float:
+    return max(abs(a - e) for a, e in zip(actual, expected, strict=True))
 
 
 def create_pose_controller(bot: sdr.Bot) -> sdr.ControllerMochiArticulatedPose:
@@ -133,6 +150,12 @@ def trajectory_target(
     return interpolate_pose(closed_pose, lifted_pose, min(1.0, (frame - 60) / 180))
 
 
+def get_joint_positions(actor: sdp.Actor) -> list[float]:
+    positions = sdp.DynamicArrayReal(actor.get_num_dofs())
+    actor.get_articulated_pose(positions)
+    return list(positions)
+
+
 class Fr3TesolloZqTest(unittest.TestCase):
     def record_rollout(self, loaded: LoadedScene, directory: Path) -> Rollout:
         poses = get_trajectory_poses(loaded.actor)
@@ -142,6 +165,8 @@ class Fr3TesolloZqTest(unittest.TestCase):
         physics = recorder.PhysicsRecorder(episode, loaded.scene)
         physics.record(0, loaded.scene.get_total_simulation_time())
         heights = {}
+        block_translations = {}
+        joint_positions = {}
         for frame in range(1, 301):
             loaded.controller.compute_output(
                 observation,
@@ -153,8 +178,54 @@ class Fr3TesolloZqTest(unittest.TestCase):
             physics.record(frame, loaded.scene.get_total_simulation_time())
             if frame in CHECKPOINT_FRAMES:
                 heights[frame] = loaded.block.get_root_transform().translation[2]
+            block_translations[frame] = (
+                loaded.block.get_root_transform().translation.tolist()
+            )
+            joint_positions[frame] = get_joint_positions(loaded.actor)
         episode.commit()
-        return Rollout(episode.output_path, heights)
+        return Rollout(
+            episode.output_path, poses, heights, block_translations, joint_positions
+        )
+
+    def resume_errors(
+        self,
+        loaded: LoadedScene,
+        restorer: recorder.EpisodeRestorer,
+        rollout: Rollout,
+        zero_velocity: bool,
+    ) -> tuple[float, float]:
+        """The largest block translation and joint position errors over the resume."""
+        restorer.restore_frame(RESUME_START_FRAME)
+        if zero_velocity:
+            loaded.actor.set_articulated_joint_velocities(
+                [0.0] * loaded.actor.get_num_dofs()
+            )
+            loaded.block.set_velocity([0, 0, 0], [0, 0, 0])
+        root = loaded.actor.get_root_transform()
+        block_error = joint_error = 0.0
+        for frame in range(RESUME_START_FRAME + 1, RESUME_END_FRAME + 1):
+            loaded.controller.compute_output(
+                sdr.ControllerMochiArticulatedPoseObsv(),
+                sdr.ControllerMochiArticulatedPoseTarget(
+                    world_from_root=root,
+                    pose_dofs=trajectory_target(frame, *rollout.poses),
+                ),
+            )
+            loaded.scene.step(0.005)
+            block_error = max(
+                block_error,
+                max_error(
+                    loaded.block.get_root_transform().translation.tolist(),
+                    rollout.block_translations[frame],
+                ),
+            )
+            joint_error = max(
+                joint_error,
+                max_error(
+                    get_joint_positions(loaded.actor), rollout.joint_positions[frame]
+                ),
+            )
+        return block_error, joint_error
 
     def test_grasp_with_backward_euler(self) -> None:
         self.assert_grasp_restores(sdp.IntegrationMethod.BACKWARD_EULER)
@@ -164,6 +235,9 @@ class Fr3TesolloZqTest(unittest.TestCase):
 
     def test_grasp_with_bdf3(self) -> None:
         self.assert_grasp_restores(sdp.IntegrationMethod.BDF3)
+
+    def test_resumed_grasp_with_backward_euler(self) -> None:
+        self.assert_grasp_resumes(sdp.IntegrationMethod.BACKWARD_EULER)
 
     def test_robotics_record_fails_after_the_robot_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as directory_string:
@@ -209,6 +283,35 @@ class Fr3TesolloZqTest(unittest.TestCase):
                         rollout.heights[checkpoint],
                         delta=1e-6,
                     )
+            finally:
+                source = None
+                reconstructed = None
+                gc.collect()
+                sdp.shutdown()
+
+    def assert_grasp_resumes(self, method: sdp.IntegrationMethod) -> None:
+        with tempfile.TemporaryDirectory() as directory_string:
+            sdp.initialize(num_worker_threads=0)
+            source = None
+            reconstructed = None
+            try:
+                source = load_test_scene(method)
+                rollout = self.record_rollout(source, Path(directory_string))
+                self.assertGreater(rollout.heights[300], rollout.heights[60] + 0.1)
+                reconstructed = load_test_scene(method)
+                restorer = recorder.EpisodeRestorer(
+                    EpisodeReader(rollout.path), reconstructed.scene
+                )
+                block_error, joint_error = self.resume_errors(
+                    reconstructed, restorer, rollout, zero_velocity=False
+                )
+                self.assertLess(block_error, BLOCK_RESUME_TOLERANCE)
+                self.assertLess(joint_error, JOINT_RESUME_TOLERANCE)
+                block_error, joint_error = self.resume_errors(
+                    reconstructed, restorer, rollout, zero_velocity=True
+                )
+                self.assertGreater(block_error, BLOCK_RESUME_TOLERANCE)
+                self.assertGreater(joint_error, JOINT_RESUME_TOLERANCE)
             finally:
                 source = None
                 reconstructed = None

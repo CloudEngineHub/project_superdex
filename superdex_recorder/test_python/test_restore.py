@@ -50,6 +50,15 @@ PICKUP_DT = 0.005
 PICKUP_OPEN_POSE = (-0.43, -0.06, 0.06)
 PICKUP_CLOSED_POSE = (-0.43, 0.0, 0.0)
 PICKUP_LIFTED_POSE = (-0.1, 0.0, 0.0)
+# The hand lifts the block at a steady speed through these frames.
+GRASP_RESUME_START_FRAME = 250
+GRASP_RESUME_END_FRAME = 320
+# Resumed bodies stay this close to the recording under backward Euler: the cube's
+# translation [m], and the block's translation [m] and joint positions [rad] in the
+# grasp. Without the restored velocities, each check fails. A restore starts BDF2 and
+# BDF3 afresh, which costs them more.
+CUBE_RESUME_TOLERANCE = 1e-5
+GRASP_RESUME_TOLERANCE = 5e-4
 CUBE_HALF_SIZE = 0.05
 # Off the actor origin, so the root transform is rounded from the simulated COM state.
 CUBE_MESH_OFFSET = (0.0371, 0.0123, -0.0277)
@@ -69,6 +78,10 @@ CUBE_TRIANGLES = (
 )
 
 
+def max_error(actual: list[float], expected: list[float]) -> float:
+    return max(abs(a - e) for a, e in zip(actual, expected, strict=True))
+
+
 def pickup_target(frame: int) -> list[float]:
     if frame <= 120:
         start, end, alpha = PICKUP_OPEN_POSE, PICKUP_CLOSED_POSE, frame / 120
@@ -83,6 +96,18 @@ class PickupScene:
         self.scene = scene
         self.robot = find_actor(scene, "RobotArmHand")
         self.block = find_actor(scene, "PickupBlock")
+        self.fingers = [
+            find_actor(scene, f"RobotArmHand/{side}Finger")
+            for side in ("Left", "Right")
+        ]
+        self.block.register_query(sdp.QueryType.CONTACT_POINTS)
+        self.block.register_query(sdp.QueryType.TOTAL_CONTACT_FORCE)
+
+    def grasp_forces(self) -> list[list[float]]:
+        return [self.block.get_contact_force_world().tolist()] + [
+            self.block.get_contact_force_from_actor_world(finger).tolist()
+            for finger in self.fingers
+        ]
 
     def joint_positions(self) -> list[float]:
         positions = sdp.DynamicArrayReal(self.robot.get_num_dofs())
@@ -107,6 +132,7 @@ class PickupRecording:
         self.path = path
         self.block_translations: dict[int, list[float]] = {}
         self.joint_positions: dict[int, list[float]] = {}
+        self.forces: dict[int, list[list[float]]] = {}
 
 
 class EpisodeRestorerTest(unittest.TestCase):
@@ -247,8 +273,61 @@ class EpisodeRestorerTest(unittest.TestCase):
                 source.block.get_root_transform().translation.tolist()
             )
             recording.joint_positions[frame] = source.joint_positions()
+            recording.forces[frame] = source.grasp_forces()
         episode.commit()
         return recording
+
+    def cube_resume_error(
+        self,
+        restorer: recorder.EpisodeRestorer,
+        scene: sdp.Scene,
+        cube: sdp.Actor,
+        recording: CubeRecording,
+        zero_velocity: bool,
+    ) -> float:
+        """The cube's largest translation error over 10 steps resumed from frame 10."""
+        restorer.restore_frame(10)
+        if zero_velocity:
+            cube.set_velocity([0, 0, 0], [0, 0, 0])
+        error = 0.0
+        for frame in range(11, 21):
+            scene.step(DT)
+            error = max(
+                error,
+                max_error(
+                    cube.get_root_transform().translation.tolist(),
+                    recording.translations[frame],
+                ),
+            )
+        return error
+
+    def grasp_resume_error(
+        self,
+        restorer: recorder.EpisodeRestorer,
+        restored: PickupScene,
+        recording: PickupRecording,
+        zero_velocity: bool,
+    ) -> float:
+        """The largest block translation or joint position error over the resumed lift."""
+        restorer.restore_frame(GRASP_RESUME_START_FRAME)
+        if zero_velocity:
+            restored.robot.set_articulated_joint_velocities(
+                [0.0] * restored.robot.get_num_dofs()
+            )
+            restored.block.set_velocity([0, 0, 0], [0, 0, 0])
+        error = 0.0
+        for frame in range(GRASP_RESUME_START_FRAME + 1, GRASP_RESUME_END_FRAME + 1):
+            restored.robot.set_articulated_target_pose(pickup_target(frame))
+            restored.scene.step(PICKUP_DT)
+            error = max(
+                error,
+                max_error(
+                    restored.block.get_root_transform().translation.tolist(),
+                    recording.block_translations[frame],
+                ),
+                max_error(restored.joint_positions(), recording.joint_positions[frame]),
+            )
+        return error
 
     def make_block_scene(
         self, names: tuple[str, ...]
@@ -303,6 +382,24 @@ class EpisodeRestorerTest(unittest.TestCase):
                         recording.translations[frame],
                     ):
                         self.assertAlmostEqual(actual, expected, delta=1e-6)
+
+    def test_restored_frames_resume_near_the_recording(self) -> None:
+        method = sdp.IntegrationMethod.BACKWARD_EULER
+        recording = self.record_sliding_cube(method, 20)
+        scene, cube = self.make_cube_scene(method)
+        restorer = recorder.EpisodeRestorer(EpisodeReader(recording.path), scene)
+        self.assertLess(
+            self.cube_resume_error(
+                restorer, scene, cube, recording, zero_velocity=False
+            ),
+            CUBE_RESUME_TOLERANCE,
+        )
+        self.assertGreater(
+            self.cube_resume_error(
+                restorer, scene, cube, recording, zero_velocity=True
+            ),
+            CUBE_RESUME_TOLERANCE,
+        )
 
     def test_restores_frames_under_dirk_methods(self) -> None:
         for method in DIRK_METHODS:
@@ -421,6 +518,30 @@ class EpisodeRestorerTest(unittest.TestCase):
                         recording.joint_positions[frame],
                         1e-6,
                     )
+
+    def test_restored_grasp_resumes_near_the_live_run(self) -> None:
+        method = sdp.IntegrationMethod.BACKWARD_EULER
+        recording = self.record_pickup(method)
+        self.assertGreater(
+            recording.block_translations[340][1],
+            recording.block_translations[160][1] + 0.25,
+        )
+        for frame in (GRASP_RESUME_START_FRAME, GRASP_RESUME_END_FRAME):
+            for finger_force in recording.forces[frame][1:]:
+                self.assertGreater(abs(finger_force[0]), 1.0)
+
+        restored = self.make_pickup_scene(method)
+        restorer = recorder.EpisodeRestorer(
+            EpisodeReader(recording.path), restored.scene
+        )
+        self.assertLess(
+            self.grasp_resume_error(restorer, restored, recording, zero_velocity=False),
+            GRASP_RESUME_TOLERANCE,
+        )
+        self.assertGreater(
+            self.grasp_resume_error(restorer, restored, recording, zero_velocity=True),
+            GRASP_RESUME_TOLERANCE,
+        )
 
     def test_binds_same_named_bodies_by_spawn_name(self) -> None:
         # Unreal names both blocks after their prefab.

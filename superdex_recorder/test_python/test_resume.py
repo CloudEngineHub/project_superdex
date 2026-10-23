@@ -70,12 +70,30 @@ NUM_ARM_DOFS = 7
 # The cube rests on the table, away from the hand, during these steps.
 RESTING_STEPS = slice(150, 250)
 PUSHING_FRAME = 330
+CLOSED_LOOP_STEPS = 25
+# Under backward Euler, the closed-loop resume ends this close to the recording. Without
+# the restored velocities, each check fails. A restore starts BDF2 and BDF3 afresh, which
+# costs them more.
+CLOSED_LOOP_TOLERANCES = {
+    "cube_position": 1e-4,
+    "cube_rotation": 4e-3,
+    "joint_positions": 4e-3,
+}
+
+
+class State(NamedTuple):
+    cube_position: np.ndarray
+    cube_rotation: np.ndarray
+    joint_positions: np.ndarray
 
 
 class Recording(NamedTuple):
     path: Path
+    states: list[State]
     efforts: list[np.ndarray]
     """The effort applied during each step."""
+    touching: list[bool]
+    """Whether the robot touches the cube at each frame."""
 
 
 def add_box(
@@ -117,6 +135,11 @@ def add_box(
     return actor
 
 
+def max_errors(actual: State, expected: State) -> State:
+    """Each state component's largest absolute error."""
+    return State(*(np.abs(a - e).max() for a, e in zip(actual, expected, strict=True)))
+
+
 class PushScene:
     """An effort-driven FR3 arm with a DG5F hand pushes a cube across a table."""
 
@@ -132,8 +155,11 @@ class PushScene:
         solver_params.integration_method = method
         self.scene.set_solver_params(solver_params)
         self.scene.set_gravity([0, 0, -9.81])
-        add_box(self.scene, "table", TABLE_CENTER, TABLE_HALF_EXTENTS, is_static=True)
+        self.table = add_box(
+            self.scene, "table", TABLE_CENTER, TABLE_HALF_EXTENTS, is_static=True
+        )
         self.cube = add_box(self.scene, "cube", CUBE_POSITION, (CUBE_HALF_SIZE,) * 3)
+        self.cube.register_query(sdp.QueryType.CONTACT_POINTS)
 
         prefab = sdr.load_bot_prefab_from_file(str(resolve_asset(BOT)))
         # Neither controller compensates for gravity.
@@ -203,6 +229,27 @@ class PushScene:
         hand[:NUM_ARM_DOFS] = 0.0
         return np.array(arm, dtype=NP_REAL) + hand
 
+    def state(self) -> State:
+        world_from_com = self.cube.get_center_of_mass_transform()
+        return State(
+            np.array(world_from_com.translation.tolist()),
+            np.array(world_from_com.rotation.tolist()),
+            self.dof_values(self.robot.get_articulated_pose),
+        )
+
+    def touches_robot(self) -> bool:
+        table = self.table.get_handle()
+        return any(
+            table not in (point.actor_a, point.actor_b)
+            for point in self.cube.get_contact_points_world()
+        )
+
+    def stop(self) -> None:
+        self.robot.set_articulated_joint_velocities(
+            np.zeros(len(self.dofs), dtype=NP_REAL)
+        )
+        self.cube.set_velocity([0, 0, 0], [0, 0, 0])
+
 
 class ResumeTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -224,7 +271,7 @@ class ResumeTest(unittest.TestCase):
         physics = recorder.PhysicsRecorder(episode, source.scene)
         controls = recorder.RoboticsRecorder(episode, source.bot)
         physics.record(0, source.scene.get_total_simulation_time())
-        recording = Recording(episode.output_path, [])
+        recording = Recording(episode.output_path, [source.state()], [], [False])
         applied = np.zeros(len(source.dofs), dtype=NP_REAL)
         for step, duration in enumerate(STEP_DURATIONS[:num_steps]):
             time_sec = source.scene.get_total_simulation_time()
@@ -237,7 +284,9 @@ class ResumeTest(unittest.TestCase):
             controls.record(step, time_sec)
             source.scene.step(duration)
             physics.record(step + 1, source.scene.get_total_simulation_time())
+            recording.states.append(source.state())
             recording.efforts.append(applied)
+            recording.touching.append(source.touches_robot())
         episode.commit()
         rrd_verify.assert_rerun_accepts(episode.output_path)
         return recording
@@ -283,3 +332,30 @@ class ResumeTest(unittest.TestCase):
             np.testing.assert_array_equal(
                 restored.dof_values(restored.robot.get_external_forces), effort
             )
+
+    def closed_loop_errors(
+        self, method: sdp.IntegrationMethod, recording: Recording, with_velocities: bool
+    ) -> State:
+        restored, restorer = self.restore(method, recording)
+        restorer.restore_frame(PUSHING_FRAME)
+        if not with_velocities:
+            restored.stop()
+        # The first step runs on the restored effort, the others on the controllers'
+        # efforts.
+        restored.scene.step(STEP_DURATIONS[PUSHING_FRAME])
+        end_frame = PUSHING_FRAME + CLOSED_LOOP_STEPS
+        for duration in STEP_DURATIONS[PUSHING_FRAME + 1 : end_frame]:
+            effort = restored.effort(duration)
+            restored.robot.set_external_forces_on_dofs(restored.dofs, effort)
+            restored.scene.step(duration)
+        return max_errors(restored.state(), recording.states[end_frame])
+
+    def test_closed_loop_resume_stays_near_the_recording(self) -> None:
+        method = sdp.IntegrationMethod.BACKWARD_EULER
+        recording = self.record(method)
+        self.assertTrue(recording.touching[PUSHING_FRAME])
+        errors = self.closed_loop_errors(method, recording, with_velocities=True)
+        controls = self.closed_loop_errors(method, recording, with_velocities=False)
+        for name, tolerance in CLOSED_LOOP_TOLERANCES.items():
+            self.assertLess(getattr(errors, name), tolerance, name)
+            self.assertGreater(getattr(controls, name), tolerance, name)
