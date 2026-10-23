@@ -44,7 +44,8 @@ struct SnleProblemFunctions {
   // Function to be executed after solution is updated
   std::function<void(SnleProblem<T>& problem)> onPostNewSolution;
 
-  // Function to be executed after a solution increment is computed.
+  // Function to be executed after a solution increment is computed. It may zero increment entries
+  // at constrained DoFs.
   std::function<void(SnleProblem<T>& problem)> onPostNewIncrement;
 };
 

@@ -443,6 +443,22 @@ static bool ApplyBoundaryConditionsToSolution(
   return bcActive;
 }
 
+// Keeps the fixed DoFs at the values set by ApplyBoundaryConditionsToSolution.
+static void ApplyBoundaryConditionsToIncrement(
+    entt::registry const& reg,
+    Span<entt::entity const> actors,
+    ColumnVectorView<real> outIncrement) {
+  auto const view = reg.view<CDirichletBC<real> const, CDofOffset const>();
+  for (auto e : actors) {
+    if (view.contains(e)) {
+      auto const& dofIndices = view.get<CDirichletBC<real> const>(e).dofIndices;
+      if (!dofIndices.empty()) {
+        SetZeroOnRows(outIncrement, dofIndices, view.get<CDofOffset const>(e).dofsOffset);
+      }
+    }
+  }
+}
+
 static void GatherSnleDataFromActors(
     SnleProblem<real>& outProblem,
     AssemblyParams const& params,
@@ -1080,6 +1096,8 @@ static SnleProblem<real> InitIslandProblem(
       solver::PostNewSolutionLocalPipeline(reg, island, problem.solution);
     };
     functions.onPostNewIncrement = [&reg, island](auto& problem) {
+      ApplyBoundaryConditionsToIncrement(
+          reg, reg.get<CIslandDescendants const>(island).actors, problem.increment);
       solver::PostNewIncrementLocalPipeline(reg, island, problem.increment, problem.solution);
     };
   }

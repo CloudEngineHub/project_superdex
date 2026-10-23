@@ -20,9 +20,14 @@
 
 #include "mochi_physics_test_fixture.h"
 
+#include <mochi_core/utils/reflection.h>
+#include <mochi_physics/mochi_physics_experimental.h>
+#include <mochi_physics/src/mochi_simulation.h>
+
 #include <array>
 #include <limits>
 #include <numeric>
+#include <string>
 #include <vector>
 
 using namespace mochi;
@@ -349,8 +354,8 @@ TEST_F(MochiActorBC, SoftNodeTranslation) {
     newWorldPositions[i] = params.worldFromLocal.TransformPoint(newLocalPositions[i]);
   }
 
-  // Expect that node index 1 (the one with BCs) did not move much.
-  EXPECT_NEAR_TOL(startingWorldPositions[kBCNodeIndex], newWorldPositions[kBCNodeIndex], 5e-4_r);
+  // Expect that node index 1 (the one with BCs) did not move, up to world-local transform rounding.
+  EXPECT_NEAR_EQ(startingWorldPositions[kBCNodeIndex], newWorldPositions[kBCNodeIndex]);
 
   // Expect that all other nodes moved in the direction of gravity (-Y)
   for (int i = 0; i < numNodes; ++i) {
@@ -425,7 +430,7 @@ TEST_F(MochiActorBC, AddBoundaryConditionConstrainedNodesAtRest) {
     }
 
     for (int nodeIdx : {0, 2, 4, 6}) {
-      EXPECT_NEAR_TOL(restPositionWorld(nodeIdx), worldPositions[nodeIdx], 5e-4_r);
+      EXPECT_NEAR_EQ(restPositionWorld(nodeIdx), worldPositions[nodeIdx]);
     }
     for (int nodeIdx : {1, 3, 5, 7}) {
       EXPECT_GT(restPositionWorld(nodeIdx)[1], worldPositions[nodeIdx][1]);
@@ -562,3 +567,100 @@ TEST_F(MochiActorBC, BoundaryConditionSettersRejectPartialRotations) {
     EXPECT_EQ(0, isize(actor->GetBoundaryConditionDofValuesWorld()));
   }
 }
+
+namespace {
+// AMG is the only preconditioner that writes into the fixed rows of the Newton increment: it builds
+// its coarse levels from the sparsity pattern alone, which keeps the couplings that boundary
+// conditions zero. Direct solvers and the other preconditioners leave those rows zero.
+constexpr PreconditionerType kPreconditionerWritingIntoFixedRows = PreconditionerType::AMG;
+
+class MochiActorBCFixedDofs : public MochiActorBC,
+                              public ::testing::WithParamInterface<ActorType> {};
+} // namespace
+
+TEST_P(MochiActorBCFixedDofs, FixedDofsStayAtBoundaryValues) {
+  ActorType const actorType = GetParam();
+  auto solverParams = _scene->GetSolverParams();
+  // Small islands default to a direct solver, which runs no preconditioner.
+  solverParams.linearSolver.solverType = LinearSolverType::CG;
+  solverParams.linearSolver.preconditionerType = kPreconditionerWritingIntoFixedRows;
+  _scene->SetSolverParams(solverParams, test::ExpectOK{});
+
+  // A rigid actor created first and attached to the constrained actor comes first in their island.
+  // Its 6 DoFs take 7 pose entries, so the constrained actor's DoF offset is nonzero and differs
+  // from its pose offset: zeroing that ignores the DoF offset or uses the pose offset hits the
+  // wrong rows. It has no collider, since the two actors overlap.
+  RigidActorParams firstActorParams;
+  firstActorParams.shape = _cubeShape;
+  firstActorParams.colliderType = ColliderType::None;
+  Actor* firstActor = _scene->CreateRigidActor(firstActorParams, test::ExpectOK{});
+
+  Actor* actor = nullptr;
+  if (actorType == ActorType::Soft) {
+    SoftActorParams params;
+    params.shape = _cubeShape;
+    actor = _scene->CreateSoftActor(params, test::ExpectOK{});
+    // Recentering would move the soft actor's local frame, and with it every DoF value.
+    actor->SetRecenteringParams({.useRecentering = false}, test::ExpectOK{});
+  } else if (actorType == ActorType::Shell) {
+    auto [coordinates, connectivity] =
+        test::CreateMinimalTriMeshUnitCube(Real3{kBoxWidth, kBoxWidth, kBoxWidth});
+    experimental::ShellActorParams params;
+    params.shape = _mochiContext->CreateTriMeshShape(
+        Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), test::ExpectOK{});
+    actor = experimental::CreateShellActor(_scene, params, test::ExpectOK{});
+  } else {
+    ASSERT_EQ(ActorType::Rod, actorType);
+    DynamicArray<Real3> const nodes = {
+        {0_r, 0_r, 0_r}, {kBoxWidth, 0_r, 0_r}, {2_r * kBoxWidth, 0_r, 0_r}};
+    experimental::RodActorParams params;
+    params.shape = experimental::CreatePolylineShape(
+        _mochiContext, nodes, {}, /*isClosedLoop*/ false, test::ExpectOK{});
+    actor = experimental::CreateRodActor(_scene, params, test::ExpectOK{});
+  }
+  DeformableNodeToRigidConstraintParams attachment;
+  attachment.rigidActor = firstActor->GetHandle();
+  attachment.deformableActor = actor->GetHandle();
+  attachment.deformableNodeIndex = 0;
+  _scene->CreateDeformableNodeToRigidConstraint(attachment, test::ExpectOK{});
+
+  // Fixes node 0 at rest, so its DoFs must keep their values exactly. Gravity moves the other DoFs.
+  // Node 0's DoF values are displacements, but its boundary values are world positions: with the
+  // identity root transform, its reference position.
+  DynamicArray<int> const fixedDofs = {0, 1, 2};
+  auto const mesh =
+      _mochiContext->GetShapeMesh(actor->GetReferenceShape(test::ExpectOK{}), test::ExpectOK{});
+  DynamicArray<real> const boundaryValues = {
+      mesh.coordinates[0], mesh.coordinates[1], mesh.coordinates[2]};
+  actor->AddBoundaryConditionDofsWorld(fixedDofs, boundaryValues, test::ExpectOK{});
+
+  auto const getDofValues = [actor] {
+    DynamicArray<real> values(actor->GetNumDofs());
+    actor->GetDofValues({}, values, test::ExpectOK{});
+    return values;
+  };
+  DynamicArray<real> const restDofValues = getDofValues();
+  _scene->Step(0.01);
+  DynamicArray<real> const dofValues = getDofValues();
+  for (int i : fixedDofs) {
+    EXPECT_EQ(restDofValues[i], dofValues[i]);
+  }
+  // The free DoFs moved, so the solve had nonzero increments.
+  EXPECT_NE(restDofValues, dofValues);
+  // The first actor put the constrained actor's DoFs after its own, at an offset that differs from
+  // the pose offset.
+  auto const& offset = GetRegistry().get<CDofOffset const>(GetEntity(actor));
+  EXPECT_LT(0, offset.dofsOffset);
+  EXPECT_NE(offset.poseOffset, offset.dofsOffset);
+}
+
+// Soft, shell and rod actors add the increment to their state. Rigid and articulated actors reset
+// their fixed DoFs after every increment, so their state can't show a leaked increment, and nested
+// soft actors apply it through the same path as soft actors.
+INSTANTIATE_TEST_SUITE_P(
+    AddIncrementToState,
+    MochiActorBCFixedDofs,
+    ::testing::Values(ActorType::Soft, ActorType::Shell, ActorType::Rod),
+    [](::testing::TestParamInfo<ActorType> const& info) {
+      return std::string(SReflect::EnumToString(info.param));
+    });
