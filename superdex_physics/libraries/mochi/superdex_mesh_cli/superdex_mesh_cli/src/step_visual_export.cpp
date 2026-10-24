@@ -38,6 +38,7 @@
 #include <Message_ProgressRange.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Precision.hxx>
 #include <RWGltf_CafWriter.hxx>
 #include <RWGltf_DracoParameters.hxx>
 #include <RWMesh_CoordinateSystem.hxx>
@@ -61,10 +62,12 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
+#include <gp_XY.hxx>
 
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -208,10 +211,67 @@ struct UvChart {
   double offsetV = 0.0;
 };
 
+// A vertex is treated as a pole when the surface barely moves in U or V there (less than this
+// fraction of the face's average). OpenCascade can return a normal at a pole that points the wrong
+// way.
+constexpr double kSingularDerivativeRatio = 1e-4;
+
+// Sets the normal at each pole vertex from the surface normals at the centers of the triangles
+// around it. A pole often has several vertices at the same 3D point. They all get the same normal.
+void BakeSingularNormals(
+    Handle(Poly_Triangulation) const& triangulation,
+    std::vector<Standard_Integer> const& singularNodes,
+    BRepLProp_SLProps& props) {
+  std::vector<gp_Vec> nodeSums(triangulation->NbNodes() + 1, gp_Vec(0.0, 0.0, 0.0));
+  std::vector<bool> isSingular(triangulation->NbNodes() + 1, false);
+  for (Standard_Integer const node : singularNodes) {
+    isSingular[node] = true;
+  }
+
+  for (Standard_Integer t = 1; t <= triangulation->NbTriangles(); ++t) {
+    Standard_Integer n[3] = {};
+    triangulation->Triangle(t).Get(n[0], n[1], n[2]);
+    if (!isSingular[n[0]] && !isSingular[n[1]] && !isSingular[n[2]]) {
+      continue;
+    }
+    gp_XY const centroid = (triangulation->UVNode(n[0]).XY() + triangulation->UVNode(n[1]).XY() +
+                            triangulation->UVNode(n[2]).XY()) /
+        3.0;
+    props.SetParameters(centroid.X(), centroid.Y());
+    if (!props.IsNormalDefined()) {
+      continue;
+    }
+    gp_Vec const normal(props.Normal());
+    for (int c = 0; c < 3; ++c) {
+      if (!isSingular[n[c]]) {
+        continue;
+      }
+      gp_Pnt const corner = triangulation->Node(n[c]);
+      gp_Vec const toNext(corner, triangulation->Node(n[(c + 1) % 3]));
+      gp_Vec const toPrev(corner, triangulation->Node(n[(c + 2) % 3]));
+      double const angle = std::atan2(toNext.Crossed(toPrev).Magnitude(), toNext.Dot(toPrev));
+      nodeSums[n[c]] += angle * normal;
+    }
+  }
+
+  double const sqTolerance = Precision::Confusion() * Precision::Confusion();
+  for (Standard_Integer const node : singularNodes) {
+    gp_Pnt const point = triangulation->Node(node);
+    gp_Vec pooled(0.0, 0.0, 0.0);
+    for (Standard_Integer const other : singularNodes) {
+      if (triangulation->Node(other).SquareDistance(point) <= sqTolerance) {
+        pooled += nodeSums[other];
+      }
+    }
+    triangulation->SetNormal(
+        node, pooled.SquareMagnitude() > gp::Resolution() ? gp_Dir(pooled) : gp::DZ());
+  }
+}
+
 // If the mesh has no stored normals, the GLB/OBJ writers look up the CAD surface at each vertex's
 // UV to get one, which would give wrong normals once the UVs are rewritten. So this stores the
-// normals first, computed the same way the writers would. While visiting each vertex it also
-// measures how stretched U and V are, to size the face's layout.
+// normals first, computed the same way the writers would except at poles (see BakeSingularNormals).
+// While visiting each vertex it also measures how stretched U and V are, to size the face's layout.
 UvChart BakeNormalsAndMeasureChart(
     TopoDS_Face const& face,
     Handle(Poly_Triangulation) const& triangulation) {
@@ -228,12 +288,18 @@ UvChart BakeNormalsAndMeasureChart(
 
   triangulation->AddNormals();
   Standard_Integer const numNodes = triangulation->NbNodes();
+  std::vector<double> derivativeU(numNodes + 1);
+  std::vector<double> derivativeV(numNodes + 1);
+  std::vector<bool> normalDefined(numNodes + 1);
   for (Standard_Integer i = 1; i <= numNodes; ++i) {
     gp_Pnt2d const uv = triangulation->UVNode(i);
     props.SetParameters(uv.X(), uv.Y());
-    triangulation->SetNormal(i, props.IsNormalDefined() ? props.Normal() : gp::DZ());
-    sumScaleU += props.D1U().Magnitude();
-    sumScaleV += props.D1V().Magnitude();
+    normalDefined[i] = props.IsNormalDefined();
+    triangulation->SetNormal(i, normalDefined[i] ? props.Normal() : gp::DZ());
+    derivativeU[i] = props.D1U().Magnitude();
+    derivativeV[i] = props.D1V().Magnitude();
+    sumScaleU += derivativeU[i];
+    sumScaleV += derivativeV[i];
     uMin = std::min(uMin, uv.X());
     vMin = std::min(vMin, uv.Y());
     uMax = std::max(uMax, uv.X());
@@ -242,6 +308,17 @@ UvChart BakeNormalsAndMeasureChart(
 
   double const scaleU = sumScaleU / numNodes;
   double const scaleV = sumScaleV / numNodes;
+
+  std::vector<Standard_Integer> singularNodes;
+  for (Standard_Integer i = 1; i <= numNodes; ++i) {
+    if (!normalDefined[i] || derivativeU[i] < kSingularDerivativeRatio * scaleU ||
+        derivativeV[i] < kSingularDerivativeRatio * scaleV) {
+      singularNodes.push_back(i);
+    }
+  }
+  if (!singularNodes.empty()) {
+    BakeSingularNormals(triangulation, singularNodes, props);
+  }
   return UvChart{
       .triangulation = triangulation,
       .uMin = uMin,
