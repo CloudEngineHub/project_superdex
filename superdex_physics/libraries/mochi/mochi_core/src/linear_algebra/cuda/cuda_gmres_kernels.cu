@@ -22,7 +22,7 @@
 
 #include <cuda_runtime_api.h>
 #include <cub/device/device_reduce.cuh>
-#include <cub/iterator/transform_input_iterator.cuh>
+#include <cuda/std/functional>
 
 template <typename Scalar>
 MOCHI_GPU MOCHI_FORCE_INLINE void ApplyGivensInPlace(
@@ -334,9 +334,16 @@ size_t GetBufferSize(int n, Scalar* x, Scalar* norm, cudaStream_t stream) {
   void* tempStorage = nullptr;
   size_t tempStorageBytes = 0;
   //
-  squareT<Scalar> op;
-  cub::TransformInputIterator<Scalar, squareT<Scalar>, Scalar*> input_iter(x, op);
-  cub::DeviceReduce::Sum(tempStorage, tempStorageBytes, input_iter, norm, n, stream);
+  cub::DeviceReduce::TransformReduce(
+      tempStorage,
+      tempStorageBytes,
+      x,
+      norm,
+      n,
+      cuda::std::plus<Scalar>{},
+      squareT<Scalar>{},
+      Scalar(0),
+      stream);
   wSize += tempStorageBytes;
   //
   return wSize;
@@ -369,12 +376,17 @@ void NormL2(
   void* tempStorage = buffer; // Cast is unnecessary
   size_t tempStorageBytes = bufferSize * sizeof(Scalar);
 
-  // Create transform iterator to compute squares of elements
-  squareT<Scalar> squareOp;
-  cub::TransformInputIterator<Scalar, squareT<Scalar>, Scalar*> input_iter(x, squareOp);
-
   // Sum the squares
-  cub::DeviceReduce::Sum(tempStorage, tempStorageBytes, input_iter, norm, n, stream);
+  cub::DeviceReduce::TransformReduce(
+      tempStorage,
+      tempStorageBytes,
+      x,
+      norm,
+      n,
+      cuda::std::plus<Scalar>{},
+      squareT<Scalar>{},
+      Scalar(0),
+      stream);
 
   // Take square root of the sum
   KernelSqrt<<<1, 1, 0, stream>>>(norm);

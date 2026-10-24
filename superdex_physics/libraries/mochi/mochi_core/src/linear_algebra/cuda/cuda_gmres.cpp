@@ -178,7 +178,12 @@ std::tuple<int, double, double, IterationStatus> CudaGMRes_impl(
       cParams.conditional.handle = handle;
       cParams.conditional.type = cudaGraphCondTypeWhile;
       cParams.conditional.size = 1;
+      // TODO(T294426402): keep only the CUDA 13 call once CUDA 12 is gone.
+#if CUDART_VERSION >= 13000
+      MOCHI_CUDA_CHECK(cudaGraphAddNode(&conditionalNode, graph, nullptr, nullptr, 0, &cParams));
+#else
       MOCHI_CUDA_CHECK(cudaGraphAddNode(&conditionalNode, graph, nullptr, 0, &cParams));
+#endif
       cudaGraph_t bodyGraph = cParams.conditional.phGraph_out[0];
       //
       cudaStream_t stream0{};
