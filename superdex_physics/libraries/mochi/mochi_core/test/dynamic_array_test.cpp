@@ -20,11 +20,15 @@
 #include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_core/utils/nd_array.h>
+#include <mochi_core/utils/quaternion.h>
+#include <mochi_core/utils/simd.h>
 
 #include <picojson/picojson.h>
 
+#include <limits>
 #include <list>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -2399,4 +2403,148 @@ TEST(DynamicArray, Reflection) {
   innerType.Set(&newVal, elem);
   typeInfo.Serialize(newObj, json);
   EXPECT_STREQ("[0,42,0]", json.serialize(false).c_str());
+}
+
+namespace {
+
+// Reflected struct that SReflect serializes as raw bytes (memcopy-safe).
+struct ReflectedPod {
+  int32_t a = 0;
+  float b = 0.f;
+
+  MOCHI_STRUCT_BEGIN(ReflectedPod)
+  MOCHI_FIELD(a)
+  MOCHI_FIELD(b)
+  MOCHI_STRUCT_END()
+};
+
+// Trivially copyable reflected struct that SReflect serializes field by field, because the optional
+// field is not memcopy-safe.
+struct ReflectedPodWithOptional {
+  int32_t a = 0;
+  std::optional<int32_t> b;
+  int32_t skipped = 0;
+
+  bool operator==(ReflectedPodWithOptional const&) const = default;
+
+  MOCHI_STRUCT_BEGIN(ReflectedPodWithOptional)
+  MOCHI_FIELD(a)
+  MOCHI_FIELD(b)
+  MOCHI_FIELD(skipped) MOCHI_ATTRIBUTE(NoSerialize());
+  MOCHI_STRUCT_END()
+};
+
+} // namespace
+
+// Expected bytes of the bulk serialization of an array: the element count (size_t) followed by the
+// raw bytes of all elements.
+template <class T>
+static std::vector<uint8_t> BulkBytes(DynamicArray<T> const& arr) {
+  static_assert(
+      std::is_trivially_copyable_v<T>, "Only trivially copyable elements are copied in bulk.");
+  size_t const numElements = arr.size();
+  auto const* count = reinterpret_cast<uint8_t const*>(&numElements);
+  auto const* data = reinterpret_cast<uint8_t const*>(arr.data());
+  std::vector<uint8_t> bytes(count, count + sizeof(numElements));
+  bytes.insert(bytes.end(), data, data + numElements * sizeof(T));
+  return bytes;
+}
+
+// Serializes the array to bytes, checks that they deserialize to the same array (bitwise for
+// trivially copyable elements), and returns them.
+template <class T>
+static std::vector<uint8_t> ExpectRoundTrip(DynamicArray<T> const& arr) {
+  std::vector<uint8_t> bytes = SReflect::ToBytes(arr);
+  SReflect::SpanStreamReader reader{SReflect::Span<uint8_t const>{bytes}};
+  DynamicArray<T> roundTrip;
+  EXPECT_TRUE(SReflect::FromBytes(reader, roundTrip));
+  if constexpr (std::is_trivially_copyable_v<T>) {
+    EXPECT_EQ(BulkBytes(arr), BulkBytes(roundTrip)); // Bitwise
+  } else {
+    EXPECT_EQ(arr, roundTrip);
+  }
+  EXPECT_FALSE(reader.HasUnreadBytes());
+  return bytes;
+}
+
+// Bytes of the per-element serialization of an array, which std::vector still uses.
+template <class T>
+static std::vector<uint8_t> PerElementBytes(DynamicArray<T> const& arr) {
+  std::vector<T> const vec(arr.begin(), arr.end());
+  return SReflect::ToBytes(vec);
+}
+
+// Memcopy-safe elements are serialized to bytes in one copy. For arithmetic and struct elements,
+// the bytes are those of the per-element path.
+TEST(DynamicArray, ReflectionBytesBulkMatchesPerElement) {
+  auto expectBulkAndPerElementBytes = []<class T>(DynamicArray<T> const& arr) {
+    std::vector<uint8_t> const bytes = ExpectRoundTrip(arr);
+    EXPECT_EQ(BulkBytes(arr), bytes);
+    EXPECT_EQ(PerElementBytes(arr), bytes);
+  };
+  expectBulkAndPerElementBytes(DynamicArray<int32_t>{});
+  expectBulkAndPerElementBytes(DynamicArray<int32_t>{1, -2, 3});
+  expectBulkAndPerElementBytes(DynamicArray<uint8_t>{1, 2, 255});
+  expectBulkAndPerElementBytes(DynamicArray<uint32_t>{7, 0xFFFFFFFF});
+  expectBulkAndPerElementBytes(DynamicArray<float>{0.5f, -1.25f});
+  expectBulkAndPerElementBytes(DynamicArray<double>{1e300, -2.5});
+  expectBulkAndPerElementBytes(
+      DynamicArray<ReflectedPod>{{.a = 1, .b = 0.5f}, {.a = -2, .b = 3.25f}});
+}
+
+// Fixed-size array elements are also copied in one go, without the per-element count of the
+// per-element path, and restore bitwise.
+TEST(DynamicArray, ReflectionBytesBulkFixedSizeElements) {
+  auto expectBulkBytes = []<class T>(DynamicArray<T> const& arr) {
+    std::vector<uint8_t> const bytes = ExpectRoundTrip(arr);
+    EXPECT_EQ(BulkBytes(arr), bytes);
+  };
+  expectBulkBytes(DynamicArray<Real3>{});
+  expectBulkBytes(DynamicArray<Real3>{Real3{1_r, 2_r, 3_r}, Real3{4_r, -5_r, 6.5_r}});
+  expectBulkBytes(DynamicArray<Quaternion>{Quaternion{}, Quaternion::RotationX(0.5_r)});
+  expectBulkBytes(DynamicArray<Vec4r>{Vec4r{1_r, 2_r, 3_r, 4_r}});
+}
+
+// Elements that are not trivially copyable keep the per-element path.
+TEST(DynamicArray, ReflectionBytesNonTriviallyCopyableElements) {
+  DynamicArray<DynamicArray<int32_t>> const arr{{1, 2}, {}, {3}};
+  EXPECT_EQ(PerElementBytes(arr), ExpectRoundTrip(arr));
+}
+
+// Trivially copyable elements that are not memcopy-safe also keep the per-element path, which skips
+// NoSerialize fields and the storage of empty optionals.
+TEST(DynamicArray, ReflectionBytesNotMemCopySafeElements) {
+  static_assert(std::is_trivially_copyable_v<ReflectedPodWithOptional>);
+  EXPECT_FALSE(SReflect::GetTypeInfo<ReflectedPodWithOptional>().IsMemCopySafe());
+  DynamicArray<ReflectedPodWithOptional> const arr{
+      {.a = 1, .b = 2, .skipped = 3}, {.a = -4, .b = std::nullopt, .skipped = 5}};
+  std::vector<uint8_t> const bytes = SReflect::ToBytes(arr);
+  EXPECT_EQ(PerElementBytes(arr), bytes);
+
+  SReflect::SpanStreamReader reader{SReflect::Span<uint8_t const>{bytes}};
+  DynamicArray<ReflectedPodWithOptional> roundTrip;
+  EXPECT_TRUE(SReflect::FromBytes(reader, roundTrip));
+  EXPECT_FALSE(reader.HasUnreadBytes());
+  DynamicArray<ReflectedPodWithOptional> const expected{{.a = 1, .b = 2}, {.a = -4}};
+  EXPECT_EQ(expected, roundTrip);
+}
+
+// A count whose byte size overflows size_t fails before resizing the array.
+TEST(DynamicArray, ReflectionBytesOverflowingCount) {
+  size_t const numElements = std::numeric_limits<size_t>::max() / sizeof(int32_t) + 1;
+  auto const* count = reinterpret_cast<uint8_t const*>(&numElements);
+  std::vector<uint8_t> const bytes(count, count + sizeof(numElements));
+  SReflect::SpanStreamReader reader{SReflect::Span<uint8_t const>{bytes}};
+  DynamicArray<int32_t> arr;
+  EXPECT_FALSE(SReflect::FromBytes(reader, arr));
+  EXPECT_TRUE(arr.empty());
+}
+
+// Truncated input fails instead of reading past the end.
+TEST(DynamicArray, ReflectionBytesTruncated) {
+  std::vector<uint8_t> bytes = SReflect::ToBytes(DynamicArray<int32_t>{1, 2, 3});
+  bytes.pop_back();
+  SReflect::SpanStreamReader reader{SReflect::Span<uint8_t const>{bytes}};
+  DynamicArray<int32_t> arr;
+  EXPECT_FALSE(SReflect::FromBytes(reader, arr));
 }

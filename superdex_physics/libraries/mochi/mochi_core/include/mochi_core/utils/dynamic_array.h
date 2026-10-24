@@ -1189,13 +1189,92 @@ DynamicArray(InputIt, InputIt, Allocator* = GetDefaultAllocator())
 
 // Reflection support
 #if MOCHI_USE_REFLECTION
+namespace mochi::details {
+
+// Reflection type info for DynamicArray. For memcopy-safe element types, the binary serialization
+// writes the element count followed by all elements in one copy, avoiding the per-element virtual
+// calls of SReflect::ArrayTypeInfo. For arithmetic and struct elements, this produces the same
+// bytes as the per-element path. Fixed-size array elements (e.g. Real3, Quaternion) are written
+// without the per-element count of that path; binary captures are only exchanged between processes
+// of the same build, which agree on the format.
+template <class T>
+class DynamicArrayTypeInfo final : public SReflect::ArrayTypeInfo {
+ public:
+  [[nodiscard]] bool CanResize() const override {
+    return true;
+  }
+
+  size_t GetNumElements(void const* obj) const override {
+    return Get(obj).size();
+  }
+
+  bool SetNumElements(void* obj, size_t numElements) const override {
+    Get(obj).resize(numElements);
+    return true;
+  }
+
+  void* GetElement(void* obj, size_t i) const override {
+    return &Get(obj)[i];
+  }
+
+  void const* GetElement(void const* obj, size_t i) const override {
+    return &Get(obj)[i];
+  }
+
+  [[nodiscard]] bool IsMemCopySafe() const override {
+    return false;
+  }
+
+ protected:
+  bool SerializeToBytesInner(void const* src, SReflect::StreamWriter& dst) const override {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      if (_innerTypeInfo->IsMemCopySafe()) {
+        auto const& arr = Get(src);
+        size_t const numElements = arr.size();
+        // An empty array may have no storage, and stream copies must not get a null pointer.
+        return dst.Write(&numElements, sizeof(numElements)) &&
+            (numElements == 0 || dst.Write(arr.data(), numElements * sizeof(T)));
+      }
+    }
+    return ArrayTypeInfo::SerializeToBytesInner(src, dst);
+  }
+
+  bool DeserializeFromBytesInner(SReflect::StreamReader& src, void* dst) const override {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      if (_innerTypeInfo->IsMemCopySafe()) {
+        size_t numElements = 0;
+        // Reject counts whose byte size overflows, which would allocate an undersized array.
+        if (!src.Read(&numElements, sizeof(numElements)) ||
+            numElements > std::numeric_limits<size_t>::max() / sizeof(T)) {
+          return false;
+        }
+        auto& arr = Get(dst);
+        arr.resize_noinit(numElements);
+        return numElements == 0 || src.Read(arr.data(), numElements * sizeof(T));
+      }
+    }
+    return ArrayTypeInfo::DeserializeFromBytesInner(src, dst);
+  }
+
+ private:
+  static DynamicArray<T>& Get(void* obj) {
+    return *static_cast<DynamicArray<T>*>(obj);
+  }
+
+  static DynamicArray<T> const& Get(void const* obj) {
+    return *static_cast<DynamicArray<T> const*>(obj);
+  }
+};
+
+} // namespace mochi::details
+
 template <class T>
 struct SReflectTypeTraits<mochi::DynamicArray<T>> {
   static constexpr SReflect::CoreType coreType = SReflect::CoreType::CT_array;
   static SReflect::ArrayTypeInfo const& GetTypeInfo() {
     using ArrT = mochi::DynamicArray<T>;
     static auto* s_typeInfo =
-        SReflect::MakeDynamicArrayTypeInfo<SReflect::VectorTypeInfo<ArrT>, ArrT, T>(
+        SReflect::MakeDynamicArrayTypeInfo<mochi::details::DynamicArrayTypeInfo<T>, ArrT, T>(
             "mochi::DynamicArray", true);
     return *s_typeInfo;
   }
