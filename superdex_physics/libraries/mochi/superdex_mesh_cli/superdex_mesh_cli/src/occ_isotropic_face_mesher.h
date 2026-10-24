@@ -29,7 +29,6 @@
 #include <gp_Pnt2d.hxx>
 
 #include <atomic>
-#include <utility>
 #include <vector>
 
 namespace mochi::mesh::cli::occ {
@@ -60,8 +59,10 @@ class FaceMeshFallbackStats {
 
 /// Per-face meshing algorithm using CGAL's constrained Delaunay triangulation. Operates in 2D
 /// parametric space with metric-aware sizing, so spacing stays isotropic in 3D across a face
-/// however skewed its parametrisation. Plugs into OCCT's BRepMesh pipeline (via
-/// BRepMesh_FaceDiscret) as a replacement for the default Watson/Delabella algorithms.
+/// however skewed its parametrisation. Where a face collapses to a pole, which no single scaling
+/// can match, the interior samples are instead spaced and connected by their 3D positions. Plugs
+/// into OCCT's BRepMesh pipeline (via BRepMesh_FaceDiscret) as a replacement for the default
+/// Watson/Delabella algorithms.
 ///
 /// Degenerate CAD occasionally defeats the CGAL path on individual faces. Rather than leaving a
 /// hole in the model, such a face is retried with @p fallbackAlgo (OCCT's own mesher).
@@ -93,10 +94,27 @@ class IsotropicFaceMesher : public IMeshTools_MeshAlgo {
   struct BoundaryPoint {
     gp_Pnt2d uv;
     gp_Pnt p3d;
+    /// Whether this sample is a pole: an end of a degenerate boundary segment, such as the edge
+    /// OCCT puts at a sphere's pole, which spans parametric space but is a single point in 3D.
+    bool pole = false;
   };
 
   using Wire = std::vector<BoundaryPoint>;
   using Wires = std::vector<Wire>;
+
+  /// An interior sample in metric-scaled parametric space, with the spacing it was placed at, in
+  /// the same units.
+  struct InteriorPoint {
+    double u{};
+    double v{};
+    double spacing{};
+  };
+
+  /// How many samples each interior cell is split into along u and v.
+  struct Oversampling {
+    int u = 1;
+    int v = 1;
+  };
 
  private:
   /// The face meshing proper, with @p parameters already carrying the face's deflections.
@@ -124,8 +142,9 @@ class IsotropicFaceMesher : public IMeshTools_MeshAlgo {
     double spacing{};
   };
 
-  /// Interior sample positions in metric-scaled parametric space, graded from the boundary.
-  std::vector<std::pair<double, double>> GenerateInteriorPoints(
+  /// Interior samples in metric-scaled parametric space, graded from the boundary. Each cell of the
+  /// graded quad-tree yields @p oversampling samples.
+  std::vector<InteriorPoint> GenerateInteriorPoints(
       IMeshData::IFaceHandle const& dFace,
       IMeshTools_Parameters const& parameters,
       Wires const& wires,
@@ -134,7 +153,8 @@ class IsotropicFaceMesher : public IMeshTools_MeshAlgo {
       double uMin,
       double uMax,
       double vMin,
-      double vMax) const;
+      double vMax,
+      Oversampling oversampling) const;
 
   /// Retries @p dFace with the fallback mesher. Marks the face IMeshData_Failure only if the
   /// fallback also produced nothing.

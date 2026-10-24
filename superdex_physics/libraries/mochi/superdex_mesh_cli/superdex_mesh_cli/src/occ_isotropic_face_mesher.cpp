@@ -27,6 +27,7 @@
 
 #if MOCHI_USE_OCCT
 
+#include <Adaptor3d_Surface.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepMesh_Deflection.hxx>
 #include <BRepMesh_ShapeTool.hxx>
@@ -39,6 +40,7 @@
 #include <IMeshData_Wire.hxx>
 #include <IMeshTools_Parameters.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Precision.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Pnt.hxx>
@@ -46,11 +48,14 @@
 #include <gp_Vec.hxx>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <numbers>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -77,6 +82,20 @@ constexpr double kMinMetricValue = 1e-20;
 // How fine the graded interior may get relative to the target, bounding the cost of a face whose
 // boundary is locally very dense.
 constexpr double kMinSpacingFraction = 0.125;
+
+// Interior samples closer than this fraction of their spacing to the boundary make slivers.
+constexpr double kBoundaryClearance = 0.35;
+
+// On a face with a pole, interior cells are split this many times along the parameter that
+// collapses there, so thinning (see ThinToSurfaceSpacing) can pick the 3D spacing finely.
+constexpr int kPoleOversampling = 4;
+
+// On a face with a pole, interior samples closer in 3D than this fraction of their spacing, to each
+// other or to a pole, are dropped. Just under 1 so a grid at the intended spacing loses nothing.
+constexpr double kMinSampleDistance = 0.85;
+
+// Bounds the edge flipping of FlipToSurfaceDelaunay, which converges in a few passes.
+constexpr int kMaxFlipPasses = 32;
 
 /// Determine which pcurve orientation to use for a seam edge. Seam edges have two pcurves on the
 /// same face -- if they coincide geometrically, mark as INTERNAL to avoid duplicating constraints.
@@ -260,6 +279,237 @@ bool MarkDomain(CDT& cdt, IsotropicFaceMesher::Wires const& wires, double scaleU
   return true;
 }
 
+/// Squared distance from (u, v) to the nearest boundary segment, in scaled parametric space.
+double DistanceToBoundarySq(
+    double u,
+    double v,
+    IsotropicFaceMesher::Wires const& wires,
+    double scaleU,
+    double scaleV) {
+  double best = std::numeric_limits<double>::max();
+  for (auto const& wire : wires) {
+    for (size_t i = 0; i < wire.size(); ++i) {
+      size_t const j = (i + 1) % wire.size();
+      double const ax = wire[i].uv.X() * scaleU;
+      double const ay = wire[i].uv.Y() * scaleV;
+      double const dx = wire[j].uv.X() * scaleU - ax;
+      double const dy = wire[j].uv.Y() * scaleV - ay;
+      double const lenSq = dx * dx + dy * dy;
+      double const t =
+          (lenSq > 0.0) ? std::clamp(((u - ax) * dx + (v - ay) * dy) / lenSq, 0.0, 1.0) : 0.0;
+      double const px = ax + t * dx - u;
+      double const py = ay + t * dy - v;
+      best = std::min(best, px * px + py * py);
+    }
+  }
+  return best;
+}
+
+/// Appends the samples of the interior cell of side @p cellSize centred at (u, v), all in scaled
+/// parametric space: the centre, or the centres of an @p oversampling grid of sub-cells. A sample
+/// outside the domain or too close to the boundary for the cell's size is dropped.
+void EmitCell(
+    double u,
+    double v,
+    double cellSize,
+    IsotropicFaceMesher::Oversampling oversampling,
+    IsotropicFaceMesher::Wires const& wires,
+    double scaleU,
+    double scaleV,
+    std::vector<IsotropicFaceMesher::InteriorPoint>& points) {
+  double const clearance = cellSize * kBoundaryClearance;
+  for (int i = 0; i < oversampling.u; ++i) {
+    double const su = u + cellSize * ((i + 0.5) / oversampling.u - 0.5);
+    for (int j = 0; j < oversampling.v; ++j) {
+      double const sv = v + cellSize * ((j + 0.5) / oversampling.v - 0.5);
+      if (IsInsideDomain(su, sv, wires, scaleU, scaleV) &&
+          DistanceToBoundarySq(su, sv, wires, scaleU, scaleV) >= clearance * clearance) {
+        points.push_back({su, sv, cellSize});
+      }
+    }
+  }
+}
+
+/// Oversampling for a face's interior: @ref kPoleOversampling along each parameter that collapses
+/// at a pole of the face, i.e. along which one of its degenerate boundary segments runs.
+IsotropicFaceMesher::Oversampling PoleOversampling(IsotropicFaceMesher::Wires const& wires) {
+  IsotropicFaceMesher::Oversampling oversampling;
+  for (auto const& wire : wires) {
+    for (size_t i = 0; i < wire.size(); ++i) {
+      IsotropicFaceMesher::BoundaryPoint const& a = wire[i];
+      IsotropicFaceMesher::BoundaryPoint const& b = wire[(i + 1) % wire.size()];
+      if (a.p3d.SquareDistance(b.p3d) > Precision::SquareConfusion()) {
+        continue;
+      }
+      if (std::abs(b.uv.X() - a.uv.X()) >= std::abs(b.uv.Y() - a.uv.Y())) {
+        oversampling.u = kPoleOversampling;
+      } else {
+        oversampling.v = kPoleOversampling;
+      }
+    }
+  }
+  return oversampling;
+}
+
+double SquareDistanceToSegment(gp_Pnt const& p, gp_Pnt const& a, gp_Pnt const& b) {
+  gp_Vec const ab(a, b);
+  double const lenSq = ab.SquareMagnitude();
+  double const t = lenSq > 0.0 ? std::clamp(gp_Vec(a, p).Dot(ab) / lenSq, 0.0, 1.0) : 0.0;
+  return p.SquareDistance(a.Translated(t * ab));
+}
+
+/// Keeps the interior samples, visited in order, that lie at least @ref kMinSampleDistance x their
+/// spacing from every kept sample and pole in 3D, and @ref kBoundaryClearance x their spacing from
+/// the boundary. Metric scaling stretches each parameter by one factor for the whole face, so where
+/// the surface collapses towards a pole, samples placed at the intended spacing in scaled space
+/// bunch up in 3D; this restores the spacing.
+std::vector<IsotropicFaceMesher::InteriorPoint> ThinToSurfaceSpacing(
+    std::vector<IsotropicFaceMesher::InteriorPoint> const& candidates,
+    IsotropicFaceMesher::Wires const& wires,
+    Adaptor3d_Surface const& surface,
+    double scaleU,
+    double scaleV) {
+  if (candidates.empty()) {
+    return {};
+  }
+  struct Kept {
+    gp_Pnt p;
+    double spacing{};
+  };
+  double maxSpacing = 0.0;
+  for (auto const& candidate : candidates) {
+    maxSpacing = std::max(maxSpacing, candidate.spacing);
+  }
+  // A cell holds every kept sample that can reject a candidate in one of the 27 around its own.
+  double const cellSize = kMinSampleDistance * maxSpacing;
+  using CellKey = std::array<long long, 3>;
+  auto const cellOf = [cellSize](gp_Pnt const& p) {
+    return CellKey{
+        static_cast<long long>(std::floor(p.X() / cellSize)),
+        static_cast<long long>(std::floor(p.Y() / cellSize)),
+        static_cast<long long>(std::floor(p.Z() / cellSize))};
+  };
+  std::map<CellKey, std::vector<Kept>> cells;
+
+  // A pole keeps a sample as far away as a kept sample of the same spacing would.
+  for (auto const& wire : wires) {
+    for (auto const& bp : wire) {
+      if (bp.pole) {
+        cells[cellOf(bp.p3d)].push_back({bp.p3d, std::numeric_limits<double>::infinity()});
+      }
+    }
+  }
+
+  auto const tooCloseToKept = [&](gp_Pnt const& p, double spacing) {
+    CellKey const cell = cellOf(p);
+    for (long long dx = -1; dx <= 1; ++dx) {
+      for (long long dy = -1; dy <= 1; ++dy) {
+        for (long long dz = -1; dz <= 1; ++dz) {
+          auto const it = cells.find({cell[0] + dx, cell[1] + dy, cell[2] + dz});
+          if (it == cells.end()) {
+            continue;
+          }
+          for (Kept const& kept : it->second) {
+            double const minDistance = kMinSampleDistance * std::min(spacing, kept.spacing);
+            if (p.SquareDistance(kept.p) < minDistance * minDistance) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  auto const tooCloseToBoundary = [&wires](gp_Pnt const& p, double spacing) {
+    double const clearance = kBoundaryClearance * spacing;
+    for (auto const& wire : wires) {
+      for (size_t i = 0; i < wire.size(); ++i) {
+        if (SquareDistanceToSegment(p, wire[i].p3d, wire[(i + 1) % wire.size()].p3d) <
+            clearance * clearance) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  std::vector<IsotropicFaceMesher::InteriorPoint> thinned;
+  for (auto const& candidate : candidates) {
+    gp_Pnt const p = surface.Value(candidate.u / scaleU, candidate.v / scaleV);
+    if (tooCloseToKept(p, candidate.spacing) || tooCloseToBoundary(p, candidate.spacing)) {
+      continue;
+    }
+    cells[cellOf(p)].push_back({p, candidate.spacing});
+    thinned.push_back(candidate);
+  }
+  return thinned;
+}
+
+/// Whether to flip the interior edge @p i of @p face: whether the 3D triangles on either side fail
+/// the Delaunay condition, their angles opposite the edge summing to more than pi. A flip is only
+/// considered where both new triangles keep a positive orientation in parametric space, and where
+/// no 3D edge involved collapses (as along a degenerate boundary segment).
+bool ShouldFlip(
+    CDT const& cdt,
+    CDT::Face_handle face,
+    int i,
+    std::map<VertexHandle, gp_Pnt> const& positions) {
+  CDT::Face_handle const other = face->neighbor(i);
+  if (face->is_constrained(i) || cdt.is_infinite(other) || !other->is_in_domain()) {
+    return false;
+  }
+  // The quad c, a, d, b runs counterclockwise; the flip replaces edge ab with cd.
+  VertexHandle const c = face->vertex(i);
+  VertexHandle const a = face->vertex(CDT::ccw(i));
+  VertexHandle const b = face->vertex(CDT::cw(i));
+  VertexHandle const d = other->vertex(cdt.mirror_index(face, i));
+  if (CGAL::orientation(c->point(), a->point(), d->point()) != CGAL::LEFT_TURN ||
+      CGAL::orientation(d->point(), b->point(), c->point()) != CGAL::LEFT_TURN) {
+    return false;
+  }
+
+  gp_Pnt const& pa = positions.at(a);
+  gp_Pnt const& pb = positions.at(b);
+  gp_Pnt const& pc = positions.at(c);
+  gp_Pnt const& pd = positions.at(d);
+  for (auto const& [p, q] :
+       {std::pair{&pa, &pb}, {&pa, &pc}, {&pb, &pc}, {&pa, &pd}, {&pb, &pd}, {&pc, &pd}}) {
+    if (p->SquareDistance(*q) <= Precision::SquareConfusion()) {
+      return false;
+    }
+  }
+  constexpr double kAngleTolerance = 1e-9;
+  return gp_Vec(pc, pa).Angle(gp_Vec(pc, pb)) + gp_Vec(pd, pa).Angle(gp_Vec(pd, pb)) >
+      std::numbers::pi + kAngleTolerance;
+}
+
+/// Flips the domain's interior edges until its 3D triangles are Delaunay (see ShouldFlip). The CDT
+/// is Delaunay in scaled parametric space, which matches 3D only where the surface's metric is
+/// near uniform; around a pole it is far from it.
+void FlipToSurfaceDelaunay(CDT& cdt, std::map<VertexHandle, gp_Pnt> const& positions) {
+  for (int pass = 0; pass < kMaxFlipPasses; ++pass) {
+    bool flipped = false;
+    for (auto fit = cdt.finite_faces_begin(); fit != cdt.finite_faces_end(); ++fit) {
+      if (!fit->is_in_domain()) {
+        continue;
+      }
+      CDT::Face_handle face = fit;
+      for (int i = 0; i < 3; ++i) {
+        if (ShouldFlip(cdt, face, i, positions)) {
+          // Both faces stay in the domain; the flip reuses them.
+          cdt.flip(face, i);
+          flipped = true;
+          break;
+        }
+      }
+    }
+    if (!flipped) {
+      return;
+    }
+  }
+}
+
 } // namespace
 
 IsotropicFaceMesher::IsotropicFaceMesher(
@@ -273,7 +523,7 @@ IsotropicFaceMesher::IsotropicFaceMesher(
       _fallbackAlgo(std::move(fallbackAlgo)),
       _stats(stats) {}
 
-std::vector<std::pair<double, double>> IsotropicFaceMesher::GenerateInteriorPoints(
+std::vector<IsotropicFaceMesher::InteriorPoint> IsotropicFaceMesher::GenerateInteriorPoints(
     IMeshData::IFaceHandle const& dFace,
     IMeshTools_Parameters const& parameters,
     Wires const& wires,
@@ -282,12 +532,11 @@ std::vector<std::pair<double, double>> IsotropicFaceMesher::GenerateInteriorPoin
     double uMin,
     double uMax,
     double vMin,
-    double vMax) const {
+    double vMax,
+    Oversampling oversampling) const {
   // How fast the size field relaxes from a fine boundary back to the target.
   // Too low (~0.15) doubles element count; too high (~1.0) causes fans.
   constexpr double kGradeRate = 0.8;
-  // Points closer than this fraction of local size to the boundary make slivers.
-  constexpr double kBoundaryClearance = 0.35;
 
   double const minSpacing = _targetEdgeLength * kMinSpacingFraction;
 
@@ -377,44 +626,13 @@ std::vector<std::pair<double, double>> IsotropicFaceMesher::GenerateInteriorPoin
     return std::max(best, minSpacing);
   };
 
-  auto distanceToBoundarySq = [&](double u, double v) {
-    double best = std::numeric_limits<double>::max();
-    for (auto const& wire : wires) {
-      for (size_t i = 0; i < wire.size(); ++i) {
-        size_t const j = (i + 1) % wire.size();
-        double const ax = wire[i].uv.X() * scaleU;
-        double const ay = wire[i].uv.Y() * scaleV;
-        double const dx = wire[j].uv.X() * scaleU - ax;
-        double const dy = wire[j].uv.Y() * scaleV - ay;
-        double const lenSq = dx * dx + dy * dy;
-        double const t =
-            (lenSq > 0.0) ? std::clamp(((u - ax) * dx + (v - ay) * dy) / lenSq, 0.0, 1.0) : 0.0;
-        double const px = ax + t * dx - u;
-        double const py = ay + t * dy - v;
-        best = std::min(best, px * px + py * py);
-      }
-    }
-    return best;
-  };
+  std::vector<InteriorPoint> points;
 
-  std::vector<std::pair<double, double>> points;
-
-  // Adaptive quad-tree: subdivide until cell size <= local size field, then emit centre.
+  // Adaptive quad-tree: subdivide until cell size <= local size field, then emit the cell.
   // Most of the face stays at base resolution; only the band near fine boundaries fills in.
-  auto emit = [&](double u, double v, double cellSize) {
-    if (!IsInsideDomain(u, v, wires, scaleU, scaleV)) {
-      return;
-    }
-    double const clearance = cellSize * kBoundaryClearance;
-    if (distanceToBoundarySq(u, v) < clearance * clearance) {
-      return;
-    }
-    points.emplace_back(u, v);
-  };
-
   auto subdivide = [&](auto&& self, double u, double v, double cellSize) -> void {
     if (cellSize <= sizeAt(u, v) || cellSize <= minSpacing) {
-      emit(u, v, cellSize);
+      EmitCell(u, v, cellSize, oversampling, wires, scaleU, scaleV, points);
       return;
     }
     double const quarter = cellSize * 0.25;
@@ -518,6 +736,17 @@ IsotropicFaceMesher::Wires IsotropicFaceMesher::ExtractBoundaryWires(
       wirePoints = std::move(deduped);
     }
 
+    // Consecutive samples left distinct in parametric space but coinciding in 3D bound a
+    // degenerate segment.
+    for (size_t i = 0; i < wirePoints.size(); ++i) {
+      BoundaryPoint& a = wirePoints[i];
+      BoundaryPoint& b = wirePoints[(i + 1) % wirePoints.size()];
+      if (a.p3d.SquareDistance(b.p3d) <= Precision::SquareConfusion()) {
+        a.pole = true;
+        b.pole = true;
+      }
+    }
+
     if (wirePoints.size() >= 3) {
       wires.push_back(std::move(wirePoints));
     }
@@ -612,6 +841,10 @@ void IsotropicFaceMesher::Mesh(
   double scaleV = 1.0;
   ComputeMetricScaling(dFace, wires, scaleU, scaleV);
 
+  // Around a pole one parameter collapses, so no single scale per parameter matches 3D there.
+  Oversampling const oversampling = PoleOversampling(wires);
+  bool const hasPole = oversampling.u > 1 || oversampling.v > 1;
+
   // --- Step 3: Build CGAL CDT2 with scaled boundary constraints ---
   CDT cdt;
 
@@ -621,6 +854,7 @@ void IsotropicFaceMesher::Mesh(
   // meshes. Using curve3d->GetPoint() ensures identical 3D positions across faces.
   std::map<VertexHandle, gp_Pnt> boundaryPt3d;
   std::map<VertexHandle, gp_Pnt2d> boundaryUV;
+  std::set<VertexHandle> poleVertices;
 
   for (auto const& wire : wires) {
     std::vector<VertexHandle> vhs;
@@ -632,6 +866,9 @@ void IsotropicFaceMesher::Mesh(
       vhs.push_back(vh);
       boundaryPt3d[vh] = bp.p3d;
       boundaryUV[vh] = bp.uv;
+      if (bp.pole) {
+        poleVertices.insert(vh);
+      }
     }
 
     // Insert constrained edges forming the closed polygon.
@@ -661,7 +898,8 @@ void IsotropicFaceMesher::Mesh(
   // --- Step 4b: Refine interior with Steiner points ---
   // These are non-constrained points, so boundary edges are never split, preserving cross-face
   // vertex matching. Spacing is uniform at the target length, or graded towards the boundary's own
-  // density when that is finer.
+  // density when that is finer. On a face with a pole, the samples are then thinned to that spacing
+  // in 3D.
   {
     double uMin = std::numeric_limits<double>::max();
     double uMax = std::numeric_limits<double>::lowest();
@@ -683,60 +921,26 @@ void IsotropicFaceMesher::Mesh(
     double const minExtent =
         _gradedInterior ? _targetEdgeLength * kMinSpacingFraction : _targetEdgeLength;
     if ((uMax - uMin) > minExtent && (vMax - vMin) > minExtent) {
-      std::vector<std::pair<double, double>> interior;
+      std::vector<InteriorPoint> interior;
       if (_gradedInterior) {
         interior = GenerateInteriorPoints(
-            dFace, parameters, wires, scaleU, scaleV, uMin, uMax, vMin, vMax);
+            dFace, parameters, wires, scaleU, scaleV, uMin, uMax, vMin, vMax, oversampling);
       } else {
         double const spacing = _targetEdgeLength;
-        // Grid points closer than this to any boundary edge create thin triangles at face seams.
-        double const minBoundaryDist = spacing * 0.35;
-        double const minBoundaryDistSq = minBoundaryDist * minBoundaryDist;
-
         // Offset by half spacing to avoid points on the boundary.
         for (double u = uMin + spacing * 0.5; u < uMax; u += spacing) {
           for (double v = vMin + spacing * 0.5; v < vMax; v += spacing) {
-            if (!IsInsideDomain(u, v, wires, scaleU, scaleV)) {
-              continue;
-            }
-
-            bool tooClose = false;
-            for (auto const& wire : wires) {
-              for (size_t i = 0; i < wire.size() && !tooClose; ++i) {
-                size_t const j = (i + 1) % wire.size();
-                double const ax = wire[i].uv.X() * scaleU;
-                double const ay = wire[i].uv.Y() * scaleV;
-                double const bx = wire[j].uv.X() * scaleU;
-                double const by = wire[j].uv.Y() * scaleV;
-
-                // Point-to-segment distance squared.
-                double const dx = bx - ax;
-                double const dy = by - ay;
-                double const lenSq = dx * dx + dy * dy;
-                double const t = (lenSq > 0.0)
-                    ? std::clamp(((u - ax) * dx + (v - ay) * dy) / lenSq, 0.0, 1.0)
-                    : 0.0;
-                double const px = ax + t * dx - u;
-                double const py = ay + t * dy - v;
-                if (px * px + py * py < minBoundaryDistSq) {
-                  tooClose = true;
-                }
-              }
-              if (tooClose) {
-                break;
-              }
-            }
-
-            if (!tooClose) {
-              interior.emplace_back(u, v);
-            }
+            EmitCell(u, v, spacing, oversampling, wires, scaleU, scaleV, interior);
           }
         }
       }
+      if (hasPole) {
+        interior = ThinToSurfaceSpacing(interior, wires, *surface, scaleU, scaleV);
+      }
 
       if (!interior.empty()) {
-        for (auto const& p : interior) {
-          cdt.insert(Point2(p.first, p.second));
+        for (InteriorPoint const& p : interior) {
+          cdt.insert(Point2(p.u, p.v));
         }
         // Re-mark the domain now that the interior points are in.
         if (!MarkDomain(cdt, wires, scaleU, scaleV)) {
@@ -745,6 +949,19 @@ void IsotropicFaceMesher::Mesh(
         }
       }
     }
+  }
+
+  // --- Step 4c: On a face with a pole, connect the samples by their 3D geometry ---
+  if (hasPole) {
+    std::map<VertexHandle, gp_Pnt> positions;
+    for (auto vit = cdt.finite_vertices_begin(); vit != cdt.finite_vertices_end(); ++vit) {
+      VertexHandle const vh = vit;
+      auto const boundaryIt = boundaryPt3d.find(vh);
+      positions[vh] = boundaryIt != boundaryPt3d.end()
+          ? boundaryIt->second
+          : surface->Value(vh->point().x() / scaleU, vh->point().y() / scaleV);
+    }
+    FlipToSurfaceDelaunay(cdt, positions);
   }
 
   // --- Step 5: Collect in-domain faces, filter degenerates, build Poly_Triangulation ---
@@ -761,6 +978,7 @@ void IsotropicFaceMesher::Mesh(
   std::map<VertexHandle, Standard_Integer> vertexIndex;
   std::vector<gp_Pnt> nodes3d;
   std::vector<gp_Pnt2d> nodesUV;
+  std::vector<bool> nodesPole;
 
   // First pass: collect all vertices from in-domain faces.
   for (auto fit = cdt.finite_faces_begin(); fit != cdt.finite_faces_end(); ++fit) {
@@ -791,6 +1009,7 @@ void IsotropicFaceMesher::Mesh(
 
         nodes3d.push_back(p3d);
         nodesUV.push_back(uv);
+        nodesPole.push_back(poleVertices.count(vh) > 0);
       }
     }
   }
@@ -819,7 +1038,9 @@ void IsotropicFaceMesher::Mesh(
     }
 
     // UV-space sliver test. Collinear boundary samples (straight parametric edges) produce
-    // zero-area UV triangles that look fine in 3D on curved surfaces, reject them here.
+    // zero-area UV triangles that look fine in 3D on curved surfaces, reject them here. Not for a
+    // triangle at a pole: the fan around it is a sliver in UV, where the pole is a whole segment.
+    bool const atPole = nodesPole[n1 - 1] || nodesPole[n2 - 1] || nodesPole[n3 - 1];
     gp_Pnt2d const& uv1 = nodesUV[n1 - 1];
     gp_Pnt2d const& uv2 = nodesUV[n2 - 1];
     gp_Pnt2d const& uv3 = nodesUV[n3 - 1];
@@ -832,7 +1053,7 @@ void IsotropicFaceMesher::Mesh(
         {su1 * su1 + sv1 * sv1,
          su2 * su2 + sv2 * sv2,
          (su2 - su1) * (su2 - su1) + (sv2 - sv1) * (sv2 - sv1)});
-    if (uvArea < kMinShapeQuality * uvLongestEdgeSq) {
+    if (!atPole && uvArea < kMinShapeQuality * uvLongestEdgeSq) {
       continue;
     }
 

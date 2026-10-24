@@ -23,9 +23,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <numbers>
 #include <set>
 #include <string>
 #include <utility>
@@ -63,9 +65,9 @@ StepMeshBodyParams BaseParams() {
   return params;
 }
 
-MeshData Mesh(StepMeshBodyParams const& params) {
+MeshData Mesh(StepMeshBodyParams const& params, std::string const& path = FixturePath()) {
   ExpectOK expectOK;
-  return MeshStepBody(FixturePath(), params, expectOK);
+  return MeshStepBody(path, params, expectOK);
 }
 
 // Edges used by exactly one triangle once coincident vertices are merged. MeshStepBody leaves
@@ -94,6 +96,33 @@ int CountOpenEdges(MeshData const& mesh) {
     open += uses == 1 ? 1 : 0;
   }
   return open;
+}
+
+// Smallest interior angle of any triangle [deg].
+double MinAngleDegrees(MeshData const& mesh) {
+  auto const point = [&mesh](int node) {
+    return std::array<double, 3>{
+        mesh.coordinates[3 * node], mesh.coordinates[3 * node + 1], mesh.coordinates[3 * node + 2]};
+  };
+  double minAngle = 180.0;
+  for (int tri = 0; tri < mesh.GetNumElements(); ++tri) {
+    for (int corner = 0; corner < 3; ++corner) {
+      std::array<double, 3> const p = point(mesh.connectivity[3 * tri + corner]);
+      std::array<double, 3> const q = point(mesh.connectivity[3 * tri + (corner + 1) % 3]);
+      std::array<double, 3> const r = point(mesh.connectivity[3 * tri + (corner + 2) % 3]);
+      double dot = 0.0;
+      double qq = 0.0;
+      double rr = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        dot += (q[k] - p[k]) * (r[k] - p[k]);
+        qq += (q[k] - p[k]) * (q[k] - p[k]);
+        rr += (r[k] - p[k]) * (r[k] - p[k]);
+      }
+      double const cosine = std::clamp(dot / std::sqrt(qq * rr), -1.0, 1.0);
+      minAngle = std::min(minAngle, std::acos(cosine) * 180.0 / std::numbers::pi);
+    }
+  }
+  return minAngle;
 }
 
 } // namespace
@@ -268,4 +297,18 @@ TEST(StepFaceColorSizing, RejectsNegativeFraction) {
   params.faceColorSizing = {{kRed, 0.0, 0.0, 0.0, -0.01}};
   ExpectNotOK expectNotOK;
   EXPECT_EQ(MeshStepBody(FixturePath(), params, expectNotOK).GetNumElements(), 0);
+}
+
+// sphere.stp: a 10 mm sphere as two hemispheres, each with a degenerate edge at its pole. Metric
+// scaling cannot match a pole, where triangles used to come out as slivers or go missing.
+TEST(StepMeshBody, SpherePolesAreWatertightAndWellShaped) {
+  for (StepMeshBodyParams::EdgeSampling const sampling :
+       {StepMeshBodyParams::EdgeSampling::Uniform, StepMeshBodyParams::EdgeSampling::Adaptive}) {
+    SCOPED_TRACE(static_cast<int>(sampling));
+    StepMeshBodyParams params;
+    params.edgeSampling = sampling;
+    MeshData const mesh = Mesh(params, AssetPath("sphere.stp"));
+    EXPECT_EQ(CountOpenEdges(mesh), 0);
+    EXPECT_GT(MinAngleDegrees(mesh), 15.0);
+  }
 }
