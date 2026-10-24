@@ -148,7 +148,9 @@ MeshDataToSurfaceMesh(MeshData const& mesh, CliError& error, bool* needsRepairOu
 /// Best-effort mesh repair. Never fails - rolls back destructive operations
 /// if they would break mesh invariants (e.g., opening a watertight mesh).
 /// Defined in surface_remeshing.cpp.
-void RepairMesh(CgalSurfaceMesh& sm);
+/// @param removeAlmostDegenerateFaces Also collapse needles and flip caps; see
+///        @ref MeshCleanupParams::removeAlmostDegenerateFaces.
+void RepairMesh(CgalSurfaceMesh& sm, bool removeAlmostDegenerateFaces = true);
 
 /// Convert a CGAL Surface_mesh to MeshData.
 [[nodiscard]] inline MeshData SurfaceMeshToMeshData(CgalSurfaceMesh const& sm) {

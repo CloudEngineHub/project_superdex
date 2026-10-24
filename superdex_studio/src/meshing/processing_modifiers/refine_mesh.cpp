@@ -37,9 +37,11 @@ constexpr double kMillimetersToMeters = 0.001;
 // is small + human-editable) ----------------------------------------------------------------------
 
 struct RefineMakeManifoldProps {
+  bool removeAlmostDegenerateFaces = true;
   bool thenMakeWatertight = false;
 
   MOCHI_STRUCT_BEGIN(superdex::studio::RefineMakeManifoldProps)
+  MOCHI_FIELD(removeAlmostDegenerateFaces)
   MOCHI_FIELD(thenMakeWatertight)
   MOCHI_STRUCT_END()
 };
@@ -86,6 +88,11 @@ class MakeManifoldMethod : public ReflectedMethod<RefineMakeManifoldProps> {
   void ShowParams(ModifierGuiContext const& gui) override {
     ImGui::TextUnformatted("Weld coincident vertices, remove internal/overlapping faces,");
     ImGui::TextUnformatted("and repair non-manifold topology.");
+    ImGui::Checkbox("Remove Almost-Degenerate Faces", &_props.removeAlmostDegenerateFaces);
+    gui.tooltip(
+        "Collapse needle triangles (longest edge over 4x the shortest) and flip caps (an angle over "
+        "160 degrees). Tidies thin slivers, but merges vertices regardless of how far apart they "
+        "are; turn it off to keep the input's vertices in place.");
     ImGui::Checkbox("Then Make Watertight", &_props.thenMakeWatertight);
     gui.tooltip(
         "Also fill any remaining holes so the result is a closed manifold, not a potentially open "
@@ -96,7 +103,9 @@ class MakeManifoldMethod : public ReflectedMethod<RefineMakeManifoldProps> {
       ModifierRunContext const& /*ctx*/,
       mochi::Error& error) const override {
     namespace mm = mochi::mesh;
-    mochi::MeshData manifold = mm::CleanupMesh(input, error);
+    mm::MeshCleanupParams params;
+    params.removeAlmostDegenerateFaces = _props.removeAlmostDegenerateFaces;
+    mochi::MeshData manifold = mm::CleanupMesh(input, params, error);
     if (!error.IsOK() || !_props.thenMakeWatertight) {
       return manifold;
     }

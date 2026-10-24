@@ -297,6 +297,14 @@ struct StepVisualExportParams {
   bool rgbaMaterialNames = false;
 };
 
+/// @brief Stage 2 -- Cleanup parameters.
+struct MeshCleanupParams {
+  /// Collapse needle triangles (longest edge over 4x the shortest) and flip caps (an angle over
+  /// 160 degrees) after welding. Tidies thin slivers but merges vertices at any distance, so turn
+  /// it off to keep the input's vertices where they are.
+  bool removeAlmostDegenerateFaces = true;
+};
+
 /// @brief Stage 3 -- Closure parameters.
 struct MeshClosureParams {
   MeshClosureMode mode = MeshClosureMode::FillHoles;

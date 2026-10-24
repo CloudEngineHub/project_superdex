@@ -38,10 +38,12 @@ void WriteMesh(MeshDataView const& mesh, cli::PayloadWriter& writer, Error& erro
 
 } // namespace
 
-MeshData mochi::mesh::CleanupMesh(MeshDataView const& mesh, Error& error) {
+MeshData
+mochi::mesh::CleanupMesh(MeshDataView const& mesh, MeshCleanupParams const& params, Error& error) {
   MOCHI_ERROR_RETURN(error, {});
   cli::PayloadWriter writer;
   WriteMesh(mesh, writer, error);
+  writer.WriteMeshCleanupParams(params);
   return InvokeMeshOp(cli::GeometryOp::CleanupMesh, writer, error);
 }
 

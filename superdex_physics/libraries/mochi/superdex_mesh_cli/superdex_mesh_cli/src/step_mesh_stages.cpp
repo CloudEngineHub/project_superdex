@@ -633,7 +633,10 @@ bool PrepareUnionInput(CgalSurfaceMesh& mesh, double wrapDetail, bool& outApprox
 
 } // namespace
 
-MeshData mochi::mesh::cli::CleanupMesh(MeshData const& mesh, CliError& error) {
+MeshData mochi::mesh::cli::CleanupMesh(
+    MeshData const& mesh,
+    MeshCleanupParams const& params,
+    CliError& error) {
   MOCHI_MESH_CLI_ERROR_RETURN(error, {});
   MOCHI_MESH_CLI_ERROR_IF(GetNumElements(mesh) == 0, error, "CleanupMesh: input mesh is empty.");
   MOCHI_MESH_CLI_ERROR_RETURN(error, {});
@@ -671,7 +674,7 @@ MeshData mochi::mesh::cli::CleanupMesh(MeshData const& mesh, CliError& error) {
   try {
     CgalSurfaceMesh result = BuildSurfaceMeshFromSoup(std::move(points), std::move(triangles));
     RemoveSelfOverlaps(result);
-    cgal_utils::RepairMesh(result);
+    cgal_utils::RepairMesh(result, params.removeAlmostDegenerateFaces);
     MOCHI_MESH_CLI_ERROR_IF(
         result.number_of_faces() == 0, error, "CleanupMesh: cleanup produced an empty mesh.");
     MOCHI_MESH_CLI_ERROR_RETURN(error, {});

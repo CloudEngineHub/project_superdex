@@ -45,6 +45,7 @@ inline int GetNumElements(MeshData const& mesh) {
 // Pull the shared param structs into the cli namespace so the algorithm implementations can
 // continue to reference them unqualified.
 using mochi::mesh::CadMeshingBackend;
+using mochi::mesh::MeshCleanupParams;
 using mochi::mesh::MeshClosureMode;
 using mochi::mesh::MeshClosureParams;
 using mochi::mesh::MeshDecimateParams;
@@ -94,7 +95,8 @@ MeshStepBody(std::string_view stepFilePath, StepMeshBodyParams const& params, Cl
     std::string_view stepFilePath,
     std::vector<StepFaceColorInfo>& outColors,
     CliError& error);
-[[nodiscard]] MeshData CleanupMesh(MeshData const& mesh, CliError& error);
+[[nodiscard]] MeshData
+CleanupMesh(MeshData const& mesh, MeshCleanupParams const& params, CliError& error);
 [[nodiscard]] MeshData
 CloseMesh(MeshData const& mesh, MeshClosureParams const& params, CliError& error);
 [[nodiscard]] MeshData EdgeSwapMesh(

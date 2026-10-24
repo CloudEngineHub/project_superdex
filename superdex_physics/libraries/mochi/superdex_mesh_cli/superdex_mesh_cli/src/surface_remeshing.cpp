@@ -45,7 +45,7 @@ using namespace mochi::mesh::cli;
 using K = mochi::mesh::cli::cgal_utils::K;
 using SurfaceMesh = mochi::mesh::cli::cgal_utils::CgalSurfaceMesh;
 
-void cgal_utils::RepairMesh(SurfaceMesh& sm) {
+void cgal_utils::RepairMesh(SurfaceMesh& sm, bool removeAlmostDegenerateFaces) {
   namespace PMP = CGAL::Polygon_mesh_processing;
 
   bool const wasClosed = CGAL::is_closed(sm);
@@ -61,8 +61,10 @@ void cgal_utils::RepairMesh(SurfaceMesh& sm) {
     sm.collect_garbage();
 
     // Remove near-degenerate triangles (needles with high aspect ratio, caps with obtuse angles).
-    PMP::remove_almost_degenerate_faces(sm);
-    sm.collect_garbage();
+    if (removeAlmostDegenerateFaces) {
+      PMP::remove_almost_degenerate_faces(sm);
+      sm.collect_garbage();
+    }
 
     // If degenerate removal opened a watertight mesh, rollback.
     if (wasClosed && !CGAL::is_closed(sm)) {

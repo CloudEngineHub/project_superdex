@@ -335,6 +335,11 @@ void PayloadWriter::WriteStepVisualExportParams(StepVisualExportParams const& pa
   WriteBool(rgbaMaterialNames);
 }
 
+void PayloadWriter::WriteMeshCleanupParams(MeshCleanupParams const& params) {
+  auto const& [removeAlmostDegenerateFaces] = params;
+  WriteBool(removeAlmostDegenerateFaces);
+}
+
 void PayloadWriter::WriteMeshClosureParams(MeshClosureParams const& params) {
   auto const& [mode, shrinkWrapTightness, shrinkWrapSnap, shrinkWrapTargetEdgeLength, shrinkWrapTargetEdgeLengthFraction] =
       params;
@@ -642,6 +647,12 @@ bool PayloadReader::ReadStepVisualExportParams(StepVisualExportParams& outParams
       ReadDouble(targetEdgeLength) && ReadDouble(targetEdgeLengthFraction) &&
       ReadEnum(*this, edgeSampling, kEdgeSamplingCount) && ReadDouble(scale) &&
       ReadBool(allowPartialFailure) && ReadBool(rgbaMaterialNames);
+}
+
+bool PayloadReader::ReadMeshCleanupParams(MeshCleanupParams& outParams) {
+  outParams = {};
+  auto& [removeAlmostDegenerateFaces] = outParams;
+  return ReadBool(removeAlmostDegenerateFaces);
 }
 
 bool PayloadReader::ReadMeshClosureParams(MeshClosureParams& outParams) {

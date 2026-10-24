@@ -718,6 +718,21 @@ TEST(MochiMeshCliEncoding, VisualExportStatusesRejectOutOfRangeStatus) {
   EXPECT_FALSE(reader.ReadVisualExportStatuses(decoded));
 }
 
+TEST(MochiMeshCliEncoding, MeshCleanupParamsRoundTrip) {
+  MeshCleanupParams params;
+  // Non-default so the round trip catches a field that is never written.
+  params.removeAlmostDegenerateFaces = false;
+
+  PayloadWriter writer;
+  writer.WriteMeshCleanupParams(params);
+
+  PayloadReader reader(writer.Bytes());
+  MeshCleanupParams decoded;
+  EXPECT_TRUE(reader.ReadMeshCleanupParams(decoded));
+  EXPECT_TRUE(reader.AtEnd());
+  EXPECT_EQ(decoded.removeAlmostDegenerateFaces, params.removeAlmostDegenerateFaces);
+}
+
 TEST(MochiMeshCliEncoding, MeshClosureParamsRoundTrip) {
   MeshClosureParams const params = DistinctMeshClosureParams();
 

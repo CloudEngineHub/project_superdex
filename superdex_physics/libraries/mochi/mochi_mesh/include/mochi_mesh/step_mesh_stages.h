@@ -29,12 +29,14 @@
 namespace mochi::mesh {
 
 /// @brief Stage 2 -- Cleanup. Welds coincident vertices, removes internal/overlapping faces from
-/// flush mating surfaces, and repairs non-manifold topology. No parameters.
+/// flush mating surfaces, and repairs non-manifold topology.
 ///
 /// @param[in] mesh Input triangle mesh (typically the Stage 1 raw soup).
+/// @param[in] params Cleanup parameters.
 /// @param[in,out] error Error status.
 /// @return Cleaned triangle mesh; empty on error.
-[[nodiscard]] MeshData CleanupMesh(MeshDataView const& mesh, Error& error);
+[[nodiscard]] MeshData
+CleanupMesh(MeshDataView const& mesh, MeshCleanupParams const& params, Error& error);
 
 /// @brief Stage 3 -- Closure. Fills holes, shrink-wraps, takes the convex hull, or leaves the
 /// surface open.

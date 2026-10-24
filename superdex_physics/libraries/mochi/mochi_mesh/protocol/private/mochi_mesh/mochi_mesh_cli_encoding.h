@@ -150,6 +150,7 @@ class PayloadWriter {
   void WriteStepTessellationParams(StepTessellationParams const& params);
   void WriteStepMeshBodyParams(StepMeshBodyParams const& params);
   void WriteStepVisualExportParams(StepVisualExportParams const& params);
+  void WriteMeshCleanupParams(MeshCleanupParams const& params);
   void WriteMeshClosureParams(MeshClosureParams const& params);
   void WriteMeshEdgeSwapParams(MeshEdgeSwapParams const& params);
   void WriteMeshDecimateParams(MeshDecimateParams const& params);
@@ -197,6 +198,7 @@ class PayloadReader {
   [[nodiscard]] bool ReadStepTessellationParams(StepTessellationParams& outParams);
   [[nodiscard]] bool ReadStepMeshBodyParams(StepMeshBodyParams& outParams);
   [[nodiscard]] bool ReadStepVisualExportParams(StepVisualExportParams& outParams);
+  [[nodiscard]] bool ReadMeshCleanupParams(MeshCleanupParams& outParams);
   [[nodiscard]] bool ReadMeshClosureParams(MeshClosureParams& outParams);
   [[nodiscard]] bool ReadMeshEdgeSwapParams(MeshEdgeSwapParams& outParams);
   [[nodiscard]] bool ReadMeshDecimateParams(MeshDecimateParams& outParams);

@@ -190,11 +190,12 @@ std::vector<char> DispatchMeshStepBody(std::vector<char> const& payload) {
 std::vector<char> DispatchCleanupMesh(std::vector<char> const& payload) {
   PayloadReader reader(payload);
   MeshData inputMesh;
-  if (!reader.ReadMeshData(inputMesh) || !reader.AtEnd()) {
+  MeshCleanupParams params;
+  if (!reader.ReadMeshData(inputMesh) || !reader.ReadMeshCleanupParams(params) || !reader.AtEnd()) {
     return MakeErrorResponse(1, "superdex_mesh_cli: malformed CleanupMesh request");
   }
   CliError error;
-  MeshData const result = CleanupMesh(inputMesh, error);
+  MeshData const result = CleanupMesh(inputMesh, params, error);
   if (!error.IsOK()) {
     return MakeErrorResponse(error);
   }
