@@ -725,15 +725,7 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
         status.itersSinceDResidualAssembly = 0;
       }
 
-      // Set up the linear operator used by the linear solver. Use IslandOperators if the solver is
-      // iterative (direct solvers require the global matrix), not CUDA (solving with
-      // IslandOperators is not supported on CUDA) and the preconditioner can be directly computed
-      // from the IslandOperators (if the preconditioner requires condensing the global matrix, it's
-      // more efficient to use the global matrix also for the matrix-vector products).
-      bool const useIslandOperators = details::IsIterativeSolver(_params.lParams.solverType) &&
-          !details::IsCudaSolver(_params.lParams.solverType) &&
-          ((_params.lParams.preconditionerType == PreconditionerType::None) ||
-           (_params.lParams.preconditionerType == PreconditionerType::PerActor));
+      bool const useIslandOperators = details::UseIslandOperators(_params.lParams);
       PrepareLinearOperator(problem, status, useIslandOperators, projectPsd, linOp);
 
       // Solve the linear system.

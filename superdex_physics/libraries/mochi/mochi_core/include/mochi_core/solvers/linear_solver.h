@@ -127,6 +127,17 @@ inline constexpr bool IsIterativeSolver(LinearSolverType const& solverType) {
       "Please update the switch statement above if LinearSolverType enumerator changes");
 }
 
+/// @brief Whether a linear solve with the given parameters should use IslandOperators instead of
+/// the global matrix: the solver must be iterative (direct solvers require the global matrix) and
+/// not CUDA (solving with IslandOperators is not supported on CUDA), and the preconditioner must be
+/// computable from the IslandOperators (if it requires condensing the global matrix, it's more
+/// efficient to use the global matrix also for the matrix-vector products).
+inline constexpr bool UseIslandOperators(KrylovSolverParams const& params) {
+  return IsIterativeSolver(params.solverType) && !IsCudaSolver(params.solverType) &&
+      ((params.preconditionerType == PreconditionerType::None) ||
+       (params.preconditionerType == PreconditionerType::PerActor));
+}
+
 /// @brief Dispatches a runtime LinearSolverConvergenceNorm to the corresponding compile-time
 /// stop criterion type and invokes the given callable with it. The callable must accept a reference
 /// to a stop criterion object (use a generic lambda) and return a LinearSolverStatus.

@@ -32,6 +32,7 @@
 #include <mochi_core/utils/task_scheduler.h>
 
 #include <limits>
+#include <variant>
 
 using namespace mochi;
 
@@ -253,14 +254,21 @@ static void KrylovSolveZ(
   GetIslandNewtonParams(reg, island, newtonParamsForward);
   KrylovSolverParams& innerLParams = newtonParamsForward.lParams;
   innerLParams.absTol = backpropParams.innerSolverAbsTol;
+  // Stop on the residual L2-norm, like the outer PCG, so that innerSolverAbsTol is in the units of
+  // outerSolverAbsTol.
+  // TODO: Make MINRES honor normType, so that an inner MINRES also stops on the residual L2-norm.
+  innerLParams.normType = LinearSolverConvergenceNorm::ResidualL2;
 
   // Assemble approximate Hessian hat(dres) for preconditioning
   AssemblyParams paramsDRes = {
       .assemObj = false, .assemRes = false, .assemDRes = true, .psdDRes = true};
   solver::AssembleIslandPipeline(reg, island, paramsDRes, problemForward);
 
-  // Get the approximate Hessian matrix
-  auto const& approxHessian = ToMatrix(problemForward.GetDResidual());
+  // Get the approximate Hessian.
+  using ApproxHessian = std::variant<IslandOperators<real>, Matrix<real>>;
+  auto const approxHessian = details::UseIslandOperators(innerLParams)
+      ? ApproxHessian(problemForward.GetOperators())
+      : ApproxHessian(ToMatrix(problemForward.GetDResidual()));
 
   // Create linear solver for the preconditioner (inner solver) using scene's linear solver settings
   auto& preconditionerRecyclingMgr = reg.get<CIslandPreconditioner>(island);
