@@ -953,7 +953,7 @@ class MochiEnv(abc.ABC, Env[ObservationSpace, ActionSpace]):
         """
         Initializes the renderer. This function is called only once at the start of the
         environment. Derived environments can override this function to use a different
-        renderer (e.g., UnrealCV for Unreal Engine rendering).
+        renderer (for example, an external rendering backend).
         """
         logger.info("Initializing renderer...")
 

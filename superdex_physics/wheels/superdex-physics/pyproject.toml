@@ -37,7 +37,6 @@ dependencies = [
     "tabulate",
     "trimesh",
     "typing_extensions",
-    "unrealcv",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -62,6 +61,11 @@ managed = false
 
 [tool.scikit-build]
 build-dir = "../../../build-fp32/{wheel_tag}"
+sdist.exclude = [
+    "superdex/physics/internal",
+    "superdex/physics/utils/testing/internal",
+    "test/internal",
+]
 wheel.packages = ["superdex"]
 wheel.exclude = ["superdex/physics/internal", "superdex/physics/utils/testing/internal"]
 wheel.install-dir = "superdex/physics/_native"
