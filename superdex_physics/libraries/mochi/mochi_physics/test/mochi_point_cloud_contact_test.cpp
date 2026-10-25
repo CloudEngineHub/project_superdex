@@ -19,6 +19,7 @@
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/src/mochi_point_cloud_contact.h>
 #include <mochi_physics/src/mochi_solve.h>
+#include <mochi_physics/src/mochi_step.h>
 #include "mochi_core/test/mochi_test_helpers.h"
 #include "mochi_physics_test_fixture.h"
 
@@ -514,6 +515,33 @@ TEST_P(MochiShellActorContactScene, SetContactParams_UpdatesPointCloudHashCellSi
   EXPECT_EQ(
       kContactRadius + expandedParams.GetPenaltyThresholdDist(true),
       rebuiltSpatialHash.GetCellSize());
+}
+
+// Test that stage-start collision detection finds the contacts at the stage-start positions while
+// the current positions are out of contact range.
+TEST_P(MochiShellActorContactScene, StageStartCollisionDetection_UsesStageStartPositions) {
+  // Set up the island and potential colliders without stepping.
+  auto& reg = GetRegistry();
+  reg.ctx<CSceneTime>().Advance(CSceneTime::kDefaultTimeStep);
+  PreStepEcs(reg);
+
+  // At stage start only, lower the top shell along its local z axis to half a contact radius above
+  // the bottom shell.
+  auto& topStageStart =
+      reg.get<CDisplacementSlice<real, TimeStep::StageStart>>(GetEntity(_topActor)).value;
+  for (int i = 2; i < isize(topStageStart); i += kSpaceDim3) {
+    topStageStart[i] = -kContactRadius;
+  }
+  for (auto [island] : reg.view<TagIsland>().each()) {
+    CollisionDetectionPipeline<TimeStep::StageStart>(
+        reg, reg.get<CIslandDescendants const>(island));
+  }
+
+  for (Actor* actor : {_bottomActor, _topActor}) {
+    auto const& collisions =
+        reg.get<CActiveCollisions</*kIsSync*/ true, TimeStep::StageStart> const>(GetEntity(actor));
+    EXPECT_TRUE(collisions.HasContact());
+  }
 }
 
 // This tests two parallel shell actors, with one constrained, and the other one freeling falling

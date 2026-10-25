@@ -237,16 +237,18 @@ DynamicArray<real> InitializeNodalWeights(
   return nodalWeights;
 }
 
+// Scratch state overwritten with the collider points of the state being evaluated.
 using CSpatialHashTable = SpatialHashTable;
 struct CNodalWeights {
   CNodalWeights(DynamicArray<real> valuesIn) : values(std::move(valuesIn)) {}
   DynamicArray<real> values;
 };
 
+template <TimeStep kTimeStep>
 void UpdateSpatialHashTable(
     ecs::Included<TagUsePointCloudContact>,
     CColliderPointCloudDiscretization const& colliderDiscretization,
-    CFinalDisplacementRef<TimeStep::Current> const& colliderDisplacementsRef,
+    CFinalDisplacementRef<kTimeStep> const& colliderDisplacementsRef,
     CSpatialHashTable& outHashTable);
 
 namespace point_cloud_contact {

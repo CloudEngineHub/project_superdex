@@ -63,10 +63,11 @@ SpatialHashTable CreateSpatialHashTable(
   return {cellSize, numColliderPoints, minNumBins};
 }
 
+template <TimeStep kTimeStep>
 void UpdateSpatialHashTable(
     ecs::Included<TagUsePointCloudContact>,
     CColliderPointCloudDiscretization const& colliderDiscretization,
-    CFinalDisplacementRef<TimeStep::Current> const& colliderDisplacementsRef,
+    CFinalDisplacementRef<kTimeStep> const& colliderDisplacementsRef,
     CSpatialHashTable& outHashTable) {
   int const dofsPerNode = colliderDiscretization.dofsPerNode;
   MOCHI_ASSERT_VERBOSE(
@@ -108,6 +109,17 @@ void UpdateSpatialHashTable(
     }
   });
 }
+
+template void UpdateSpatialHashTable<TimeStep::Current>(
+    ecs::Included<TagUsePointCloudContact>,
+    CColliderPointCloudDiscretization const&,
+    CFinalDisplacementRef<TimeStep::Current> const&,
+    CSpatialHashTable&);
+template void UpdateSpatialHashTable<TimeStep::StageStart>(
+    ecs::Included<TagUsePointCloudContact>,
+    CColliderPointCloudDiscretization const&,
+    CFinalDisplacementRef<TimeStep::StageStart> const&,
+    CSpatialHashTable&);
 
 template <bool kSelfContact, typename ColliderDiscretizationT>
 static void ComputePointCloudContactIndicesImpl(

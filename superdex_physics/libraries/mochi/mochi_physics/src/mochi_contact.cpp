@@ -5410,10 +5410,12 @@ void mochi::CollisionDetectionPipeline(entt::registry& reg, CIslandDescendants c
 
   // Update spatial hash tables for point-cloud contact. This is a collider-side
   // update, and must complete before the loop over colliding actors below.
-  ecs::ScheduleInvokeForEach(
-      sem, "UpdateSpatialHashTable", &UpdateSpatialHashTable, reg, descendants.shellActors);
-  ecs::ScheduleInvokeForEach(
-      sem, "UpdateSpatialHashTable", &UpdateSpatialHashTable, reg, descendants.rodActors);
+  std::array<Span<entt::entity const>, 2> shellAndRodActors = {
+      descendants.shellActors, descendants.rodActors};
+  for (auto actors : shellAndRodActors) {
+    ecs::ScheduleInvokeForEach(
+        sem, "UpdateSpatialHashTable", &UpdateSpatialHashTable<kTimeStep>, reg, actors);
+  }
 
   // The above must complete before collision detection can start.
   sem.Wait();
