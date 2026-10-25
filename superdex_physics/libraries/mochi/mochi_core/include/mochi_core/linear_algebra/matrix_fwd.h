@@ -1142,55 +1142,17 @@ class MOCHI_EMPTY_BASE Matrix : public krylov::BaseMatrix<
 
   template <IsCompatibleMatrixClass<Matrix> YMatrix>
   [[nodiscard]] NonConstScalar Dot(YMatrix const& ymat) const {
-    auto const xrows = this->Rows();
-    MOCHI_ASSERT_VERBOSE(
-        (xrows == ymat.Rows()) && (this->Cols() == ymat.Cols()), "Dimensions do not match.");
-    MOCHI_ASSERT_VERBOSE(this->Cols() == 1, "Inner product works only for column vectors.");
+    return DotImpl<false>(ymat, nullptr);
+  }
 
-    NonConstScalar result = 0;
-    if constexpr ((kIsCuda) || (YMatrix::kIsCuda)) {
-      static_assert(kIsCuda == YMatrix::kIsCuda, "Mismatched memory ownership");
-      static_assert(
-          kIsColMajor && YMatrix::kIsColMajor,
-          "CUDA dot product only supported for col-major vectors");
-      result = mochi::details::CudaDot(this->Rows(), this->Data(), ymat.Data());
-    } else if constexpr (kUseSimd && kIsColMajor && YMatrix::kIsColMajor) {
-      auto const* xData = this->Data();
-      auto const* yData = ymat.Data();
-      int pos = 0;
-      auto partResult = SimdZero<VType>();
-      constexpr auto kShift = 3 * VType::kSize; // Value chosen empirically chosen value
-      constexpr int kValuesAtCT =
-          Max(kRowsAtCompileTime, krylov::details::MatTraits<YMatrix>::kNumRows);
-      if constexpr (kValuesAtCT == krylov::kDynamic || kValuesAtCT >= kShift) {
-        for (; pos + kShift <= xrows; pos += kShift) {
-          // PERFORMANCE NOTE:
-          // This is at least 2X faster than simply using MulAdd for one SIMD vector at a time (see
-          // "Dot" in mochi_benchmark for comparison of similar algorithms). The reason has to do
-          // with the latency of the SIMD operations. It is better to do multiple multiplications,
-          // which do not depend on the output of the previous instructions.
-          auto const* px = xData + pos;
-          auto const* py = yData + pos;
-          VType xy0 = Load<VType>(px + 0 * VType::kSize) * Load<VType>(py + 0 * VType::kSize);
-          VType xy1 = Load<VType>(px + 1 * VType::kSize) * Load<VType>(py + 1 * VType::kSize);
-          VType xy2 = Load<VType>(px + 2 * VType::kSize) * Load<VType>(py + 2 * VType::kSize);
-          partResult += xy0 + xy1 + xy2;
-        }
-      }
-      if constexpr (kValuesAtCT == krylov::kDynamic || kValuesAtCT % kShift >= VType::kSize) {
-        for (; pos + VType::kSize <= xrows; pos += VType::kSize) {
-          partResult += Load<VType>(xData + pos) * Load<VType>(yData + pos);
-        }
-      }
-      MOCHI_ASSERT_VERBOSE(xrows - pos < VType::kSize, "Unexpected number of leftover entries.");
-      partResult += Load<VType>(xData + pos, xrows - pos) * Load<VType>(yData + pos, xrows - pos);
-      result = HSum(partResult);
-    } else {
-      for (int ii = 0; ii < xrows; ++ii) {
-        result += (*this)(ii, 0) * ymat(ii, 0);
-      }
-    }
-    return result;
+  /// @brief Inner product weighted by the diagonal matrix of @p weights:
+  /// \f$x^T \mathrm{diag}(w) y\f$.
+  ///
+  /// @note Not supported for CUDA matrices.
+  template <IsCompatibleMatrixClass<Matrix> YMatrix>
+  [[nodiscard]] NonConstScalar Dot(YMatrix const& ymat, Span<NonConstScalar const> weights) const {
+    MOCHI_ASSERT_VERBOSE(isize(weights) == this->Rows(), "Inconsistent number of weights.");
+    return DotImpl<true>(ymat, weights.data());
   }
 
   /// @brief Computes the Frobenius norm.
@@ -1286,6 +1248,73 @@ class MOCHI_EMPTY_BASE Matrix : public krylov::BaseMatrix<
       Simd<NonConstScalar, Simd<NonConstScalar>::kSize / 2>,
       Simd<NonConstScalar>>;
   static constexpr bool kUseSimd = VType::kIsSupported; // TODO(T158480383)
+
+  // Inner product, weighted by weights[i] if kWeighted.
+  template <bool kWeighted, IsCompatibleMatrixClass<Matrix> YMatrix>
+  [[nodiscard]] MOCHI_FORCE_INLINE NonConstScalar
+  DotImpl(YMatrix const& ymat, NonConstScalar const* weights) const {
+    auto const xrows = this->Rows();
+    MOCHI_ASSERT_VERBOSE(
+        (xrows == ymat.Rows()) && (this->Cols() == ymat.Cols()), "Dimensions do not match.");
+    MOCHI_ASSERT_VERBOSE(this->Cols() == 1, "Inner product works only for column vectors.");
+
+    NonConstScalar result = 0;
+    if constexpr ((kIsCuda) || (YMatrix::kIsCuda)) {
+      static_assert(kIsCuda == YMatrix::kIsCuda, "Mismatched memory ownership");
+      static_assert(
+          kIsColMajor && YMatrix::kIsColMajor,
+          "CUDA dot product only supported for col-major vectors");
+      static_assert(!kWeighted, "Weighted inner products are not supported on CUDA.");
+      result = mochi::details::CudaDot(this->Rows(), this->Data(), ymat.Data());
+    } else if constexpr (kUseSimd && kIsColMajor && YMatrix::kIsColMajor) {
+      auto const* xData = this->Data();
+      auto const* yData = ymat.Data();
+      auto loadX = [=](NonConstScalar const* px, auto... count) MOCHI_FORCE_INLINE_LAMBDA {
+        if constexpr (kWeighted) {
+          return Load<VType>(weights + (px - xData), count...) * Load<VType>(px, count...);
+        } else {
+          return Load<VType>(px, count...);
+        }
+      };
+      int pos = 0;
+      auto partResult = SimdZero<VType>();
+      constexpr auto kShift = 3 * VType::kSize; // Chosen empirically.
+      constexpr int kValuesAtCT =
+          Max(kRowsAtCompileTime, krylov::details::MatTraits<YMatrix>::kNumRows);
+      if constexpr (kValuesAtCT == krylov::kDynamic || kValuesAtCT >= kShift) {
+        for (; pos + kShift <= xrows; pos += kShift) {
+          // PERFORMANCE NOTE:
+          // This is at least 2X faster than simply using MulAdd for one SIMD vector at a time (see
+          // "Dot" in mochi_benchmark for comparison of similar algorithms). The reason has to do
+          // with the latency of the SIMD operations. It is better to do multiple multiplications,
+          // which do not depend on the output of the previous instructions.
+          auto const* px = xData + pos;
+          auto const* py = yData + pos;
+          VType xy0 = loadX(px + 0 * VType::kSize) * Load<VType>(py + 0 * VType::kSize);
+          VType xy1 = loadX(px + 1 * VType::kSize) * Load<VType>(py + 1 * VType::kSize);
+          VType xy2 = loadX(px + 2 * VType::kSize) * Load<VType>(py + 2 * VType::kSize);
+          partResult += xy0 + xy1 + xy2;
+        }
+      }
+      if constexpr (kValuesAtCT == krylov::kDynamic || kValuesAtCT % kShift >= VType::kSize) {
+        for (; pos + VType::kSize <= xrows; pos += VType::kSize) {
+          partResult += loadX(xData + pos) * Load<VType>(yData + pos);
+        }
+      }
+      MOCHI_ASSERT_VERBOSE(xrows - pos < VType::kSize, "Unexpected number of leftover entries.");
+      partResult += loadX(xData + pos, xrows - pos) * Load<VType>(yData + pos, xrows - pos);
+      result = HSum(partResult);
+    } else {
+      for (int ii = 0; ii < xrows; ++ii) {
+        if constexpr (kWeighted) {
+          result += weights[ii] * (*this)(ii, 0) * ymat(ii, 0);
+        } else {
+          result += (*this)(ii, 0) * ymat(ii, 0);
+        }
+      }
+    }
+    return result;
+  }
 
   void UpdateValue(auto unaryOp);
 

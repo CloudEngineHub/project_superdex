@@ -54,6 +54,11 @@ class ScaledDot {
     return (*this)(value, value);
   }
 
+  [[nodiscard]] ScaledDot MiddleRows([[maybe_unused]] int rowStart, [[maybe_unused]] int numRows)
+      const {
+    return *this;
+  }
+
  private:
   real const _scale;
 };

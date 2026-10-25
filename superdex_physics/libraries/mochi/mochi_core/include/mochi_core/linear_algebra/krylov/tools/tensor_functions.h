@@ -22,6 +22,7 @@
 #include <mochi_core/utils/array_utils.h>
 #include <mochi_core/utils/debug.h>
 #include <mochi_core/utils/math_utils.h>
+#include <mochi_core/utils/span.h>
 #include <mochi_core/utils/task_scheduler.h>
 #include <mochi_core/utils/time.h>
 
@@ -221,12 +222,50 @@ struct UsualDot {
   auto MatrixWise(MatrixLeft const& x, MatrixRight const& y) {
     return Dot(x, y);
   }
+
+  /// @brief Dot product of the operands' views of rows [@p rowStart, @p rowStart + @p numRows): a
+  /// copy of this one, which doesn't depend on the rows.
+  [[nodiscard]] UsualDot MiddleRows([[maybe_unused]] int rowStart, [[maybe_unused]] int numRows)
+      const {
+    return *this;
+  }
+};
+
+/// @brief Dot product weighted by a diagonal matrix: \f$x^T \mathrm{diag}(w) y\f$.
+///
+/// @note Meant for stopping-criterion norms. As the dot product of CG's own recurrences,
+/// non-uniform weights break conjugacy, because the operator isn't self-adjoint in the weighted
+/// inner product.
+template <typename Scalar>
+struct WeightedDot {
+  /// @brief One weight per row, or empty to compute @ref UsualDot's products.
+  Span<Scalar const> weights;
+
+  template <typename VectorLeft, typename VectorRight>
+  [[nodiscard]] Scalar operator()(VectorLeft const& x, VectorRight const& y) const {
+    static_assert(
+        !mochi::IsCuda<VectorLeft> && !mochi::IsCuda<VectorRight>,
+        "Weighted inner products are not supported on CUDA.");
+    return weights.empty() ? x.Dot(y) : x.Dot(y, weights);
+  }
+
+  template <typename VectorIn>
+  [[nodiscard]] Scalar NormSqr(VectorIn const& x) const {
+    return (*this)(x, x);
+  }
+
+  /// @brief Dot product of the operands' views of rows [@p rowStart, @p rowStart + @p numRows),
+  /// with the weights of those rows.
+  [[nodiscard]] WeightedDot MiddleRows(int rowStart, int numRows) const {
+    return {weights.empty() ? weights : weights.subspan(rowStart, numRows)};
+  }
 };
 
 /* Utility to perform dot products using an existing pool of parallel workers. It can be used to
  * perform an arbitrary number of dot products, one after another, or two dot products in one
  * reduction. The dot product is a runtime argument so that subsequent dot products can be of
- * different type.
+ * different type. Each dot operation provides MiddleRows(rowStart, numRows), the dot operation to
+ * apply to the operands' views of the rows that a worker reduces.
  *
  * WARNINGS:
  * - Workers busy-wait for each other, so each worker must run on a different thread (which can be
@@ -295,9 +334,7 @@ class ParallelDot final {
     MOCHI_ASSERT_VERBOSE((workerIdx >= 0) && (workerIdx < _numWorkers));
     MOCHI_ASSERT_VERBOSE((rowStart >= 0) && (rowStart <= rowEnd));
 
-    auto const partialResult = static_cast<Scalar>(dot(
-        v1.MiddleRows(rowStart, rowEnd - rowStart), v2.MiddleRows(rowStart, rowEnd - rowStart)));
-    return Reduce(std::array{partialResult}, workerIdx)[0];
+    return Reduce(std::array{PartialDot(dot, v1, v2, rowStart, rowEnd - rowStart)}, workerIdx)[0];
   }
 
   // Returns the reduced results as {dot1(v11, v12), dot2(v21, v22)}.
@@ -325,15 +362,22 @@ class ParallelDot final {
     auto const numRows = rowEnd - rowStart;
     return Reduce(
         std::array{
-            static_cast<Scalar>(
-                dot1(v11.MiddleRows(rowStart, numRows), v12.MiddleRows(rowStart, numRows))),
-            static_cast<Scalar>(
-                dot2(v21.MiddleRows(rowStart, numRows), v22.MiddleRows(rowStart, numRows)))},
+            PartialDot(dot1, v11, v12, rowStart, numRows),
+            PartialDot(dot2, v21, v22, rowStart, numRows)},
         workerIdx);
   }
 
  private:
   static constexpr int kMaxDotsPerReduction = 2;
+
+  // The dot operation is restricted to the same rows, which matters for row-dependent ones such as
+  // WeightedDot.
+  template <typename DotType, typename Vec1, typename Vec2, typename Idx>
+  static Scalar
+  PartialDot(DotType const& dot, Vec1 const& v1, Vec2 const& v2, Idx rowStart, Idx numRows) {
+    return static_cast<Scalar>(dot.MiddleRows(rowStart, numRows)(
+        v1.MiddleRows(rowStart, numRows), v2.MiddleRows(rowStart, numRows)));
+  }
 
   template <size_t kNumDots>
   std::array<Scalar, kNumDots> Reduce(

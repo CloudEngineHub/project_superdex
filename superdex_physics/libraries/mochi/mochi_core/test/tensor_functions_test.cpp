@@ -17,6 +17,8 @@
 #include <mochi_core/linear_algebra/krylov/tools/tensor_functions.h>
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/test/mochi_test_helpers.h>
+#include <mochi_core/utils/array_utils.h>
+#include <mochi_core/utils/span.h>
 #include <mochi_core/utils/task_scheduler.h>
 #include <mochi_core/utils/time.h>
 
@@ -55,6 +57,12 @@ static void TestParallelDot(bool singleThreadedMode) {
     TaskSemaphore sem(numWorkers);
     ColumnVector<real> x(2 * numWorkers);
     ColumnVector<real> y(2 * numWorkers);
+    // Weights that differ between workers, so that each worker must use the weights of its rows.
+    ColumnVector<real> weights(2 * numWorkers);
+    for (int r = 0; r < weights.Rows(); ++r) {
+      weights[r] = real(1 + r % 3);
+    }
+    krylov::WeightedDot<real> const weightedDot{MakeConstSpan(weights)};
     auto const timeoutTime = Timer::Now() +
         TimeSpanFromSeconds(/* Large to increase likelihood of success */
                             0.01);
@@ -71,9 +79,10 @@ static void TestParallelDot(bool singleThreadedMode) {
             }
             auto result = parDot.Dot(dot, x, y, startRow, endRow, workerId);
             EXPECT_NEAR_EQ(static_cast<real>(2 * numWorkers * iter), result);
-            auto const pair = parDot.DotPair(dot, x, x, dot, x, y, startRow, endRow, workerId);
+            auto const pair =
+                parDot.DotPair(dot, x, x, weightedDot, x, y, startRow, endRow, workerId);
             EXPECT_NEAR_EQ(static_cast<real>(2 * numWorkers), pair[0]);
-            EXPECT_NEAR_EQ(static_cast<real>(2 * numWorkers * iter), pair[1]);
+            EXPECT_NEAR_EQ(HSum(MakeConstSpan(weights)) * real(iter), pair[1]);
           }
 
           if (numWorkers > 1) {
@@ -111,4 +120,11 @@ TEST(TensorFunctions, ParallelDotReducedToSingleWorker) {
   ColumnVector<real> const y = {{4_r, 5_r}};
 
   EXPECT_NEAR_EQ(23_r, parDot.Dot(dot, x, y, 0, 2, 0));
+
+  // On rows [1, 2), with and without weights.
+  ColumnVector<real> const weights = {{1_r, 2_r}};
+  krylov::WeightedDot<real> const weightedDot{MakeConstSpan(weights)};
+  krylov::WeightedDot<real> const unweightedDot = {};
+  EXPECT_NEAR_EQ(30_r, parDot.Dot(weightedDot, x, y, 1, 2, 0));
+  EXPECT_NEAR_EQ(15_r, parDot.Dot(unweightedDot, x, y, 1, 2, 0));
 }

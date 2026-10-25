@@ -42,7 +42,7 @@ template <int N, typename VecA, typename VecB>
 static void TestDotHelper(VecA const& a, VecB const& b) {
   ASSERT_TRUE(N <= a.Rows() && a.Cols() == 1);
   ASSERT_TRUE(N <= b.Rows() && b.Cols() == 1);
-  auto const expectedDot = static_cast<real>(N * (N + 1));
+  auto const expectedDot = static_cast<real>(N * (N + 1) * (2 * N + 1)) / 3;
 
   // Test all combinations of compile-time and dynamic number of rows.
   EXPECT_NEAR_EQ(expectedDot, (a.TopRows(N).Dot(b.TopRows(N))));
@@ -55,6 +55,22 @@ static void TestDotHelper(VecA const& a, VecB const& b) {
   EXPECT_NEAR_EQ(expectedDot, Dot(a.template TopRows<N>(N), b.TopRows(N))(0, 0));
   EXPECT_NEAR_EQ(expectedDot, Dot(a.TopRows(N), b.template TopRows<N>(N))(0, 0));
   EXPECT_NEAR_EQ(expectedDot, Dot(a.template TopRows<N>(N), b.template TopRows<N>(N))(0, 0));
+
+  // Powers of two with a period of five rows, which is coprime to every SIMD block size, so that a
+  // block using another block's weights changes the result.
+  std::array<real, N> weights{};
+  int expectedWeightedDotInt = 0;
+  for (int i = 0; i < N; ++i) {
+    int const weight = 1 << (i % 5);
+    weights[i] = static_cast<real>(weight);
+    expectedWeightedDotInt += 2 * (i + 1) * (i + 1) * weight;
+  }
+  auto const expectedWeightedDot = static_cast<real>(expectedWeightedDotInt);
+  EXPECT_NEAR_EQ(expectedWeightedDot, (a.TopRows(N).Dot(b.TopRows(N), weights)));
+  EXPECT_NEAR_EQ(expectedWeightedDot, (a.template TopRows<N>(N).Dot(b.TopRows(N), weights)));
+  EXPECT_NEAR_EQ(expectedWeightedDot, (a.TopRows(N).Dot(b.template TopRows<N>(N), weights)));
+  EXPECT_NEAR_EQ(
+      expectedWeightedDot, (a.template TopRows<N>(N).Dot(b.template TopRows<N>(N), weights)));
 }
 
 template <int N>
@@ -73,15 +89,16 @@ static void TestDot(Matrix<real> const& Ac, Matrix<real> const& Bc) {
 }
 
 TEST(MatrixOperations, Dot) {
-  constexpr int kMaxSizeTested = 33;
+  constexpr int kMaxSizeTested = 49;
 
-  // Only the 1st column is relevant. The last 4 columns are unused.
+  // Only the 1st column is relevant. The last 4 columns are unused. Integers keep every product and
+  // partial sum exact.
   Matrix<real> A(kMaxSizeTested, 5), B(kMaxSizeTested, 5);
   A.SetRandom(123);
   B.SetRandom(234);
   for (int i = 0; i < kMaxSizeTested; ++i) {
-    A(i, 0) = Sqrt(static_cast<real>(i + 1));
-    B(i, 0) = 2_r * Sqrt(static_cast<real>(i + 1));
+    A(i, 0) = static_cast<real>(i + 1);
+    B(i, 0) = static_cast<real>(2 * (i + 1));
   }
 
   TestDot<1>(A, B);
@@ -107,6 +124,9 @@ TEST(MatrixOperations, Dot) {
   TestDot<31>(A, B);
   TestDot<32>(A, B);
   TestDot<33>(A, B);
+  TestDot<47>(A, B);
+  TestDot<48>(A, B);
+  TestDot<49>(A, B);
 }
 
 TEST(MatrixOperations, ParallelMatMatAlongK) {
