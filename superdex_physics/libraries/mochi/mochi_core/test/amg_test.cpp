@@ -75,7 +75,7 @@ static bool ParallelFor(int numWorkers, Fn const& forEach) {
 [[nodiscard]] static bool NearEqualVectors(
     ColumnVector<real> const& a,
     ColumnVector<real> const& b) {
-  return IsFinite(a.GetConstSpan()) &&
+  return IsFinite(a.GetConstSpan()) && IsFinite(b.GetConstSpan()) &&
       mochi::test::NearEqualMatrices(
              a, b, 10 * std::numeric_limits<real>::epsilon() * MaxAbs(a.GetConstSpan()));
 }
