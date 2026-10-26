@@ -19,6 +19,7 @@
 #include <superdex_robotics/core/context.h>
 #include <superdex_robotics/core/loader.h>
 #include <superdex_robotics/superdex_robotics.h>
+#include <superdex_robotics/utils/bot_utils.h>
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/basic_utils.h>
@@ -47,10 +48,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
-#include <set>
 #include <string>
-#include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -331,7 +329,7 @@ void GatherRenderParts(
     mochi::Span<mochi::DynamicString const> linkNames,
     mochi::Span<mochi::TransformRT const> bindFromLinks,
     mochi::CoordinateSpaceConverter const& gltfFromMochi,
-    std::set<int> const& coveredLinks,
+    mochi::Span<bool const> coveredLinks,
     mochi::DynamicArray<MaterialFactors>& materials,
     mochi::DynamicArray<MeshPart>& parts) {
   // Render GLBs are authored in the renderer's basis. Bringing them back into Mochi space lets them
@@ -343,7 +341,7 @@ void GatherRenderParts(
   for (int i = 0; i < numLinks; ++i) {
     // A link the skin binds to is represented by the skin's own mesh, so skip its rigid render
     // mesh.
-    if (coveredLinks.count(i) != 0) {
+    if (coveredLinks[i]) {
       continue;
     }
     auto const* linkPrefab = FindLinkPrefab(botPrefab, linkNames[i]);
@@ -406,13 +404,13 @@ void GatherCollisionPart(
     mochi::Span<mochi::ActorHandle const> linkActorHandles,
     mochi::Span<mochi::TransformRT const> bindFromLinks,
     mochi::CoordinateSpaceConverter const& gltfFromMochi,
-    std::set<int> const& coveredLinks,
+    mochi::Span<bool const> coveredLinks,
     mochi::DynamicArray<MeshPart>& parts) {
   MeshPart part;
   int const numLinks = mochi::isize(bindFromLinks);
   for (int i = 0; i < numLinks; ++i) {
     // A link the skin binds to is represented by the skin's own mesh, so skip its collision mesh.
-    if (coveredLinks.count(i) != 0) {
+    if (coveredLinks[i]) {
       continue;
     }
     auto* linkActor = scene->GetActor(linkActorHandles[i]);
@@ -788,46 +786,6 @@ void AppendSkinnedGeometry(
   combined.totalIndices += numAppendedElements * 3;
 }
 
-// Maps skin bone b -> composed link index. For a composed (mod) bot, @ref BotPrefab::_skinBoneLinks
-// names the link each skin bone binds to (its indices were offset onto the composed skeleton when
-// the sub-bot was attached), so this bakes those offsets in for export. For a standalone skinned
-// bot _skinBoneLinks is empty and the skin's bone indices already ARE link indices (identity).
-// Empty if the bot has no skin.
-mochi::DynamicArray<int> BuildSkinBoneToLink(
-    robotics::BotPrefab const& botPrefab,
-    mochi::Span<mochi::DynamicString const> linkNames) {
-  mochi::DynamicArray<int> boneToLink;
-  if (!botPrefab.skin.has_value()) {
-    return boneToLink;
-  }
-  if (botPrefab._skinBoneLinks.empty()) {
-    boneToLink.resize(mochi::isize(linkNames));
-    for (int i = 0; i < mochi::isize(linkNames); ++i) {
-      boneToLink[i] = i;
-    }
-    return boneToLink;
-  }
-  std::unordered_map<std::string_view, int> linkIndexByName;
-  linkIndexByName.reserve(static_cast<size_t>(mochi::isize(linkNames)));
-  for (int i = 0; i < mochi::isize(linkNames); ++i) {
-    linkIndexByName.emplace(std::string_view(linkNames[i]), i);
-  }
-  boneToLink.resize(mochi::isize(botPrefab._skinBoneLinks));
-  for (int b = 0; b < mochi::isize(botPrefab._skinBoneLinks); ++b) {
-    auto const it = linkIndexByName.find(std::string_view(botPrefab._skinBoneLinks[b]));
-    boneToLink[b] = it != linkIndexByName.end() ? it->second : -1;
-    if (boneToLink[b] < 0) {
-      // Left as -1 so the vertex loop drops the influence and renormalizes, but report it: the
-      // exported skin silently loses that bone's deformation otherwise.
-      MOCHI_LOG_WARNING_ONCE(
-          "ExportSkeletalGlb: skin bone references link '%s', which is not in the exported "
-          "skeleton; that bone's influence is dropped.",
-          botPrefab._skinBoneLinks[b].c_str());
-    }
-  }
-  return boneToLink;
-}
-
 // Appends the skin's render mesh (@ref BotPrefab::skin->renderModelFile) to the render parts, per
 // distinct material, with real per-vertex weights remapped through @p skinBoneToLink. No-op if the
 // bot has no skin or the skin has no render model.
@@ -1016,9 +974,20 @@ void ExportSkeletalGlb(
 
   // Skin (optional). The skin's bone indices are remapped to composed link indices -- identity for
   // a standalone skinned bot, offset onto the composed skeleton for a mod bot (via _skinBoneLinks).
-  // The links the skin covers (see nonCollidingLinks below) are represented by the skin, so
-  // their per-link rigid meshes are skipped (coveredLinks).
-  mochi::DynamicArray<int> const skinBoneToLink = BuildSkinBoneToLink(botPrefab, artInfo.linkNames);
+  // The links the skin covers are represented by the skin, so their per-link rigid meshes are
+  // skipped (coveredLinks).
+  mochi::DynamicArray<int> const skinBoneToLink =
+      robotics::ComputeSkinBoneLinkIndices(botPrefab, artInfo.linkNames);
+  for (int b = 0; b < mochi::isize(skinBoneToLink); ++b) {
+    if (skinBoneToLink[b] == robotics::kIndexNone) {
+      // Left unmapped so the vertex loop drops the influence and renormalizes, but report it: the
+      // exported skin silently loses that bone's deformation otherwise.
+      MOCHI_LOG_WARNING_ONCE(
+          "ExportSkeletalGlb: skin bone references link '%s', which is not in the exported "
+          "skeleton; that bone's influence is dropped.",
+          botPrefab._skinBoneLinks[b].c_str());
+    }
+  }
   // The skin mesh is authored in its own root-link frame (skin bone 0 = the skin's root link).
   // rootFromSkinRoot maps that frame to the composed root: identity for a standalone skinned bot
   // (bone 0 -> link 0, whose root-relative rest is identity), and the hand's offset onto the arm
@@ -1061,36 +1030,13 @@ void ExportSkeletalGlb(
       loadFailed, error, "The bot's skin declares a collision mesh that could not be loaded.");
   MOCHI_ERROR_RETURN(error);
   // coveredLinks are the links the skin covers -- their rigid render/collision meshes are skipped
-  // because the skin represents them. This mirrors ArticulatedSkinParams::nonCollidingLinks
-  // exactly: when set, the skin covers precisely those listed links (and its faces cover only
-  // them; links NOT listed keep their own rigid geometry). When unset, no link collides and the
-  // skin is the sole colliding actor, so all links its collision mesh weights are covered.
-  std::set<int> coveredLinks;
-  if (botPrefab.skin.has_value()) {
-    if (botPrefab.skin->nonCollidingLinks.has_value()) {
-      std::unordered_map<std::string_view, int> linkIndexByName;
-      linkIndexByName.reserve(static_cast<size_t>(mochi::isize(artInfo.linkNames)));
-      for (int i = 0; i < mochi::isize(artInfo.linkNames); ++i) {
-        linkIndexByName.emplace(std::string_view(artInfo.linkNames[i]), i);
-      }
-      for (auto const& name : *botPrefab.skin->nonCollidingLinks) {
-        auto const it = linkIndexByName.find(std::string_view(name));
-        if (it != linkIndexByName.end()) {
-          coveredLinks.insert(it->second);
-        }
-      }
-    } else if (
-        skinCollisionModel.mesh.has_value() && skinCollisionModel.mesh->skinning.has_value()) {
-      for (int const boneIndex : skinCollisionModel.mesh->skinning->indices) {
-        int const link = (boneIndex >= 0 && boneIndex < mochi::isize(skinBoneToLink))
-            ? skinBoneToLink[boneIndex]
-            : -1;
-        if (link >= 0) {
-          coveredLinks.insert(link);
-        }
-      }
-    }
-  }
+  // because the skin represents them.
+  mochi::SkinningData const* const skinCollisionSkinning =
+      skinCollisionModel.mesh.has_value() && skinCollisionModel.mesh->skinning.has_value()
+      ? &*skinCollisionModel.mesh->skinning
+      : nullptr;
+  mochi::DynamicArray<bool> const coveredLinks =
+      robotics::ComputeSkinCoveredLinks(botPrefab, artInfo.linkNames, skinCollisionSkinning);
 
   // Gather geometry, render parts first, so each mesh owns a contiguous run of parts.
   mochi::DynamicArray<ImageData> images;
@@ -1102,7 +1048,7 @@ void ExportSkeletalGlb(
         artInfo.linkNames,
         bindFromLinks,
         gltfFromMochi,
-        coveredLinks,
+        mochi::MakeConstSpan(coveredLinks),
         materialFactors,
         parts);
     GatherSkinRenderParts(
@@ -1117,7 +1063,13 @@ void ExportSkeletalGlb(
   int const numRenderParts = mochi::isize(parts);
   if (options.includeCollisionMeshes) {
     GatherCollisionPart(
-        scene, context, linkActorHandles, bindFromLinks, gltfFromMochi, coveredLinks, parts);
+        scene,
+        context,
+        linkActorHandles,
+        bindFromLinks,
+        gltfFromMochi,
+        mochi::MakeConstSpan(coveredLinks),
+        parts);
     GatherSkinCollisionPart(
         skinCollisionModel,
         gltfFromMochi,
