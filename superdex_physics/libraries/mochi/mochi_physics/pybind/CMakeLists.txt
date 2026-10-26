@@ -33,13 +33,13 @@ target_sources(mochi_physics_pybind PRIVATE ${mochi_physics_srcs})
 # single shared instance.
 add_library(mochi_pybind_core SHARED core/pybind_core.cpp)
 mochi_set_hidden_symbol_visibility(mochi_pybind_core)
-# The nanobind runtime also supplies its public headers and matching Python import-library
-# dependency.
+# Each extension gets nanobind directly from nanobind_add_module(); keep this copy private so it
+# does not propagate a duplicate static archive onto the extension link line.
 target_link_libraries(mochi_pybind_core PUBLIC mochi_physics)
 if (SKBUILD_SABI_VERSION)
-    target_link_libraries(mochi_pybind_core PUBLIC nanobind-static-abi3)
+    target_link_libraries(mochi_pybind_core PRIVATE nanobind-static-abi3)
 else ()
-    target_link_libraries(mochi_pybind_core PUBLIC nanobind-static)
+    target_link_libraries(mochi_pybind_core PRIVATE nanobind-static)
 endif ()
 target_include_directories(mochi_pybind_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/core)
 mochi_set_compiler_options(mochi_pybind_core)
