@@ -83,7 +83,7 @@ picojson::value JsonArray(std::initializer_list<mochi::real> values) {
   for (mochi::real const value : values) {
     array.emplace_back(static_cast<double>(value));
   }
-  return picojson::value(std::move(array));
+  return {std::move(array)};
 }
 
 // The source that reads @p path on its own ("From File"), chosen by the file's type, or null for a
