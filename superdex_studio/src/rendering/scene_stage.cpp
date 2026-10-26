@@ -34,6 +34,7 @@
 #include "ui/imgui_widgets.h" // HashStringToColor
 
 #include <superdex_robotics/utils/archive_utils.h>
+#include <superdex_robotics/utils/bot_utils.h>
 #include <superdex_robotics/utils/file_utils.h>
 
 #include <mochi_core/geometry/mesh_data.h>
@@ -671,6 +672,7 @@ static void BuildBotRequests(
     superdex::robotics::BotPrefab const& prefab,
     StageType stageType,
     bool stageSkin,
+    bool hideSkinCoveredLinks,
     std::vector<StageRequest>& out) {
   using namespace mochi;
 
@@ -718,6 +720,7 @@ static void BuildBotRequests(
     return;
   }
 
+  int const firstLinkRequest = isize(out);
   out.reserve(out.size() + prefab.links.size());
   // Per-link world transforms in nested-link order (== GLB joint order), captured for posing an
   // optional skinned render model below.
@@ -854,6 +857,29 @@ static void BuildBotRequests(
           stageType,
           req.renderVisible,
           req.shapeVisible);
+      // The skin stands in for the links it covers, so hide them where the skin is drawn, as the
+      // skeletal GLB export and the Unreal importer leave them out. A view that draws no skin (the
+      // render view of a skin without a render model) keeps them. They stay staged and still bound
+      // the scene, but cannot be picked while hidden.
+      if (hideSkinCoveredLinks && (req.renderVisible || req.shapeVisible)) {
+        DynamicArray<DynamicString> linkNames;
+        linkNames.reserve(prefab.links.size());
+        for (auto const& link : prefab.links) {
+          linkNames.push_back(link.name);
+        }
+        auto const& skinMesh = asset->GetModelData().mesh;
+        DynamicArray<bool> const coveredLinks = superdex::robotics::ComputeSkinCoveredLinks(
+            prefab,
+            MakeConstSpan(linkNames),
+            skinMesh.has_value() && skinMesh->skinning.has_value() ? &*skinMesh->skinning
+                                                                   : nullptr);
+        for (int i = 0; i < isize(coveredLinks); ++i) {
+          if (coveredLinks[i]) {
+            out[firstLinkRequest + i].renderVisible = false;
+            out[firstLinkRequest + i].shapeVisible = false;
+          }
+        }
+      }
       out.push_back(std::move(req));
     }
   }
@@ -887,12 +913,16 @@ void SceneStage::BindRenderScene(mochi_renderer::Scene* renderScene) {
   _renderScene = renderScene;
 }
 
-bool SceneStage::StageBot(superdex::robotics::BotPrefab const& prefab, StageType stageType) {
+bool SceneStage::StageBot(
+    superdex::robotics::BotPrefab const& prefab,
+    StageType stageType,
+    bool hideSkinCoveredLinks) {
   if (!_studio || !_scene || !_renderScene) {
     return false;
   }
   std::vector<StageRequest> requests;
-  BuildBotRequests(_scene, _studio, prefab, stageType, /*stageSkin=*/true, requests);
+  BuildBotRequests(
+      _scene, _studio, prefab, stageType, /*stageSkin=*/true, hideSkinCoveredLinks, requests);
   return ApplyStageRequests(requests, stageType);
 }
 
@@ -1002,7 +1032,14 @@ bool SceneStage::StageBotSceneImpl(
           superdex::robotics::BotPrefab botPrefab = botAsset->GetBotPrefab();
           botPrefab.name = name;
           botPrefab.worldFromRoot = worldFromSpawn;
-          BuildBotRequests(_scene, _studio, botPrefab, stageType, /*stageSkin=*/false, requests);
+          BuildBotRequests(
+              _scene,
+              _studio,
+              botPrefab,
+              stageType,
+              /*stageSkin=*/false,
+              /*hideSkinCoveredLinks=*/false,
+              requests);
           return;
         }
 
@@ -1062,7 +1099,14 @@ bool SceneStage::StageBotSceneImpl(
     if (!botEntry.initialPose.empty()) {
       botPrefab.defaultPose = botEntry.initialPose;
     }
-    BuildBotRequests(_scene, _studio, botPrefab, stageType, /*stageSkin=*/false, requests);
+    BuildBotRequests(
+        _scene,
+        _studio,
+        botPrefab,
+        stageType,
+        /*stageSkin=*/false,
+        /*hideSkinCoveredLinks=*/false,
+        requests);
   }
 
   return ApplyStageRequests(requests, stageType);
@@ -1285,6 +1329,7 @@ bool SceneStage::ApplyStageRequests(
     // representation is visible (render preferred).
     actor.render.visible = req.renderVisible;
     actor.shape.visible = req.shapeVisible;
+    actor.sdf.visible = false;
     if (actor.render.sceneObject) {
       actor.render.sceneObject->SetVisible(req.renderVisible);
     }
@@ -1328,8 +1373,11 @@ static bool HasDeformingSurface(StagedActor const& actor) {
 }
 
 void SceneStage::ApplySdfVisibility(StagedActor& actor) {
+  // The SDF stands in for a shown shape: shape.visible as staged, or sdf.visible once the SDF has
+  // replaced it (ApplyStageRequests clears sdf.visible before each stage).
   bool const wanted = _stageType == StageType::SdfFallbackToMochiModel &&
-      actor.shape.sceneObject != nullptr && !HasDeformingSurface(actor);
+      actor.shape.sceneObject != nullptr && (actor.shape.visible || actor.sdf.visible) &&
+      !HasDeformingSurface(actor);
   if (wanted && actor.sdf.sceneObject == nullptr) {
     auto* asset = _studio->GetAssetManager().LoadMochiModelAsset(actor.shape.modelFile);
     if (auto instance = asset ? asset->GetSdfRenderModelInstance() : nullptr) {

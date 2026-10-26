@@ -188,6 +188,8 @@ class BotEditor : public AssetEditor {
   std::unique_ptr<Viewport> _viewport;
   SceneStage _stage;
   StageType _stageType = StageType::RenderModelOnly;
+  // Draw the rigid links the bot's skin covers, which are hidden by default behind the skin.
+  bool _showSkinCoveredLinks = false;
   // physics scene state
   MochiAsyncScene _mochiScene;
   superdex::robotics::Bot* _bot = nullptr;

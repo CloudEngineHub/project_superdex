@@ -245,7 +245,7 @@ bool BotAsset::IsBuildOk() const {
 void BotAsset::StageThumbnailScene(mochi_renderer::Scene& scene) {
   SceneStage stage(_manager->GetStudio(), "BotThumbnailStage");
   stage.BindRenderScene(&scene);
-  stage.StageBot(GetBotPrefab(), StageType::RenderModelOnly);
+  stage.StageBot(GetBotPrefab(), StageType::RenderModelOnly, /*hideSkinCoveredLinks=*/true);
 }
 
 bool BotAsset::IsSavable() const {

@@ -310,6 +310,14 @@ void BotEditor::Initialize() {
            },
        .getState = [this] { return _stageType == StageType::SdfFallbackToMochiModel; },
        .shortcut = ImGuiKey_4});
+  _viewport->RegisterShowCommand(
+      {.name = "Skin-Covered Links",
+       .onToggle =
+           [this] {
+             _showSkinCoveredLinks ^= true;
+             RestageBot();
+           },
+       .getState = [this] { return _showSkinCoveredLinks; }});
   // Initialize Mochi scene and callbacks
   _mochiScene.Initialize(_studio->GetMochiContext(), "BotEditor");
   _mochiScene.SetSettings(_studio->GetAppSettings().physics);
@@ -1035,7 +1043,8 @@ int BotEditor::GetUndoSelectionIndex() const {
 void BotEditor::RestageBot() {
   int const selected = _selectedBotLinkIndex;
   bool const hadSelection = _viewport->HasSelection();
-  bool const rebuilt = _stage.StageBot(_botAsset->GetBotPrefab(), _stageType);
+  bool const rebuilt =
+      _stage.StageBot(_botAsset->GetBotPrefab(), _stageType, !_showSkinCoveredLinks);
   if (rebuilt && hadSelection) {
     _viewport->SetSelectedSceneObjects({});
     _selectedBotLinkIndex = selected;

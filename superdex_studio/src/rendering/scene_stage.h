@@ -288,9 +288,14 @@ struct SceneStage {
   // Stage (or re-stage) a bot prefab's render objects into the bound render scene at its default
   // pose, using Mochi forward kinematics. Reuses existing objects when the actor set and active
   // model files are unchanged (pure pose/param edits); otherwise rebuilds. No-op if no scene is
-  // bound.
+  // bound. With hideSkinCoveredLinks, the links the bot's skin covers (see
+  // superdex::robotics::ComputeSkinCoveredLinks) are staged hidden, leaving the skin to stand in
+  // for them.
   // Returns true if the staged objects were rebuilt (pointers invalidated), false if reused.
-  bool StageBot(superdex::robotics::BotPrefab const& prefab, StageType stageType);
+  bool StageBot(
+      superdex::robotics::BotPrefab const& prefab,
+      StageType stageType,
+      bool hideSkinCoveredLinks);
 
   // Stage (or re-stage) a scene prefab's render objects into the bound render scene at its default
   // pose. Rigid (and nested-rigid) poses are computed analytically; articulated actors are expanded
