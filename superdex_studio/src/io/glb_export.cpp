@@ -66,14 +66,46 @@ struct CombinedMesh {
   int totalIndices = 0;
 };
 
-// PBR factors of a source render mesh, doubling as the key that merges primitives drawn alike.
+// The glTF material textures the export carries over from the source render meshes.
+enum TextureSlot {
+  kBaseColor,
+  kMetallicRoughness,
+  kNormal,
+  kOcclusion,
+  kEmissive,
+  kNumTextureSlots,
+};
+
+// Marks a texture slot with no image.
+constexpr int kNoImage = -1;
+
+constexpr std::array<int, kNumTextureSlots> NoImages() {
+  std::array<int, kNumTextureSlots> images{};
+  images.fill(kNoImage);
+  return images;
+}
+
+// An image from a source render mesh, re-embedded verbatim into the export.
+struct ImageData {
+  std::vector<uint8_t> bytes;
+  std::string mimeType;
+};
+
+// PBR material of a source render mesh, doubling as the key that merges primitives drawn alike.
 struct MaterialFactors {
   std::array<float, 4> baseColor;
   float metallic;
   float roughness;
   std::array<float, 3> emissive;
   float emissiveStrength;
-  int imageIndex = -1; // index into the images list, or -1 for an untextured (factor-only) material
+  float normalScale = 1.0f;
+  float occlusionStrength = 1.0f;
+  // Per TextureSlot, an index into the images list, or kNoImage.
+  std::array<int, kNumTextureSlots> images = NoImages();
+
+  // Exact comparison is what merging wants: the values are copied verbatim out of cgltf's parse of
+  // the source GLBs.
+  bool operator==(MaterialFactors const&) const = default;
 };
 
 // One glTF primitive: geometry plus the material it draws with, or -1 for untextured collision.
@@ -112,12 +144,14 @@ void ResizeZeroed(mochi::DynamicArray<T>& array, int count) {
 //
 // @p normals may be empty, in which case per-vertex normals are accumulated from face normals.
 // Source normals matter: the render meshes are unwelded triangle soups, so every vertex has exactly
-// one adjacent face and accumulation could only ever produce faceted shading.
+// one adjacent face and accumulation could only ever produce faceted shading. @p texcoords may be
+// empty for untextured geometry.
 template <typename T>
 void AppendMeshGeometry(
     CombinedMesh& combined,
     mochi::Span<T const> positions,
     mochi::Span<T const> normals,
+    mochi::Span<float const> texcoords,
     mochi::Span<int const> indices,
     mochi::TransformRT const& rootFromMesh,
     mochi::Real3 const& preScale,
@@ -129,6 +163,7 @@ void AppendMeshGeometry(
     return;
   }
   bool const hasSourceNormals = mochi::isize(normals) == numNodes * 3;
+  bool const hasTexcoords = mochi::isize(texcoords) == numNodes * 2;
 
   // Normals transform by the inverse transpose of the linear part. That part is a permutation times
   // a rotation times diag(preScale), and the first two are orthogonal, so only the scale inverts.
@@ -172,10 +207,15 @@ void AppendMeshGeometry(
       combined.normals.push_back(0.0f);
     }
 
-    // Rigid geometry is untextured, but every primitive carries a TEXCOORD_0 so the writer's vertex
-    // attribute layout stays uniform across parts; these placeholder UVs go unused.
-    combined.texcoords.push_back(0.0f);
-    combined.texcoords.push_back(0.0f);
+    // Every primitive carries a TEXCOORD_0 so the writer's vertex attribute layout stays uniform
+    // across parts; untextured geometry gets placeholder UVs that go unused.
+    if (hasTexcoords) {
+      combined.texcoords.push_back(texcoords[i * 2 + 0]);
+      combined.texcoords.push_back(texcoords[i * 2 + 1]);
+    } else {
+      combined.texcoords.push_back(0.0f);
+      combined.texcoords.push_back(0.0f);
+    }
 
     combined.joints.push_back(static_cast<uint8_t>(linkIndex));
     combined.joints.push_back(0);
@@ -293,21 +333,30 @@ void WriteInverseBindMatrix(float* out, mochi::TransformRT const& rootFromLink) 
   out[15] = 1.0f;
 }
 
-// Exact comparison is what we want: the factors are copied verbatim out of cgltf's parse of the
-// source GLB.
 int FindOrAddMaterial(
     mochi::DynamicArray<MaterialFactors>& materials,
     MaterialFactors const& factors) {
-  for (int i = 0; i < mochi::isize(materials); ++i) {
-    if (materials[i].baseColor == factors.baseColor && materials[i].metallic == factors.metallic &&
-        materials[i].roughness == factors.roughness && materials[i].emissive == factors.emissive &&
-        materials[i].emissiveStrength == factors.emissiveStrength &&
-        materials[i].imageIndex == factors.imageIndex) {
-      return i;
-    }
+  auto const it = std::find(materials.begin(), materials.end(), factors);
+  if (it != materials.end()) {
+    return static_cast<int>(it - materials.begin());
   }
   materials.push_back(factors);
   return mochi::isize(materials) - 1;
+}
+
+// Index of @p image in @p images, adding it if no image there has the same bytes, so a texture used
+// by several sections or links is embedded once. kNoImage for an empty image.
+int FindOrAddImage(mochi::DynamicArray<ImageData>& images, ImageData image) {
+  if (image.bytes.empty()) {
+    return kNoImage;
+  }
+  for (int i = 0; i < mochi::isize(images); ++i) {
+    if (images[i].bytes == image.bytes) {
+      return i;
+    }
+  }
+  images.push_back(std::move(image));
+  return mochi::isize(images) - 1;
 }
 
 // The articulated actor's link order need not match the prefab's declaration order, so links are
@@ -330,6 +379,7 @@ void GatherRenderParts(
     mochi::Span<mochi::TransformRT const> bindFromLinks,
     mochi::CoordinateSpaceConverter const& gltfFromMochi,
     mochi::Span<bool const> coveredLinks,
+    mochi::DynamicArray<ImageData>& images,
     mochi::DynamicArray<MaterialFactors>& materials,
     mochi::DynamicArray<MeshPart>& parts) {
   // Render GLBs are authored in the renderer's basis. Bringing them back into Mochi space lets them
@@ -370,12 +420,17 @@ void GatherRenderParts(
       if (section.positions.size() < 3 || section.indices.size() < 3) {
         continue;
       }
-      MaterialFactors const factors{
+      MaterialFactors factors{
           section.baseColor,
           section.metallic,
           section.roughness,
           section.emissive,
           section.emissiveStrength};
+      // ReadGlbFromFile reads only the base color texture, which needs the section's UVs.
+      if (section.hasTexcoords && section.baseColorTexture != nullptr) {
+        factors.images[kBaseColor] = FindOrAddImage(
+            images, ImageData{section.baseColorTexture->bytes, section.baseColorTexture->mimeType});
+      }
       int const materialIndex = FindOrAddMaterial(materials, factors);
       // Materials grow one at a time, so a new material is always the next part, which keeps render
       // parts indexed by material.
@@ -388,6 +443,8 @@ void GatherRenderParts(
           parts[materialIndex].geometry,
           mochi::MakeConstSpan(section.positions),
           mochi::MakeConstSpan(section.normals),
+          section.hasTexcoords ? mochi::MakeConstSpan(section.texcoords)
+                               : mochi::Span<float const>{},
           mochi::MakeConstSpan(section.indices),
           rootFromRenderModel,
           linkPrefab->renderModelScale,
@@ -454,6 +511,7 @@ void GatherCollisionPart(
         part.geometry,
         meshView.coordinates,
         mochi::Span<mochi::real const>{},
+        mochi::Span<float const>{},
         meshView.connectivity,
         bindFromLinks[i],
         mochi::Real3{1_r, 1_r, 1_r},
@@ -473,12 +531,6 @@ void GatherCollisionPart(
 // skin binds to are represented by the skin, so their rigid meshes are skipped (see coveredLinks).
 // ------------------------------------------------------------------------------------------------
 
-// Raw base-color image extracted from a skin's render GLB, re-embedded verbatim into the export.
-struct ImageData {
-  std::vector<uint8_t> bytes;
-  std::string mimeType;
-};
-
 // One skinned triangle section read from a skin's render GLB: geometry plus up-to-4 bone influences
 // per vertex. Bone indices are in the SKIN's own bone order; the caller remaps them to composed
 // links. Positions/normals are in the renderer's (Y-up) basis, as authored.
@@ -489,17 +541,39 @@ struct SkinnedSection {
   std::vector<int> indices; // 3 per triangle
   std::vector<int> boneIndices; // 4 per vertex
   std::vector<mochi::real> boneWeights; // 4 per vertex
-  std::array<float, 4> baseColor{1.0f, 1.0f, 1.0f, 1.0f};
-  float metallic = 0.0f;
-  float roughness = 1.0f;
-  // This section's own embedded base-color image, if it has one. Per section rather than per file:
-  // a skin GLB may texture its sections differently, and sharing one image across them would
-  // re-texture every section with whichever happened to be read first.
-  std::vector<uint8_t> imageBytes;
-  std::string imageMime;
+  // The section's material. Its images are set once the section's images join an export's list.
+  MaterialFactors material{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 1.0f, {0.0f, 0.0f, 0.0f}, 1.0f};
+  // This section's own embedded images, per TextureSlot (empty for none). Per section rather than
+  // per file: a skin GLB may texture its sections differently.
+  std::array<ImageData, kNumTextureSlots> images;
 };
 
-// Reads a skinned GLB (POSITION / NORMAL / JOINTS_0 / WEIGHTS_0 / indices + PBR base color) via
+// The image of a texture embedded in the GLB (via a buffer view), or empty for none. External-URI
+// images are not handled, and neither are textures on a UV set other than TEXCOORD_0, the only one
+// the export writes; both are reported.
+ImageData ReadEmbeddedTexture(cgltf_texture_view const& view, char const* path) {
+  cgltf_texture const* tex = view.texture;
+  if (tex == nullptr || tex->image == nullptr) {
+    return {};
+  }
+  cgltf_buffer_view const* bv = tex->image->buffer_view;
+  // cgltf leaves checking that a view lies inside its buffer to cgltf_validate.
+  bool const embedded = bv != nullptr && bv->buffer != nullptr && bv->buffer->data != nullptr &&
+      bv->offset <= bv->buffer->size && bv->size <= bv->buffer->size - bv->offset;
+  if (view.texcoord != 0 || !embedded) {
+    MOCHI_LOG_WARNING_ONCE(
+        "ExportSkeletalGlb: a texture of skin '%s' is external or uses a UV set other than "
+        "TEXCOORD_0; it is left out of the export.",
+        path);
+    return {};
+  }
+  auto const* src = static_cast<uint8_t const*>(bv->buffer->data) + bv->offset;
+  return ImageData{
+      std::vector<uint8_t>(src, src + bv->size),
+      tex->image->mime_type != nullptr ? tex->image->mime_type : "image/png"};
+}
+
+// Reads a skinned GLB (POSITION / NORMAL / JOINTS_0 / WEIGHTS_0 / indices + PBR material) via
 // cgltf -- unlike mochi_renderer::ReadGlbFromFile, which drops skinning. Returns empty on failure.
 std::vector<SkinnedSection> ReadSkinnedGlbSections(char const* path) {
   std::vector<SkinnedSection> out;
@@ -587,25 +661,34 @@ std::vector<SkinnedSection> ReadSkinnedGlbSections(char const* path) {
       for (cgltf_size i = 0; i < numIndices; ++i) {
         section.indices[i] = static_cast<int>(cgltf_accessor_read_index(prim.indices, i));
       }
-      if (prim.material != nullptr && prim.material->has_pbr_metallic_roughness) {
-        auto const& pbr = prim.material->pbr_metallic_roughness;
-        section.baseColor = {
-            pbr.base_color_factor[0],
-            pbr.base_color_factor[1],
-            pbr.base_color_factor[2],
-            pbr.base_color_factor[3]};
-        section.metallic = pbr.metallic_factor;
-        section.roughness = pbr.roughness_factor;
-        // Extract this section's base-color image bytes (embedded in the GLB via a buffer view)
-        // so the export can re-embed the skin's texture. External-URI images are not handled.
-        cgltf_texture const* tex = pbr.base_color_texture.texture;
-        if (tex != nullptr && tex->image != nullptr && tex->image->buffer_view != nullptr) {
-          cgltf_buffer_view const* bv = tex->image->buffer_view;
-          if (bv->buffer != nullptr && bv->buffer->data != nullptr) {
-            auto const* src = static_cast<uint8_t const*>(bv->buffer->data) + bv->offset;
-            section.imageBytes.assign(src, src + bv->size);
-            section.imageMime =
-                tex->image->mime_type != nullptr ? tex->image->mime_type : "image/png";
+      if (prim.material != nullptr) {
+        cgltf_material const& material = *prim.material;
+        MaterialFactors& factors = section.material;
+        if (material.has_pbr_metallic_roughness) {
+          auto const& pbr = material.pbr_metallic_roughness;
+          std::copy_n(pbr.base_color_factor, 4, factors.baseColor.begin());
+          factors.metallic = pbr.metallic_factor;
+          factors.roughness = pbr.roughness_factor;
+          section.images[kBaseColor] = ReadEmbeddedTexture(pbr.base_color_texture, path);
+          section.images[kMetallicRoughness] =
+              ReadEmbeddedTexture(pbr.metallic_roughness_texture, path);
+        }
+        section.images[kNormal] = ReadEmbeddedTexture(material.normal_texture, path);
+        if (!section.images[kNormal].bytes.empty()) {
+          factors.normalScale = material.normal_texture.scale;
+        }
+        section.images[kOcclusion] = ReadEmbeddedTexture(material.occlusion_texture, path);
+        if (!section.images[kOcclusion].bytes.empty()) {
+          factors.occlusionStrength = material.occlusion_texture.scale;
+        }
+        section.images[kEmissive] = ReadEmbeddedTexture(material.emissive_texture, path);
+        // The emissive factor scales the emissive texture. Without it, the factor alone would make
+        // the whole surface glow (this skin's factor is white over a black texture), so drop both.
+        if (material.emissive_texture.texture == nullptr ||
+            !section.images[kEmissive].bytes.empty()) {
+          std::copy_n(material.emissive_factor, 3, factors.emissive.begin());
+          if (material.has_emissive_strength) {
+            factors.emissiveStrength = material.emissive_strength.emissive_strength;
           }
         }
       }
@@ -807,21 +890,6 @@ void GatherSkinRenderParts(
         botPrefab.skin->renderModelFile.c_str());
     return;
   }
-  // Sections sharing identical image bytes share one embedded image, so a skin split across
-  // several primitives by material does not embed the same texture repeatedly.
-  auto findOrAddImage = [&images](std::vector<uint8_t>& bytes, std::string& mime) {
-    if (bytes.empty()) {
-      return -1;
-    }
-    for (int i = 0; i < mochi::isize(images); ++i) {
-      if (images[i].bytes == bytes) {
-        return i;
-      }
-    }
-    int const index = mochi::isize(images);
-    images.push_back(ImageData{std::move(bytes), std::move(mime)});
-    return index;
-  };
   mochi::CoordinateSpaceConverter const mochiFromGltf(
       mochi_renderer::RenderSpace(), mochi::CoordinateSpace::Default());
   // The skin mesh is authored in the skin's own root-link frame. rootFromSkinRoot carries that
@@ -836,16 +904,12 @@ void GatherSkinRenderParts(
       continue;
     }
     ConvertSkinnedSectionToMochi(section, mochiFromGltf);
-    // SkinnedSection carries no emissive data, so pass the neutral values: black emissive with unit
-    // strength, which keeps KHR_materials_emissive_strength off the exported material.
-    int const sectionImageIndex = findOrAddImage(section.imageBytes, section.imageMime);
-    MaterialFactors const factors{
-        section.baseColor,
-        section.metallic,
-        section.roughness,
-        {0.0f, 0.0f, 0.0f},
-        1.0f,
-        sectionImageIndex};
+    // Sections sharing identical image bytes share one embedded image, so a skin split across
+    // several primitives by material does not embed the same texture repeatedly.
+    MaterialFactors factors = section.material;
+    for (int slot = 0; slot < kNumTextureSlots; ++slot) {
+      factors.images[slot] = FindOrAddImage(images, std::move(section.images[slot]));
+    }
     int const materialIndex = FindOrAddMaterial(materials, factors);
     // Materials grow one at a time and every new material immediately gets its own part, so a
     // material index is also its part index. Both render gatherers run before any collision part is
@@ -1049,6 +1113,7 @@ void ExportSkeletalGlb(
         bindFromLinks,
         gltfFromMochi,
         mochi::MakeConstSpan(coveredLinks),
+        images,
         materialFactors,
         parts);
     GatherSkinRenderParts(
@@ -1222,7 +1287,7 @@ void ExportSkeletalGlb(
     accessors[ibmView].buffer_view = &bufferViews[ibmView];
   }
 
-  // Image bytes (skin textures) follow the geometry, each as its own buffer view -- a glTF image
+  // Image bytes (textures) follow the geometry, each as its own buffer view -- a glTF image
   // references a buffer view directly, with no accessor. Pad to 4 bytes to keep later data aligned.
   for (int i = 0; i < numImages; ++i) {
     auto const imageSize = static_cast<cgltf_size>(images[i].bytes.size());
@@ -1240,11 +1305,12 @@ void ExportSkeletalGlb(
     bufferView.buffer = &buffer;
   }
 
-  // Texture objects for the embedded skin images (one shared sampler, default linear/repeat). These
-  // outlive cgltf_write_file; the material loop below points textured materials at them.
+  // Texture objects for the embedded images (one shared trilinear/repeat sampler, as the source
+  // assets use). These outlive cgltf_write_file; the material loop below points textured materials
+  // at them.
   cgltf_sampler sampler = {};
   sampler.mag_filter = cgltf_filter_type_linear;
-  sampler.min_filter = cgltf_filter_type_linear;
+  sampler.min_filter = cgltf_filter_type_linear_mipmap_linear;
   sampler.wrap_s = cgltf_wrap_mode_repeat;
   sampler.wrap_t = cgltf_wrap_mode_repeat;
   mochi::DynamicArray<cgltf_image> cgltfImages;
@@ -1294,10 +1360,17 @@ void ExportSkeletalGlb(
     // Winding in the source render meshes is not dependable, so draw both sides rather than risk
     // geometry disappearing to back-face culling.
     materials[i].double_sided = 1;
-    if (materialFactors[i].imageIndex >= 0 && materialFactors[i].imageIndex < numImages) {
-      pbr.base_color_texture.texture = &cgltfTextures[materialFactors[i].imageIndex];
-      pbr.base_color_texture.texcoord = 0;
-    }
+    auto const textureOf = [&](TextureSlot slot) -> cgltf_texture* {
+      int const image = materialFactors[i].images[slot];
+      return image >= 0 && image < numImages ? &cgltfTextures[image] : nullptr;
+    };
+    pbr.base_color_texture.texture = textureOf(kBaseColor);
+    pbr.metallic_roughness_texture.texture = textureOf(kMetallicRoughness);
+    materials[i].normal_texture.texture = textureOf(kNormal);
+    materials[i].normal_texture.scale = materialFactors[i].normalScale;
+    materials[i].occlusion_texture.texture = textureOf(kOcclusion);
+    materials[i].occlusion_texture.scale = materialFactors[i].occlusionStrength;
+    materials[i].emissive_texture.texture = textureOf(kEmissive);
   }
 
   mochi::DynamicArray<cgltf_attribute> attributes;

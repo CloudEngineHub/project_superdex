@@ -41,7 +41,7 @@ enum class GlbBindPose {
 // Which geometry @ref ExportSkeletalGlb writes, and what the skin binds to.
 struct GlbExportOptions {
   // Include each link's render mesh (@ref robotics::BotLinkPrefab::renderModelFile) as a
-  // "BotRenderMesh" node, preserving its materials. A deformable skin
+  // "BotRenderMesh" node, preserving its material factors and base color texture. A deformable skin
   // (@ref robotics::BotPrefab::skin), if present, contributes its own textured render mesh here,
   // and the links it surfaces are represented by it instead of their own render mesh.
   bool includeRenderMeshes = true;
@@ -66,7 +66,8 @@ struct GlbExportOptions {
 //
 // A deformable skin (@ref robotics::BotPrefab::skin), if present, is exported as additional skinned
 // geometry with its real per-vertex weights and its bone indices remapped onto the composed
-// skeleton (so an attached hand's skin lands correctly on the arm), and its base-color texture is
+// skeleton (so an attached hand's skin lands correctly on the arm), and its full PBR material
+// (base color, metallic-roughness, normal, occlusion and emissive textures and factors) is
 // re-embedded. The links the skin covers carry no separate rigid mesh; links it does not cover
 // (e.g. hard couplings and nails) keep their own. The skin's nonCollidingLinks, when set, names
 // exactly the covered links; when unset, every link the skin binds to is covered.
