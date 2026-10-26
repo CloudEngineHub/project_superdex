@@ -527,8 +527,8 @@ void CopyMaterialLibrary(std::filesystem::path const& source, std::filesystem::p
     }
     size_t end = 0;
     std::string_view const keyword = LineKeyword(line, end);
-    bool const isTexture = keyword.substr(0, 4) == "map_" || keyword == "bump" ||
-        keyword == "disp" || keyword == "decal" || keyword == "norm" || keyword == "refl";
+    bool const isTexture = keyword.starts_with("map_") || keyword == "bump" || keyword == "disp" ||
+        keyword == "decal" || keyword == "norm" || keyword == "refl";
     // The texture file is the statement's last token, after any options.
     size_t const fileStart = line.find_last_of(" \t");
     if (isTexture && end != std::string::npos && fileStart != std::string::npos &&
