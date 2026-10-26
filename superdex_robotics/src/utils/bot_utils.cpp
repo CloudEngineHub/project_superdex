@@ -23,7 +23,10 @@
 #include <mochi_physics/utils/mochi_model_utils.h>
 
 #include <algorithm>
+#include <numeric>
 #include <set>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 
@@ -1526,6 +1529,74 @@ std::string_view superdex::robotics::GetBotSkinName(BotPrefab const& botPrefab) 
   // name (BotPrefab::name, which BuildArticulatedActorParams assigns to
   // ArticulatedActorParams::name).
   return std::string_view(botPrefab.name);
+}
+
+static std::unordered_map<std::string_view, int> MakeLinkIndexByName(
+    Span<DynamicString const> linkNames) {
+  std::unordered_map<std::string_view, int> linkIndexByName;
+  linkIndexByName.reserve(linkNames.size());
+  for (int i = 0; i < isize(linkNames); ++i) {
+    linkIndexByName.emplace(std::string_view(linkNames[i]), i);
+  }
+  return linkIndexByName;
+}
+
+DynamicArray<int> superdex::robotics::ComputeSkinBoneLinkIndices(
+    BotPrefab const& botPrefab,
+    Span<DynamicString const> linkNames) {
+  DynamicArray<int> boneLinks;
+  if (!botPrefab.skin.has_value()) {
+    return boneLinks;
+  }
+  if (botPrefab._skinBoneLinks.empty()) {
+    boneLinks.resize_noinit(isize(linkNames));
+    std::iota(boneLinks.begin(), boneLinks.end(), 0);
+    return boneLinks;
+  }
+  auto const linkIndexByName = MakeLinkIndexByName(linkNames);
+  boneLinks.reserve(isize(botPrefab._skinBoneLinks));
+  for (auto const& name : botPrefab._skinBoneLinks) {
+    auto const it = linkIndexByName.find(std::string_view(name));
+    boneLinks.push_back(it != linkIndexByName.end() ? it->second : kIndexNone);
+  }
+  return boneLinks;
+}
+
+DynamicArray<bool> superdex::robotics::ComputeSkinCoveredLinks(
+    BotPrefab const& botPrefab,
+    Span<DynamicString const> linkNames,
+    SkinningData const* skinning) {
+  DynamicArray<bool> covered(isize(linkNames), false);
+  if (!botPrefab.skin.has_value()) {
+    return covered;
+  }
+  if (botPrefab.skin->nonCollidingLinks.has_value()) {
+    auto const linkIndexByName = MakeLinkIndexByName(linkNames);
+    for (auto const& name : *botPrefab.skin->nonCollidingLinks) {
+      auto const it = linkIndexByName.find(std::string_view(name));
+      if (it != linkIndexByName.end()) {
+        covered[it->second] = true;
+      }
+    }
+    return covered;
+  }
+  if (skinning == nullptr) {
+    return covered;
+  }
+  DynamicArray<int> const boneLinks = ComputeSkinBoneLinkIndices(botPrefab, linkNames);
+  int const numInfluences = Min(isize(skinning->indices), isize(skinning->weights));
+  for (int i = 0; i < numInfluences; ++i) {
+    int const bone = skinning->indices[i];
+    // Skins pad unused influence slots with bone 0 at weight 0, which must not cover the root link.
+    if (skinning->weights[i] <= 0_r || bone < 0 || bone >= isize(boneLinks)) {
+      continue;
+    }
+    int const link = boneLinks[bone];
+    if (link != kIndexNone) {
+      covered[link] = true;
+    }
+  }
+  return covered;
 }
 
 static void ApplyBotContactOverrides(

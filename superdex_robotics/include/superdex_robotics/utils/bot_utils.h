@@ -284,6 +284,44 @@ int MOCHI_API FindLinkIndexByName(BotPrefab const& bot, std::string_view name);
 [[nodiscard]] MOCHI_API std::string_view GetBotSkinName(BotPrefab const& botPrefab);
 
 /**
+ * @brief Map each bone of a bot's skin to the index of the link it binds to.
+ *
+ * @details For a composed bot, @ref BotPrefab::_skinBoneLinks names the link each skin bone binds
+ * to. When it is empty (a standalone skinned bot), skin bone b binds to link b.
+ *
+ * @param[in] botPrefab Bot whose skin to map.
+ * @param[in] linkNames Link names, in the order the returned indices refer to.
+ * @return One link index per skin bone, or @ref kIndexNone for a bone whose link is not in
+ * @p linkNames. When @ref BotPrefab::_skinBoneLinks is non-empty, entry b corresponds to its entry
+ * b, which names the unresolved link. Empty if the bot has no skin.
+ */
+[[nodiscard]] MOCHI_API DynamicArray<int> ComputeSkinBoneLinkIndices(
+    BotPrefab const& botPrefab,
+    Span<DynamicString const> linkNames);
+
+/**
+ * @brief Find the links a bot's skin covers: the links the skin stands in for, whose own rigid
+ * geometry a renderer or exporter should omit.
+ *
+ * @details Mirrors @ref ArticulatedSkinParams::nonCollidingLinks. When set, the skin covers exactly
+ * the links it names. When unset, no link collides and the skin is the bot's only collider, so it
+ * covers every link its collision mesh puts a positive weight on, through
+ * @ref ComputeSkinBoneLinkIndices.
+ *
+ * @param[in] botPrefab Bot whose skin to query.
+ * @param[in] linkNames Link names, in the order of the returned flags.
+ * @param[in] skinning Skinning of the skin's collision mesh (@ref
+ * ArticulatedSkinPrefab::shapeFile), or nullptr if it is unavailable. Only read when
+ * @ref ArticulatedSkinParams::nonCollidingLinks is unset.
+ * @return One flag per entry of @p linkNames, true for a covered link. All false if the bot has no
+ * skin.
+ */
+[[nodiscard]] MOCHI_API DynamicArray<bool> ComputeSkinCoveredLinks(
+    BotPrefab const& botPrefab,
+    Span<DynamicString const> linkNames,
+    SkinningData const* skinning);
+
+/**
  * @brief Find the indices of all leaf links (links that are not referenced as a parent by any
  * other link).
  *
