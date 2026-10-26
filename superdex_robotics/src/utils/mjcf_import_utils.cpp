@@ -1591,8 +1591,7 @@ void superdex::robotics::ApplyMjcfContactFilter(BotPrefab& botPrefab, MjcfImport
     for (int b = 0; b < numBodies; ++b) {
       std::string const bodyLink(info.bodies[b].link);
       if (name == bodyLink ||
-          (name.substr(0, bodyLink.size()) == bodyLink &&
-           name.substr(bodyLink.size()).rfind("_collision_", 0) == 0)) {
+          (name.starts_with(bodyLink) && name.substr(bodyLink.size()).starts_with("_collision_"))) {
         bodyOfLink[l] = b;
         break;
       }
