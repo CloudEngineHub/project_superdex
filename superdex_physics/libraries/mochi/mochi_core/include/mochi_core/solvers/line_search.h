@@ -159,6 +159,7 @@ bool LineSearch<T>::Simple(Problem& problem, Status& status, LsParams const& par
   // Simple requires no sufficient decrease, hence c1 = 0
   RoundingErrorSlopeTest const slopeTest(
       status.merit, problem.GetResidual().Dot(problem.GetIncrement()), /*c1*/ 0.0);
+  bool const finiteStart = IsFinite(status.merit);
 
   bool improved = false;
   auto scale = T(1);
@@ -177,7 +178,7 @@ bool LineSearch<T>::Simple(Problem& problem, Status& status, LsParams const& par
     double const merit = problem.GetObjective();
 
     // Check enough improvement
-    if (IsFinite(merit) &&
+    if (finiteStart && IsFinite(merit) &&
         (merit <= (status.merit + Abs(status.merit * params.maxRelIncrease)) ||
          slopeTest.Passes(problem, merit, scale))) {
       status.merit = merit;
@@ -204,6 +205,7 @@ bool LineSearch<T>::Armijo(Problem& problem, Status& status, LsParams const& par
   double const dotDx0Res0 = problem.GetResidual().Dot(problem.GetIncrement());
   double const factor0 = dotDx0Res0 * params.wolfe1;
   RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
+  bool const finiteStart = IsFinite(status.merit) && IsFinite(dotDx0Res0);
 
   bool improved = false;
   auto scale = T(1);
@@ -222,7 +224,7 @@ bool LineSearch<T>::Armijo(Problem& problem, Status& status, LsParams const& par
     double const merit = problem.GetObjective();
 
     // Check enough improvement
-    if (IsFinite(merit) &&
+    if (finiteStart && IsFinite(merit) &&
         (merit <= status.merit + scale * factor0 || slopeTest.Passes(problem, merit, scale))) {
       status.merit = merit;
       improved = true;
@@ -262,6 +264,7 @@ bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& para
   double const t1 = params.wolfe1 * dotDx0Res0;
   double const t2 = params.wolfe2 * dotDx0Res0;
   RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
+  bool const finiteStart = IsFinite(status.merit) && IsFinite(dotDx0Res0);
 
   bool improved = false;
   auto scale = T(1);
@@ -294,7 +297,7 @@ bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& para
 
     // TODO: Explore choosing the next trial by safeguarded interpolation of the trials' merits and
     // slopes.
-    if (!IsFinite(dotDxRes) || !IsFinite(merit) ||
+    if (!finiteStart || !IsFinite(dotDxRes) || !IsFinite(merit) ||
         !(merit <= status.merit + scale * t1 || slopeTest.Passes(problem, merit, scale)) ||
         (strong && dotDxRes > Abs(t2 * scale))) {
       // If not finite, or neither the 1st Wolfe condition nor the slope test is met, or the strong
@@ -344,6 +347,7 @@ bool LineSearch<T>::ResidualNorm(Problem& problem, Status& status, LsParams cons
 
   // Compute current residual norm
   auto const resNorm0 = problem.GetResidual().Norm();
+  bool const finiteStart = IsFinite(resNorm0);
 
   bool improved = false;
   int& it = status.numLastLSIterDone;
@@ -359,7 +363,7 @@ bool LineSearch<T>::ResidualNorm(Problem& problem, Status& status, LsParams cons
     problem.UpdateResidual();
     auto const resNorm = problem.GetResidual().Norm();
 
-    if (IsFinite(resNorm) && resNorm <= resNorm0) {
+    if (finiteStart && IsFinite(resNorm) && resNorm <= resNorm0) {
       improved = true;
       break;
     }

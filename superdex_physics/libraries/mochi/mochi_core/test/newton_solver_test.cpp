@@ -770,24 +770,26 @@ TEST(NewtonSolver, PerActorWeighted_FallbackToGlobal) {
 // ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
 
 /**
- * The full step lands where the residual is NaN and the objective is NaN or −∞, and must be
- * rejected. The half step is acceptable to every line search.
+ * Where x[0] < −1, the residual and the objective are NaN or ±∞. From (1, 1), the full step lands
+ * there and must be rejected, and every line search accepts the half step, unless it tests the
+ * merit and its start merit is that value too. From (−2, −2), every line search fails both trials.
+ * Accepted or not, the search ends at the half step.
  */
-TEST(NewtonSolver, LineSearchRejectsNonFiniteTrial) {
-  real invalidObjective = 0_r;
+TEST(NewtonSolver, LineSearchRejectsNonFiniteValues) {
+  real invalidValue = 0_r;
   auto residual = ColumnVector<real>::Zero(2);
   SnleProblemFunctions<real> functions;
-  functions.assemble = [&invalidObjective, &residual](
+  functions.assemble = [&invalidValue, &residual](
                            SnleProblem<real>& problem, AssemblyParams const& params) {
     auto const x = problem.GetSolution();
     bool const isInvalid = x[0] < -1_r;
     if (params.assemObj) {
-      problem.objective = isInvalid ? invalidObjective : 0.5 * x.Dot(x);
+      problem.objective = isInvalid ? invalidValue : 0.5 * x.Dot(x);
     }
     if (params.assemRes) {
       residual = x;
       if (isInvalid) {
-        residual.SetConstant(std::numeric_limits<real>::quiet_NaN());
+        residual.SetConstant(invalidValue);
       }
       problem.actorResiduals = {{0, &residual}};
     }
@@ -796,21 +798,14 @@ TEST(NewtonSolver, LineSearchRejectsNonFiniteTrial) {
   SnleProblem<real> problem{2, 2, std::move(functions)};
 
   using Ls = LineSearch<real>;
-  for (real const objective :
-       {std::numeric_limits<real>::quiet_NaN(), -std::numeric_limits<real>::infinity()}) {
-    invalidObjective = objective;
+  for (real const value : {std::numeric_limits<real>::quiet_NaN(), -kInf, kInf}) {
+    invalidValue = value;
     for (auto const& [type, search] :
          {std::pair{LineSearchType::Simple, &Ls::Simple},
           std::pair{LineSearchType::Armijo, &Ls::Armijo},
           std::pair{LineSearchType::WolfeWeak, &Ls::WolfeWeak},
           std::pair{LineSearchType::WolfeStrong, &Ls::WolfeStrong},
           std::pair{LineSearchType::ResidualNorm, &Ls::ResidualNorm}}) {
-      problem.SetSolution(ColumnVector<real>({{1_r, 1_r}}));
-      problem.increment.SetConstant(-3_r);
-      problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
-      NewtonSolverStatus<real> status;
-      status.merit = problem.GetObjective();
-
       LineSearchParams const params{
           .type = type,
           .maxIter = 2,
@@ -818,8 +813,22 @@ TEST(NewtonSolver, LineSearchRejectsNonFiniteTrial) {
           .wolfe1 = 1e-4_r,
           .wolfe2 = 0.9_r,
           .maxRelIncrease = 0_r};
-      EXPECT_TRUE(search(problem, status, params));
-      EXPECT_EQ(status.numLastLSIterDone, 1);
+      for (auto const& [start, step, invalidStartMerit] :
+           {std::tuple{1_r, -3_r, false},
+            std::tuple{1_r, -3_r, true},
+            std::tuple{-2_r, 3_r, true}}) {
+        problem.SetSolution(ColumnVector<real>({{start, start}}));
+        problem.increment.SetConstant(step);
+        problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
+        NewtonSolverStatus<real> status;
+        status.merit = invalidStartMerit ? value : problem.GetObjective();
+
+        bool const accepts =
+            (start == 1_r) && (!invalidStartMerit || type == LineSearchType::ResidualNorm);
+        EXPECT_EQ(search(problem, status, params), accepts);
+        EXPECT_EQ(status.numLastLSIterDone, accepts ? 1 : params.maxIter);
+        EXPECT_EQ(problem.GetSolution()[0], -0.5_r);
+      }
     }
   }
 }
@@ -876,7 +885,7 @@ TEST(NewtonSolver, MeritLineSearches) {
   // small enough that a merit drop of kEps passes every merit test, in both precisions.
   real constexpr kG = 1000_r * kEps;
   real constexpr kSteep = -0.95_r * kG;
-  double constexpr kNaN = std::numeric_limits<double>::quiet_NaN();
+  real constexpr kNaN = std::numeric_limits<real>::quiet_NaN();
   std::array<bool, 4> constexpr kAllAccept = {true, true, true, true};
   struct Case {
     double rise{};
@@ -896,8 +905,10 @@ TEST(NewtonSolver, MeritLineSearches) {
           Case{1500 * kEps, -kG, kSteep, {true, true, true, true}}, // Wolfe falls back on it
           Case{1500 * kEps, -kG, -kInf, {false, false, false, false}},
           Case{1500 * kEps, -kInf, -0.5_r * kG, {false, false, false, false}},
-          // Uphill start slope: Armijo and Wolfe fail every trial and keep the last one
+          // Uphill, NaN or +∞ start slope: Armijo and Wolfe fail every trial and keep the last one
           Case{4000 * kEps, kG, -0.5_r * kG, {false, false, false, false}},
+          Case{-10 * kEps, kNaN, -0.5_r * kG, {true, false, false, false}},
+          Case{-10 * kEps, kInf, -0.5_r * kG, {true, false, false, false}},
           Case{4000 * kEps, -kG, -0.5_r * kG, {false, false, false, false}}, // Out of band
           // Out-of-band drop that fails the Armijo test
           Case{-3000 * kEps, -2e8_r * kEps, -4e8_r * kEps, {true, false, false, false}},
