@@ -62,7 +62,7 @@ void LinkKinematics::Compute(mochi::Span<mochi::real const> dofs, mochi::Error& 
       error,
       "Joint DoF count does not match the articulation.");
   MOCHI_ERROR_RETURN(error);
-  std::copy(dofs.begin(), dofs.end(), _dofs.Data());
+  std::ranges::copy(dofs, _dofs.Data());
   mochi::articulated::ConvertDofsToPose(
       _jointTypes, _dofInfo, _poseInfo, mochi::AsConstView(_dofs), mochi::AsView(_pose));
   mochi::articulated::ComputeTransformsFromReducedPose(

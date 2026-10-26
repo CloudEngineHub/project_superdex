@@ -310,7 +310,7 @@ void Points3DSeries::Append(
   MOCHI_ERROR_RETURN(error);
 
   _lengths.push_back(static_cast<uint32_t>(positions.size()));
-  std::transform(positions.begin(), positions.end(), std::back_inserter(_positions), toPosition);
+  std::ranges::transform(positions, std::back_inserter(_positions), toPosition);
 }
 
 void Points3DSeries::BuildColumns(

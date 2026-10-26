@@ -106,14 +106,11 @@ void detail::ControllerSink::WriteScalars(
   MOCHI_ERROR_RETURN(error);
   SampleTime const time = *_time;
 
-  auto binding =
-      std::find_if(_scalarBindings.begin(), _scalarBindings.end(), [&](ScalarBinding const& value) {
-        return value.name == seriesName;
-      });
+  auto binding = std::ranges::find_if(
+      _scalarBindings, [&](ScalarBinding const& value) { return value.name == seriesName; });
   if (binding == _scalarBindings.end()) {
     MOCHI_ERROR_IF_NOT(
-        std::all_of(
-            fields.begin(), fields.end(), [](auto const& field) { return !field.name.empty(); }),
+        std::ranges::all_of(fields, [](auto const& field) { return !field.name.empty(); }),
         error,
         "Controller scalar field name must not be empty.");
     MOCHI_ERROR_RETURN(error);
@@ -165,10 +162,8 @@ void detail::ControllerSink::WriteTransform(
     return;
   }
   SampleTime const time = *_time;
-  auto binding = std::find_if(
-      _transformBindings.begin(), _transformBindings.end(), [&](TransformBinding const& item) {
-        return item.name == seriesName;
-      });
+  auto binding = std::ranges::find_if(
+      _transformBindings, [&](TransformBinding const& item) { return item.name == seriesName; });
   if (binding == _transformBindings.end()) {
     std::string const prefix{seriesName};
     auto* const series = _episode.CreateScalarSeries(

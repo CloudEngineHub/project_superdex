@@ -21,6 +21,7 @@
 #include <mochi_core/utils/log.h>
 
 #include <rerun.hpp>
+#include <algorithm>
 
 #include <algorithm>
 #include <array>
@@ -41,9 +42,8 @@ constexpr std::string_view kEpisodeArchetype = "superdex.archetypes.Episode";
 constexpr std::string_view kShadowsPath = "world/shadows";
 
 bool HasValidPropertyKeys(std::map<std::string, std::string> const& properties) {
-  return std::none_of(properties.begin(), properties.end(), [](auto const& property) {
-    return property.first.empty();
-  });
+  return std::ranges::none_of(
+      properties, [](auto const& property) { return property.first.empty(); });
 }
 
 bool HasValidField(ComponentField const& field) {
@@ -57,8 +57,8 @@ bool HasDuplicateComponents(mochi::Span<ComponentField const> fields) {
   for (auto const& field : fields) {
     componentNames.push_back(field.component);
   }
-  std::sort(componentNames.begin(), componentNames.end());
-  return std::adjacent_find(componentNames.begin(), componentNames.end()) != componentNames.end();
+  std::ranges::sort(componentNames);
+  return std::ranges::adjacent_find(componentNames) != componentNames.end();
 }
 
 void SetRerunError(rerun::Error const& rerunError, mochi::Error& error, char const* description) {
@@ -154,7 +154,7 @@ ScalarSeries* Episode::CreateScalarSeries(
   ValidateSeriesPath(entityPath, error);
   MOCHI_ERROR_IF(fields.empty(), error, "A scalar series must have at least one field.");
   MOCHI_ERROR_IF_NOT(
-      std::all_of(fields.begin(), fields.end(), HasValidField),
+      std::ranges::all_of(fields, HasValidField),
       error,
       "Scalar series fields must have archetype and component names.");
   MOCHI_ERROR_IF(
@@ -315,10 +315,8 @@ void Episode::WriteMesh(
       "Mesh triangle indices must contain complete triples.");
   size_t const vertexCount = vertexPositions.size() / 3;
   MOCHI_ERROR_IF_NOT(
-      std::all_of(
-          triangleIndices.begin(),
-          triangleIndices.end(),
-          [vertexCount](uint32_t index) { return index < vertexCount; }),
+      std::ranges::all_of(
+          triangleIndices, [vertexCount](uint32_t index) { return index < vertexCount; }),
       error,
       "Mesh triangle index exceeds the vertex count.");
   MOCHI_ERROR_RETURN(error);
@@ -389,9 +387,8 @@ void Episode::WriteKeypointSkeleton(
       error,
       "Keypoint skeleton has too many keypoints.");
   MOCHI_ERROR_IF_NOT(
-      std::all_of(
-          connections.begin(),
-          connections.end(),
+      std::ranges::all_of(
+          connections,
           [&](auto const& connection) {
             return connection[0] < keypointNames.size() && connection[1] < keypointNames.size();
           }),

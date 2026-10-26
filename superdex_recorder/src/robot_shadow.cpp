@@ -43,25 +43,20 @@ void WriteGeometry(
 
   std::vector<float> vertices;
   vertices.reserve(mesh.coordinates.size());
-  std::transform(
-      mesh.coordinates.begin(),
-      mesh.coordinates.end(),
-      std::back_inserter(vertices),
-      [](mochi::real value) { return static_cast<float>(value); });
+  std::ranges::transform(mesh.coordinates, std::back_inserter(vertices), [](mochi::real value) {
+    return static_cast<float>(value);
+  });
 
   std::vector<uint32_t> triangles;
   triangles.reserve(mesh.connectivity.size());
   MOCHI_ERROR_IF_NOT(
-      std::all_of(
-          mesh.connectivity.begin(), mesh.connectivity.end(), [](int index) { return index >= 0; }),
+      std::ranges::all_of(mesh.connectivity, [](int index) { return index >= 0; }),
       error,
       "Robot shadow mesh contains a negative vertex index.");
   MOCHI_ERROR_RETURN(error);
-  std::transform(
-      mesh.connectivity.begin(),
-      mesh.connectivity.end(),
-      std::back_inserter(triangles),
-      [](int index) { return static_cast<uint32_t>(index); });
+  std::ranges::transform(mesh.connectivity, std::back_inserter(triangles), [](int index) {
+    return static_cast<uint32_t>(index);
+  });
   episode.WriteMesh(entityPath, vertices, triangles, color, error);
 }
 

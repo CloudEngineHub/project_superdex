@@ -151,16 +151,15 @@ std::array<uint8_t, 4> ColorForId(std::string_view id) {
 }
 
 std::string const* FindSpawnName(PhysicsRecorderConfig const& config, mochi::Actor const& actor) {
-  auto const entry =
-      std::find_if(config.spawnNames.begin(), config.spawnNames.end(), [&](auto const& candidate) {
-        return candidate.first == actor.GetHandle();
-      });
+  auto const entry = std::ranges::find_if(config.spawnNames, [&](auto const& candidate) {
+    return candidate.first == actor.GetHandle();
+  });
   return entry == config.spawnNames.end() ? nullptr : &entry->second;
 }
 
 // Actor IDs are entity path segments, where `.` reads better than an escaped `\/`.
 std::string WithoutSlashes(std::string name) {
-  std::replace(name.begin(), name.end(), '/', '.');
+  std::ranges::replace(name, '/', '.');
   return name;
 }
 
@@ -226,10 +225,8 @@ PhysicsRecorder::PhysicsRecorder(
       error,
       "Contact force visualization scale must be finite and positive.");
   MOCHI_ERROR_IF(
-      std::any_of(
-          _config.spawnNames.begin(),
-          _config.spawnNames.end(),
-          [](auto const& entry) { return entry.second.empty(); }),
+      std::ranges::any_of(
+          _config.spawnNames, [](auto const& entry) { return entry.second.empty(); }),
       error,
       "Spawn names must not be empty.");
   MOCHI_ERROR_RETURN(error);
@@ -593,25 +590,20 @@ void PhysicsRecorder::WriteGeometry(
 
   std::vector<float> vertices;
   vertices.reserve(mesh.coordinates.size());
-  std::transform(
-      mesh.coordinates.begin(),
-      mesh.coordinates.end(),
-      std::back_inserter(vertices),
-      [](mochi::real value) { return static_cast<float>(value); });
+  std::ranges::transform(mesh.coordinates, std::back_inserter(vertices), [](mochi::real value) {
+    return static_cast<float>(value);
+  });
 
   std::vector<uint32_t> triangles;
   triangles.reserve(mesh.connectivity.size());
   MOCHI_ERROR_IF_NOT(
-      std::all_of(
-          mesh.connectivity.begin(), mesh.connectivity.end(), [](int index) { return index >= 0; }),
+      std::ranges::all_of(mesh.connectivity, [](int index) { return index >= 0; }),
       error,
       "Physics mesh contains a negative vertex index.");
   MOCHI_ERROR_RETURN(error);
-  std::transform(
-      mesh.connectivity.begin(),
-      mesh.connectivity.end(),
-      std::back_inserter(triangles),
-      [](int index) { return static_cast<uint32_t>(index); });
+  std::ranges::transform(mesh.connectivity, std::back_inserter(triangles), [](int index) {
+    return static_cast<uint32_t>(index);
+  });
   _episode.WriteMesh(entityPath, vertices, triangles, ColorForId(entityPath), error);
 }
 

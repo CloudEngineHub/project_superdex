@@ -52,9 +52,8 @@ ContactCollector::ContactCollector(
     std::vector<ContactBody> bodies,
     mochi::Error& error)
     : _scene{scene}, _bodies{std::move(bodies)} {
-  std::sort(_bodies.begin(), _bodies.end(), [](ContactBody const& lhs, ContactBody const& rhs) {
-    return lhs.path < rhs.path;
-  });
+  std::ranges::sort(
+      _bodies, [](ContactBody const& lhs, ContactBody const& rhs) { return lhs.path < rhs.path; });
   _queries.resize(_bodies.size());
   for (size_t i = 0; i < _bodies.size(); ++i) {
     _indices.emplace(_bodies[i].handle, i);
@@ -128,7 +127,7 @@ void ContactCollector::Collect(ContactColumns& output, mochi::Error& error) cons
            preservesOrientation ? contact.force : -contact.force});
     }
   }
-  std::stable_sort(contacts.begin(), contacts.end(), [](Contact const& lhs, Contact const& rhs) {
+  std::ranges::stable_sort(contacts, [](Contact const& lhs, Contact const& rhs) {
     return std::pair{lhs.bodyA, lhs.bodyB} < std::pair{rhs.bodyA, rhs.bodyB};
   });
 
