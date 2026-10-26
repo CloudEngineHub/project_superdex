@@ -416,16 +416,19 @@ TEST_F(ParallelPcgTest, ConvergesImmediatelyForZeroSystemWithPreconditionedResid
   }
 }
 
-class ParallelPcgNonSpdTest : public ParallelPcgTest, public testing::WithParamInterface<bool> {};
+using NonSpdParam = std::tuple<bool, real>;
+
+class ParallelPcgNonSpdTest : public ParallelPcgTest,
+                              public testing::WithParamInterface<NonSpdParam> {};
 
 TEST_P(ParallelPcgNonSpdTest, HonorsAbortPolicy) {
+  auto const [abortIfNotSpd, diagonal] = GetParam();
   auto problem = MakeProblem(/*identity*/ true);
   for (int row = 0; row < problem.A.Rows(); ++row) {
-    problem.A(row, row) = -1_r;
-    problem.expectedSolution[row] = -problem.b[row];
+    problem.A(row, row) = diagonal;
+    problem.expectedSolution[row] = problem.b[row] / diagonal;
   }
   ASSERT_GE(krylov::parallel_pcg::GetNumParallelWorkers(problem.A), 3);
-  bool const abortIfNotSpd = GetParam();
   auto const result = RunParallelPcg(
       problem, MakeCriterion<krylov::StatusResidualL2>(), {.abortIfNotSpd = abortIfNotSpd});
 
@@ -440,11 +443,19 @@ TEST_P(ParallelPcgNonSpdTest, HonorsAbortPolicy) {
   ExpectValidExecution(result, problem.A.Rows());
 }
 
-static std::string GetAbortPolicyName(testing::TestParamInfo<bool> const& info) {
-  return info.param ? "Abort" : "Continue";
+static std::string GetAbortPolicyName(testing::TestParamInfo<NonSpdParam> const& info) {
+  auto const [abortIfNotSpd, diagonal] = info.param;
+  return std::string{abortIfNotSpd ? "Abort" : "Continue"} + (IsFinite(diagonal) ? "" : "OnNan");
 }
 
-INSTANTIATE_TEST_SUITE_P(AbortPolicy, ParallelPcgNonSpdTest, testing::Bool(), GetAbortPolicyName);
+INSTANTIATE_TEST_SUITE_P(
+    AbortPolicy,
+    ParallelPcgNonSpdTest,
+    testing::Values(
+        NonSpdParam{false, -1_r},
+        NonSpdParam{true, -1_r},
+        NonSpdParam{true, std::numeric_limits<real>::quiet_NaN()}),
+    GetAbortPolicyName);
 
 TEST_F(ParallelPcgTest, ReportsSingularPreconditionerBreakdown) {
   auto problem = MakeProblem(/*identity*/ true);

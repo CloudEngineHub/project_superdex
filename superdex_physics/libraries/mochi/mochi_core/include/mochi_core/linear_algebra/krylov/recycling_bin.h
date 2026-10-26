@@ -80,7 +80,7 @@ void RecyclingBin<Scalar>::Insert(VectorP const& p, VectorAP const& Ap) {
     CudaVectorView<Scalar const> pview(p.data(), NumRows(p));
     CudaVectorView<Scalar const> Apview(Ap.data(), NumRows(Ap));
     auto const pTAp = pview.Dot(Apview);
-    if (pTAp <= Scalar(0)) {
+    if (!IsFinite(pTAp) || pTAp <= Scalar(0)) {
       return; // Skip — direction is not A-conjugate (non-SPD or degenerate)
     }
     auto const scaling = Scalar(1) / Sqrt(pTAp);
@@ -92,7 +92,7 @@ void RecyclingBin<Scalar>::Insert(VectorP const& p, VectorAP const& Ap) {
     ColumnVectorView<Scalar const> pview(p.data(), NumRows(p));
     ColumnVectorView<Scalar const> Apview(Ap.data(), NumRows(Ap));
     auto const pTAp = pview.Dot(Apview);
-    if (pTAp <= Scalar(0)) {
+    if (!IsFinite(pTAp) || pTAp <= Scalar(0)) {
       return; // Skip — direction is not A-conjugate (non-SPD or degenerate)
     }
     auto const scaling = Scalar(1) / Sqrt(pTAp);

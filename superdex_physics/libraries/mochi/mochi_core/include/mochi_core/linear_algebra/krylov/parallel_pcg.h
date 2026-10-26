@@ -340,7 +340,7 @@ LinearSolverStatus ParallelPCG(
         ApplyToRange(A, p, Ap, rowBegin, rowEnd);
 
         auto const pTAp = workerParDot.Dot(dot, p, Ap, rowBegin, rowEnd, workerIdx);
-        if (pTAp <= 0) MOCHI_UNLIKELY {
+        if (!IsFinite(pTAp) || pTAp <= 0) MOCHI_UNLIKELY {
           if (!abortIfNotSpd) {
             if (isMaster && verbosity >= VerbosityLevel::Warning) {
               MOCHI_LOG_WARNING(

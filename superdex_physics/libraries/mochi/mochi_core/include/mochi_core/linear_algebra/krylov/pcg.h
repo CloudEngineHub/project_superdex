@@ -149,7 +149,7 @@ LinearSolverStatus PCG(
   for (int iter = 1; iter <= maxIter; ++iter) {
     Apply(A, p, Ap);
     auto const pTAp = dot(p, Ap);
-    if (pTAp <= 0) MOCHI_UNLIKELY {
+    if (!IsFinite(pTAp) || pTAp <= 0) MOCHI_UNLIKELY {
       if (!abortIfNotSpd) {
         if (verbosity >= VerbosityLevel::Warning) {
           MOCHI_LOG_WARNING(
