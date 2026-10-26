@@ -221,9 +221,9 @@ bool LoadStepDocument(
   return true;
 }
 
-void CloseStepDocument(Handle(TDocStd_Document) const& document) {
-  if (!document.IsNull() && document->CanClose() == CDM_CCS_OK) {
-    document->Close();
+ScopedStepDocument::~ScopedStepDocument() {
+  if (!handle.IsNull() && handle->CanClose() == CDM_CCS_OK) {
+    XCAFApp_Application::GetApplication()->Close(handle);
   }
 }
 
@@ -324,7 +324,8 @@ bool mochi::mesh::cli::ReadStepFaceColors(
   MOCHI_MESH_CLI_ERROR_IF(stepFilePath.empty(), error, "STEP file path is empty.");
   MOCHI_MESH_CLI_ERROR_RETURN(error, false);
 
-  Handle(TDocStd_Document) document;
+  occ::ScopedStepDocument scopedDocument;
+  auto& document = scopedDocument.handle;
   if (!occ::LoadStepDocument(std::string(stepFilePath), document, error)) {
     return false;
   }
@@ -356,7 +357,6 @@ bool mochi::mesh::cli::ReadStepFaceColors(
     MOCHI_MESH_CLI_ERROR_SET(error, "OpenCascade threw while reading the STEP face colors.");
   }
 
-  occ::CloseStepDocument(document);
   MOCHI_MESH_CLI_ERROR_RETURN(error, false);
   return true;
 }

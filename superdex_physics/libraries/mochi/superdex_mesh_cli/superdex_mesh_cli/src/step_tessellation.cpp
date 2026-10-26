@@ -237,7 +237,8 @@ std::vector<ColorMeshData> mochi::mesh::cli::TessellateStepByColor(
   }
 
   // Read through XCAF, unlike TessellateStep, because STEPControl_Reader drops styles.
-  Handle(TDocStd_Document) document;
+  occ::ScopedStepDocument scopedDocument;
+  auto& document = scopedDocument.handle;
   if (!occ::LoadStepDocument(std::string(stepFilePath), document, error)) {
     return {};
   }
@@ -269,7 +270,6 @@ std::vector<ColorMeshData> mochi::mesh::cli::TessellateStepByColor(
     }
     return result;
   });
-  occ::CloseStepDocument(document);
   MOCHI_MESH_CLI_ERROR_IF(
       error.IsOK() && meshes.empty(), error, "STEP tessellation produced no triangles.");
   MOCHI_MESH_CLI_ERROR_RETURN(error, {});

@@ -488,13 +488,12 @@ IMeshData_Status RunIsotropicMeshing(
 // Faces of the STEP file with their resolved colors, read through XCAF because STEPControl_Reader
 // drops styles.
 std::vector<occ::StyledFace> LoadStyledFaces(std::string const& path, CliError& error) {
-  Handle(TDocStd_Document) document;
+  occ::ScopedStepDocument scopedDocument;
+  auto& document = scopedDocument.handle;
   if (!occ::LoadStepDocument(path, document, error)) {
     return {};
   }
-  std::vector<occ::StyledFace> faces = occ::CollectStyledFaces(document);
-  occ::CloseStepDocument(document);
-  return faces;
+  return occ::CollectStyledFaces(document);
 }
 
 // Sizing for every face of @p shape whose color has an entry in @p colorSizing. An entry's target

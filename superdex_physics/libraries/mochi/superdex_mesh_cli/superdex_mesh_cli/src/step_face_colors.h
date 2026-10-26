@@ -41,8 +41,17 @@ namespace mochi::mesh::cli::occ {
 [[nodiscard]] bool
 LoadStepDocument(std::string const& path, Handle(TDocStd_Document) & outDocument, CliError& error);
 
-/// Releases a document from @ref LoadStepDocument.
-void CloseStepDocument(Handle(TDocStd_Document) const& document);
+/// Owns a document from @ref LoadStepDocument.
+struct ScopedStepDocument {
+  ScopedStepDocument() = default;
+  ~ScopedStepDocument();
+  ScopedStepDocument(ScopedStepDocument const&) = delete;
+  ScopedStepDocument& operator=(ScopedStepDocument const&) = delete;
+  ScopedStepDocument(ScopedStepDocument&&) = delete;
+  ScopedStepDocument& operator=(ScopedStepDocument&&) = delete;
+
+  Handle(TDocStd_Document) handle;
+};
 
 /// A face of the document, placed in world coordinates, with its resolved color as packed
 /// `0xRRGGBB` sRGB. Resolution matches OpenCascade's glTF writer: the face's own style, else its

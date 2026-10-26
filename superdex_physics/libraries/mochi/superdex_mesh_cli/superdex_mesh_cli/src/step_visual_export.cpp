@@ -705,7 +705,8 @@ bool mochi::mesh::cli::ExportStepVisual(
   }
   MOCHI_MESH_CLI_ERROR_RETURN(error, false);
 
-  Handle(TDocStd_Document) document;
+  occ::ScopedStepDocument scopedDocument;
+  auto& document = scopedDocument.handle;
   if (!occ::LoadStepDocument(std::string(stepFilePath), document, error)) {
     return false;
   }
@@ -759,7 +760,6 @@ bool mochi::mesh::cli::ExportStepVisual(
     MOCHI_MESH_CLI_ERROR_SET(error, "OpenCascade threw during the STEP visual export.");
   }
 
-  occ::CloseStepDocument(document);
   MOCHI_MESH_CLI_ERROR_RETURN(error, false);
   return meshed;
 }
