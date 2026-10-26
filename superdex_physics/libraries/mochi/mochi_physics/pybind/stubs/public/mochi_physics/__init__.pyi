@@ -1382,12 +1382,22 @@ class LineSearchType:
     WOLFE_WEAK: LineSearchType
     """Line search with weak Wolfe conditions.
 
+    Steps are no longer than the full step. A trial that meets the 1st condition,
+    but along which the objective still decreases too steeply for the 2nd, is
+    accepted if it is the full step and otherwise leads to longer trials. If no
+    trial meets both conditions, the line search takes the longest such trial, if
+    any, at the cost of one more assembly unless it was the last.
+
     See Also:
         :attr:`~superdex.physics.NonLinearSolverParams.line_search_wolfe1`,
         :attr:`~superdex.physics.NonLinearSolverParams.line_search_wolfe2`
     """
     WOLFE_STRONG: LineSearchType
     """Line search with strong Wolfe conditions.
+
+    Like :class:`WOLFE_WEAK <superdex.physics.LineSearchType>`, but also rejects a
+    trial along which the objective increases too steeply for the strong 2nd
+    condition.
 
     See Also:
         :attr:`~superdex.physics.NonLinearSolverParams.line_search_wolfe1`,

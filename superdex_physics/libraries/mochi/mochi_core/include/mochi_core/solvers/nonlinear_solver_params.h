@@ -166,12 +166,21 @@ enum struct LineSearchType {
   /**
    * @brief Line search with weak Wolfe conditions.
    *
+   * @details Steps are no longer than the full step. A trial that meets the 1st condition, but
+   * along which the objective still decreases too steeply for the 2nd, is accepted if it is the
+   * full step and otherwise leads to longer trials. If no trial meets both conditions, the line
+   * search takes the longest such trial, if any, at the cost of one more assembly unless it was
+   * the last.
+   *
    * @see NonLinearSolverParams::lineSearchWolfe1, NonLinearSolverParams::lineSearchWolfe2
    */
   WolfeWeak,
 
   /**
    * @brief Line search with strong Wolfe conditions.
+   *
+   * @details Like @ref LineSearchType::WolfeWeak, but also rejects a trial along which the
+   * objective increases too steeply for the strong 2nd condition.
    *
    * @see NonLinearSolverParams::lineSearchWolfe1, NonLinearSolverParams::lineSearchWolfe2
    */

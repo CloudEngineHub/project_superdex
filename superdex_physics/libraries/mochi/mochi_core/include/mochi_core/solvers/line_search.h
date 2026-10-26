@@ -50,12 +50,12 @@ struct LineSearch {
   static bool Armijo(Problem& problem, Status& status, LsParams const& params);
 
   /**
-   * Backtracking line search with Wolfe weak conditions for improvement.
+   * Line search with Wolfe weak conditions for improvement. See @ref Wolfe.
    */
   static bool WolfeWeak(Problem& problem, Status& status, LsParams const& params);
 
   /**
-   * Backtracking line search with Wolfe strong conditions for improvement.
+   * Line search with Wolfe strong conditions for improvement. See @ref Wolfe.
    */
   static bool WolfeStrong(Problem& problem, Status& status, LsParams const& params);
 
@@ -65,6 +65,15 @@ struct LineSearch {
   static bool ResidualNorm(Problem& problem, Status& status, LsParams const& params);
 
  private:
+  /**
+   * Line search with Wolfe conditions, the 2nd one strong if @p strong, and steps no longer than
+   * the full step. A trial that meets the 1st condition or the slope test but fails the 2nd by
+   * below is accepted if it is the full step, and otherwise bounds the step from below. If no trial
+   * meets both conditions, the line search takes the longest such trial, if any, assembled again
+   * unless it was the last one.
+   */
+  static bool Wolfe(Problem& problem, Status& status, LsParams const& params, bool strong);
+
   /**
    * Slope test of the trials whose merit change is within an estimate of the merit's rounding
    * error.
@@ -193,7 +202,6 @@ bool LineSearch<T>::Armijo(Problem& problem, Status& status, LsParams const& par
 
   // Compute Armijo factor
   double const dotDx0Res0 = problem.GetResidual().Dot(problem.GetIncrement());
-  MOCHI_ASSERT_VERBOSE(dotDx0Res0 <= 0, "Armijo line search requires a descent direction.");
   double const factor0 = dotDx0Res0 * params.wolfe1;
   RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
 
@@ -229,6 +237,19 @@ template <typename T>
 bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& params) {
   MOCHI_PROFILE_SCOPE();
   MOCHI_ASSERT_VERBOSE(params.type == LineSearchType::WolfeWeak, "Inconsistent line search type.");
+  return Wolfe(problem, status, params, /*strong*/ false);
+}
+
+template <typename T>
+bool LineSearch<T>::WolfeStrong(Problem& problem, Status& status, LsParams const& params) {
+  MOCHI_PROFILE_SCOPE();
+  MOCHI_ASSERT_VERBOSE(
+      params.type == LineSearchType::WolfeStrong, "Inconsistent line search type.");
+  return Wolfe(problem, status, params, /*strong*/ true);
+}
+
+template <typename T>
+bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& params, bool strong) {
   MOCHI_ASSERT(
       params.maxIter > 0,
       "At least 1 line search iteration is required. To run without line search, 'None' line search type must be used.");
@@ -238,7 +259,6 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
 
   // Compute Wolfe factors
   double const dotDx0Res0 = problem.GetResidual().Dot(problem.GetIncrement());
-  MOCHI_ASSERT_VERBOSE(dotDx0Res0 <= 0, "Wolfe line search requires a descent direction.");
   double const t1 = params.wolfe1 * dotDx0Res0;
   double const t2 = params.wolfe2 * dotDx0Res0;
   RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
@@ -247,14 +267,17 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
   auto scale = T(1);
   auto scaleNew = scale;
   auto scaleMin = T(0);
-  auto scaleMax = std::numeric_limits<T>::infinity();
+  auto scaleMax = T(1);
   int& it = status.numLastLSIterDone;
   for (it = 0; it < params.maxIter; ++it) {
     MOCHI_ASSERT(
         scaleMin <= scaleMax, "Inconsistent scale bounds: [%.5e, %.5e].\n", scaleMin, scaleMax);
 
-    // Compute new candidate solution
+    // Compute new candidate solution, if the scale bounds leave room for it
     if (it > 0) {
+      if (!(scaleMin < scaleNew && scaleNew < scaleMax)) {
+        break;
+      }
       problem.SetSolution(sol0, /*invokePost*/ false);
       problem.ScaleIncrement(scaleNew / scale);
       scale = scaleNew;
@@ -269,17 +292,19 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
     double const dotDxRes = problem.GetResidual().Dot(problem.GetIncrement());
     double const merit = problem.GetObjective();
 
-    // Check current iterate
+    // TODO: Explore choosing the next trial by safeguarded interpolation of the trials' merits and
+    // slopes.
     if (!IsFinite(dotDxRes) || !IsFinite(merit) ||
-        (merit > status.merit + scale * t1 && !slopeTest.Passes(problem, merit, scale))) {
-      // If not finite, or neither the 1st Wolfe condition nor the slope test is met, reduce the
-      // scale.
+        !(merit <= status.merit + scale * t1 || slopeTest.Passes(problem, merit, scale)) ||
+        (strong && dotDxRes > Abs(t2 * scale))) {
+      // If not finite, or neither the 1st Wolfe condition nor the slope test is met, or the strong
+      // 2nd Wolfe condition is not met by above, reduce the scale.
       scaleMax = scale;
       scaleNew = scaleMin + params.alpha * (scale - scaleMin);
-    } else if (dotDxRes < t2 * scale) {
-      // If the 2nd Wolfe condition is not met, increase the scale.
+    } else if ((strong ? dotDxRes < -Abs(t2 * scale) : dotDxRes < t2 * scale) && scale < T(1)) {
+      // If the 2nd Wolfe condition is not met by below, short of the full step, increase the scale.
       scaleMin = scale;
-      scaleNew = IsFinite(scaleMax) ? T(0.5) * (scale + scaleMax) : scale / params.alpha;
+      scaleNew = T(0.5) * (scale + scaleMax);
     } else {
       // Otherwise, update merit and exit line search.
       status.merit = merit;
@@ -288,71 +313,18 @@ bool LineSearch<T>::WolfeWeak(Problem& problem, Status& status, LsParams const& 
     }
   }
 
-  return improved;
-}
-
-template <typename T>
-bool LineSearch<T>::WolfeStrong(Problem& problem, Status& status, LsParams const& params) {
-  MOCHI_PROFILE_SCOPE();
-  MOCHI_ASSERT_VERBOSE(
-      params.type == LineSearchType::WolfeStrong, "Inconsistent line search type.");
-  MOCHI_ASSERT(
-      params.maxIter > 0,
-      "At least 1 line search iteration is required. To run without line search, 'None' line search type must be used.");
-
-  // Save current solution
-  ColumnVector<T> const sol0(problem.GetSolution());
-
-  // Compute Wolfe factors
-  double const dotDx0Res0 = problem.GetResidual().Dot(problem.GetIncrement());
-  MOCHI_ASSERT_VERBOSE(dotDx0Res0 <= 0, "Wolfe line search requires a descent direction.");
-  double const t1 = params.wolfe1 * dotDx0Res0;
-  double const t2 = params.wolfe2 * dotDx0Res0;
-  RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
-
-  bool improved = false;
-  auto scale = T(1);
-  auto scaleNew = scale;
-  auto scaleMin = T(0);
-  auto scaleMax = std::numeric_limits<T>::infinity();
-  int& it = status.numLastLSIterDone;
-  for (it = 0; it < params.maxIter; ++it) {
-    MOCHI_ASSERT(
-        scaleMin <= scaleMax, "Inconsistent scale bounds: [%.5e, %.5e].\n", scaleMin, scaleMax);
-
-    // Compute new candidate solution
-    if (it > 0) {
+  // Failing that, take the longest trial that met the 1st Wolfe condition or the slope test and
+  // failed the 2nd by below, if any.
+  if (!improved && scaleMin > T(0)) {
+    if (scale != scaleMin) {
       problem.SetSolution(sol0, /*invokePost*/ false);
-      problem.ScaleIncrement(scaleNew / scale);
-      scale = scaleNew;
+      problem.ScaleIncrement(scaleMin / scale);
+      problem.UpdateSolution();
+      problem.UpdateObjResDRes(
+          {.assemObj = true, .assemRes = true, .assemDRes = false, .psdDRes = false});
     }
-    problem.UpdateSolution();
-
-    // Compute merit and gradient at x + dx position
-    problem.UpdateObjResDRes(
-        {.assemObj = true, .assemRes = true, .assemDRes = false, .psdDRes = false});
-
-    // Compute values for Wolfe conditions
-    double const dotDxRes = problem.GetResidual().Dot(problem.GetIncrement());
-    double const merit = problem.GetObjective();
-
-    if (!IsFinite(dotDxRes) || !IsFinite(merit) ||
-        (merit > status.merit + scale * t1 && !slopeTest.Passes(problem, merit, scale)) ||
-        (dotDxRes > Abs(t2 * scale))) {
-      // If not finite, or neither the 1st Wolfe condition nor the slope test is met, or the 2nd
-      // Wolfe condition is not met by above, reduce the scale.
-      scaleMax = scale;
-      scaleNew = scaleMin + params.alpha * (scale - scaleMin);
-    } else if (dotDxRes < -Abs(t2 * scale)) {
-      // If 2nd Wolfe condition is not met by below, increase the scale.
-      scaleMin = scale;
-      scaleNew = IsFinite(scaleMax) ? T(0.5) * (scale + scaleMax) : scale / params.alpha;
-    } else {
-      // Otherwise, update merit and exit line search.
-      status.merit = merit;
-      improved = true;
-      break;
-    }
+    status.merit = problem.GetObjective();
+    improved = true;
   }
 
   return improved;

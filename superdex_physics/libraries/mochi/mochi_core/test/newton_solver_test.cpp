@@ -827,16 +827,16 @@ TEST(NewtonSolver, LineSearchRejectsNonFiniteTrial) {
 /**
  * Two-DoF problem for the step dx = (1, 0) from the zero solution, where the objective is merit0
  * and the residual (startSlope, 0). Elsewhere, the residual is (slope, 1), and the objective is
- * merit0 + |merit0| at the first two trials, dx and dx / 2, and merit0 + rise at the third, dx / 4.
+ * merit0 + rise up to the step maxScale dx and merit0 + |merit0| beyond.
  */
 static SnleProblem<real>
-GetLineSearchTrialProblem(double merit0, real startSlope, double rise, real slope) {
+GetLineSearchTrialProblem(double merit0, real startSlope, double rise, real slope, real maxScale) {
   auto residual = ColumnVector<real>{2};
   auto assembleFn = [=](SnleProblem<real>& problem, AssemblyParams const& params) mutable {
     real const x = problem.GetSolution()[0];
     if (params.assemObj) {
       problem.objective = (x == 0_r) ? merit0
-          : (x == 0.25_r)            ? merit0 + rise
+          : (x <= maxScale)          ? merit0 + rise
                                      : merit0 + Abs(merit0);
     }
     if (params.assemRes) {
@@ -859,9 +859,12 @@ GetLineSearchTrialProblem(double merit0, real startSlope, double rise, real slop
 // A merit-based line search treats a trial that fails its merit test, but changes the merit by no
 // more than the band, as passing that test if its slope passes the merit test's Armijo condition;
 // the Wolfe searches still apply their curvature test. Out of the band, and for trials that pass
-// the merit test, the slope test doesn't apply. The first two trials rise by |merit0|, which every
-// merit test and the band reject, so the third, at step scale 1/4, decides.
-TEST(NewtonSolver, MeritRoundingErrorBand) {
+// the merit test, the slope test doesn't apply. Steps longer than maxScale dx rise by |merit0|,
+// which every merit test and the band reject: by default, the first two trials do, so the third, at
+// step scale 1/4, decides. The Wolfe searches never step beyond dx. A trial still descending too
+// steeply for their curvature test is accepted at dx and bounds the step from below otherwise, and
+// if no trial passes both tests, they take the longest such trial, if any.
+TEST(NewtonSolver, MeritLineSearches) {
   using Search = bool (*)(SnleProblem<real>&, NewtonSolverStatus<real>&, LineSearchParams const&);
   std::array<std::pair<LineSearchType, Search>, 4> constexpr kSearches = {
       {{LineSearchType::Simple, &LineSearch<real>::Simple},
@@ -872,12 +875,17 @@ TEST(NewtonSolver, MeritRoundingErrorBand) {
   // Rises and slopes are in units of |merit0|, so the band is 2000 kEps. The start slope -kG is
   // small enough that a merit drop of kEps passes every merit test, in both precisions.
   real constexpr kG = 1000_r * kEps;
+  real constexpr kSteep = -0.95_r * kG;
   double constexpr kNaN = std::numeric_limits<double>::quiet_NaN();
+  std::array<bool, 4> constexpr kAllAccept = {true, true, true, true};
   struct Case {
     double rise{};
     real startSlope{};
     real slope{};
     std::array<bool, 4> accepted{}; // In the order of kSearches
+    real maxScale = 0.25_r;
+    int maxIter = 3;
+    std::array<real, 4> scale = {0.25_r, 0.25_r, 0.25_r, 0.25_r}; // Final step scales
   };
   for (double const merit0 : {4.0, -0.25}) {
     real const unit = Abs(real(merit0));
@@ -885,21 +893,31 @@ TEST(NewtonSolver, MeritRoundingErrorBand) {
          {Case{1500 * kEps, -kG, -0.5_r * kG, {true, true, true, true}},
           Case{1500 * kEps, -kG, 1.5_r * kG, {false, false, false, false}},
           Case{1500 * kEps, -kG, 0.9999_r * kG, {true, false, false, false}}, // c1 = 0
-          Case{1500 * kEps, -kG, -0.95_r * kG, {true, true, false, false}}, // Wolfe expands
+          Case{1500 * kEps, -kG, kSteep, {true, true, true, true}}, // Wolfe falls back on it
           Case{1500 * kEps, -kG, -kInf, {false, false, false, false}},
           Case{1500 * kEps, -kInf, -0.5_r * kG, {false, false, false, false}},
+          // Uphill start slope: Armijo and Wolfe fail every trial and keep the last one
+          Case{4000 * kEps, kG, -0.5_r * kG, {false, false, false, false}},
           Case{4000 * kEps, -kG, -0.5_r * kG, {false, false, false, false}}, // Out of band
           // Out-of-band drop that fails the Armijo test
           Case{-3000 * kEps, -2e8_r * kEps, -4e8_r * kEps, {true, false, false, false}},
           // In-band drop that fails the Armijo test
           Case{-10 * kEps, -1e6_r * kEps, -0.5e6_r * kEps, {true, true, true, true}},
           Case{-10 * kEps, -kG, 2_r * kG, {true, true, true, false}}, // Merit test passes
-          Case{kNaN, -kG, -0.5_r * kG, {false, false, false, false}}}) { // NaN merit
+          Case{kNaN, -kG, -0.5_r * kG, {false, false, false, false}}, // NaN merit
+          // Steep drops up to maxScale dx: Wolfe accepts dx, ...
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, 2_r, 3, {1_r, 1_r, 1_r, 1_r}},
+          // ... bisects towards dx and takes the last trial, ...
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, 0.8_r, 3, {0.5_r, 0.5_r, 0.75_r, 0.75_r}},
+          // ... or an earlier one, assembled again, ...
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, 0.6_r, 3, {0.5_r, 0.5_r, 0.5_r, 0.5_r}},
+          // ... also once the bisection has closed in on maxScale
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, 0.6_r, 1000, {0.5_r, 0.5_r, 0.6_r, 0.6_r}}}) {
       std::array<bool, 4> accepted{};
       for (int i = 0; i < isize(kSearches); ++i) {
         auto const [type, search] = kSearches[i];
-        SnleProblem<real> problem =
-            GetLineSearchTrialProblem(merit0, unit * c.startSlope, unit * c.rise, unit * c.slope);
+        SnleProblem<real> problem = GetLineSearchTrialProblem(
+            merit0, unit * c.startSlope, unit * c.rise, unit * c.slope, c.maxScale);
         problem.SetSolution(ColumnVector<real>::Zero(2));
         problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
         problem.increment[0] = 1_r;
@@ -910,11 +928,19 @@ TEST(NewtonSolver, MeritRoundingErrorBand) {
             problem,
             status,
             {.type = type,
-             .maxIter = 3,
+             .maxIter = c.maxIter,
              .alpha = 0.5_r,
              .wolfe1 = 1e-4_r,
              .wolfe2 = 0.9_r,
              .maxRelIncrease = 0_r});
+
+        EXPECT_NEAR(problem.GetSolution()[0], c.scale[i], 1e-5_r);
+        EXPECT_EQ(problem.GetIncrement()[0], problem.GetSolution()[0]); // The step taken
+        if (accepted[i]) { // Assembled, with its merit in status.merit
+          EXPECT_FALSE(problem.HasSolutionChangedSinceLastAssembly());
+          EXPECT_EQ(status.merit, problem.GetObjective());
+        }
+        EXPECT_LT(status.numLastLSIterDone, 100); // Wolfe stops once the bisection closes in
       }
       EXPECT_EQ(accepted, c.accepted);
     }
