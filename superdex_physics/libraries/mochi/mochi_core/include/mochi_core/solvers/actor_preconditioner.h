@@ -26,6 +26,7 @@
 #include <mochi_core/solvers/interaction_matrix_info.h>
 #include <mochi_core/solvers/linear_solver_params.h>
 
+#include <algorithm>
 #include <memory>
 #include <type_traits>
 #include <utility>
