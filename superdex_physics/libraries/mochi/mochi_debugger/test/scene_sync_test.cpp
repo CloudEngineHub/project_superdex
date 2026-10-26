@@ -1273,10 +1273,18 @@ TEST_F(SceneSyncTest, SyncInitialStatePaused) {
   uint64_t const baseCounter = GetSceneSyncData().counter;
 
   // Step the scene on another thread. This will block until we unpause the server.
-  std::thread thread{[&]() { scene->Step(kTimeStep); }};
+  std::thread thread{[&]() {
+    assert_cast<SceneImpl*>(scene)->SetThreadAffinity();
+    scene->Step(kTimeStep);
+  }};
 
   // Wait for the client to receive sync data about the initial state (before first step).
-  auto syncData = WaitForSync(scene, baseCounter + 1);
+  SceneSyncData syncData;
+  test::WaitUntil([&] {
+    syncData = GetSceneSyncData();
+    return syncData.counter >= baseCounter + 1;
+  });
+  EXPECT_EQ(baseCounter + 1, syncData.counter);
   ASSERT_EQ(1, isize(syncData.actors));
   ExpectActorData(scene, rigidActor, syncData.actors[0]);
   ExpectActorMeshMatches(scene, rigidActor);
