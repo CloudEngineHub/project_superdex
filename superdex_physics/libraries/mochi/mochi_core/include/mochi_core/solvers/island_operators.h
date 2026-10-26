@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <mochi_core/linear_algebra/actor_pseudo_matrix.h>
 #include <mochi_core/linear_algebra/any_matrix.h>
 #include <mochi_core/linear_algebra/krylov/preconditioner.h>
 #include <mochi_core/linear_algebra/krylov/tools/tensor_functions.h>
@@ -69,13 +70,7 @@ struct IslandOperators {
   /// @note Actors are stored in the same order as in _actorMatrices.
   /// @note The vector can be empty, in which case the per-actor preconditioner cannot be
   /// constructed.
-  std::vector<std::reference_wrapper<std::unique_ptr<ActorPreconditioner<T>>>>
-      _actorPreconditioners;
-
-  // Optional per-actor preconditioner type hints. If non-empty, must match the size of
-  // _actorMatrices. If empty or for actors with std::nullopt, the preconditioner type is
-  // auto-selected.
-  std::vector<std::optional<PreconditionerType>> _actorPreconditionerTypeHints;
+  std::vector<ActorPreconditionerInfo<T>> _actorPreconditioners;
 
   // Number of workers to apply the IslandOperators to a dense matrix. Optimized for the application
   // on a column vector. Lazily evaluated the first time 'Apply' is called.
@@ -90,13 +85,10 @@ struct IslandOperators {
   IslandOperators(
       std::vector<std::pair<int, AnyMatrixView<T const>>> actorMatrices,
       std::vector<AnyInteractionMatrixViewInfo<T const>> interactionMatrices,
-      std::vector<std::reference_wrapper<std::unique_ptr<ActorPreconditioner<T>>>>
-          actorPreconditioners,
-      std::vector<std::optional<PreconditionerType>> actorPreconditionerTypeHints = {})
+      std::vector<ActorPreconditionerInfo<T>> actorPreconditioners)
       : _actorMatrices(std::move(actorMatrices)),
         _interactionMatrices(std::move(interactionMatrices)),
-        _actorPreconditioners(std::move(actorPreconditioners)),
-        _actorPreconditionerTypeHints(std::move(actorPreconditionerTypeHints)) {
+        _actorPreconditioners(std::move(actorPreconditioners)) {
     // TODO[pabfer]: Store actor matrices and actor preconditioners is a single struct containing
     // the actor offset, the actor matrix and the actor preconditioner.
 #if MOCHI_ASSERT_VERBOSE_ENABLED
@@ -119,10 +111,18 @@ struct IslandOperators {
     MOCHI_ASSERT_VERBOSE(
         _actorPreconditioners.empty() || (_actorPreconditioners.size() == _actorMatrices.size()),
         "The vector of actor preconditioners must be empty or the same size as the vector of actor matrices.");
-    MOCHI_ASSERT_VERBOSE(
-        _actorPreconditionerTypeHints.empty() ||
-            (_actorPreconditionerTypeHints.size() == _actorMatrices.size()),
-        "The vector of preconditioner type hints must be empty or the same size as the vector of actor matrices.");
+    for (int aIndex = 0; aIndex < isize(_actorPreconditioners); ++aIndex) {
+      auto const& [offset, actorMatrix] = _actorMatrices[aIndex];
+      auto const& info = _actorPreconditioners[aIndex];
+      MOCHI_ASSERT_VERBOSE(
+          info.offset == offset, "Actor preconditioners must match the actor matrices' offsets.");
+      int const numRows = GetNumRows(actorMatrix);
+      auto const& [reference, displacement] = info.nodePositions;
+      MOCHI_ASSERT_VERBOSE(
+          (reference.empty() && displacement.empty()) ||
+              (isize(reference) == numRows && isize(displacement) == numRows),
+          "Node positions must be empty or have one value per actor row.");
+    }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
   }
 
@@ -138,15 +138,16 @@ struct IslandOperators {
     // TODO[T175051452]: Optimize parallelization.
     ParallelForN("PerActorPrecUpdate", numActors, 1, [this](int aIndex) {
       auto const& [offset, A] = _actorMatrices[aIndex];
-      auto& actorPrec = _actorPreconditioners[aIndex].get();
-      bool const hasTypeHint = !_actorPreconditionerTypeHints.empty() &&
-          _actorPreconditionerTypeHints[aIndex].has_value();
+      auto const& info = _actorPreconditioners[aIndex];
+      auto& actorPrec = info.preconditioner.get();
+      ActorPseudoMatrix<T> const actorPseudoMatrix{
+          offset, A, _interactionMatrices, info.nodePositions};
       if (!actorPrec) {
         // Preconditioner doesn't exist yet. Construct it.
         PreconditionerType precType = {};
-        if (hasTypeHint) {
+        if (info.typeHint) {
           // Use preconditioner type hint.
-          precType = _actorPreconditionerTypeHints[aIndex].value();
+          precType = *info.typeHint;
         } else {
           // Auto-select based on matrix type.
           // TODO[T247922835]: Improve criteria to select the preconditioner type.
@@ -167,13 +168,13 @@ struct IslandOperators {
             precType = PreconditionerType::Jacobi;
           }
         }
-        actorPrec = CreateActorPreconditioner(precType, offset, A, _interactionMatrices);
+        actorPrec = CreateActorPreconditioner(precType, actorPseudoMatrix);
       } else {
         // Preconditioner already exists. Update it.
         MOCHI_ASSERT(
-            !hasTypeHint || *_actorPreconditionerTypeHints[aIndex] == actorPrec->GetType(),
+            !info.typeHint || *info.typeHint == actorPrec->GetType(),
             "Inconsistent preconditioner type.");
-        actorPrec->Update({offset, A, _interactionMatrices});
+        actorPrec->Update(actorPseudoMatrix);
       }
     });
 
@@ -182,7 +183,7 @@ struct IslandOperators {
     for (int aIndex = 0; aIndex < numActors; ++aIndex) {
       auto const& [offset, A] = _actorMatrices[aIndex];
       actorPreconditionerEntries.push_back(
-          {offset, GetNumRows(A), *_actorPreconditioners[aIndex].get()});
+          {offset, GetNumRows(A), *_actorPreconditioners[aIndex].preconditioner.get()});
     }
 
     return actorPreconditionerEntries;

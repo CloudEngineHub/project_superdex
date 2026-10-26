@@ -367,7 +367,7 @@ void SnleProblem<T>::SortActors() {
   std::sort(
       this->actorPreconditioners.begin(),
       this->actorPreconditioners.end(),
-      [](auto const& a, auto const& b) { return std::get<0>(a) < std::get<0>(b); });
+      [](auto const& a, auto const& b) { return a.offset < b.offset; });
 }
 
 template <typename T>
@@ -384,22 +384,8 @@ IslandOperators<T> SnleProblem<T>::GetOperators() const {
     interactionMatrixViews.emplace_back(rowOffset, colOffset, AsConstView(*matrix), symmetricPair);
   }
 
-  std::vector<std::reference_wrapper<std::unique_ptr<ActorPreconditioner<T>>>>
-      actorPreconditionersRef;
-  std::vector<std::optional<PreconditionerType>> actorPreconditionerTypeHints;
-  actorPreconditionersRef.reserve(this->actorPreconditioners.size());
-  actorPreconditionerTypeHints.reserve(this->actorPreconditioners.size());
-
-  for (auto const& prec : this->actorPreconditioners) {
-    actorPreconditionersRef.emplace_back(std::get<1>(prec));
-    actorPreconditionerTypeHints.emplace_back(std::get<2>(prec));
-  }
-
   return {
-      std::move(actorMatrixViews),
-      std::move(interactionMatrixViews),
-      std::move(actorPreconditionersRef),
-      std::move(actorPreconditionerTypeHints)};
+      std::move(actorMatrixViews), std::move(interactionMatrixViews), this->actorPreconditioners};
 }
 
 template struct SnleProblemFunctions<real>;

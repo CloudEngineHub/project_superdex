@@ -21,11 +21,16 @@
 #include <mochi_core/utils/container_utils.h>
 #include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/mochi_physics_experimental.h>
+#include <mochi_physics/src/mochi_common_components.h>
+#include <mochi_physics/src/mochi_discretization_components.h>
 #include <mochi_physics/src/mochi_island.h>
+#include <mochi_physics/src/mochi_simulation.h>
 #include <mochi_physics/src/mochi_snle.h>
+#include <mochi_physics/src/mochi_solve.h>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <initializer_list>
 #include <utility>
 
@@ -110,19 +115,57 @@ class ActorPreconditionerTest : public test::MochiSceneTestBase {
   }
 };
 
-TEST_F(ActorPreconditionerTest, SupportsOnlyCompatibleTypesAndWarnsForSymInverse) {
+TEST_F(ActorPreconditionerTest, PassesNodePositionsAndSupportsOnlyCompatibleTypes) {
   auto* rigid = CreateRigid();
   auto* soft = CreateSoft();
+  auto* nestedSoft = CreateNestedSoft();
   auto* shell = CreateShell();
   auto* rod = CreateRod();
   auto* articulated = CreateArticulated(ArticulatedJointType::Free);
   auto* reducedSoft = CreateSoft();
-  GetRegistry().get<CActorSnle>(GetEntity(reducedSoft)).EnableReduced(Matrix<real>::Zero(1, 1));
-  auto* nestedSoft = CreateNestedSoft();
   auto* reducedNestedSoft = CreateNestedSoft();
-  GetRegistry()
-      .get<CActorSnle>(GetEntity(reducedNestedSoft))
-      .EnableReduced(Matrix<real>::Zero(1, 1));
+
+  // Full-order soft actors, nested ones included, and shell actors give their preconditioners views
+  // of their reference coordinates and stage-start displacements. Other actors, reduced ones
+  // included, give none.
+  _scene->Step(0.01_r);
+  auto& reg = GetRegistry();
+  reg.get<CActorSnle>(GetEntity(reducedSoft)).EnableReduced(Matrix<real>::Zero(1, 1));
+  reg.get<CActorSnle>(GetEntity(reducedNestedSoft)).EnableReduced(Matrix<real>::Zero(1, 1));
+  int numWithPositions = 0;
+  for (entt::entity const island : reg.view<CIslandDescendants const>()) {
+    auto const& descendants = reg.get<CIslandDescendants const>(island);
+    auto problem = solver::InitIslandAssembly(reg, island, descendants, /*syncCurrentState*/ true);
+    problem.UpdateObjResDRes({.assemObj = false, .assemDRes = true});
+    for (entt::entity const actor : descendants.actors) {
+      auto const* actorSnle = reg.try_get<CActorSnle const>(actor);
+      if (actorSnle == nullptr || !actorSnle->useInSolver) {
+        continue;
+      }
+      auto const it = std::ranges::find(
+          problem.actorPreconditioners,
+          reg.get<CDofOffset const>(actor).dofsOffset,
+          &ActorPreconditionerInfo<real>::offset);
+      ASSERT_NE(problem.actorPreconditioners.end(), it);
+      auto const& [reference, displacement] = it->nodePositions;
+      if (!actorSnle->UseReduced() && reg.any_of<TagSoftActor, TagShellActor>(actor)) {
+        auto const expectedReference =
+            Flatten(reg.get<CSimplicialMesh const>(actor).mesh->GetNodeCoordinates());
+        auto const expectedDisplacement =
+            reg.get<CDisplacementSlice<real, TimeStep::StageStart> const>(actor)
+                .value.GetConstSpan();
+        EXPECT_EQ(expectedReference.data(), reference.data());
+        EXPECT_EQ(expectedReference.size(), reference.size());
+        EXPECT_EQ(expectedDisplacement.data(), displacement.data());
+        EXPECT_EQ(expectedDisplacement.size(), displacement.size());
+        ++numWithPositions;
+      } else {
+        EXPECT_TRUE(reference.empty() && displacement.empty());
+      }
+    }
+  }
+  EXPECT_EQ(3, numWithPositions);
+
   auto* staticRigid = CreateRigid(/*isStatic*/ true);
   auto* zeroDofArticulated = CreateArticulated(ArticulatedJointType::Hard);
   auto const links = articulated->GetNestedLinkActors(test::ExpectOK{});

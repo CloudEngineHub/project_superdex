@@ -18,12 +18,26 @@
 
 #include <mochi_core/linear_algebra/any_matrix.h>
 #include <mochi_core/solvers/interaction_matrix_info.h>
+#include <mochi_core/utils/span.h>
 
 #include <vector>
 
 namespace mochi {
 
-/// @brief Composite matrix structure to represent an actor matrix with interaction matrices
+/// @brief View of an actor's node positions [m], in the frame of its DoFs: reference coordinates
+/// plus displacements. Each span holds 3 values per node, ordered like the actor's DoFs.
+/// @tparam Scalar type
+template <typename Scalar>
+struct NodePositionsView {
+  /// @brief Reference coordinates [m].
+  Span<Scalar const> reference;
+
+  /// @brief Displacements from the reference coordinates [m].
+  Span<Scalar const> displacement;
+};
+
+/// @brief Composite matrix structure to represent an actor matrix with interaction matrices, plus
+/// the actor's node positions, if any.
 /// @tparam Scalar type
 template <typename Scalar>
 struct ActorPseudoMatrix {
@@ -36,6 +50,13 @@ struct ActorPseudoMatrix {
   /// @brief Vector of interaction matrices.
   /// @note It is possible that some interaction matrices do not interact with the actor matrix.
   std::vector<AnyInteractionMatrixViewInfo<Scalar const>> const& interactionMatrices;
+
+  /// @brief Node positions of the actor, fixed during each nonlinear solve, so they may differ from
+  /// the configuration at which the matrix is linearized. Empty for actors that provide none.
+  /// @note Valid only during the constructor or @ref ActorPreconditioner::Update call that receives
+  /// them. Their values may change in place between calls, so copy what must persist, and don't
+  /// detect changes by address.
+  NodePositionsView<Scalar> nodePositions = {};
 
   /// @brief Returns the number of rows in the matrix
   /// @return Integral value

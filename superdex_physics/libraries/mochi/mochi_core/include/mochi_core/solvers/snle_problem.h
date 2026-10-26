@@ -16,14 +16,12 @@
 
 #pragma once
 
+#include <mochi_core/solvers/actor_preconditioner.h>
 #include <mochi_core/solvers/interaction_matrix_info.h>
 #include <mochi_core/solvers/island_operators.h>
 #include <mochi_core/utils/assembly_params.h>
 
 #include <functional>
-#include <memory>
-#include <optional>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -165,15 +163,8 @@ class SnleProblem {
   // Collection of dresidual matrices for each actor. Paired with the actor's DOF offset.
   std::vector<std::pair</*offset*/ int, AnyMatrix<T>*>> actorMatrices;
 
-  // Collection of preconditioners for each actor. Paired with the actor's DOF offset and an
-  // optional preconditioner type hint. The actor preconditioners approximate the inverse of the
-  // full actor matrices, including the contribution due to interaction matrices.
-  // Tuple elements: (offset, preconditioner reference, optional type hint)
-  std::vector<std::tuple<
-      /*offset*/ int,
-      std::reference_wrapper<std::unique_ptr<ActorPreconditioner<T>>>,
-      std::optional<PreconditionerType>>>
-      actorPreconditioners;
+  // Collection of preconditioners for each actor.
+  std::vector<ActorPreconditionerInfo<T>> actorPreconditioners;
 
   // Collection of convergence weights for each actor. Paired with the actor's DOF offset, which
   // must match the corresponding actorResiduals offset. Must be populated by the assembly callback

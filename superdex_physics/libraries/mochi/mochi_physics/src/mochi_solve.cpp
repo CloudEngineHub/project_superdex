@@ -24,6 +24,7 @@
 #include "mochi_contact.h"
 #include "mochi_contact_filter.h"
 #include "mochi_deformable.h"
+#include "mochi_discretization_components.h"
 #include "mochi_group.h"
 #include "mochi_island.h"
 #include "mochi_point_cloud_contact.h"
@@ -490,10 +491,29 @@ static void GatherSnleDataFromActors(
       if (params.assemDRes) {
         MOCHI_ASSERT(GetNumRows(dRes) > 0);
         outProblem.actorMatrices.emplace_back(dofOffset, &dRes);
-        outProblem.actorPreconditioners.emplace_back(
-            dofOffset,
-            useReduced ? actorSnle->reducedPreconditioner : actorSnle->fullPreconditioner,
-            useReduced ? actorSnle->reducedPreconditionerType : actorSnle->fullPreconditionerType);
+
+        NodePositionsView<real> nodePositions;
+        if (!useReduced &&
+            reg.all_of<CSimplicialMesh, CDisplacementSlice<real, TimeStep::StageStart>>(actor)) {
+          auto const& simplicial = reg.get<CSimplicialMesh const>(actor);
+          // Stage-start positions stay fixed during the stage solve.
+          auto const& stageStartDispl =
+              reg.get<CDisplacementSlice<real, TimeStep::StageStart> const>(actor);
+          nodePositions = {
+              .reference = Flatten(simplicial.mesh->GetNodeCoordinates()),
+              .displacement = stageStartDispl.value.GetConstSpan()};
+        }
+        MOCHI_ASSERT_VERBOSE(
+            (useReduced || !nodePositions.reference.empty() ||
+             !reg.any_of<TagSoftActor, TagShellActor>(actor)),
+            "Full-order soft and shell actors must have node positions.");
+        outProblem.actorPreconditioners.push_back(
+            {.offset = dofOffset,
+             .preconditioner =
+                 useReduced ? actorSnle->reducedPreconditioner : actorSnle->fullPreconditioner,
+             .typeHint = useReduced ? actorSnle->reducedPreconditionerType
+                                    : actorSnle->fullPreconditionerType,
+             .nodePositions = nodePositions});
       }
     }
   };

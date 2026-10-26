@@ -27,11 +27,11 @@
 #include <mochi_core/solvers/linear_solver_params.h>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <type_traits>
-#include <utility>
 #include <variant>
-#include <vector>
 
 namespace mochi {
 
@@ -196,6 +196,16 @@ struct ActorPreconditioner {
    * @note Must run in constant time.
    */
   [[nodiscard]] virtual ActorPreconditionerCost GetConcurrentSolveCost() const = 0;
+};
+
+// Preconditioner of an actor, which approximates the inverse of the full actor matrix, including
+// the contribution due to interaction matrices.
+template <typename T>
+struct ActorPreconditionerInfo {
+  int offset = 0; // DoF offset of the actor.
+  std::reference_wrapper<std::unique_ptr<ActorPreconditioner<T>>> preconditioner;
+  std::optional<PreconditionerType> typeHint; // Auto-selected if empty.
+  NodePositionsView<T> nodePositions; // Empty if the actor provides none.
 };
 
 /**
@@ -550,52 +560,48 @@ class ILU0ActorPrec : public ActorPreconditioner<T> {
 template <typename T>
 auto CreateActorPreconditioner(
     PreconditionerType precType,
-    int offset,
-    AnyMatrixView<T const> actorMatrix,
-    std::vector<AnyInteractionMatrixViewInfo<T const>> const& interactionMatrices) {
+    ActorPseudoMatrix<T> const& actorPseudoMatrix) {
   static_assert(std::is_same_v<T, std::remove_const_t<T>>);
   return std::visit(
-      [offset, precType, &interactionMatrices](auto const& A) {
+      [precType, &actorPseudoMatrix](auto const& A) {
         static_assert(
-            std::variant_size_v<decltype(actorMatrix)> == 4,
+            std::variant_size_v<AnyMatrixView<T const>> == 4,
             "Please update the if statement below if the actor matrix types change");
         using MatType = std::decay_t<decltype(A)>;
-        ActorPseudoMatrix<T> actorPseudoMatrix = {offset, A, interactionMatrices};
         if (precType == PreconditionerType::SymInverse) {
           return std::unique_ptr<ActorPreconditioner<T>>{
-              new SymInverseActorPrec<T>{std::move(actorPseudoMatrix)}};
+              new SymInverseActorPrec<T>{actorPseudoMatrix}};
         } else if (precType == PreconditionerType::AMG) {
           MOCHI_ASSERT(
               (std::is_same_v<MatType, BlockSparseMatrixView<T const, 3>>),
               "Per-actor AMG preconditioner is only enabled for block sparse actors with block size of 3.");
-          return std::unique_ptr<ActorPreconditioner<T>>{
-              new AMGActorPrec<T, 3>{std::move(actorPseudoMatrix)}};
+          return std::unique_ptr<ActorPreconditioner<T>>{new AMGActorPrec<T, 3>{actorPseudoMatrix}};
         } else if (precType == PreconditionerType::BlockJacobi) {
           if constexpr (std::is_same_v<MatType, BlockSparseMatrixView<T const, 3>>) {
             return std::unique_ptr<ActorPreconditioner<T>>{
-                new BlockJacobiActorPrec<T, 3>{std::move(actorPseudoMatrix)}};
+                new BlockJacobiActorPrec<T, 3>{actorPseudoMatrix}};
           } else {
             MOCHI_ASSERT(
                 (std::is_same_v<MatType, BlockSparseMatrixView<T const, 4>>),
                 "Per-actor block Jacobi preconditioner is only enabled for block sparse actors.");
             return std::unique_ptr<ActorPreconditioner<T>>{
-                new BlockJacobiActorPrec<T, 4>{std::move(actorPseudoMatrix)}};
+                new BlockJacobiActorPrec<T, 4>{actorPseudoMatrix}};
           }
         } else if (precType == PreconditionerType::ColoredSSOR) {
           MOCHI_ASSERT(
               (std::is_same_v<MatType, BlockSparseMatrixView<T const, 3>>),
               "Per-actor colored SSOR preconditioner is only enabled for block sparse actors with block size of 3.");
           return std::unique_ptr<ActorPreconditioner<T>>{
-              new ColoredSSORActorPrec<T, 3>{std::move(actorPseudoMatrix)}};
+              new ColoredSSORActorPrec<T, 3>{actorPseudoMatrix}};
         } else if (precType == PreconditionerType::ILU0) {
           MOCHI_ASSERT(
               (std::is_same_v<MatType, BlockSparseMatrixView<T const, 4>>),
               "Per-actor ILU0 preconditioner is only enabled for block sparse actors with block size of 4.");
           return std::unique_ptr<ActorPreconditioner<T>>{
-              new ILU0ActorPrec<T, 4>{std::move(actorPseudoMatrix)}};
+              new ILU0ActorPrec<T, 4>{actorPseudoMatrix}};
         } else if (precType == PreconditionerType::Jacobi) {
           return std::unique_ptr<ActorPreconditioner<T>>{
-              new BlockJacobiActorPrec<T, 1>{std::move(actorPseudoMatrix)}};
+              new BlockJacobiActorPrec<T, 1>{actorPseudoMatrix}};
         } else [[unlikely]] {
           MOCHI_ASSERT(
               false,
@@ -604,7 +610,7 @@ auto CreateActorPreconditioner(
           return std::unique_ptr<ActorPreconditioner<T>>{nullptr};
         }
       },
-      actorMatrix);
+      actorPseudoMatrix.actorMatrix);
 }
 
 } // namespace mochi
