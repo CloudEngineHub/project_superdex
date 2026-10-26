@@ -1615,16 +1615,6 @@ enum LinearToleranceStrategy [from_mochi_core] {
   // Reference: [Choosing the Forcing Terms in an Inexact Newton Method, Choice 2 (Eisenstat and
   // Walker, 1994)](https://softlib.rice.edu/pub/CRPC-TRs/reports/CRPC-TR94463.pdf)
   EisenstatWalker2,
-  // @brief Custom Eisenstat-Walker strategy: eta = max(min(1/(2+k), sqrt(@code |r| @endcode)),
-  // eta_0), where `k` is the non-linear iteration number, @code |r| @endcode is the L2-norm of the
-  // nonlinear residual, and
-  // `eta_0` is @ref LinearSolverParams::relTol.
-  //
-  // @note Should be used with @ref LinearSolverConvergenceNorm::ResidualL2. Other norms may yield
-  // suboptimal forcing terms.
-  // @note Not recommended for use with quasi-Newton methods (e.g., @ref NonLinearSolverType::BFGS,
-  // @ref NonLinearSolverType::SR1).
-  EisenstatWalker3,
   // @brief Number of linear tolerance strategy enum values.
   Count,
   // @brief Default linear tolerance strategy.
@@ -1943,8 +1933,6 @@ struct LinearSolverParams [equality(default), from_mochi_core] {
   // @note Applies only to iterative solvers.
   // @note Ignored when using @ref LinearToleranceStrategy::EisenstatWalker1 or @ref
   // LinearToleranceStrategy::EisenstatWalker2 in the non-linear solver.
-  // @note For @ref LinearToleranceStrategy::EisenstatWalker3, this is used as a lower bound on the
-  // adaptive tolerance in every non-linear iteration.
   real relTol = 1e-5;
   // @brief Relative residual norm tolerance for divergence, relative to the same norm of the
   // right-hand side.

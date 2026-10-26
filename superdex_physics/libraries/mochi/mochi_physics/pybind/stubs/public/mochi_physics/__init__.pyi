@@ -1453,22 +1453,6 @@ class LinearToleranceStrategy:
         (Eisenstat and Walker,
         1994)](https://softlib.rice.edu/pub/CRPC-TRs/reports/CRPC-TR94463.pdf)
     """
-    EISENSTAT_WALKER3: LinearToleranceStrategy
-    """Custom Eisenstat-Walker strategy: eta = max(min(1/(2+k), sqrt(``|r|``)), eta_0),
-    where `k` is the non-linear iteration number, ``|r|`` is the L2-norm of the
-    nonlinear residual, and `eta_0` is
-    :attr:`~superdex.physics.LinearSolverParams.rel_tol`.
-
-    Note:
-        Should be used with :class:`RESIDUAL_L2
-        <superdex.physics.LinearSolverConvergenceNorm>`. Other norms may yield
-        suboptimal forcing terms.
-
-    Note:
-        Not recommended for use with quasi-Newton methods (e.g., :class:`BFGS
-        <superdex.physics.NonLinearSolverType>`, :class:`SR1
-        <superdex.physics.NonLinearSolverType>`).
-    """
     COUNT: LinearToleranceStrategy
     """Number of linear tolerance strategy enum values."""
     DEFAULT: LinearToleranceStrategy
@@ -4093,11 +4077,6 @@ class LinearSolverParams:
         Ignored when using :class:`EISENSTAT_WALKER1
         <superdex.physics.LinearToleranceStrategy>` or :class:`EISENSTAT_WALKER2
         <superdex.physics.LinearToleranceStrategy>` in the non-linear solver.
-
-    Note:
-        For :class:`EISENSTAT_WALKER3 <superdex.physics.LinearToleranceStrategy>`,
-        this is used as a lower bound on the adaptive tolerance in every non-linear
-        iteration.
     """
     rel_div_tol: float
     """Relative residual norm tolerance for divergence, relative to the same norm of

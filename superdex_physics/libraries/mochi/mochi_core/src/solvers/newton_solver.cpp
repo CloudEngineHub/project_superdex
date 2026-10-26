@@ -259,11 +259,10 @@ template <typename T>
 void NewtonSolver<T>::SetParams(NewtonSolverParams const& params) {
   MOCHI_PROFILE_SCOPE();
 
-  if (((params.linearToleranceStrategy == LinearToleranceStrategy::EisenstatWalker1) ||
-       (params.linearToleranceStrategy == LinearToleranceStrategy::EisenstatWalker3)) &&
+  if ((params.linearToleranceStrategy == LinearToleranceStrategy::EisenstatWalker1) &&
       (params.lParams.normType != LinearSolverConvergenceNorm::ResidualL2)) {
     MOCHI_LOG_WARNING_ONCE(
-        "Inconsistent solver settings: Eisenstat-Walker Choices #1 and #3 require using the L2-norm of "
+        "Inconsistent solver settings: Eisenstat-Walker Choice #1 requires using the L2-norm of "
         "the residual to monitor convergence of the linear solver."); // Could be fixed if needed.
   }
 
@@ -425,12 +424,11 @@ void NewtonSolver<T>::SetLinearSolverRelativeTolerance(Status const& status, T l
   //   e.g. when free falling.
   T constexpr kMaxEta = T(0.01);
 
-  // Safeguard eta. Used only for EW1 and EW2. Default in Eisenstat-Walker is 0.1. Using 0.01 to
-  // match maximum eta since that's already sufficiently low.
+  // Safeguard eta. Default in Eisenstat-Walker is 0.1. Using 0.01 to match maximum eta since that's
+  // already sufficiently low.
   T constexpr kSafeguardEtaTh = T(0.01);
 
-  // Minimum eta. Used only for EW1 and EW2. Prevents attempting to solve beyond the floating-point
-  // noise floor.
+  // Minimum eta. Prevents attempting to solve beyond the floating-point noise floor.
   // TODO: Assess max-clamping kMinEta to a fraction of the non-linear residual norm that is left to
   // achieve non-linear convergence.
   T constexpr kMinEta = T(100) * std::numeric_limits<T>::epsilon();
@@ -474,18 +472,13 @@ void NewtonSolver<T>::SetLinearSolverRelativeTolerance(Status const& status, T l
       }
       break;
     }
-    case LinearToleranceStrategy::EisenstatWalker3: {
-      auto const minEta = static_cast<T>(_params.lParams.relTol);
-      eta = Max(Min(T(1) / (T(2) + status.numIterDone), Sqrt(status.resNorm)), minEta);
-      break;
-    }
     default: {
       MOCHI_ASSERT(false, "Invalid linear tolerance strategy.");
       eta = kMaxEta;
     }
   }
   static_assert(
-      static_cast<int>(LinearToleranceStrategy::Count) == 4,
+      static_cast<int>(LinearToleranceStrategy::Count) == 3,
       "Please update the switch statement above if LinearToleranceStrategy enum changes");
 
   linearParams.relTol = static_cast<real>(eta);

@@ -237,18 +237,6 @@ enum struct LinearToleranceStrategy {
    */
   EisenstatWalker2,
 
-  /**
-   * @brief Custom Eisenstat-Walker strategy: eta = max(min(1/(2+k), sqrt(|r|)), eta_0), where `k`
-   * is the non-linear iteration number, `|r|` is the L2-norm of the nonlinear residual, and
-   * `eta_0` is @ref LinearSolverParams::relTol.
-   *
-   * @note Should be used with @ref LinearSolverConvergenceNorm::ResidualL2. Other norms may yield
-   * suboptimal forcing terms.
-   * @note Not recommended for use with quasi-Newton methods (e.g., @ref NonLinearSolverType::BFGS,
-   * @ref NonLinearSolverType::SR1).
-   */
-  EisenstatWalker3,
-
   /** @brief Number of linear tolerance strategy enum values. */
   Count,
 
@@ -261,7 +249,6 @@ MOCHI_ENUM_BEGIN(mochi::LinearToleranceStrategy)
 MOCHI_ENUM_ITEM(Constant)
 MOCHI_ENUM_ITEM(EisenstatWalker1)
 MOCHI_ENUM_ITEM(EisenstatWalker2)
-MOCHI_ENUM_ITEM(EisenstatWalker3)
 MOCHI_ENUM_COUNT(Count)
 MOCHI_ENUM_END()
 

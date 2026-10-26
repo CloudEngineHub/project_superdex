@@ -376,8 +376,6 @@ struct LinearSolverParams {
    * @note Applies only to iterative solvers.
    * @note Ignored when using @ref LinearToleranceStrategy::EisenstatWalker1 or @ref
    * LinearToleranceStrategy::EisenstatWalker2 in the non-linear solver.
-   * @note For @ref LinearToleranceStrategy::EisenstatWalker3, this is used as a lower bound on the
-   * adaptive tolerance in every non-linear iteration.
    */
   real relTol = 1e-5_r;
 
