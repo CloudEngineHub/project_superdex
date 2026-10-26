@@ -100,6 +100,7 @@ auto Aggregate(Graph const& g) {
  * @details The formula used derives from Vanek, Mandel and Brezina and guarantees that the coarse
  * shape functions form a partition of unity.
  *
+ * @tparam Weight Scalar type of @p omega and of the interpolation weights.
  * @return The sparse interpolation matrix of fine vertex interpolation from coarse ones.
  */
 template <
@@ -107,29 +108,29 @@ template <
     int kDofsPerNode,
     typename InputIdx,
     template <typename, typename...> typename Storage,
-    typename Index>
+    typename Index,
+    typename Weight>
 auto Smoothing(
     BlockSparseMatrix<Scalar, kDofsPerNode, InputIdx, InputIdx, Storage> const& A,
     int nCoarse,
     DynamicArray<Index> const& partition,
-    std::remove_const_t<Scalar> omega) {
+    Weight omega) {
   static_assert(std::is_same_v<Index const, InputIdx const>, "Incompatible Integers");
   using Idx = std::remove_const_t<InputIdx>;
-  using NonConstScalar = std::remove_const_t<Scalar>;
   //
   auto nToN = AsGraphView(A);
   auto const n = nToN.size();
-  SparseMatrix<NonConstScalar, Idx, Idx> S(n, nToN);
+  SparseMatrix<Weight, Idx, Idx> S(n, nToN);
   for (Idx i = 0; i < n; ++i) {
     auto const colIdx = S.Indices(i);
     auto values = S.Values(i);
     if (isize(colIdx) == 1) {
-      values[0] = Scalar(1.0);
+      values[0] = Weight(1.0);
       continue;
     }
-    auto ratio = omega / Scalar(isize(colIdx) - 1.0);
+    auto ratio = omega / Weight(isize(colIdx) - 1.0);
     for (int k = 0; k < isize(colIdx); ++k) {
-      values[k] = (colIdx[k] == i) ? Scalar(1.0 - omega) : ratio;
+      values[k] = (colIdx[k] == i) ? Weight(1.0 - omega) : ratio;
     }
   }
   // Build the tentative prolongator based on piecewise-constant interpolation
@@ -144,9 +145,8 @@ auto Smoothing(
     pptr[i + 1] = pptr[i] + 1;
     pcIdx.push_back(partition[i]);
   }
-  DynamicArray<NonConstScalar> pvalues(pcIdx.size(), NonConstScalar(1.0));
-  SparseMatrix<NonConstScalar, Idx, Idx> P(
-      nCoarse, std::move(pptr), std::move(pcIdx), std::move(pvalues));
+  DynamicArray<Weight> pvalues(pcIdx.size(), Weight(1.0));
+  SparseMatrix<Weight, Idx, Idx> P(nCoarse, std::move(pptr), std::move(pcIdx), std::move(pvalues));
   // Smooth the tentative prolongator
   auto newP = S * P;
   return newP;

@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <variant>
 
@@ -565,6 +566,46 @@ auto EstimateSpectralRadius(MatrixOp const& A, PrecOp const& invDiag, int numIte
   return maxEstimate;
 }
 
+/// @brief Automatic relaxation factor of one smoothed AMG level, as @ref
+/// AMGOptions::relaxationFactor describes.
+///
+/// @param[in] A Matrix of the level. Must support Apply(v, Av) and Rows().
+/// @param[in] invDiag Block diagonal preconditioner D^{-1} of the level. Must support Solve(in,
+/// out).
+/// @param[in] options Supplies the spectral radius safety factor and iteration budget.
+/// @param[in] level Zero-based smoothed level, reported in warnings.
+/// @return The relaxation factor, or no value (with a warning) if it is not positive and finite.
+template <typename MatrixOp, typename PrecOp, typename Scalar>
+std::optional<Scalar> AutoRelaxationFactor(
+    MatrixOp const& A,
+    PrecOp const& invDiag,
+    AMGOptions<Scalar> const& options,
+    int level) {
+  auto const estimate = EstimateSpectralRadius(A, invDiag, options.spectralRadiusMaxIters);
+  if (estimate == Scalar(0)) {
+    MOCHI_LOG_WARNING(
+        "AMG auto relaxation factor skipped at level %d: Spectral-radius estimate was not positive and finite. Using the default relaxation factor.",
+        level);
+    return std::nullopt;
+  }
+
+  // Weighted Jacobi is stable for 0 < omega < 2 / lambda_max(D^{-1} A), assuming A and its block
+  // diagonal D are SPD. We choose the standard AMG smoothing value omega = 4 / (3 lambda_max),
+  // where lambda_max = lambda_max(D^{-1} A), not the stability limit: this minimizes
+  // max |1 - omega lambda| on the model high-frequency interval [lambda_max / 2, lambda_max]. The
+  // safety factor makes the choice more conservative because the Ritz value is only an estimate
+  // and is computed independently on each smoothed operator.
+  // TODO: Bound the relaxation factor with a certified upper bound on the spectral radius.
+  auto const relaxationFactor = Scalar(4.0 / 3.0) / (options.spectralRadiusSafetyFactor * estimate);
+  if (!IsFinite(relaxationFactor) || relaxationFactor <= Scalar(0)) {
+    MOCHI_LOG_WARNING(
+        "AMG auto relaxation factor skipped at level %d: Computed relaxation factor was not positive and finite. Using the default relaxation factor.",
+        level);
+    return std::nullopt;
+  }
+  return relaxationFactor;
+}
+
 } // namespace details
 
 template <typename Scalar, int kDofsPerNode>
@@ -981,35 +1022,13 @@ void AMGPrec<Scalar, kDofsPerNode>::RefreshRelaxationFactors() {
 
   // Estimate lambda_max(D^{-1} A) separately for each smoothed level.
   for (int level = 0; level < numSmoothingLevels; ++level) {
-    auto const estimate = (level == 0)
-        ? details::EstimateSpectralRadius(
-              _Af, std::get<0>(_relaxOps[level]), _options.spectralRadiusMaxIters)
-        : details::EstimateSpectralRadius(
-              _coarsenings[level - 1].PtAP,
-              std::get<0>(_relaxOps[level]),
-              _options.spectralRadiusMaxIters);
-    if (estimate == Scalar(0)) {
-      MOCHI_LOG_WARNING(
-          "AMG auto relaxation factor skipped at level %d: Spectral-radius estimate was not positive and finite. Using the default relaxation factor.",
-          level);
-      continue;
+    auto const relaxationFactor = (level == 0)
+        ? details::AutoRelaxationFactor(_Af, std::get<0>(_relaxOps[level]), _options, level)
+        : details::AutoRelaxationFactor(
+              _coarsenings[level - 1].PtAP, std::get<0>(_relaxOps[level]), _options, level);
+    if (relaxationFactor) {
+      _relaxationFactors[level] = *relaxationFactor;
     }
-
-    // Weighted Jacobi is stable for 0 < omega < 2 / lambda_max(D^{-1} A), assuming A and its block
-    // diagonal D are SPD. We choose the standard AMG smoothing value omega = 4 / (3 lambda_max),
-    // where lambda_max = lambda_max(D^{-1} A), not the stability limit: this minimizes
-    // max |1 - omega lambda| on the model high-frequency interval [lambda_max / 2, lambda_max]. The
-    // safety factor makes the choice more conservative because the Ritz value is only an estimate
-    // and is computed independently on each smoothed operator.
-    auto const relaxationFactor =
-        Scalar(4.0 / 3.0) / (_options.spectralRadiusSafetyFactor * estimate);
-    if (!IsFinite(relaxationFactor) || relaxationFactor <= Scalar(0)) {
-      MOCHI_LOG_WARNING(
-          "AMG auto relaxation factor skipped at level %d: Computed relaxation factor was not positive and finite. Using the default relaxation factor.",
-          level);
-      continue;
-    }
-    _relaxationFactors[level] = relaxationFactor;
   }
 }
 
