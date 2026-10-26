@@ -117,6 +117,7 @@ class MochiPrefabEditor : public AssetEditor {
   //------------------------------------------------------------------------------------------------
 
   void RestagePrefab();
+  void SetRepresentationMode(StageType stageType);
   // Find the staged render object for a top-level prefab actor by source + index (and, for
   // articulated links, link index). Pass linkIndex < 0 to match any link.
   mochi_renderer::SceneObject*

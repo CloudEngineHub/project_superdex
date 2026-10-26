@@ -330,6 +330,10 @@ struct SceneStage {
       StageType stageType);
 #endif
 
+  // Change which already-staged representation is visible without rebuilding or restoring actors
+  // to their default pose. Used for view changes during simulation.
+  void SetRepresentationMode(StageType stageType);
+
   // Apply per-actor world transforms (e.g. from simulation), in staged-actor order. Warns and does
   // nothing if the incoming array length does not match the number of staged actors.
   void ApplyWorldTransforms(

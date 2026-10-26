@@ -151,6 +151,21 @@ static void ComputeStageVisibility(
   }
 }
 
+static void ApplyStageVisibility(StagedActor& actor, bool renderVisible, bool shapeVisible) {
+  actor.render.visible = renderVisible;
+  actor.shape.visible = shapeVisible;
+  actor.sdf.visible = false;
+  if (actor.render.sceneObject) {
+    actor.render.sceneObject->SetVisible(renderVisible);
+  }
+  if (actor.shape.sceneObject) {
+    actor.shape.sceneObject->SetVisible(shapeVisible);
+  }
+  actor.sceneObject = (renderVisible && actor.render.sceneObject) ? actor.render.sceneObject
+      : (shapeVisible && actor.shape.sceneObject)                 ? actor.shape.sceneObject
+                                                                  : nullptr;
+}
+
 // Resolve a prefab-relative model reference to a full path; empty when the reference is empty or
 // does not resolve.
 static mochi::Path ResolvePrefabModelPath(
@@ -1327,18 +1342,7 @@ bool SceneStage::ApplyStageRequests(
     // a toggle. This is the base's baseline visibility; UpdateHighlights overrides it to hide a
     // base while its highlight clone stands in. The selectable object aliases whichever
     // representation is visible (render preferred).
-    actor.render.visible = req.renderVisible;
-    actor.shape.visible = req.shapeVisible;
-    actor.sdf.visible = false;
-    if (actor.render.sceneObject) {
-      actor.render.sceneObject->SetVisible(req.renderVisible);
-    }
-    if (actor.shape.sceneObject) {
-      actor.shape.sceneObject->SetVisible(req.shapeVisible);
-    }
-    actor.sceneObject = (req.renderVisible && actor.render.sceneObject) ? actor.render.sceneObject
-        : (req.shapeVisible && actor.shape.sceneObject)                 ? actor.shape.sceneObject
-                                                                        : nullptr;
+    ApplyStageVisibility(actor, req.renderVisible, req.shapeVisible);
     ApplySdfVisibility(actor);
 
     SetStagedActorWorldTransform(actor, actor.worldTransform, converter);
@@ -1374,7 +1378,7 @@ static bool HasDeformingSurface(StagedActor const& actor) {
 
 void SceneStage::ApplySdfVisibility(StagedActor& actor) {
   // The SDF stands in for a shown shape: shape.visible as staged, or sdf.visible once the SDF has
-  // replaced it (ApplyStageRequests clears sdf.visible before each stage).
+  // replaced it (ApplyStageVisibility clears sdf.visible before each stage).
   bool const wanted = _stageType == StageType::SdfFallbackToMochiModel &&
       actor.shape.sceneObject != nullptr && (actor.shape.visible || actor.sdf.visible) &&
       !HasDeformingSurface(actor);
@@ -1476,6 +1480,28 @@ void SceneStage::BuildMissingSdfSurfaces() {
           }
         }
       });
+}
+
+void SceneStage::SetRepresentationMode(StageType stageType) {
+  _stageType = stageType;
+  auto const& converter = _studio->GetEditorToRendererSpaceConverter();
+  for (auto& actor : _actors) {
+    bool renderVisible = false;
+    bool shapeVisible = false;
+    ComputeStageVisibility(
+        actor.render.sceneObject != nullptr,
+        actor.shape.sceneObject != nullptr,
+        stageType,
+        renderVisible,
+        shapeVisible);
+    ApplyStageVisibility(actor, renderVisible, shapeVisible);
+    ApplySdfVisibility(actor);
+    // An SDF surface created just now has not been placed yet.
+    if (actor.sdf.sceneObject != nullptr) {
+      SetStagedActorWorldTransform(actor, actor.worldTransform, converter);
+    }
+  }
+  BuildMissingSdfSurfaces();
 }
 
 void SceneStage::Clear() {

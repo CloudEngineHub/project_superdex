@@ -110,38 +110,22 @@ void MochiPrefabEditor::Initialize() {
        .shortcut = ImGuiKey_P});
   _viewport->RegisterShowCommand(
       {.name = "Render Only",
-       .onToggle =
-           [this] {
-             _stageType = StageType::RenderModelOnly;
-             RestagePrefab();
-           },
+       .onToggle = [this] { SetRepresentationMode(StageType::RenderModelOnly); },
        .getState = [this] { return _stageType == StageType::RenderModelOnly; },
        .shortcut = ImGuiKey_1});
   _viewport->RegisterShowCommand(
       {.name = "Collision Only",
-       .onToggle =
-           [this] {
-             _stageType = StageType::MochiModelOnly;
-             RestagePrefab();
-           },
+       .onToggle = [this] { SetRepresentationMode(StageType::MochiModelOnly); },
        .getState = [this] { return _stageType == StageType::MochiModelOnly; },
        .shortcut = ImGuiKey_2});
   _viewport->RegisterShowCommand(
       {.name = "Render (Collision Fallback)",
-       .onToggle =
-           [this] {
-             _stageType = StageType::RenderModelFallbackToMochiModel;
-             RestagePrefab();
-           },
+       .onToggle = [this] { SetRepresentationMode(StageType::RenderModelFallbackToMochiModel); },
        .getState = [this] { return _stageType == StageType::RenderModelFallbackToMochiModel; },
        .shortcut = ImGuiKey_3});
   _viewport->RegisterShowCommand(
       {.name = "SDF (Collision Fallback)",
-       .onToggle =
-           [this] {
-             _stageType = StageType::SdfFallbackToMochiModel;
-             RestagePrefab();
-           },
+       .onToggle = [this] { SetRepresentationMode(StageType::SdfFallbackToMochiModel); },
        .getState = [this] { return _stageType == StageType::SdfFallbackToMochiModel; },
        .shortcut = ImGuiKey_4});
   // Initialize Mochi scene and callbacks
@@ -451,6 +435,17 @@ static void ResolveNestedPrefabsFromMemory(
     ClearCachedShapes(*nested.prefab);
     ResolveNestedPrefabsFromMemory(*nested.prefab, manager, rootPath);
   }
+}
+
+void MochiPrefabEditor::SetRepresentationMode(StageType stageType) {
+  _stageType = stageType;
+  if (_mochiScene.IsSimulating()) {
+    _stage.SetRepresentationMode(stageType);
+  } else {
+    RestagePrefab();
+  }
+  // Both paths can move an actor's selectable object to another representation without rebuilding.
+  SyncViewportSelection();
 }
 
 void MochiPrefabEditor::RestagePrefab() {
