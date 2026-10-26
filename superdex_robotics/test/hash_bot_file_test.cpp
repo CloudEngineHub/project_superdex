@@ -247,6 +247,26 @@ TEST_F(HashBotFileTest, HashBotFile_ModifiedModelFileContent) {
   EXPECT_NE(std::string_view(hash1.c_str()), std::string_view(hash2.c_str()));
 }
 
+// A skin's model files are hashed by content, like a link's: editing one in place changes the hash.
+TEST_F(HashBotFileTest, HashBotFile_ModifiedSkinFileContent) {
+  SetUpFR3TempDir("modified_skin_content");
+  auto botPrefab = LoadFR3ForTempDir();
+  botPrefab.skin.emplace();
+  auto const renderPath = _dirPath / "render" / "skin.glb";
+  auto const shapePath = _dirPath / "collision" / "skin.mochi.h5";
+  mochi::WriteFile(renderPath, "render", ExpectOK{});
+  mochi::WriteFile(shapePath, "shape", ExpectOK{});
+  botPrefab.skin->renderModelFile = DynamicString(renderPath.generic_string());
+  botPrefab.skin->shapeFile = DynamicString(shapePath.generic_string());
+  auto const path = SaveToTempDir(botPrefab, "fr3_skin.superdex_bot");
+  for (auto const& file : {botPrefab.skin->renderModelFile, botPrefab.skin->shapeFile}) {
+    auto const before = HashBotFile(path, ExpectOK{});
+    std::ofstream(file.c_str(), std::ios::binary | std::ios::app) << "extra_bytes";
+    auto const after = HashBotFile(path, ExpectOK{});
+    EXPECT_NE(std::string_view(before.c_str()), std::string_view(after.c_str())) << file.c_str();
+  }
+}
+
 TEST_F(HashBotFileTest, HashBotFile_RemovedLastLinkAndJoint) {
   SetUpFR3TempDir("removed_last");
   auto botPrefab = LoadFR3ForTempDir();

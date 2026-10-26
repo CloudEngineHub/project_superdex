@@ -953,7 +953,8 @@ DynamicString superdex::robotics::HashBotFile(std::string_view path, Error& erro
   // operations are reordered but produce the same effective result.
   auto botPrefab = LoadBotPrefabFromFile(botPath, error);
   MOCHI_ERROR_RETURN(error, {});
-  // 3. Hash referenced model files for each link (uses absolute paths from LoadBotPrefabFromFile)
+  // 3. Hash referenced model files of each link and the skin (uses absolute paths from
+  // LoadBotPrefabFromFile)
   /* A file the tree does not have contributes nothing and warns, rather than failing the hash. A
    * bot may name an asset that is absent -- the open-source export strips some -- and such a tree
    * must still be hashable and archivable, since archiving hashes the bot for its metadata. The
@@ -974,6 +975,12 @@ DynamicString superdex::robotics::HashBotFile(std::string_view path, Error& erro
     hashFileIfPresent(link.renderModelFile);
     MOCHI_ERROR_RETURN(error, {});
     hashFileIfPresent(link.shapeFile);
+    MOCHI_ERROR_RETURN(error, {});
+  }
+  if (botPrefab.skin.has_value()) {
+    hashFileIfPresent(botPrefab.skin->renderModelFile);
+    MOCHI_ERROR_RETURN(error, {});
+    hashFileIfPresent(botPrefab.skin->shapeFile);
     MOCHI_ERROR_RETURN(error, {});
   }
   /* 4. Convert link asset paths back to relative for the JSON we hash.
