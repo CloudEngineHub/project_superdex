@@ -120,6 +120,14 @@ constexpr char const* kTetrahedralize =
     R"({"modifier": "Tetrahedralize", "method": "Delaunay Refinement", "enabled": true,
         "collapsed": true, "properties": {"edgeSize": 0.5}})";
 
+constexpr char const* kExtractSurface =
+    R"({"modifier": "Extract Surface", "method": "Boundary", "enabled": true, "collapsed": true,
+        "properties": {}})";
+
+constexpr char const* kMakeWatertight =
+    R"({"modifier": "Refine Mesh", "method": "Make Watertight", "enabled": true,
+        "collapsed": true, "properties": {}})";
+
 constexpr char const* kSdfExport =
     R"({"modifier": "Export Mochi Model", "method": "SDF", "enabled": true, "collapsed": true,
         "properties": {"sdf": {"resolutionMode": "Explicit", "resolutionDelta": [0.01, 0.01, 0.01],
@@ -405,12 +413,7 @@ TEST_F(ProcessCommandTest, SdfExportOfATetMeshWritesBoth) {
 TEST_F(ProcessCommandTest, ASurfaceStepAfterTetrahedralizeFailsItsStage) {
   WriteCubeStl(_root / "cad" / "cube.stl");
   fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
-  WriteModifiers(
-      pipeline,
-      {kSourceFromModelViewer,
-       kTetrahedralize,
-       R"({"modifier": "Refine Mesh", "method": "Make Watertight", "enabled": true,
-           "collapsed": true, "properties": {}})"});
+  WriteModifiers(pipeline, {kSourceFromModelViewer, kTetrahedralize, kMakeWatertight});
 
   mochi::Error error;
   ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
@@ -421,6 +424,50 @@ TEST_F(ProcessCommandTest, ASurfaceStepAfterTetrahedralizeFailsItsStage) {
   EXPECT_FALSE(report.stages[2].succeeded);
   EXPECT_NE(report.stages[2].error.find("Tetrahedralize"), std::string::npos)
       << report.stages[2].error;
+}
+
+TEST_F(ProcessCommandTest, ExtractSurfaceLetsASurfaceStepFollowTetrahedralize) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(
+      pipeline,
+      {kSourceFromModelViewer, kTetrahedralize, kExtractSurface, kMakeWatertight, kNoSdfExport});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_EQ(report.stages.size(), 5u);
+  for (ProcessStageReport const& stage : report.stages) {
+    EXPECT_TRUE(stage.succeeded) << stage.label << ": " << stage.error;
+  }
+  // The tet stage reports its boundary, which the extracted surface must match.
+  ASSERT_TRUE(report.stages[1].tetMesh.has_value());
+  EXPECT_FALSE(report.stages[2].tetMesh.has_value());
+  EXPECT_EQ(report.stages[2].vertices, report.stages[1].vertices);
+  EXPECT_EQ(report.stages[2].triangles, report.stages[1].triangles);
+  mochi::ModelData const model =
+      mochi::model_utils::LoadFromFile((_root / "collision" / "cube.mochi.h5").string(), error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_EQ(model.mesh->nodesPerElement, 3);
+  EXPECT_EQ(model.mesh->GetNumElements(), report.stages[3].triangles);
+}
+
+TEST_F(ProcessCommandTest, ExtractSurfaceOfATriangleSurfaceFailsItsStage) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(pipeline, {kSourceFromModelViewer, kExtractSurface});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  EXPECT_FALSE(report.succeeded);
+  ASSERT_EQ(report.stages.size(), 2u);
+  EXPECT_TRUE(report.stages[0].succeeded);
+  EXPECT_FALSE(report.stages[1].succeeded);
+  EXPECT_NE(report.stages[1].error.find("Tetrahedralize"), std::string::npos)
+      << report.stages[1].error;
 }
 
 TEST_F(ProcessCommandTest, OutDirCollectsTheExports) {
