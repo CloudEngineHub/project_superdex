@@ -1365,7 +1365,7 @@ TEST(AMG, RigidModeMargin) {
 TEST(AMG, RigidModesFactorChecks) {
   real const eps = std::numeric_limits<real>::epsilon();
   real const nan = std::numeric_limits<real>::quiet_NaN();
-  for (auto const [delta, accepted] :
+  for (auto const& [delta, accepted] :
        {std::pair{1_r, true},
         std::pair{4 * eps, true},
         std::pair{eps, false},
