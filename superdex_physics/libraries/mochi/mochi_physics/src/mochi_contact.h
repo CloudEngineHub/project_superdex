@@ -496,22 +496,6 @@ class CContactCorrespondence : public ContactCorrespondence {
   using ContactCorrespondence::ContactCorrespondence;
 };
 
-/**
- * @brief World-space velocity of the center-of-mass at the end of the previous step.
- *
- * @note For soft actors, this value is approximated based on the center-of-bounding-volume.
- * @note For static actors, this value is computed based on change in root transform.
- */
-struct CPrevRigidVelocity : NoCopy {
-  Vec4r linearVelocityWorld = {}; // World-space
-  Vec4r angularVelocityWorld = {}; // World-space
-  Vec4r centerOfMassLocal = {}; // Actor local-space
-
-  MOCHI_STRUCT_BEGIN(mochi::CPrevRigidVelocity);
-  MOCHI_ATTRIBUTE(CaptureState);
-  MOCHI_STRUCT_END();
-};
-
 /*
   For each contact pair, collection of data needed for contact assembly using contact Jacobians,
   either from the colliding or collider perspective. In sync contact, all actors (both colliding and

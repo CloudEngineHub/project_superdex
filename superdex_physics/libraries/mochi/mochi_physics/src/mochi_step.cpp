@@ -487,8 +487,7 @@ void mochi::PostStepEcs(entt::registry& reg) {
       },
       reg);
 
-  // Update CPrevRigidVelocity
-  ecs::InvokeForEachGlobal(&rigid::UpdateRigidVelocity_Dynamic, reg);
+  // Update CPrevRigidVelocity of soft actors
   ecs::InvokeForEachGlobal(&soft::UpdateRigidVelocity, reg);
 
   // Swap active elements, if necessary.

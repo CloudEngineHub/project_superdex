@@ -268,7 +268,6 @@ static void UpdateDerivedVelocityFromJointVelocities(
     linkVelocity.SetOmega(Load<RigidSize::kDRot, Vec4r>(&velocity[RigidSize::kDTrans]));
     outLinkVels[i] = linkVelocity;
   }
-  ecs::InvokeForEach(&mochi::rigid::UpdateRigidVelocity_Dynamic, reg, members.actors);
 
   // The skinned velocities of nested soft actors may be differential variables, but they are
   // invalidated after a pose reset. The skinned and/or blending velocity is not updated.

@@ -61,6 +61,7 @@
 #include <functional>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -425,26 +426,33 @@ class ActorInterfaceImpl : public ActorInterface {
       }
     }
 
-    // All soft, rigid and static actors have CPrevRigidVelocity
-    auto& prevRigidVelocity = reg.get<CPrevRigidVelocity>(e);
-    prevRigidVelocity.linearVelocityWorld = ToSimd(linearVel);
-    prevRigidVelocity.angularVelocityWorld = ToSimd(angularVel);
+    // Static and soft actors report their velocity from CPrevRigidVelocity.
+    if (auto* prevRigidVelocity = reg.try_get<CPrevRigidVelocity>(e)) {
+      prevRigidVelocity->linearVelocityWorld = ToSimd(linearVel);
+      prevRigidVelocity->angularVelocityWorld = ToSimd(angularVel);
+    }
 
     // External state changes invalidate step history.
     InvalidateActorStepHistory(reg, e);
     WakeUp();
   }
 
+  std::optional<rigid::RigidVelocity> GetRigidVelocity(Error& error) const {
+    MOCHI_ERROR_RETURN(error, std::nullopt);
+    auto velocity = rigid::TryGetRigidVelocity(reg, e);
+    MOCHI_ERROR_IF_NOT(
+        velocity.has_value(), error, "Velocity is only supported for rigid and soft actors.");
+    return velocity;
+  }
+
   Real3 GetLinearVelocity(Error& error) const override {
-    auto const* prev = MOCHI_TRY_GET(CPrevRigidVelocity const, reg, e, error);
-    MOCHI_ERROR_RETURN(error, {});
-    return ToReal3(prev->linearVelocityWorld);
+    auto const velocity = GetRigidVelocity(error);
+    return velocity ? velocity->linearVelocityWorld : Real3{};
   }
 
   Real3 GetAngularVelocity(Error& error) const override {
-    auto const* prev = MOCHI_TRY_GET(CPrevRigidVelocity const, reg, e, error);
-    MOCHI_ERROR_RETURN(error, {});
-    return ToReal3(prev->angularVelocityWorld);
+    auto const velocity = GetRigidVelocity(error);
+    return velocity ? velocity->angularVelocityWorld : Real3{};
   }
 
 #define MOCHI_ERROR_RETURN_IF_STATIC(functionName, ...)                               \
@@ -593,9 +601,6 @@ class ActorInterfaceImpl : public ActorInterface {
       auto& rigidVel = reg.get<CRigidVel<TimeStep::Current>>(e).value;
       rigidVel.SetVCom(
           rigidVel.GetVCom() + Cross3(rigidVel.GetOmegaAndVSym().first, comShiftWorld));
-      auto& prevRigidVelocity = reg.get<CPrevRigidVelocity>(e);
-      prevRigidVelocity.linearVelocityWorld = rigidVel.GetVCom();
-      prevRigidVelocity.centerOfMassLocal = comLocal;
 
       // Step history is stored in terms of the old CoM.
       InvalidateActorStepHistory(reg, e);

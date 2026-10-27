@@ -200,6 +200,23 @@ struct CRigidBodyInertia : public NoCopy, RigidBodyInertia {
   using RigidBodyInertia::RigidBodyInertia;
 };
 
+/**
+ * @brief World-space velocity of the center-of-mass at the end of the previous step, for soft and
+ * standalone static actors. Rigid actors (including links) use CRigidVel<TimeStep::Current>.
+ *
+ * @note For soft actors, this value is approximated based on the center-of-bounding-volume.
+ * @note For static actors, this value is computed based on change in root transform.
+ */
+struct CPrevRigidVelocity : NoCopy {
+  Vec4r linearVelocityWorld = {}; // World-space
+  Vec4r angularVelocityWorld = {}; // World-space
+  Vec4r centerOfMassLocal = {}; // Actor local-space
+
+  MOCHI_STRUCT_BEGIN(mochi::CPrevRigidVelocity);
+  MOCHI_ATTRIBUTE(CaptureState);
+  MOCHI_STRUCT_END();
+};
+
 // Every dynamic actor has CConservativeStepBounds. It stores a conservative world-space bounding
 // volume which must be large enough to contain the actor's movement for the current time step,
 // assuming reasonable constraints on acceleration, etc... This information is used to sort actors

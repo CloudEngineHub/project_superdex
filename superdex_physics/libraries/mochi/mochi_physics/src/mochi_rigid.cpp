@@ -982,7 +982,6 @@ static void InitRigidActor_Dynamic(
         "Unable to create dynamic rigid actor. Linear velocity must be finite.");
     MOCHI_ERROR_RETURN(error);
     vel.SetVCom(ToSimd(*params.linearVelocity));
-    reg.get<CPrevRigidVelocity>(e).linearVelocityWorld = ToSimd(*params.linearVelocity);
   }
   if (params.angularVelocity) {
     MOCHI_ERROR_IF_NOT(
@@ -991,7 +990,6 @@ static void InitRigidActor_Dynamic(
         "Unable to create dynamic rigid actor. Angular velocity must be finite.");
     MOCHI_ERROR_RETURN(error);
     vel.SetOmega(ToSimd(*params.angularVelocity));
-    reg.get<CPrevRigidVelocity>(e).angularVelocityWorld = ToSimd(*params.angularVelocity);
   }
 
   // Boundary conditions
@@ -999,12 +997,6 @@ static void InitRigidActor_Dynamic(
 
   // Storage for external forces
   reg.emplace<CExternalForces>(e);
-
-  // Center of mass
-  auto& rigidVelocity = reg.get<CPrevRigidVelocity>(e);
-  if (comLocal) {
-    rigidVelocity.centerOfMassLocal = *comLocal;
-  }
 
   // Components to detect and compute contact against other actors
   if (useContact) {
@@ -1298,16 +1290,13 @@ void mochi::InitRigidActor(
   // This bounding volume contains all active nodes of the mesh and the shape of the collider.
   reg.emplace<CBoundingVolume>(e, bv);
 
-  // Rigid velocity component
-  auto& rigidVelocity = reg.emplace<CPrevRigidVelocity>(e);
-
   auto& exportParams = reg.emplace<CRigidExportParams>(e);
   exportParams.boundaryElementType = params.boundaryElementType;
   exportParams.boundarySubsampling = params.boundarySubsampling;
 
   if (params.isStatic) {
     reg.emplace<TagStaticActor>(e);
-    rigidVelocity.centerOfMassLocal = GetBoundingSphere(bv).VGetCenter();
+    reg.emplace<CPrevRigidVelocity>(e).centerOfMassLocal = GetBoundingSphere(bv).VGetCenter();
   } else {
     reg.emplace<TagRigidActor>(e); // currently implies dynamic
     InitRigidActor_Dynamic(reg, e, params, useContact, shapePtr.get(), error);
@@ -1426,5 +1415,24 @@ real GetActorMass(entt::registry const& reg, entt::entity actor) {
       !reg.all_of<TagStaticActor>(actor) || reg.all_of<TagArticulatedLinkActor>(actor),
       "Cannot get mass of static actor.");
   return reg.get<CRigidBodyInertia>(actor).GetMass();
+}
+
+std::optional<RigidVelocity> TryGetRigidVelocity(entt::registry const& reg, entt::entity actor) {
+  if (auto const* prev = reg.try_get<CPrevRigidVelocity const>(actor)) {
+    return RigidVelocity{
+        .linearVelocityWorld = ToReal3(prev->linearVelocityWorld),
+        .angularVelocityWorld = ToReal3(prev->angularVelocityWorld),
+        .referencePointLocal = ToReal3(prev->centerOfMassLocal),
+    };
+  }
+  if (auto const* vel = reg.try_get<CRigidVel<TimeStep::Current> const>(actor)) {
+    return RigidVelocity{
+        .linearVelocityWorld = ToReal3(vel->value.GetVCom()),
+        .angularVelocityWorld = ToReal3(vel->value.GetOmegaAndVSym().first),
+        .referencePointLocal =
+            ToReal3(reg.get<CRigidBodyInertia const>(actor).GetCenterOfMassLocal()),
+    };
+  }
+  return std::nullopt;
 }
 } // namespace mochi::rigid

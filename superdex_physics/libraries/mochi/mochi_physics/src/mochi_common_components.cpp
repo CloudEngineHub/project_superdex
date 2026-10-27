@@ -43,6 +43,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CIntegrationVelocitySlices<DisplacementLayer::Default>>(reg);
   ecs::RegisterComponent<CIntegrationVelocitySlices<DisplacementLayer::Skinned>>(reg);
   ecs::RegisterComponent<CIntegrationRigidStates>(reg);
+  ecs::RegisterComponent<CPrevRigidVelocity>(reg);
   ecs::RegisterComponent<CRecenteringParams>(reg);
   ecs::RegisterComponent<CRootTransform>(reg);
   ecs::RegisterComponent<CSceneGravity>(reg);

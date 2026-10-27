@@ -5005,7 +5005,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CConservativePotentialColliders</*kIsSync*/ true>>(reg);
   ecs::RegisterComponent<CPotentialColliders</*kIsSync*/ false>>(reg);
   ecs::RegisterComponent<CPotentialColliders</*kIsSync*/ true>>(reg);
-  ecs::RegisterComponent<CPrevRigidVelocity>(reg);
   ecs::RegisterComponent<CRequiresFarSdfEvaluation>(reg);
   ecs::RegisterComponent<CSdfCollider>(reg);
   ecs::RegisterComponent<CSdfColliderPending>(reg);

@@ -143,16 +143,6 @@ inline void UpdateRigidVelocity_Static(
       outRigidVelocity.angularVelocityWorld);
 }
 
-// Call UpdateRigidVelocity for dynamic rigid actors
-inline void UpdateRigidVelocity_Dynamic(
-    ecs::RequiredTag<TagRigidActor>,
-    ecs::Excluded<TagStaticActor>,
-    CRigidVel<TimeStep::Current> const& currVel,
-    CPrevRigidVelocity& outRigidVelocity) {
-  outRigidVelocity.linearVelocityWorld = currVel.value.GetVCom();
-  outRigidVelocity.angularVelocityWorld = currVel.value.GetOmegaAndVSym().first;
-}
-
 // System to initialize state (position and velocity) for a new step
 void EntityIncrementStep(
     ecs::Included<TagRigidActor>,
@@ -451,6 +441,21 @@ void InitializeOnce(entt::registry& reg);
 
 // Get the mass of a rigid actor.
 [[nodiscard]] real GetActorMass(entt::registry const& reg, entt::entity actor);
+
+// World-space rigid velocity of an actor. The linear velocity is that of referencePointLocal.
+struct RigidVelocity {
+  Real3 linearVelocityWorld;
+  Real3 angularVelocityWorld;
+  Real3 referencePointLocal;
+};
+
+// Get the rigid velocity of an actor. Rigid actors (including links) report their velocity state,
+// with reference point at the center of mass. Standalone static and soft actors report
+// CPrevRigidVelocity, with reference point at its approximate center of mass. Returns
+// std::nullopt if the actor has no rigid velocity.
+[[nodiscard]] std::optional<RigidVelocity> TryGetRigidVelocity(
+    entt::registry const& reg,
+    entt::entity actor);
 
 } // namespace rigid
 

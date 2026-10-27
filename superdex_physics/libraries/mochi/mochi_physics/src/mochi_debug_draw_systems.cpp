@@ -1423,20 +1423,23 @@ static void RegisterDebugDrawSystem_RigidVelocity(DebugDrawInternal& debugDraw) 
   system.description = "Draw a cyan/magenta lines representing actor's linear/angular velocity";
   system.onDrawEntityWorldSpace =
       [](entt::registry const& reg, entt::entity e, DebugDrawCollector& out) {
+        auto const velocity = rigid::TryGetRigidVelocity(reg, e);
+        if (!velocity) {
+          return;
+        }
         auto const& worldFromLocal = reg.get<CRootTransform const>(e).worldFromLocal;
-        auto const& rigidVelocity = reg.get<CPrevRigidVelocity const>(e);
-        auto comWorld = worldFromLocal.TransformPoint(rigidVelocity.centerOfMassLocal);
+        auto const comWorld = worldFromLocal.TransformPoint(velocity->referencePointLocal);
         LineVertex verts[2];
-        verts[0].position = ToReal3(comWorld);
-        verts[1].position = ToReal3(comWorld + rigidVelocity.linearVelocityWorld * 0.05_r);
+        verts[0].position = comWorld;
+        verts[1].position = comWorld + velocity->linearVelocityWorld * 0.05_r;
         verts[0].color = verts[1].color = colors::kCyan;
         out.AddLines(verts);
-        verts[1].position = ToReal3(comWorld + rigidVelocity.angularVelocityWorld * 0.05_r);
+        verts[1].position = comWorld + velocity->angularVelocityWorld * 0.05_r;
         verts[0].color = verts[1].color = colors::kMagenta;
         out.AddLines(verts);
       };
 
-  debugDraw.RegisterSystem<CRootTransform, CPrevRigidVelocity>(system);
+  debugDraw.RegisterSystem<CRootTransform>(system);
 }
 
 static void RegisterDebugDrawSystem_ArticulatedTargetPose(DebugDrawInternal& debugDraw) {

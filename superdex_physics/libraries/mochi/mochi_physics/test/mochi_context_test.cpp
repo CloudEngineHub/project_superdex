@@ -2013,12 +2013,31 @@ TEST_F(ActorTest, GetVelocityRigid) {
   actorVel.SetOmega(ToSimd(angVel));
   actorVel.UpdateVSymIfDirty(1e-2_r);
 
-  // Run internal rigid-body velocity update
-  ecs::InvokeOnEntity(&rigid::UpdateRigidVelocity_Dynamic, reg, entity);
-
   // Get rigid velocity and test
   TestReal3(linVel, actor->GetLinearVelocity(ExpectOK{}), 1e-4_r);
   TestReal3(angVel, actor->GetAngularVelocity(ExpectOK{}), 1e-4_r);
+}
+
+// The velocity getters of dynamic rigid actors track the velocity state across steps and restores.
+TEST_F(ActorTest, GetVelocityRigidAfterStepAndRestore) {
+  _scene->SetGravity(Real3{});
+  Actor* actor = CreateRigidUnitCube();
+  Real3 const linVel{-1_r, 2_r, 1_r};
+  Real3 const angVel{0.5_r, -0.5_r, 1_r};
+  actor->SetVelocity(linVel, angVel, ExpectOK{});
+
+  // A free cube keeps its velocity, up to integrator dissipation.
+  _scene->Step(1e-2_r);
+  Real3 const steppedLinVel = actor->GetLinearVelocity(ExpectOK{});
+  Real3 const steppedAngVel = actor->GetAngularVelocity(ExpectOK{});
+  TestReal3(linVel, steppedLinVel, 1e-4_r);
+  TestReal3(angVel, steppedAngVel, 1e-2_r);
+
+  StateHandle const state = _scene->CaptureState(ExpectOK{});
+  actor->SetVelocity(Real3{}, Real3{}, ExpectOK{});
+  _scene->RestoreState(state, /*releaseImmediately=*/true, ExpectOK{});
+  EXPECT_EQ(steppedLinVel, actor->GetLinearVelocity(ExpectOK{}));
+  EXPECT_EQ(steppedAngVel, actor->GetAngularVelocity(ExpectOK{}));
 }
 
 TEST_F(ActorTest, GetVelocitySoft) {
