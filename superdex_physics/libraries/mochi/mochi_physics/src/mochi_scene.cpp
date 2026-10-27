@@ -462,10 +462,6 @@ SolverParams SceneImpl::GetSolverParams() const {
 
 void SceneImpl::SetSolverParams(SolverParams const& params, Error& error) {
   MOCHI_ERROR_RETURN(error);
-  SolverParams& storedParams = _registry.ctx<CSimulationParams>();
-  if (storedParams == params) {
-    return; // No change
-  }
 
   MOCHI_ERROR_IF_NOT(
       IsValidEnumValue(params.nonLinearSolver.solverType, NonLinearSolverType::Count),
@@ -563,6 +559,24 @@ void SceneImpl::SetSolverParams(SolverParams const& params, Error& error) {
         error,
         "At least 1 line search iteration (NonLinearSolverParams::lineSearchMaxIter) is required. To run without line search, use 'LineSearchType::None'.");
   }
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(params.nonLinearSolver.lineSearchAlpha) &&
+          params.nonLinearSolver.lineSearchAlpha > 0_r &&
+          params.nonLinearSolver.lineSearchAlpha < 1_r,
+      error,
+      "Line search alpha (NonLinearSolverParams::lineSearchAlpha) must be in (0, 1).");
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(params.nonLinearSolver.lineSearchWolfe1) &&
+          params.nonLinearSolver.lineSearchWolfe1 > 0_r &&
+          params.nonLinearSolver.lineSearchWolfe1 < 1_r,
+      error,
+      "First Wolfe coefficient (NonLinearSolverParams::lineSearchWolfe1) must be in (0, 1).");
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(params.nonLinearSolver.lineSearchWolfe2) &&
+          params.nonLinearSolver.lineSearchWolfe2 > params.nonLinearSolver.lineSearchWolfe1 &&
+          params.nonLinearSolver.lineSearchWolfe2 < 1_r,
+      error,
+      "Second Wolfe coefficient (NonLinearSolverParams::lineSearchWolfe2) must be in (lineSearchWolfe1, 1).");
 
   MOCHI_ERROR_IF(
       params.experimentalEval.implicitNormalForceForDissipation &&
@@ -570,6 +584,12 @@ void SceneImpl::SetSolverParams(SolverParams const& params, Error& error) {
       error,
       "implicitNormalForceForDissipation = true with explicitNormals = true is not supported.");
   MOCHI_ERROR_RETURN(error);
+
+  // After validation, since NaN can compare equal under MSVC /fp:fast.
+  SolverParams& storedParams = _registry.ctx<CSimulationParams>();
+  if (storedParams == params) {
+    return; // No change
+  }
 
   // Store in CSimulationParams (global to our registry)
   storedParams = params;

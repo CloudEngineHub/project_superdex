@@ -1841,6 +1841,21 @@ TEST_F(MochiSceneTest, SceneTimeAndStepCounter) {
   EXPECT_EQ(sceneStepCounter.value, 4);
 }
 
+TEST_F(MochiSceneTest, SetSolverParams_RejectsInvalidLineSearchCoefficients) {
+  using P = NonLinearSolverParams;
+  SolverParams const before = _scene->GetSolverParams();
+  for (auto const& [coefficient, value] :
+       {std::pair{&P::lineSearchAlpha, std::numeric_limits<real>::quiet_NaN()},
+        std::pair{&P::lineSearchWolfe1, 0_r},
+        std::pair{&P::lineSearchWolfe2, P{}.lineSearchWolfe1}}) {
+    SolverParams params = before;
+    params.nonLinearSolver.lineSearchType = LineSearchType::None; // Checked even if unused.
+    params.nonLinearSolver.*coefficient = value;
+    _scene->SetSolverParams(params, ExpectNotOK{});
+    EXPECT_EQ(before, _scene->GetSolverParams());
+  }
+}
+
 TEST_F(MochiSceneForeignHandleTest, RejectForeignSceneActorHandle) {
   auto* actor = CreateRigidUnitCube();
   auto* otherScene = _mochiContext->CreateScene("other");
