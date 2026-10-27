@@ -231,6 +231,9 @@ struct RigidBodyModesAMGPrec : Preconditioner<Scalar> {
   BSpMatrixView _A0;
   BlockJacobiPrec<Scalar, 3, /*kIsSymmetric*/ true> _fineSmoother;
   Scalar _fineRelaxationFactor = 0;
+  /// @brief Random RHS of the damping estimates, drawn with the larger of the fine and first coarse
+  /// sizes. Each level uses its leading entries.
+  ColumnVector<Scalar> _spectralRadiusRhs;
   /// @brief Pattern of P^T A_0 for the interpolation P from level 1.
   Graph<int, int> _PtA0Pattern = {};
   /// @brief Level-0 aggregates whose rotation DoFs are decoupled.
@@ -923,6 +926,12 @@ RigidBodyModesAMGPrec<Scalar>::RigidBodyModesAMGPrec(
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
   DynamicArray<double> const reference(referencePositions.begin(), referencePositions.end());
   BuildHierarchy(MakeConstSpan(reference));
+
+  // Level 1 has 6 rows per aggregate and at most one aggregate per node, so at most twice A's rows.
+  // A deeper level has 6 rows per aggregate of 6-row nodes, so it never grows.
+  _spectralRadiusRhs = ColumnVector<Scalar>(Max(_A0.Rows(), _levels.front().A.Rows()));
+  details::SetXorShiftRandom(AsView(_spectralRadiusRhs));
+
   _positions.resize(_A0.Rows());
   SetPositions(referencePositions, displacements);
   UpdateInterpolation();
@@ -1070,8 +1079,11 @@ template <typename Scalar>
 void RigidBodyModesAMGPrec<Scalar>::UpdateNumerics() {
   constexpr AMGOptions<Scalar> kOptions = {};
   constexpr Scalar kDefaultRelaxationFactor = AMGPrec<Scalar, 3>::kDefaultRelaxationFactor;
-  _fineRelaxationFactor = details::AutoRelaxationFactor(_A0, _fineSmoother, kOptions, 0)
-                              .value_or(kDefaultRelaxationFactor);
+  auto const rhs = AsConstView(_spectralRadiusRhs);
+  _fineRelaxationFactor =
+      details::AutoRelaxationFactor(_A0, _fineSmoother, kOptions, 0, rhs.TopRows(_A0.Rows()))
+          .value_or(kDefaultRelaxationFactor);
+
   auto& level1 = _levels.front();
   details::Galerkin(level1.transfer, _A0, _PtA0Pattern, nullptr, level1.A);
   for (int a = 0; a < isize(_decoupled); ++a) {
@@ -1092,7 +1104,8 @@ void RigidBodyModesAMGPrec<Scalar>::UpdateNumerics() {
     }
     _numAcceptedCoarseLevels = s + 1;
     current.relaxationFactor =
-        details::AutoRelaxationFactor(current.A, current.smoother, kOptions, s + 1)
+        details::AutoRelaxationFactor(
+            current.A, current.smoother, kOptions, s + 1, rhs.TopRows(current.A.Rows()))
             .value_or(kDefaultRelaxationFactor);
     auto& next = _levels[s + 1];
     details::Galerkin(next.transfer, current.A, AsGraphView(current.PtA), &current.PtA, next.A);

@@ -251,6 +251,9 @@ struct AMGPrec : Preconditioner<Scalar> {
   BlockSparseMatrixView<Scalar const, kDofsPerNode, int const, int const> _Af;
   AMGOptions<Scalar> _options = {};
   DynamicArray<Scalar> _relaxationFactors = {};
+  /// @brief Random RHS of the damping estimates, drawn with the fine size. Each level uses its
+  /// leading entries.
+  ColumnVector<Scalar> _spectralRadiusRhs;
   Workspace _workspace = {};
 
   template <bool kWithInitialX, typename VectorIn, typename VectorOut>
@@ -340,6 +343,8 @@ struct AMGPrec : Preconditioner<Scalar> {
 
 namespace details {
 
+/// @brief Fill @p out with pseudo-random values in [-1, 1] from a fixed seed. Each entry depends
+/// only on its index, so a shorter vector equals the leading entries of a longer one.
 template <typename Scalar>
 void SetXorShiftRandom(ColumnVectorView<Scalar> out) {
   constexpr uint32_t kSeed = 0x9E3779B9u;
@@ -412,15 +417,20 @@ Scalar EstimateSpectralRadiusPowerMethod(
 /// @param[in] invDiag Diagonal preconditioner D^{-1}. Must support Solve(in, out).
 /// @param[in] numIterations Requested PCG iteration budget, clamped to the scalar dimension of A.
 /// The completed iteration count determines the dimension of T.
+/// @param[in] rhs Random RHS, with A.Rows() entries.
 /// @return Deterministic finite-iteration Ritz estimate of lambda_max(D^{-1} A), or 0 if the
 /// estimate fails.
 ///
 /// @note The Lanczos interpretation assumes A and D are SPD. The returned value is used to choose a
 /// damping factor. It is not guaranteed to be an upper bound on the true largest eigenvalue.
-template <typename MatrixOp, typename PrecOp>
-auto EstimateSpectralRadius(MatrixOp const& A, PrecOp const& invDiag, int numIterations) {
-  using Scalar = typename MatrixOp::NonConstScalar;
+template <typename MatrixOp, typename PrecOp, typename Scalar>
+Scalar EstimateSpectralRadius(
+    MatrixOp const& A,
+    PrecOp const& invDiag,
+    int numIterations,
+    ColumnVectorView<Scalar const> rhs) {
   MOCHI_ASSERT_VERBOSE(numIterations > 0, "Number of iterations must be positive.");
+  MOCHI_ASSERT_VERBOSE(rhs.Rows() == A.Rows(), "Expected one RHS entry per row.");
 
   int const n = A.Rows();
   if (n <= 0) {
@@ -441,8 +451,8 @@ auto EstimateSpectralRadius(MatrixOp const& A, PrecOp const& invDiag, int numIte
   alphas.reserve(maxIterations);
   betas.reserve(maxIterations - 1);
 
-  // Initial residual r_0 is random (zero initial guess)
-  SetXorShiftRandom(r);
+  // Initial residual r_0 is the RHS (zero initial guess)
+  r = rhs;
 
   // z_0 = D^{-1} r_0
   invDiag.Solve(r, z);
@@ -574,14 +584,16 @@ auto EstimateSpectralRadius(MatrixOp const& A, PrecOp const& invDiag, int numIte
 /// out).
 /// @param[in] options Supplies the spectral radius safety factor and iteration budget.
 /// @param[in] level Zero-based smoothed level, reported in warnings.
+/// @param[in] rhs Random RHS of the estimate, with A.Rows() entries.
 /// @return The relaxation factor, or no value (with a warning) if it is not positive and finite.
 template <typename MatrixOp, typename PrecOp, typename Scalar>
 std::optional<Scalar> AutoRelaxationFactor(
     MatrixOp const& A,
     PrecOp const& invDiag,
     AMGOptions<Scalar> const& options,
-    int level) {
-  auto const estimate = EstimateSpectralRadius(A, invDiag, options.spectralRadiusMaxIters);
+    int level,
+    ColumnVectorView<Scalar const> rhs) {
+  auto const estimate = EstimateSpectralRadius(A, invDiag, options.spectralRadiusMaxIters, rhs);
   if (estimate == Scalar(0)) {
     MOCHI_LOG_WARNING(
         "AMG auto relaxation factor skipped at level %d: Spectral-radius estimate was not positive and finite. Using the default relaxation factor.",
@@ -1020,12 +1032,18 @@ void AMGPrec<Scalar, kDofsPerNode>::RefreshRelaxationFactors() {
     return;
   }
 
+  // At most one aggregate per node, so no coarse level has more rows than the fine one.
+  if (_spectralRadiusRhs.Rows() != _Af.Rows()) {
+    _spectralRadiusRhs = ColumnVector<Scalar>(_Af.Rows());
+    details::SetXorShiftRandom(AsView(_spectralRadiusRhs));
+  }
+
   // Estimate lambda_max(D^{-1} A) separately for each smoothed level.
+  auto const rhs = AsConstView(_spectralRadiusRhs);
   for (int level = 0; level < numSmoothingLevels; ++level) {
-    auto const relaxationFactor = (level == 0)
-        ? details::AutoRelaxationFactor(_Af, std::get<0>(_relaxOps[level]), _options, level)
-        : details::AutoRelaxationFactor(
-              _coarsenings[level - 1].PtAP, std::get<0>(_relaxOps[level]), _options, level);
+    auto const A = (level == 0) ? _Af : AsConstView(_coarsenings[level - 1].PtAP);
+    auto const relaxationFactor = details::AutoRelaxationFactor(
+        A, std::get<0>(_relaxOps[level]), _options, level, rhs.TopRows(A.Rows()));
     if (relaxationFactor) {
       _relaxationFactors[level] = *relaxationFactor;
     }

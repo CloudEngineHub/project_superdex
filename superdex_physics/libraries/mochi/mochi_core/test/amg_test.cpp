@@ -166,13 +166,20 @@ static void ExpectSpectralRadiusEstimateBoundsLambdaMax(real estimate, int n, re
   EXPECT_LE(estimate, lambdaMax * (1.0_r + 1.0e-4_r));
 }
 
+// The AMGs' damping-estimate RHS, so that estimates and damping factors match theirs.
+[[nodiscard]] static ColumnVector<real> RandomRhs(int numRows) {
+  ColumnVector<real> rhs(numRows);
+  krylov::details::SetXorShiftRandom(AsView(rhs));
+  return rhs;
+}
+
 template <typename MatrixType>
 [[nodiscard]] static real EstimateAutoRelaxationFactor(
     MatrixType const& A,
     krylov::AMGOptions<real> const& options) {
   krylov::BlockJacobiPrec<real, 1> invDiag(A);
-  auto const estimate =
-      krylov::details::EstimateSpectralRadius(A, invDiag, options.spectralRadiusMaxIters);
+  auto const estimate = krylov::details::EstimateSpectralRadius(
+      A, invDiag, options.spectralRadiusMaxIters, AsConstView(RandomRhs(A.Rows())));
   EXPECT_GT(estimate, 0_r);
   return real(4.0 / 3.0) / (options.spectralRadiusSafetyFactor * estimate);
 }
@@ -216,8 +223,6 @@ class OverflowingBetaPrec {
 
 class RitzOverflowOp {
  public:
-  using NonConstScalar = real;
-
   explicit RitzOverflowOp(int numRows) : _numRows(numRows) {}
 
   int Rows() const {
@@ -540,9 +545,11 @@ static int ExpectAMGProperties(AMGProblem<MatrixType> const& problem) {
     Matrix<double> const Pt = P.Transpose();
     EXPECT_EQ(MaxAbsDifference(R, Pt), 0.0);
     Matrix<double> const PtA = Pt * A;
+    // Rounding relative to the largest product, since the sums cancel on rigid motions.
+    double const productScale = MaxAbs(P) * MaxAbs(A);
     auto const storedPtA = prec.StoredPtA(s);
     if (storedPtA.Rows() > 0) {
-      EXPECT_LE(MaxAbsDifference(storedPtA, PtA), tol * MaxAbs(PtA));
+      EXPECT_LE(MaxAbsDifference(storedPtA, PtA), tol * productScale);
     }
     Matrix<double> galerkin = PtA * P;
     DynamicArray<int> columns;
@@ -556,7 +563,7 @@ static int ExpectAMGProperties(AMGProblem<MatrixType> const& problem) {
             3.0;
       }
     }
-    EXPECT_LE(MaxAbsDifference(coarseA, galerkin), tol * MaxAbs(galerkin));
+    EXPECT_LE(MaxAbsDifference(coarseA, galerkin), tol * productScale * MaxAbs(P));
     if constexpr (AMG::kExactlySymmetricCoarseMatrices) {
       Matrix<double> const coarseAt = coarseA.Transpose();
       EXPECT_EQ(MaxAbsDifference(coarseA, coarseAt), 0.0);
@@ -794,8 +801,11 @@ enum class AMGFixture {
     for (int i = 0; i + 4 < 10; ++i) {
       groups.push_back({i, i + 1, i + 2, i + 3, i + 4});
     }
-    // An isolated node, which forms its own aggregate.
-    reference.push_back({2.0, 0.0, 0.0});
+    // Seven isolated nodes, which form their own aggregates, so that level 1, with 6 rows per
+    // aggregate, has more rows than the fine level.
+    for (int i = 0; i < 7; ++i) {
+      reference.push_back({2.0 + i, 0.0, 0.0});
+    }
   } else {
     // A 12 x 3 strip of triangles bent into a quarter arc, with the bending stencil: the nodes of
     // every two triangles that share an edge.
@@ -1205,9 +1215,13 @@ TEST_P(RigidModesAMGTest, Properties) {
     // The smoother-only cycle: x = u + omega D^{-1} (b - A u), with u = omega D^{-1} b and the
     // automatic damping of AMGPrec.
     krylov::BlockJacobiPrec<real, 3, /*kIsSymmetric*/ true> const smoother(problem.A);
-    real const omega =
-        krylov::details::AutoRelaxationFactor(problem.A, smoother, krylov::AMGOptions<real>{}, 0)
-            .value_or(krylov::AMGPrec<real, 3>::kDefaultRelaxationFactor);
+    real const omega = krylov::details::AutoRelaxationFactor(
+                           problem.A,
+                           smoother,
+                           krylov::AMGOptions<real>{},
+                           0,
+                           AsConstView(RandomRhs(problem.A.Rows())))
+                           .value_or(krylov::AMGPrec<real, 3>::kDefaultRelaxationFactor);
     ColumnVector<real> b(problem.A.Rows());
     b.SetRandom(3);
     ColumnVector<real> u(b.Rows());
@@ -1235,7 +1249,7 @@ constexpr RigidModesRow kRigidModesRows[] = {
     {"MovedStrip", AMGFixture::MovedStrip, 0, 0, 1, 1, 25},
     {"CollinearCurrent", AMGFixture::CollinearCurrent, 0, 3, 1, 1},
     {"CollinearReference", AMGFixture::CollinearReference, 3, 0, 1, 1},
-    {"TenNodes", AMGFixture::TenNodes, 3, 1, 2, 2},
+    {"TenNodes", AMGFixture::TenNodes, 9, 7, 2, 2},
     {"NearlyCollinear", AMGFixture::NearlyCollinear, 1, 1, 1, 1},
     {"CoupledNearlyCollinear", AMGFixture::CoupledNearlyCollinear, 1, 0, 1, 1},
     {"RoundsToSingular", AMGFixture::RoundsToSingular, 0, 0, 1, 0},
@@ -1717,7 +1731,9 @@ TEST(AMG, EstimateSpectralRadiusPCGExactResidualZero) {
   Matrix<real> A(4, 4);
   A.SetIdentity();
   krylov::IdentityPrec<real> invDiag(A);
-  EXPECT_EQ(krylov::details::EstimateSpectralRadius(A, invDiag, 8), 1_r);
+  EXPECT_EQ(
+      krylov::details::EstimateSpectralRadius(A, invDiag, 8, AsConstView(RandomRhs(A.Rows()))),
+      1_r);
 }
 
 TEST(AMG, EstimateSpectralRadiusPCGRejectsZeroQuadraticWithNonzeroResidual) {
@@ -1726,7 +1742,9 @@ TEST(AMG, EstimateSpectralRadiusPCGRejectsZeroQuadraticWithNonzeroResidual) {
   A(1, 1) = 2_r;
   ZeroAfterFirstSolvePrec invDiag;
   auto suppressWarnings = mochi::test::SuppressLogWarning();
-  EXPECT_EQ(krylov::details::EstimateSpectralRadius(A, invDiag, 2), 0_r);
+  EXPECT_EQ(
+      krylov::details::EstimateSpectralRadius(A, invDiag, 2, AsConstView(RandomRhs(A.Rows()))),
+      0_r);
 }
 
 TEST(AMG, EstimateSpectralRadiusPCGRejectsNonFiniteBeta) {
@@ -1735,7 +1753,9 @@ TEST(AMG, EstimateSpectralRadiusPCGRejectsNonFiniteBeta) {
   A.SetIdentity();
   OverflowingBetaPrec invDiag;
   auto suppressWarnings = mochi::test::SuppressLogWarning();
-  EXPECT_EQ(krylov::details::EstimateSpectralRadius(A, invDiag, 2), 0_r);
+  EXPECT_EQ(
+      krylov::details::EstimateSpectralRadius(A, invDiag, 2, AsConstView(RandomRhs(A.Rows()))),
+      0_r);
 }
 
 TEST(AMG, EstimateSpectralRadiusPCGRejectsInvalidRitzMatrix) {
@@ -1743,7 +1763,9 @@ TEST(AMG, EstimateSpectralRadiusPCGRejectsInvalidRitzMatrix) {
   RitzOverflowOp A(n);
   RitzOverflowPrec invDiag;
   auto suppressWarnings = mochi::test::SuppressLogWarning();
-  EXPECT_EQ(krylov::details::EstimateSpectralRadius(A, invDiag, 2), 0_r);
+  EXPECT_EQ(
+      krylov::details::EstimateSpectralRadius(A, invDiag, 2, AsConstView(RandomRhs(A.Rows()))),
+      0_r);
 }
 
 TEST(AMG, EstimateSpectralRadiusPCG1D) {
@@ -1751,8 +1773,8 @@ TEST(AMG, EstimateSpectralRadiusPCG1D) {
   for (int n : {15, 31, 63}) {
     auto A = mochi::test::Make3ptLaplacianMatrix(n);
     krylov::BlockJacobiPrec<real, 1> invDiag(A);
-    auto estimate =
-        krylov::details::EstimateSpectralRadius(A, invDiag, options.spectralRadiusMaxIters);
+    auto estimate = krylov::details::EstimateSpectralRadius(
+        A, invDiag, options.spectralRadiusMaxIters, AsConstView(RandomRhs(n)));
     ExpectSpectralRadiusEstimateBoundsLambdaMax(estimate, n, options.spectralRadiusSafetyFactor);
   }
 }
@@ -1782,8 +1804,8 @@ TEST(AMG, EstimateSpectralRadiusPCGBlockSize2_1D) {
     }
     auto Af = ToBlockSparseMatrix<kBlock>(A, true);
     krylov::BlockJacobiPrec<real, kBlock> invDiag(Af);
-    auto estimate =
-        krylov::details::EstimateSpectralRadius(Af, invDiag, options.spectralRadiusMaxIters);
+    auto estimate = krylov::details::EstimateSpectralRadius(
+        Af, invDiag, options.spectralRadiusMaxIters, AsConstView(RandomRhs(Af.Rows())));
     ExpectSpectralRadiusEstimateBoundsLambdaMax(
         estimate, nNodes, options.spectralRadiusSafetyFactor);
   }
