@@ -353,33 +353,33 @@ template <typename T, int kBlockSize>
 }
 
 /**
- * @brief Refresh the fine matrix of a per-actor AMG with the values of an actor pseudo-matrix of
- * the same sparsity pattern, compensating the interaction entries outside the pattern.
+ * @brief Refresh a block-sparse copy of an actor pseudo-matrix, made by @ref ToBlockSparseMatrix
+ * with the same policy, from the pseudo-matrix's current values.
  *
- * @param[in] actorMatrix Actor pseudo-matrix.
- * @param[in,out] Afine Fine matrix of the AMG.
+ * @tparam kMissingSparsityPolicy How to handle the interaction entries outside the copy's pattern.
+ * @param[in] actorMatrix Actor pseudo-matrix, with the sparsity pattern of the copy's source.
+ * @param[in,out] blockSparseCopy Copy to refresh.
  */
-template <typename T, int kBlockSize>
-void UpdateAMGFineMatrix(
+template <MissingSparsityPolicy kMissingSparsityPolicy, typename T, int kBlockSize>
+void RefreshBlockSparseCopy(
     ActorPseudoMatrix<T> const& actorMatrix,
-    BlockSparseMatrix<T, kBlockSize>& Afine) {
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-  // Reconstruct only for the verbose sparsity-pattern check.
-  auto Anew = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::AddAbsToDiagonal>(actorMatrix);
-  MOCHI_ASSERT_VERBOSE(Anew.Pointers() == Afine.Pointers(), "Sparsity pattern mismatch.");
-  MOCHI_ASSERT_VERBOSE(Anew.Indices() == Afine.Indices(), "Sparsity pattern mismatch.");
-#endif
+    BlockSparseMatrix<T, kBlockSize>& blockSparseCopy) {
   using BSpMatrixView = BlockSparseMatrixView<T const, kBlockSize>;
   MOCHI_ASSERT(
       std::holds_alternative<BSpMatrixView>(actorMatrix.actorMatrix),
-      "Actor matrix type not supported for AMG actor preconditioner.");
+      "Expected a block-sparse actor matrix with block size %d.",
+      kBlockSize);
   MOCHI_ASSERT_VERBOSE(actorMatrix.Rows() == actorMatrix.Cols(), "Expected square actor matrix.");
+  auto const& actorBlockSparse = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
+  MOCHI_ASSERT_VERBOSE(
+      actorBlockSparse.Pointers() == blockSparseCopy.Pointers() &&
+          actorBlockSparse.Indices() == blockSparseCopy.Indices(),
+      "Sparsity pattern mismatch.");
 
-  auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
-  auto srcValues = bsp.Values();
-  std::copy(srcValues.begin(), srcValues.end(), Afine.Values().begin());
-  AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::AddAbsToDiagonal>(
-      actorMatrix.interactionMatrices, Afine, actorMatrix.offset);
+  auto const values = actorBlockSparse.Values();
+  std::copy(values.begin(), values.end(), blockSparseCopy.Values().begin());
+  AddInteractionToBlockSparseMatrix<kMissingSparsityPolicy>(
+      actorMatrix.interactionMatrices, blockSparseCopy, actorMatrix.offset);
 }
 
 } // namespace details
@@ -394,6 +394,9 @@ template <typename T, int kBlockSize>
 class AMGActorPrec : public ActorPreconditioner<T> {
  public:
   static_assert(kBlockSize > 0, "Preconditioner block size must be positive");
+  // Compensating the interaction entries outside the pattern, instead of discarding them, keeps
+  // the fine matrix SPD whenever the full matrix is, as AMG requires.
+  static constexpr auto kMissingSparsityPolicy = MissingSparsityPolicy::AddAbsToDiagonal;
 
   explicit AMGActorPrec(ActorPseudoMatrix<T> const& A) {
     MOCHI_ASSERT_VERBOSE(A.Rows() > 0, "Actor row count must be positive.");
@@ -403,7 +406,7 @@ class AMGActorPrec : public ActorPreconditioner<T> {
         .numPreSmoothingSteps = 1,
         .numPostSmoothingSteps = 1,
     };
-    Afine = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::AddAbsToDiagonal>(A);
+    Afine = ToBlockSparseMatrix<kBlockSize, kMissingSparsityPolicy>(A);
     prec = std::make_unique<krylov::AMGPrec<T, kBlockSize>>(Afine, options);
   }
 
@@ -420,7 +423,7 @@ class AMGActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update numerical values using the existing sparsity structure. */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
-    details::UpdateAMGFineMatrix(actorMatrix, Afine);
+    details::RefreshBlockSparseCopy<kMissingSparsityPolicy>(actorMatrix, Afine);
     prec->Update(Afine);
   }
 
@@ -453,13 +456,17 @@ class AMGActorPrec : public ActorPreconditioner<T> {
 template <typename T>
 class RigidBodyModesAMGActorPrec : public ActorPreconditioner<T> {
  public:
+  // Compensating the interaction entries outside the pattern, instead of discarding them, keeps
+  // the fine matrix SPD whenever the full matrix is, as AMG requires.
+  static constexpr auto kMissingSparsityPolicy = MissingSparsityPolicy::AddAbsToDiagonal;
+
   explicit RigidBodyModesAMGActorPrec(ActorPseudoMatrix<T> const& A) {
     MOCHI_ASSERT_VERBOSE(A.Rows() > 0, "Actor row count must be positive.");
     auto const& [reference, displacement] = A.nodePositions;
     MOCHI_ASSERT(
         isize(reference) == A.Rows() && isize(displacement) == A.Rows(),
         "Expected 3 node position coordinates per block row.");
-    Afine = ToBlockSparseMatrix<3, MissingSparsityPolicy::AddAbsToDiagonal>(A);
+    Afine = ToBlockSparseMatrix<3, kMissingSparsityPolicy>(A);
     prec = std::make_unique<krylov::RigidBodyModesAMGPrec<T>>(Afine, reference, displacement);
   }
 
@@ -476,7 +483,7 @@ class RigidBodyModesAMGActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update numerical values and node positions using the existing sparsity structure. */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
-    details::UpdateAMGFineMatrix(actorMatrix, Afine);
+    details::RefreshBlockSparseCopy<kMissingSparsityPolicy>(actorMatrix, Afine);
     auto const& [reference, displacement] = actorMatrix.nodePositions;
     MOCHI_ASSERT(
         isize(reference) == actorMatrix.Rows() && isize(displacement) == actorMatrix.Rows(),
@@ -511,12 +518,13 @@ template <typename T, int kBlockSize>
 class ColoredSSORActorPrec : public ActorPreconditioner<T> {
  public:
   static_assert(kBlockSize > 0, "Preconditioner block size must be positive");
+  // With symmetric values and a strictly positive diagonal, colored SSOR with the default omega =
+  // 1 is SPD even if A is indefinite. Diagonal compensation is therefore unnecessary.
+  static constexpr auto kMissingSparsityPolicy = MissingSparsityPolicy::Discard;
 
   explicit ColoredSSORActorPrec(ActorPseudoMatrix<T> const& A_) {
     MOCHI_ASSERT_VERBOSE(A_.Rows() > 0, "Actor row count must be positive.");
-    // With symmetric values and a strictly positive diagonal, colored SSOR with the default omega =
-    // 1 is SPD even if A is indefinite. Diagonal compensation is therefore unnecessary.
-    A = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(A_);
+    A = ToBlockSparseMatrix<kBlockSize, kMissingSparsityPolicy>(A_);
     prec = std::make_unique<krylov::ColoredSSORPrec<BlockSparseMatrix<T, kBlockSize>>>(A);
   }
 
@@ -533,23 +541,7 @@ class ColoredSSORActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update numerical values using the existing sparsity structure. */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-    // Reconstruct only for the verbose sparsity-pattern check.
-    auto Anew = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(actorMatrix);
-    MOCHI_ASSERT_VERBOSE(Anew.Pointers() == A.Pointers(), "Sparsity pattern mismatch.");
-    MOCHI_ASSERT_VERBOSE(Anew.Indices() == A.Indices(), "Sparsity pattern mismatch.");
-#endif
-    using BSpMatrixView = BlockSparseMatrixView<T const, kBlockSize>;
-    MOCHI_ASSERT(
-        std::holds_alternative<BSpMatrixView>(actorMatrix.actorMatrix),
-        "Actor matrix type not supported for colored SSOR actor preconditioner.");
-    MOCHI_ASSERT_VERBOSE(actorMatrix.Rows() == actorMatrix.Cols(), "Expected square actor matrix.");
-
-    auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
-    auto srcValues = bsp.Values();
-    std::copy(srcValues.begin(), srcValues.end(), A.Values().begin());
-    details::AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::Discard>(
-        actorMatrix.interactionMatrices, A, actorMatrix.offset);
+    details::RefreshBlockSparseCopy<kMissingSparsityPolicy>(actorMatrix, A);
     prec->Update(A);
   }
 
@@ -598,10 +590,11 @@ template <typename T, int kBlockSize>
 class ILU0ActorPrec : public ActorPreconditioner<T> {
  public:
   static_assert(kBlockSize > 0, "Preconditioner block size must be positive");
+  static constexpr auto kMissingSparsityPolicy = MissingSparsityPolicy::Discard;
 
   explicit ILU0ActorPrec(ActorPseudoMatrix<T> const& A_) {
     MOCHI_ASSERT_VERBOSE(A_.Rows() > 0, "Actor row count must be positive.");
-    A = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(A_);
+    A = ToBlockSparseMatrix<kBlockSize, kMissingSparsityPolicy>(A_);
     prec = std::make_unique<krylov::RelaxedILUPrec<BlockSparseMatrix<T, kBlockSize>>>(
         A, /*fillInLevel*/ 0, /*alphaRelax*/ T{0});
   }
@@ -612,23 +605,7 @@ class ILU0ActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update numerical values using the existing sparsity structure. */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-    // Reconstruct only for the verbose sparsity-pattern check.
-    auto Anew = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::Discard>(actorMatrix);
-    MOCHI_ASSERT_VERBOSE(Anew.Pointers() == A.Pointers(), "Sparsity pattern mismatch.");
-    MOCHI_ASSERT_VERBOSE(Anew.Indices() == A.Indices(), "Sparsity pattern mismatch.");
-#endif
-    using BSpMatrixView = BlockSparseMatrixView<T const, kBlockSize>;
-    MOCHI_ASSERT(
-        std::holds_alternative<BSpMatrixView>(actorMatrix.actorMatrix),
-        "Actor matrix type not supported for ILU0 actor preconditioner.");
-    MOCHI_ASSERT_VERBOSE(actorMatrix.Rows() == actorMatrix.Cols(), "Expected square actor matrix.");
-
-    auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
-    auto srcValues = bsp.Values();
-    std::copy(srcValues.begin(), srcValues.end(), A.Values().begin());
-    details::AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::Discard>(
-        actorMatrix.interactionMatrices, A, actorMatrix.offset);
+    details::RefreshBlockSparseCopy<kMissingSparsityPolicy>(actorMatrix, A);
     prec->Update(A);
   }
 
