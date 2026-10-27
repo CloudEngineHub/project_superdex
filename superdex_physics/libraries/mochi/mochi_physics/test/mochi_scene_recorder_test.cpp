@@ -480,6 +480,19 @@ TEST_F(CaptureRestoreTest, WrongSceneMultiStepIntegration) {
   TestWrongScene(_mochiContext, IntegrationMethod::BDF3);
 }
 
+// Local bounds of all actors that have them, in actor iteration order.
+static DynamicArray<Aabb> GetActorAabbsLocal(Scene* scene) {
+  DynamicArray<Aabb> aabbs;
+  scene->ForEachActor([&](Actor* actor) {
+    Error error;
+    Aabb const aabb = actor->GetAabbLocal(error);
+    if (error.IsOK()) {
+      aabbs.push_back(aabb);
+    }
+  });
+  return aabbs;
+}
+
 // Common test logic for ActorTypes tests, parameterized by restore type.
 template <RestoreTypeConcept RestoreT>
 static void TestActorTypes(Context* mochiContext, IntegrationMethod integrationMethod) {
@@ -499,6 +512,7 @@ static void TestActorTypes(Context* mochiContext, IntegrationMethod integrationM
     AdvanceScene(sceneFrom, 2);
     auto state1 = restoreT.CaptureState(sceneFrom, test::ExpectOK{});
     EXPECT_TRUE(RestoreT::IsValidState(state1));
+    auto const aabbs1 = GetActorAabbsLocal(sceneFrom);
 
     // Advance the source scene and get the state again
     AdvanceScene(sceneFrom, 2);
@@ -515,6 +529,10 @@ static void TestActorTypes(Context* mochiContext, IntegrationMethod integrationM
     EXPECT_TRUE(RestoreT::IsValidState(state1B));
     EXPECT_FALSE(RestoreT::IsEqualHandle(state1, state1B)); // Different handles
     EXPECT_TRUE(restoreT.IsEqualState(state1, state1B));
+
+    // Bounds are recomputed on restore. The source's bounds are current in this scene, so they must
+    // match.
+    EXPECT_EQ(aabbs1, GetActorAabbsLocal(sceneTo));
 
     // Advance sceneTo and confirm the state matches state2
     AdvanceScene(sceneTo, 2);
@@ -724,6 +742,37 @@ TEST_IF_F(MOCHI_INTERNAL, CaptureRestoreTest, SceneSharingMultiStageIntegration)
 
 TEST_IF_F(MOCHI_INTERNAL, CaptureRestoreTest, SceneSharingMultiStepIntegration) {
   TestSceneSharing(_mochiContext, IntegrationMethod::BDF3);
+}
+
+// Convergence weights of FOM soft and shell actors depend on gravity. Restoring a state captured
+// before SetGravity must not bring back weights computed for the old gravity.
+TEST_IF_F(MOCHI_INTERNAL, CaptureRestoreTest, SetGravityBetweenCaptureAndRestore) {
+  Real3 const newGravity{0_r, -40_r, 0_r};
+  int constexpr kStepsBefore = 2; // Weights are computed lazily during the first step.
+  int constexpr kStepsAfter = 5;
+
+  Scene* scene = _mochiContext->CreateScene("Scene");
+  real offsetX = 0_r;
+  AddGroundPlane(scene);
+  AddSoftDuck(scene, &offsetX);
+#if MOCHI_USE_HDF5
+  AddShellDuck(scene, &offsetX);
+#endif
+  AdvanceScene(scene, kStepsBefore);
+
+  // Reference: weights are recomputed for the new gravity.
+  StateHandle const state0 = scene->CaptureState(test::ExpectOK{});
+  scene->SetGravity(newGravity);
+  AdvanceScene(scene, kStepsAfter);
+  StateHandle const stateFresh = scene->CaptureState(test::ExpectOK{});
+
+  // Restore a state captured with old-gravity weights.
+  scene->RestoreState(state0, false, test::ExpectOK{});
+  AdvanceScene(scene, kStepsAfter);
+  StateHandle const stateRestored = scene->CaptureState(test::ExpectOK{});
+  EXPECT_TRUE(scene->IsEqualState(stateFresh, stateRestored));
+
+  _mochiContext->DestroyScene(scene);
 }
 
 // Creates a scene with an articulated agent with pose controller and configures the integration

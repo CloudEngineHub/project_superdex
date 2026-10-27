@@ -16,8 +16,7 @@
 
 #pragma once
 
-#include "mochi_attributes.h"
-#include "mochi_simulation.h"
+#include "mochi_common_components.h"
 #include "mochi_snle.h"
 
 #include <mochi_core/linear_algebra/matrix.h>
@@ -43,12 +42,6 @@ namespace mochi {
 struct CActorConvergenceWeights : NoCopy {
   ColumnVector<real> values;
   bool isValid = false;
-
-  MOCHI_STRUCT_BEGIN(mochi::CActorConvergenceWeights);
-  MOCHI_ATTRIBUTE(CaptureState);
-  MOCHI_FIELD(values);
-  MOCHI_FIELD(isValid);
-  MOCHI_STRUCT_END();
 };
 
 /**

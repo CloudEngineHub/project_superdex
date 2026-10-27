@@ -18,6 +18,7 @@
 
 #include "mochi_articulated_body.h"
 #include "mochi_blended.h"
+#include "mochi_capture.h"
 #include "mochi_common_components.h"
 #include "mochi_compound.h"
 #include "mochi_constraint.h"
@@ -502,3 +503,12 @@ void mochi::PostStepEcs(entt::registry& reg) {
   // Update the external targets of pose controllers
   ecs::InvokeForEachGlobal(&controller::UpdateOldTargets, reg);
 }
+
+namespace mochi::step {
+void InitializeOnce(entt::registry& reg) {
+  // CBoundingVolume is not captured, so recompute deforming bounds after restore. Must run after
+  // the articulated post-restore systems, which rebuild the skinned displacements read here.
+  ForEachCurrentBoundsUpdateSystem(
+      [&](auto const& system) { capture::RegisterPostRestoreSystem(system, reg); });
+}
+} // namespace mochi::step

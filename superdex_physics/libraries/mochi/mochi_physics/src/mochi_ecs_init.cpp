@@ -53,6 +53,7 @@ namespace soft { void InitializeOnce(entt::registry& reg); }
 namespace shell { void InitializeOnce(entt::registry& reg); }
 namespace point_cloud_contact { void InitializeOnce(entt::registry& reg); }
 namespace rod { void InitializeOnce(entt::registry& reg); }
+namespace step { void InitializeOnce(entt::registry& reg); }
 // clang-format on
 
 void ecs::InitializeOnce(entt::registry& reg) {
@@ -87,6 +88,10 @@ void ecs::InitializeOnce(entt::registry& reg) {
   shell::InitializeOnce(reg);
   point_cloud_contact::InitializeOnce(reg);
   rod::InitializeOnce(reg);
+
+  // Must come last: its post-restore systems read derived state rebuilt by other post-restore
+  // systems, and post-restore systems run in registration order.
+  step::InitializeOnce(reg);
 }
 
 } // namespace mochi

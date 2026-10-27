@@ -59,4 +59,9 @@ void PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& descendan
  */
 void UpdateAllActorQueries(entt::registry& reg);
 
+namespace step {
+// Call once on startup, after all other modules' InitializeOnce.
+void InitializeOnce(entt::registry& reg);
+} // namespace step
+
 } // namespace mochi

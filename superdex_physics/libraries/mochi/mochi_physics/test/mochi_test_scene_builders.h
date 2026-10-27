@@ -106,6 +106,36 @@ inline Actor* AddSoftDuck(Scene* scene, real* offsetX = nullptr) {
   return actor;
 }
 
+// Dynamic soft cube with a contact skin, just above the ground plane.
+inline Actor* AddSoftContactSkinCube(Scene* scene, real* offsetX = nullptr) {
+  auto* context = scene->GetContext();
+  real constexpr kCubeScale = 0.1_r;
+  real constexpr kCubeLift = 0.1_r;
+  real const x = offsetX ? *offsetX : 0_r;
+
+  SoftActorParams params;
+  params.name = "ContactSkinCube";
+  params.layer = "Object";
+  params.shape = context->LoadShapeFromFile(
+      test::GetAssetPath("cube/cube_minimal_contact_skin.mochi.json"),
+      Real3{kCubeScale, kCubeScale, kCubeScale},
+      TransformRT::Identity(),
+      test::ExpectOK{});
+  params.useContactSkin = true;
+  params.material.density = 1000_r;
+  params.material.type = SoftMaterialType::NeoHookean;
+  params.material.neoHookean.poissonRatio = 0.3_r;
+  params.material.neoHookean.youngsModulus = 10000_r;
+  params.worldFromLocal.SetTranslation(Real3{x, kCubeLift, -0.5_r * kCubeScale});
+  auto* actor = scene->CreateSoftActor(params, test::ExpectOK{});
+
+  if (offsetX) {
+    *offsetX += 1.5_r * kCubeScale;
+  }
+
+  return actor;
+}
+
 // Dynamic shell duck just above the ground plane.
 inline Actor* AddShellDuck(Scene* scene, real* offsetX = nullptr) {
   MOCHI_ASSERT(MOCHI_USE_HDF5, "Adding a shell duck requires HDF5 support");
@@ -138,8 +168,43 @@ inline Actor* AddShellDuck(Scene* scene, real* offsetX = nullptr) {
   return actor;
 }
 
-// Dynamic rod actor: a free rod above the ground plane.
-inline Actor* AddRod(Scene* scene, real* offsetX = nullptr) {
+// Dynamic shell box with a contact skin, just above the ground plane.
+inline Actor* AddShellContactSkinBox(Scene* scene, real* offsetX = nullptr) {
+  MOCHI_ASSERT(MOCHI_USE_HDF5, "Adding a shell box requires HDF5 support");
+  auto* context = scene->GetContext();
+  // The asset spans about [-0.09, 0.1] x [-0.03, 0.03] x [0, 0.29].
+  real constexpr kBoxSizeX = 0.2_r;
+  real constexpr kBoxSizeZ = 0.3_r;
+  real constexpr kBoxLift = 0.1_r;
+  real const x = offsetX ? *offsetX : 0_r;
+
+  experimental::ShellActorParams params;
+  params.name = "ContactSkinBox";
+  params.layer = "Object";
+  params.shape = context->LoadShapeFromFile(
+      test::GetAssetPath("shell_contact_skin/cereal_box_subdivided.mochi.h5"),
+      Real3{1_r, 1_r, 1_r},
+      TransformRT::Identity(),
+      test::ExpectOK{});
+  params.useContactSkin = true;
+  params.material = experimental::ShellMaterialParamsFrom3dIsotropic(
+      10000_r, // youngsModulus3d
+      0.3_r, // poissonRatio
+      1000_r, // density3d
+      0.01_r, // thickness
+      test::ExpectOK{});
+  params.worldFromLocal.SetTranslation(Real3{x + 0.5_r * kBoxSizeX, kBoxLift, -0.5_r * kBoxSizeZ});
+  auto* actor = experimental::CreateShellActor(scene, params, test::ExpectOK{});
+
+  if (offsetX) {
+    *offsetX += 1.2_r * kBoxSizeX;
+  }
+
+  return actor;
+}
+
+// Dynamic rod actor: a free rod above the ground plane, optionally with a tubular contact skin.
+inline Actor* AddRod(Scene* scene, real* offsetX = nullptr, bool useContactSkin = false) {
   int constexpr kNumNodes = 8;
   real constexpr kRodLength = 0.2_r;
   real constexpr kRodRadius = 0.005_r;
@@ -162,10 +227,23 @@ inline Actor* AddRod(Scene* scene, real* offsetX = nullptr) {
   }
   // Define parameters for the rod actor
   experimental::RodActorParams params;
-  params.name = "Rod";
+  params.name = useContactSkin ? "ContactSkinRod" : "Rod";
   params.layer = "Object";
-  params.shape = experimental::CreatePolylineShape(
-      scene->GetContext(), nodes, frameAxes, /*isClosedLoop=*/false, test::ExpectOK{});
+  if (useContactSkin) {
+    int constexpr kNumCrossSectionSegments = 8;
+    ModelData const model = experimental::GenerateTubularRodModelData(
+        nodes,
+        frameAxes,
+        kRodRadius,
+        kNumCrossSectionSegments,
+        /*isClosedLoop=*/false,
+        test::ExpectOK{});
+    params.shape = scene->GetContext()->CreateModelShape(model, test::ExpectOK{});
+  } else {
+    params.shape = experimental::CreatePolylineShape(
+        scene->GetContext(), nodes, frameAxes, /*isClosedLoop=*/false, test::ExpectOK{});
+  }
+  params.useContactSkin = useContactSkin;
   params.worldFromLocal.SetTranslation(Real3{x, kRodLift, 0_r});
 
   // Material properties for a circular cross-section rod
@@ -732,6 +810,9 @@ inline std::tuple<Scene*, Actor*> CreateSceneActorTypes(
   auto* agent = AddNChainBody(
       mochiContext, scene, "Articulated Agent", -90_r * kRadiansPerDegree, 0_r, true, offsetX);
   AddPoseController(agent);
+  AddSoftContactSkinCube(scene, &offsetX);
+  AddShellContactSkinBox(scene, &offsetX);
+  AddRod(scene, &offsetX, /*useContactSkin=*/true);
   AddSoftAllegro(mochiContext, scene);
   // TODO: Add a ROM actor to the scene.
 
