@@ -49,6 +49,19 @@ class SurfaceRemeshingParams:
     repair_mesh: bool
     def __init__(self) -> None: ...
 
+class TetrahedralizationParams:
+    edge_size: float
+    relative_to_mesh_size: bool
+    facet_distance_bound: float
+    facet_angle_bound: float
+    cell_radius_edge_ratio: float
+    detect_features: bool
+    sharp_feature_angle: float
+    perturb: bool
+    exude: bool
+    odt: bool
+    def __init__(self) -> None: ...
+
 class DistributionStatistics:
     mean: float
     standard_deviation: float
@@ -69,6 +82,11 @@ def remesh_surface(
     vertices: npt.NDArray[np.floating],
     faces: npt.NDArray[np.integer],
     params: SurfaceRemeshingParams = ...,
+) -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.integer]]: ...
+def tetrahedralize(
+    vertices: npt.NDArray[np.floating],
+    faces: npt.NDArray[np.integer],
+    params: TetrahedralizationParams = ...,
 ) -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.integer]]: ...
 def compute_mesh_statistics(
     vertices: npt.NDArray[np.floating],

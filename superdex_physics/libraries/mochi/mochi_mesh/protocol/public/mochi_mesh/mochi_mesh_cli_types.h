@@ -345,4 +345,23 @@ struct MeshUnionParams {
   double wrapDetail = 0.01;
 };
 
+/// @brief [Experimental] Parameters for tetrahedral volume meshing of a closed triangle surface.
+/// @warning This API may change in future releases.
+struct TetrahedralizationParams {
+  double edgeSize = 0.1; ///< Target tetrahedron edge length. Must be positive.
+  bool relativeToMeshSize = true; ///< Length params are fractions of avg bounding box dimension,
+                                  ///< otherwise coordinate units
+  double facetDistanceBound = 0.0; ///< Upper bound on the distance between boundary facets and the
+                                   ///< input surface. If 0, auto-computed as edgeSize / 5.
+  double facetAngleBound = 25.0; ///< Lower bound on boundary facet angles [degrees], in (0, 30].
+  double cellRadiusEdgeRatio = 3.0; ///< Upper bound on the circumradius-to-shortest-edge ratio of
+                                    ///< each tetrahedron. Must be at least 2.
+  bool detectFeatures = true; ///< Detect and preserve sharp feature edges of the input
+  double sharpFeatureAngle = 60.0; ///< Angle between adjacent face normals above which an edge is
+                                   ///< sharp [degrees], in (0, 180]
+  bool perturb = true; ///< Remove sliver tetrahedra by vertex perturbation
+  bool exude = true; ///< Remove sliver tetrahedra by sliver exudation
+  bool odt = false; ///< Smooth the mesh by Optimal Delaunay Triangulation (slower)
+};
+
 } // namespace mochi::mesh

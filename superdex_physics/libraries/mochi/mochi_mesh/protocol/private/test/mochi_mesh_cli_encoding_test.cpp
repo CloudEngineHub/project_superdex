@@ -171,6 +171,30 @@ MeshClosureParams DistinctMeshClosureParams() {
   return params;
 }
 
+// Every value differs from its default, and every bool is flipped from its default.
+TetrahedralizationParams DistinctTetrahedralizationParams() {
+  TetrahedralizationParams params;
+  params.edgeSize = 0.375;
+  params.relativeToMeshSize = false;
+  params.facetDistanceBound = 0.0625;
+  params.facetAngleBound = 22.5;
+  params.cellRadiusEdgeRatio = 2.5;
+  params.detectFeatures = false;
+  params.sharpFeatureAngle = 45.0;
+  params.perturb = false;
+  params.exude = false;
+  params.odt = true;
+  return params;
+}
+
+bool DecodesAsMesh(MeshData const& mesh) {
+  PayloadWriter writer;
+  writer.WriteMeshData(mesh);
+  PayloadReader reader(writer.Bytes());
+  MeshData decoded;
+  return reader.ReadMeshData(decoded);
+}
+
 // Encodes a valid payload, then overwrites the u32 at @p offset so a decoder sees a corrupt value.
 std::vector<char> WithU32At(std::vector<char> bytes, size_t offset, uint32_t value) {
   std::memcpy(bytes.data() + offset, &value, sizeof(value));
@@ -387,6 +411,28 @@ TEST(MochiMeshCliEncoding, ReaderRejectsTruncatedMesh) {
   PayloadReader reader(bytes);
   MeshData decodedMesh;
   EXPECT_FALSE(reader.ReadMeshData(decodedMesh));
+}
+
+TEST(MochiMeshCliEncoding, ReaderRejectsStructurallyInvalidMesh) {
+  MeshData unsupportedElement = Triangle();
+  unsupportedElement.nodesPerElement = 2;
+  EXPECT_FALSE(DecodesAsMesh(unsupportedElement));
+
+  MeshData raggedCoordinates = Triangle();
+  raggedCoordinates.coordinates.push_back(1.0);
+  EXPECT_FALSE(DecodesAsMesh(raggedCoordinates));
+
+  MeshData raggedConnectivity = Tetrahedron();
+  raggedConnectivity.connectivity.pop_back();
+  EXPECT_FALSE(DecodesAsMesh(raggedConnectivity));
+
+  MeshData indexTooLarge = Triangle();
+  indexTooLarge.connectivity.back() = 3;
+  EXPECT_FALSE(DecodesAsMesh(indexTooLarge));
+
+  MeshData negativeIndex = Triangle();
+  negativeIndex.connectivity.front() = -1;
+  EXPECT_FALSE(DecodesAsMesh(negativeIndex));
 }
 
 TEST(MochiMeshCliEncoding, ScalarField3dRoundTrip) {
@@ -825,6 +871,44 @@ TEST(MochiMeshCliEncoding, MeshDataArrayRejectsOversizedCount) {
   PayloadReader reader(bytes);
   std::vector<MeshData> decoded;
   EXPECT_FALSE(reader.ReadMeshDataArray(decoded));
+}
+
+TEST(MochiMeshCliEncoding, TetrahedralizationParamsRoundTrip) {
+  TetrahedralizationParams const params = DistinctTetrahedralizationParams();
+
+  PayloadWriter writer;
+  writer.WriteTetrahedralizationParams(params);
+
+  PayloadReader reader(writer.Bytes());
+  TetrahedralizationParams decoded;
+  EXPECT_TRUE(reader.ReadTetrahedralizationParams(decoded));
+  EXPECT_TRUE(reader.AtEnd());
+  EXPECT_EQ(decoded.edgeSize, params.edgeSize);
+  EXPECT_EQ(decoded.relativeToMeshSize, params.relativeToMeshSize);
+  EXPECT_EQ(decoded.facetDistanceBound, params.facetDistanceBound);
+  EXPECT_EQ(decoded.facetAngleBound, params.facetAngleBound);
+  EXPECT_EQ(decoded.cellRadiusEdgeRatio, params.cellRadiusEdgeRatio);
+  EXPECT_EQ(decoded.detectFeatures, params.detectFeatures);
+  EXPECT_EQ(decoded.sharpFeatureAngle, params.sharpFeatureAngle);
+  EXPECT_EQ(decoded.perturb, params.perturb);
+  EXPECT_EQ(decoded.exude, params.exude);
+  EXPECT_EQ(decoded.odt, params.odt);
+}
+
+TEST(MochiMeshCliEncoding, TetrahedralizationParamsRejectInvalidPayload) {
+  PayloadWriter writer;
+  writer.WriteTetrahedralizationParams(DistinctTetrahedralizationParams());
+  TetrahedralizationParams decoded;
+
+  std::vector<char> truncated = writer.Bytes();
+  truncated.pop_back();
+  PayloadReader truncatedReader(truncated);
+  EXPECT_FALSE(truncatedReader.ReadTetrahedralizationParams(decoded));
+
+  // relativeToMeshSize is the bool right after the leading edgeSize double.
+  auto const badBool = WithU32At(writer.Bytes(), sizeof(double), 2);
+  PayloadReader badBoolReader(badBool);
+  EXPECT_FALSE(badBoolReader.ReadTetrahedralizationParams(decoded));
 }
 
 // Switching on an out-of-range enumerator is undefined behaviour, so every enum on the wire is

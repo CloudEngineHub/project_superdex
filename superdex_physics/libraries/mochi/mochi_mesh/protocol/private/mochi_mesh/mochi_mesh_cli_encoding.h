@@ -65,6 +65,7 @@ enum class GeometryOp : uint32_t {
   ReadStepFaceColors = 11, ///< List the distinct resolved face colors of a STEP file.
   TessellateStepByColor = 12, ///< As TessellateStep, but one mesh per resolved face color.
   UnionMeshes = 13, ///< Boolean union of several meshes into one closed surface.
+  Tetrahedralize = 14, ///< Tetrahedral volume mesh of a closed triangle surface (CGAL Mesh_3).
 };
 
 inline constexpr uint32_t kFrameMagic = 0x53445832u; ///< Frame magic ("SDX2").
@@ -155,6 +156,7 @@ class PayloadWriter {
   void WriteMeshEdgeSwapParams(MeshEdgeSwapParams const& params);
   void WriteMeshDecimateParams(MeshDecimateParams const& params);
   void WriteMeshUnionParams(MeshUnionParams const& params);
+  void WriteTetrahedralizationParams(TetrahedralizationParams const& params);
 
   [[nodiscard]] std::vector<char> const& Bytes() const {
     return _bytes;
@@ -178,6 +180,8 @@ class PayloadReader {
   [[nodiscard]] bool ReadDoubleArray(std::vector<double>& outValues);
   [[nodiscard]] bool ReadInt32Array(std::vector<int32_t>& outValues);
   [[nodiscard]] bool ReadByteArray(std::vector<char>& outBytes);
+  /// Rejects a nodesPerElement other than 3 or 4, a coordinate count that is not a multiple of 3,
+  /// a connectivity length that is not a multiple of nodesPerElement, and an out-of-range index.
   [[nodiscard]] bool ReadMeshData(MeshData& outMesh);
   /// Rejects a count larger than the remaining bytes could describe.
   [[nodiscard]] bool ReadMeshDataArray(std::vector<MeshData>& outMeshes);
@@ -203,6 +207,7 @@ class PayloadReader {
   [[nodiscard]] bool ReadMeshEdgeSwapParams(MeshEdgeSwapParams& outParams);
   [[nodiscard]] bool ReadMeshDecimateParams(MeshDecimateParams& outParams);
   [[nodiscard]] bool ReadMeshUnionParams(MeshUnionParams& outParams);
+  [[nodiscard]] bool ReadTetrahedralizationParams(TetrahedralizationParams& outParams);
 
   /// True once every byte has been consumed. Callers must check this after reading the last value
   /// they expect; a payload with trailing bytes is malformed.

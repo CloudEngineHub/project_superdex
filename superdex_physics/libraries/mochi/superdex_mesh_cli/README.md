@@ -11,6 +11,7 @@ CGAL symbol.
 - `RemeshSurface` — alpha-wrap / ACVD / Surface-Delaunay remeshing and repair.
 - `ReconstructSurfaceFromSdf` — marching-cubes isosurface from a Cartesian SDF grid.
 - `ApproximateHausdorffDistance` — one-sided approximate Hausdorff distance between two meshes.
+- `Tetrahedralize` — tetrahedral volume mesh of a closed triangle surface (Mesh_3).
 
 `main()` reads one framed request from stdin to EOF, dispatches, writes a framed response to stdout,
 and exits. The wire format is defined in `mochi_mesh/protocol` (CGAL-free). Coordinates use the

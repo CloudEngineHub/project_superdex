@@ -367,6 +367,21 @@ void PayloadWriter::WriteMeshUnionParams(MeshUnionParams const& params) {
   WriteDouble(wrapDetail);
 }
 
+void PayloadWriter::WriteTetrahedralizationParams(TetrahedralizationParams const& params) {
+  auto const& [edgeSize, relativeToMeshSize, facetDistanceBound, facetAngleBound, cellRadiusEdgeRatio, detectFeatures, sharpFeatureAngle, perturb, exude, odt] =
+      params;
+  WriteDouble(edgeSize);
+  WriteBool(relativeToMeshSize);
+  WriteDouble(facetDistanceBound);
+  WriteDouble(facetAngleBound);
+  WriteDouble(cellRadiusEdgeRatio);
+  WriteBool(detectFeatures);
+  WriteDouble(sharpFeatureAngle);
+  WriteBool(perturb);
+  WriteBool(exude);
+  WriteBool(odt);
+}
+
 bool PayloadReader::ReadU32(uint32_t& outValue) {
   return ReadPod(_data, _pos, outValue);
 }
@@ -442,8 +457,19 @@ bool PayloadReader::ReadByteArray(std::vector<char>& outBytes) {
 
 bool PayloadReader::ReadMeshData(MeshData& outMesh) {
   outMesh = {};
-  return ReadU32(outMesh.nodesPerElement) && ReadDoubleArray(outMesh.coordinates) &&
-      ReadInt32Array(outMesh.connectivity);
+  if (!ReadU32(outMesh.nodesPerElement) || !ReadDoubleArray(outMesh.coordinates) ||
+      !ReadInt32Array(outMesh.connectivity)) {
+    return false;
+  }
+  if ((outMesh.nodesPerElement != 3u && outMesh.nodesPerElement != 4u) ||
+      outMesh.coordinates.size() % 3 != 0 ||
+      outMesh.connectivity.size() % outMesh.nodesPerElement != 0) {
+    return false;
+  }
+  uint64_t const numNodes = outMesh.coordinates.size() / 3;
+  return std::ranges::all_of(outMesh.connectivity, [numNodes](int32_t index) {
+    return index >= 0 && static_cast<uint64_t>(index) < numNodes;
+  });
 }
 
 bool PayloadReader::ReadMeshDataArray(std::vector<MeshData>& outMeshes) {
@@ -680,4 +706,13 @@ bool PayloadReader::ReadMeshUnionParams(MeshUnionParams& outParams) {
   outParams = {};
   auto& [wrapFallback, wrapDetail] = outParams;
   return ReadBool(wrapFallback) && ReadDouble(wrapDetail);
+}
+
+bool PayloadReader::ReadTetrahedralizationParams(TetrahedralizationParams& outParams) {
+  outParams = {};
+  auto& [edgeSize, relativeToMeshSize, facetDistanceBound, facetAngleBound, cellRadiusEdgeRatio, detectFeatures, sharpFeatureAngle, perturb, exude, odt] =
+      outParams;
+  return ReadDouble(edgeSize) && ReadBool(relativeToMeshSize) && ReadDouble(facetDistanceBound) &&
+      ReadDouble(facetAngleBound) && ReadDouble(cellRadiusEdgeRatio) && ReadBool(detectFeatures) &&
+      ReadDouble(sharpFeatureAngle) && ReadBool(perturb) && ReadBool(exude) && ReadBool(odt);
 }

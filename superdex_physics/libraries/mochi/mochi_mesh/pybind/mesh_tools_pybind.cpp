@@ -21,6 +21,7 @@
 #include <mochi_mesh/isosurface_reconstruction.h>
 #include <mochi_mesh/mesh_statistics.h>
 #include <mochi_mesh/surface_remeshing.h>
+#include <mochi_mesh/tetrahedralization.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -175,6 +176,42 @@ NB_MODULE(MODULE_NAME, m) {
       "    params: SurfaceRemeshingParams\n\n"
       "Returns:\n"
       "    Tuple of (vertices, faces) numpy arrays");
+
+  // Tetrahedralization
+  nb::class_<TetrahedralizationParams>(m, "TetrahedralizationParams")
+      .def(nb::init<>())
+      .def_rw("edge_size", &TetrahedralizationParams::edgeSize)
+      .def_rw("relative_to_mesh_size", &TetrahedralizationParams::relativeToMeshSize)
+      .def_rw("facet_distance_bound", &TetrahedralizationParams::facetDistanceBound)
+      .def_rw("facet_angle_bound", &TetrahedralizationParams::facetAngleBound)
+      .def_rw("cell_radius_edge_ratio", &TetrahedralizationParams::cellRadiusEdgeRatio)
+      .def_rw("detect_features", &TetrahedralizationParams::detectFeatures)
+      .def_rw("sharp_feature_angle", &TetrahedralizationParams::sharpFeatureAngle)
+      .def_rw("perturb", &TetrahedralizationParams::perturb)
+      .def_rw("exude", &TetrahedralizationParams::exude)
+      .def_rw("odt", &TetrahedralizationParams::odt);
+
+  m.def(
+      "tetrahedralize",
+      [](RealArray const& vertices, IntArray const& faces, TetrahedralizationParams const& params) {
+        MeshDataView const inputMesh = MeshDataViewFromNumpy(vertices, faces);
+        Error error;
+        MeshData result = Tetrahedralize(inputMesh, params, error);
+        if (!error.IsOK()) {
+          throw MochiMeshErrorException(error);
+        }
+        return MeshDataToNumpy(result);
+      },
+      nb::arg("vertices"),
+      nb::arg("faces"),
+      nb::arg("params") = TetrahedralizationParams{},
+      "Generate a tetrahedral volume mesh from a closed triangle surface.\n\n"
+      "Args:\n"
+      "    vertices: (N, 3) array of vertex coordinates\n"
+      "    faces: (M, 3) array of triangle vertex indices\n"
+      "    params: TetrahedralizationParams\n\n"
+      "Returns:\n"
+      "    Tuple of (vertices, tetrahedra) numpy arrays");
 
   // Mesh statistics
   nb::class_<DistributionStatistics>(m, "DistributionStatistics")

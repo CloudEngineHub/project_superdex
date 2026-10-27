@@ -58,6 +58,7 @@ using mochi::mesh::StepMeshBodyParams;
 using mochi::mesh::StepTessellationParams;
 using mochi::mesh::StepVisualExportParams;
 using mochi::mesh::SurfaceRemeshingParams;
+using mochi::mesh::TetrahedralizationParams;
 using mochi::mesh::VisualExportOutput;
 using mochi::mesh::VisualExportStatus;
 using mochi::mesh::VisualMeshFormat;
@@ -112,6 +113,12 @@ DecimateMesh(MeshData const& mesh, MeshDecimateParams const& params, CliError& e
     std::vector<MeshData> const& meshes,
     MeshUnionParams const& params,
     bool& outUsedFallback,
+    CliError& error);
+/// Tetrahedral volume mesh of a closed, self-intersection-free triangle surface. Every output node
+/// is referenced by a tetrahedron, and the output is deterministic for a given input.
+[[nodiscard]] MeshData Tetrahedralize(
+    MeshData const& surfaceMesh,
+    TetrahedralizationParams const& params,
     CliError& error);
 
 } // namespace mochi::mesh::cli
