@@ -368,21 +368,41 @@ TEST(ActorPreconditionerTest, MissingInteractionEntryPolicies) {
   checkInteractionFormat(blockSparseInteraction);
 }
 
-TEST(ActorPreconditionerTest, AMGCompensatesMissingInteractionEntries) {
-  auto actorDense = RowMatrix<real>::Zero(6, 6);
+template <typename ActorPrec>
+class AMGActorPreconditionerTest : public testing::Test {};
+
+using AMGActorPreconditioners =
+    testing::Types<AMGActorPrec<real, 3>, RigidBodyModesAMGActorPrec<real>>;
+TYPED_TEST_SUITE(AMGActorPreconditionerTest, AMGActorPreconditioners);
+
+TYPED_TEST(
+    AMGActorPreconditionerTest,
+    CompensatesMissingInteractionEntriesAndUpdatesLikeConstruction) {
+  // The actor couples nodes 0 and 1 to node 2. The interaction couples nodes 0 and 1, outside the
+  // actor's pattern.
+  auto actorDense = RowMatrix<real>::Zero(9, 9);
   for (int i = 0; i < actorDense.Rows(); ++i) {
     actorDense(i, i) = 10_r;
   }
+  for (int const i : {0, 3}) {
+    actorDense(i, 6) = -1_r;
+    actorDense(6, i) = -1_r;
+  }
   auto actor = ToBlockSparseMatrix<3>(actorDense, true);
 
-  auto interactionDense = RowMatrix<real>::Zero(6, 6);
+  auto interactionDense = RowMatrix<real>::Zero(9, 9);
   interactionDense(0, 3) = -2_r;
   interactionDense(3, 0) = -2_r;
   auto interaction = ToSparseMatrix(interactionDense, true);
+  DynamicArray<real> const reference{0_r, 0_r, 0_r, 1_r, 0_r, 0_r, 0_r, 1_r, 0_r};
+  DynamicArray<real> displacement(9, 0_r);
   ActorPseudoMatrix<real> pseudoMatrix{
-      5, AsConstView(actor), {{5, 5, interaction, /*symmetricPair*/ std::nullopt}}};
+      5,
+      AsConstView(actor),
+      {{5, 5, interaction, /*symmetricPair*/ std::nullopt}},
+      {.reference = MakeConstSpan(reference), .displacement = MakeConstSpan(displacement)}};
 
-  AMGActorPrec<real, 3> preconditioner(pseudoMatrix);
+  TypeParam preconditioner(pseudoMatrix);
   auto expected = actorDense;
   expected(0, 0) += 2_r;
   expected(3, 3) += 2_r;
@@ -391,9 +411,34 @@ TEST(ActorPreconditionerTest, AMGCompensatesMissingInteractionEntries) {
   actor.SetValue(0, 0, 20_r);
   interaction.SetValue(0, 3, -5_r);
   interaction.SetValue(3, 0, -5_r);
+  displacement[8] = 0.5_r;
   preconditioner.Update(pseudoMatrix);
-  expected = actorDense;
-  expected(0, 0) = 25_r;
-  expected(3, 3) += 5_r;
-  EXPECT_TRUE(NearEqualMatrices(expected, ToMatrix(preconditioner.Afine), 0_r));
+  TypeParam const constructed(pseudoMatrix);
+  ColumnVector<real> x(9), Px(9), constructedPx(9);
+  x.SetRandom(3);
+  preconditioner.Solve(x, Px);
+  constructed.Solve(x, constructedPx);
+  EXPECT_SPAN_EQ(Px.GetConstSpan(), constructedPx.GetConstSpan());
+}
+
+TEST(ActorPreconditionerTest, RigidBodyModesAMGForwardsNodePositions) {
+  auto const A = MakeBlockSparseMatrix<real, 3>(3, 4, 5);
+  int const n = A.Rows();
+  ColumnVector<real> reference(n), displacement(n), x(n), Px(n), Nx(n);
+  // Zero reference positions make every level-0 aggregate member-only, exposing a swap.
+  reference.SetZero();
+  displacement.SetRandom(2);
+  x.SetRandom(123);
+  ActorPseudoMatrix<real> const actorPM{
+      0,
+      AsConstView(A),
+      {},
+      {.reference = reference.GetConstSpan(), .displacement = displacement.GetConstSpan()}};
+  krylov::RigidBodyModesAMGPrec<real> const P(
+      A, reference.GetConstSpan(), displacement.GetConstSpan());
+  RigidBodyModesAMGActorPrec<real> const N(actorPM);
+  EXPECT_EQ(PreconditionerType::AMG, N.GetType());
+  P.Solve(x, Px);
+  N.Solve(x, Nx);
+  EXPECT_TRUE(NearEqualMatrices(Px, Nx));
 }

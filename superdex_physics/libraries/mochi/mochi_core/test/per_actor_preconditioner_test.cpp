@@ -862,12 +862,21 @@ TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSeri
   auto actorMatrix = ToBlockSparseMatrix<kBlockSize>(denseActorMatrix, true);
   AnyMatrixView<real const> const actorMatrixView{AsConstView(actorMatrix)};
 
+  DynamicArray<real> const reference{0_r, 0_r, 0_r, 1_r, 0_r, 0_r};
+  DynamicArray<real> const displacement(kActorSize, 0_r);
+
   ActorPseudoMatrix<real> const firstActorMatrix{0, actorMatrixView, {}};
   ActorPseudoMatrix<real> const secondActorMatrix{kActorSize, actorMatrixView, {}};
   ActorPseudoMatrix<real> const thirdActorMatrix{2 * kActorSize, actorMatrixView, {}};
+  ActorPseudoMatrix<real> const fourthActorMatrix{
+      3 * kActorSize,
+      actorMatrixView,
+      {},
+      {.reference = MakeConstSpan(reference), .displacement = MakeConstSpan(displacement)}};
   BlockJacobiActorPrec<real, kBlockSize> blockJacobiPrec{firstActorMatrix};
   SymInverseActorPrec<real> symInversePrec{firstActorMatrix};
   AMGActorPrec<real, kBlockSize> amgPrec{thirdActorMatrix};
+  RigidBodyModesAMGActorPrec<real> rigidBodyModesAMGPrec{fourthActorMatrix};
   ILU0ActorPrec<real, kBlockSize> ilu0Prec{firstActorMatrix};
   ColoredSSORActorPrec<real, kBlockSize> coloredSSORPrec{secondActorMatrix};
 
@@ -882,23 +891,29 @@ TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSeri
       ActorPreconditionerParallelMode::SynchronizedTeam,
       amgPrec.GetConcurrentSolveRequirements().mode);
   ASSERT_EQ(kBlockSize, amgPrec.GetConcurrentSolveRequirements().rowBlockSize);
+  ASSERT_EQ(
+      ActorPreconditionerParallelMode::SynchronizedTeam,
+      rigidBodyModesAMGPrec.GetConcurrentSolveRequirements().mode);
+  ASSERT_EQ(kBlockSize, rigidBodyModesAMGPrec.GetConcurrentSolveRequirements().rowBlockSize);
   ExpectCost(blockJacobiPrec.GetConcurrentSolveCost(), {0.0, 36.0, 2, 0});
   ExpectCost(symInversePrec.GetConcurrentSolveCost(), {0.0, 66.0, 6, 0});
   ExpectCost(amgPrec.GetConcurrentSolveCost(), {14.4, 201.6, 2, 4});
+  ExpectCost(rigidBodyModesAMGPrec.GetConcurrentSolveCost(), {14.4, 201.6, 2, 5});
   ExpectCost(ilu0Prec.GetConcurrentSolveCost(), {78.0, 0.0, 1, 0});
   ExpectCost(coloredSSORPrec.GetConcurrentSolveCost(), {84.0, 0.0, 1, 6});
   EXPECT_EQ(2, coloredSSORPrec.prec->NumColors());
 
-  // ILU0 covers SingleWorker; colored SSOR and AMG cover SynchronizedTeam.
+  // ILU0 covers SingleWorker; colored SSOR and both AMGs cover SynchronizedTeam.
   PerActorPrec<real> prec({
       {0, kActorSize, ilu0Prec},
       {kActorSize, kActorSize, coloredSSORPrec},
       {2 * kActorSize, kActorSize, amgPrec},
+      {3 * kActorSize, kActorSize, rigidBodyModesAMGPrec},
   });
 
-  ColumnVector<real> x(3 * kActorSize);
-  ColumnVector<real> serialResult(3 * kActorSize);
-  ColumnVector<real> parallelResult(3 * kActorSize);
+  ColumnVector<real> x(4 * kActorSize);
+  ColumnVector<real> serialResult(4 * kActorSize);
+  ColumnVector<real> parallelResult(4 * kActorSize);
   x.SetRandom(17);
   serialResult.SetZero();
   prec.Solve(x, serialResult);
@@ -909,8 +924,8 @@ TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSeri
     EXPECT_TRUE(mochi::test::NearEqualMatrices(serialResult, parallelResult, 1e-5_r));
   };
 
-  expectPlanMatchesSerial({0, 3, 6, 9, 12, 15, 18});
-  expectPlanMatchesSerial({0, 6, 12, 18});
+  expectPlanMatchesSerial({0, 3, 6, 9, 12, 15, 18, 21, 24});
+  expectPlanMatchesSerial({0, 6, 12, 18, 24});
 }
 
 TEST(PerActorPreconditioner, SolveSplitsActorsAcrossThreads) {

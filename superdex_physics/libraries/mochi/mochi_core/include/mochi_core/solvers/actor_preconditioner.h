@@ -19,6 +19,7 @@
 #include <mochi_core/linear_algebra/actor_pseudo_matrix.h>
 #include <mochi_core/linear_algebra/any_matrix.h>
 #include <mochi_core/linear_algebra/krylov/amg/amg_prec.h>
+#include <mochi_core/linear_algebra/krylov/amg/rigid_body_modes_amg_prec.h>
 #include <mochi_core/linear_algebra/krylov/block_jacobi_prec.h>
 #include <mochi_core/linear_algebra/krylov/relaxed_ilu_prec.h>
 #include <mochi_core/linear_algebra/krylov/sym_inverse_prec.h>
@@ -315,6 +316,74 @@ class SymInverseActorPrec : public ActorPreconditioner<T> {
   int _numRows;
 };
 
+namespace details {
+
+/**
+ * @brief Estimated cost of concurrently applying a per-actor AMG with one block Jacobi pre- and
+ * post-smoothing step, calibrated for @ref krylov::AMGPrec.
+ *
+ * @param[in] Afine Fine matrix of the AMG.
+ * @param[in] numTeamBarriers Number of barrier waits in one concurrent application.
+ */
+template <typename T, int kBlockSize>
+[[nodiscard]] ActorPreconditionerCost AMGConcurrentSolveCost(
+    BlockSparseMatrix<T, kBlockSize> const& Afine,
+    int numTeamBarriers) {
+  int const numBlockRows = Afine.BlockRows();
+  double const fineMatVecCost =
+      BlockMatVecCost(static_cast<int>(Afine.NumNonZeroBlocks()), kBlockSize);
+  // Across four mesh resolutions, AMG work is 2.20-2.23x fine matvecs for soft meshes
+  // and 1.62-1.64x for shell meshes. Worker-0-only shares are 6-7% and 3-4%, respectively.
+  // Scale the (conservative) soft case to the observed ~3x runtime of AMG solve w.r.t. matvec:
+  // 0.2 fixed and 2.8 parallel matvec-equivalents.
+  // TODO(T290274539): Derive the costs from the hierarchy instead of fixed multiples of the
+  // fine-level cost. Only worker 0 runs the levels below the first coarsening, so fixedCost is
+  // their work, which varies across meshes. Also model the cache-line transfers after each
+  // barrier: workers read fine-level rows that other workers wrote near their range boundaries,
+  // and worker 0 gathers the first coarse-level vector from all workers. These grow with the
+  // worker count, so small AMGs otherwise get more workers than pay off. See D121889727 and
+  // D121889728.
+  double const fixedCost = 0.2 * fineMatVecCost;
+  double const parallelCost = 2.8 * fineMatVecCost;
+  return ActorPreconditionerCost{
+      .fixedCost = fixedCost,
+      .parallelCost = parallelCost,
+      .maxUsefulWorkers = numBlockRows,
+      .numTeamBarriers = numTeamBarriers};
+}
+
+/**
+ * @brief Refresh the fine matrix of a per-actor AMG with the values of an actor pseudo-matrix of
+ * the same sparsity pattern, compensating the interaction entries outside the pattern.
+ *
+ * @param[in] actorMatrix Actor pseudo-matrix.
+ * @param[in,out] Afine Fine matrix of the AMG.
+ */
+template <typename T, int kBlockSize>
+void UpdateAMGFineMatrix(
+    ActorPseudoMatrix<T> const& actorMatrix,
+    BlockSparseMatrix<T, kBlockSize>& Afine) {
+#if MOCHI_ASSERT_VERBOSE_ENABLED
+  // Reconstruct only for the verbose sparsity-pattern check.
+  auto Anew = ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::AddAbsToDiagonal>(actorMatrix);
+  MOCHI_ASSERT_VERBOSE(Anew.Pointers() == Afine.Pointers(), "Sparsity pattern mismatch.");
+  MOCHI_ASSERT_VERBOSE(Anew.Indices() == Afine.Indices(), "Sparsity pattern mismatch.");
+#endif
+  using BSpMatrixView = BlockSparseMatrixView<T const, kBlockSize>;
+  MOCHI_ASSERT(
+      std::holds_alternative<BSpMatrixView>(actorMatrix.actorMatrix),
+      "Actor matrix type not supported for AMG actor preconditioner.");
+  MOCHI_ASSERT_VERBOSE(actorMatrix.Rows() == actorMatrix.Cols(), "Expected square actor matrix.");
+
+  auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
+  auto srcValues = bsp.Values();
+  std::copy(srcValues.begin(), srcValues.end(), Afine.Values().begin());
+  AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::AddAbsToDiagonal>(
+      actorMatrix.interactionMatrices, Afine, actorMatrix.offset);
+}
+
+} // namespace details
+
 /**
  * @brief AMG actor preconditioner.
  *
@@ -351,24 +420,7 @@ class AMGActorPrec : public ActorPreconditioner<T> {
 
   /** @brief Update numerical values using the existing sparsity structure. */
   void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-    // Reconstruct only for the verbose sparsity-pattern check.
-    auto Anew =
-        ToBlockSparseMatrix<kBlockSize, MissingSparsityPolicy::AddAbsToDiagonal>(actorMatrix);
-    MOCHI_ASSERT_VERBOSE(Anew.Pointers() == Afine.Pointers(), "Sparsity pattern mismatch.");
-    MOCHI_ASSERT_VERBOSE(Anew.Indices() == Afine.Indices(), "Sparsity pattern mismatch.");
-#endif
-    using BSpMatrixView = BlockSparseMatrixView<T const, kBlockSize>;
-    MOCHI_ASSERT(
-        std::holds_alternative<BSpMatrixView>(actorMatrix.actorMatrix),
-        "Actor matrix type not supported for AMG actor preconditioner.");
-    MOCHI_ASSERT_VERBOSE(actorMatrix.Rows() == actorMatrix.Cols(), "Expected square actor matrix.");
-
-    auto const& bsp = std::get<BSpMatrixView>(actorMatrix.actorMatrix);
-    auto srcValues = bsp.Values();
-    std::copy(srcValues.begin(), srcValues.end(), Afine.Values().begin());
-    details::AddInteractionToBlockSparseMatrix<MissingSparsityPolicy::AddAbsToDiagonal>(
-        actorMatrix.interactionMatrices, Afine, actorMatrix.offset);
+    details::UpdateAMGFineMatrix(actorMatrix, Afine);
     prec->Update(Afine);
   }
 
@@ -378,27 +430,7 @@ class AMGActorPrec : public ActorPreconditioner<T> {
   }
 
   [[nodiscard]] ActorPreconditionerCost GetConcurrentSolveCost() const override {
-    int const numBlockRows = Afine.BlockRows();
-    double const fineMatVecCost =
-        details::BlockMatVecCost(static_cast<int>(Afine.NumNonZeroBlocks()), kBlockSize);
-    // Across four mesh resolutions, AMG work is 2.20-2.23x fine matvecs for soft meshes
-    // and 1.62-1.64x for shell meshes. Worker-0-only shares are 6-7% and 3-4%, respectively.
-    // Scale the (conservative) soft case to the observed ~3x runtime of AMG solve w.r.t. matvec:
-    // 0.2 fixed and 2.8 parallel matvec-equivalents.
-    // TODO(T290274539): Derive the costs from the hierarchy instead of fixed multiples of the
-    // fine-level cost. Only worker 0 runs the levels below the first coarsening, so fixedCost is
-    // their work, which varies across meshes. Also model the cache-line transfers after each
-    // barrier: workers read fine-level rows that other workers wrote near their range boundaries,
-    // and worker 0 gathers the first coarse-level vector from all workers. These grow with the
-    // worker count, so small AMGs otherwise get more workers than pay off. See D121889727 and
-    // D121889728.
-    double const fixedCost = 0.2 * fineMatVecCost;
-    double const parallelCost = 2.8 * fineMatVecCost;
-    return ActorPreconditionerCost{
-        .fixedCost = fixedCost,
-        .parallelCost = parallelCost,
-        .maxUsefulWorkers = numBlockRows,
-        .numTeamBarriers = prec->NumConcurrentSolveBarriers()};
+    return details::AMGConcurrentSolveCost(Afine, prec->NumConcurrentSolveBarriers());
   }
 
   constexpr PreconditionerType GetType() const override {
@@ -407,6 +439,66 @@ class AMGActorPrec : public ActorPreconditioner<T> {
 
   BlockSparseMatrix<T, kBlockSize> Afine;
   std::unique_ptr<krylov::AMGPrec<T, kBlockSize>> prec;
+};
+
+/**
+ * @brief AMG actor preconditioner whose coarse levels capture rigid body rotations, see @ref
+ * krylov::RigidBodyModesAMGPrec.
+ *
+ * @note Requires @ref ActorPseudoMatrix to be convertible to a block-sparse matrix with block size
+ * 3, and to have node positions.
+ * @note Consecutive @ref ConcurrentSolve calls must be separated by a synchronization of the whole
+ * team, such as the dot products of PCG.
+ */
+template <typename T>
+class RigidBodyModesAMGActorPrec : public ActorPreconditioner<T> {
+ public:
+  explicit RigidBodyModesAMGActorPrec(ActorPseudoMatrix<T> const& A) {
+    MOCHI_ASSERT_VERBOSE(A.Rows() > 0, "Actor row count must be positive.");
+    auto const& [reference, displacement] = A.nodePositions;
+    MOCHI_ASSERT(
+        isize(reference) == A.Rows() && isize(displacement) == A.Rows(),
+        "Expected 3 node position coordinates per block row.");
+    Afine = ToBlockSparseMatrix<3, MissingSparsityPolicy::AddAbsToDiagonal>(A);
+    prec = std::make_unique<krylov::RigidBodyModesAMGPrec<T>>(Afine, reference, displacement);
+  }
+
+  void Solve(ColumnVectorView<T const> x, ColumnVectorView<T> Px) const override {
+    prec->Solve(x, Px);
+  }
+
+  void ConcurrentSolve(
+      ColumnVectorView<T const> x,
+      ColumnVectorView<T> Px,
+      ParallelWorkerInfo const& data) const override {
+    prec->ConcurrentSolve(x, Px, data);
+  }
+
+  /** @brief Update numerical values and node positions using the existing sparsity structure. */
+  void Update(ActorPseudoMatrix<T> const& actorMatrix) override {
+    details::UpdateAMGFineMatrix(actorMatrix, Afine);
+    auto const& [reference, displacement] = actorMatrix.nodePositions;
+    MOCHI_ASSERT(
+        isize(reference) == actorMatrix.Rows() && isize(displacement) == actorMatrix.Rows(),
+        "Expected 3 node position coordinates per block row.");
+    prec->Update(Afine, reference, displacement);
+  }
+
+  [[nodiscard]] constexpr ActorPreconditionerParallelism GetConcurrentSolveRequirements()
+      const override {
+    return {ActorPreconditionerParallelMode::SynchronizedTeam, 3};
+  }
+
+  [[nodiscard]] ActorPreconditionerCost GetConcurrentSolveCost() const override {
+    return details::AMGConcurrentSolveCost(Afine, prec->NumConcurrentSolveBarriers());
+  }
+
+  constexpr PreconditionerType GetType() const override {
+    return PreconditionerType::AMG;
+  }
+
+  BlockSparseMatrix<T, 3> Afine;
+  std::unique_ptr<krylov::RigidBodyModesAMGPrec<T>> prec;
 };
 
 /**
