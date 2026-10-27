@@ -139,10 +139,10 @@ struct ModifierGuiContext {
 struct MeshStats {
   std::string base; // FormatMeshStats output; the geometry summary
   std::optional<mochi::Int3> sdfGrid; // prepended "SDF grid" line when set
-  // File-size line shown between the SDF-grid line and the geometry summary, when fileSizeBytes is
-  // set. `fileSizeLabel` is its caption ("File Size" for an on-disk Model Viewer slot, "Est. File
-  // Size" for a method's GLB estimate, "Est. Export Size" for an export modifier). See ComposeStats
-  // (model_editor.cpp).
+  std::optional<mochi::Int2> tetMesh; // prepended "Tet mesh" line (nodes, tets) when set
+  // File-size line shown first, when fileSizeBytes is set. `fileSizeLabel` is its caption ("File
+  // Size" for an on-disk Model Viewer slot, "Est. File Size" for a method's GLB estimate, "Est.
+  // Export Size" for an export modifier). See ComposeStats (model_editor.cpp).
   std::optional<int64_t> fileSizeBytes;
   std::string fileSizeLabel;
   double hausdorff = -1.0; // appended "Hausdorff" line when >= 0
@@ -206,6 +206,11 @@ class MeshProcessingMethod {
     return kReferencePrecedingSource;
   }
   virtual void RemapReferences(std::vector<int> const& /*oldToNew*/) {}
+  // Whether Run accepts a tetrahedral input mesh (e.g. downstream of Tetrahedralize). Most methods
+  // operate on triangle surfaces only.
+  virtual bool AcceptsTetrahedralInput() const {
+    return false;
+  }
   // Whether this method can currently produce output given @p ctx (sources check their file /
   // slot).
   virtual bool CanGenerate(ModifierRunContext const& /*ctx*/) const {

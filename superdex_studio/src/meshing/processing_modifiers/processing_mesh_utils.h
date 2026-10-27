@@ -47,6 +47,10 @@ namespace superdex::studio::processing {
 // normals per vertex, indices per triangle, plus a small constant chunk/header/material overhead.
 int64_t EstimateGlbSizeBytes(mochi::MeshData const& mesh);
 
+// Estimated size in bytes of @p mesh written as an ASCII Legacy VTK tetrahedral mesh (.vtk).
+// Deliberately count-based so estimating a large intermediate mesh remains O(1).
+int64_t EstimateVtkSizeBytes(mochi::MeshData const& mesh);
+
 // Estimated size in bytes of @p mesh written as a Wavefront OBJ (.obj): text vertex / normal /
 // face lines. Coarser than the GLB estimate (text size depends on coordinate magnitudes).
 int64_t EstimateObjSizeBytes(mochi::MeshData const& mesh);
@@ -58,6 +62,13 @@ int64_t EstimateMochiH5SizeBytes(mochi::MeshData const& mesh, int64_t sdfValueCo
 
 // Concatenate renderer sections into a neutral triangle MeshData (positions + indices).
 mochi::MeshData MeshDataFromSections(std::vector<mochi_renderer::MeshSection> const& sections);
+
+// Recover a stage's processing output from its display buffer. A non-empty tetrahedral output is
+// authoritative because the displayed sections hold only its boundary; otherwise concatenate the
+// displayed triangle sections.
+mochi::MeshData BufferedStageOutput(
+    mochi::MeshData const& tetMesh,
+    std::vector<mochi_renderer::MeshSection> const& sections);
 
 // Neutral MeshData -> a single renderer MeshSection with computed angle-weighted vertex normals.
 mochi_renderer::MeshSection SectionFromMeshData(mochi::MeshData const& mesh);
@@ -112,6 +123,18 @@ std::vector<mochi_renderer::MeshSection> TessellateStepSections(
 
 // Load a mochi-model file's surface as a neutral triangle MeshData in renderer space.
 mochi::MeshData LoadMochiMesh(std::string const& path, mochi::Error& error);
+
+// The triangle surface to show for a stage's output: the mesh itself, or the boundary of a
+// tetrahedral mesh (boundary nodes only). Same space as @p mesh.
+mochi::MeshData DisplaySurface(mochi::MeshData const& mesh);
+
+// A renderer-space mesh of any element type converted to Mochi space, keeping its connectivity.
+// The conversion is a rotation, so tetrahedron orientation is preserved.
+mochi::MeshData ToMochiSpace(mochi::MeshData mesh);
+
+// Write a renderer-space tetrahedral MeshData to an ASCII Legacy VTK (version 3.0) unstructured
+// grid .vtk file, in Mochi space like the .mochi.h5 it would export to.
+void WriteVtkFile(std::string const& path, mochi::MeshData const& mesh, mochi::Error& error);
 
 // Write a neutral triangle MeshData to an OBJ file (no material), converting it back out of
 // renderer space into the Mochi space an .obj is expected to hold.

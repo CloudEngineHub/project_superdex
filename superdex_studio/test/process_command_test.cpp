@@ -15,14 +15,18 @@
  */
 
 // Runs processing pipelines headlessly (app/process_command.h) on a cube written by the test, and
-// checks the files they export. The SDF stages need the superdex_mesh_cli helper, which the test
-// target points SUPERDEX_MESH_CLI_PATH at.
+// checks the files they export. The SDF and tetrahedral stages need the superdex_mesh_cli helper,
+// which the test target points SUPERDEX_MESH_CLI_PATH at.
 
 #include "app/process_command.h"
+#include "meshing/processing_modifiers/processing_mesh_utils.h"
 
 #include <mochi_core/geometry/model_data.h>
 #include <mochi_core/test/mochi_test_helpers.h>
+#include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/file_utils.h>
+#include <mochi_core/utils/math_utils.h>
+#include <mochi_physics/mochi_physics.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
 #include <mochi_renderer/utils.h>
 
@@ -30,7 +34,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -43,6 +49,7 @@ namespace {
 
 constexpr float kHalfSide = 0.05f; // a 10 cm cube centered on the origin
 constexpr int kCubeTriangles = 12;
+constexpr double kFileSizeEstimateTolerance = 0.1;
 
 // Writes a binary STL of the cube, outward-wound.
 void WriteCubeStl(fs::path const& path) {
@@ -108,21 +115,82 @@ constexpr char const* kSourceFromModelViewer =
     R"({"modifier": "Source from CAD Model", "method": "From Model Viewer", "enabled": true,
         "collapsed": true, "properties": {}})";
 
+// Coarse, so the cube meshes quickly.
+constexpr char const* kTetrahedralize =
+    R"({"modifier": "Tetrahedralize", "method": "Delaunay Refinement", "enabled": true,
+        "collapsed": true, "properties": {"edgeSize": 0.5}})";
+
+constexpr char const* kSdfExport =
+    R"({"modifier": "Export Mochi Model", "method": "SDF", "enabled": true, "collapsed": true,
+        "properties": {"sdf": {"resolutionMode": "Explicit", "resolutionDelta": [0.01, 0.01, 0.01],
+                               "boundaryPaddingDist": 0.01, "minGridResolution": [6, 6, 6]}}})";
+
+constexpr char const* kZeroAxisSrt =
+    R"({"modifier": "Apply SRT Transformation", "method": "SRT Transform", "enabled": true,
+        "collapsed": true, "properties": {"scale": [1, 0, 1]}})";
+
+constexpr char const* kMirroredSrt =
+    R"({"modifier": "Apply SRT Transformation", "method": "SRT Transform", "enabled": true,
+        "collapsed": true, "properties": {"scale": [-2, 1, 1]}})";
+
+// The translation overflows float, so the output coordinates are infinite.
+constexpr char const* kNonFiniteSrt =
+    R"({"modifier": "Apply SRT Transformation", "method": "SRT Transform", "enabled": true,
+        "collapsed": true, "properties": {"translation": [1e39, 0, 0]}})";
+
+constexpr char const* kNoSdfExport =
+    R"({"modifier": "Export Mochi Model", "method": "SDF", "enabled": true, "collapsed": true,
+        "properties": {"bakeSdf": false}})";
+
+// Writes a pipeline of @p modifiers, each a JSON object, in order.
+void WriteModifiers(fs::path const& path, std::vector<std::string> const& modifiers) {
+  fs::create_directories(path.parent_path());
+  std::ofstream out(path);
+  out << R"({"version": 1, "modifiers": [)";
+  for (std::size_t i = 0; i < modifiers.size(); ++i) {
+    out << (i > 0 ? ",\n" : "\n") << modifiers[i];
+  }
+  out << "]}";
+}
+
+mochi::Real3 NodePosition(mochi::MeshData const& mesh, int node) {
+  return {
+      mesh.coordinates[3 * node], mesh.coordinates[3 * node + 1], mesh.coordinates[3 * node + 2]};
+}
+
+mochi::real TetSignedVolume(mochi::MeshData const& mesh, int tet) {
+  int const* const nodes = &mesh.connectivity[4 * tet];
+  mochi::Real3 const origin = NodePosition(mesh, nodes[0]);
+  return mochi::Dot(
+             NodePosition(mesh, nodes[1]) - origin,
+             mochi::Cross(
+                 NodePosition(mesh, nodes[2]) - origin, NodePosition(mesh, nodes[3]) - origin)) /
+      mochi::real{6};
+}
+
 class ProcessCommandTest : public ::testing::Test {
  protected:
-  // Checks the .mochi.h5 holds the cube and a grid SDF that is negative inside it.
+  static void ExpectCubeSdf(mochi::ModelData const& model, mochi::Int3 const& expectedDims) {
+    ASSERT_TRUE(model.sdf.has_value());
+    EXPECT_EQ(model.sdf->dims, expectedDims);
+    std::size_t const expectedValueCount = static_cast<std::size_t>(expectedDims[0]) *
+        static_cast<std::size_t>(expectedDims[1]) * static_cast<std::size_t>(expectedDims[2]);
+    ASSERT_EQ(model.sdf->values.size(), expectedValueCount);
+    auto const [lowest, highest] =
+        std::minmax_element(model.sdf->values.begin(), model.sdf->values.end());
+    EXPECT_LT(*lowest, -0.8f * kHalfSide); // deep inside, near the center
+    EXPECT_GT(*highest, 0.0f); // the padding outside
+  }
+
+  // Checks the .mochi.h5 holds the triangle cube and its grid SDF.
   static void ExpectCubeModel(fs::path const& path, mochi::Int3 const& expectedDims) {
     mochi::Error error;
     mochi::ModelData const model = mochi::model_utils::LoadFromFile(path.string(), error);
     ASSERT_TRUE(error.IsOK()) << error.GetDescription();
     ASSERT_TRUE(model.mesh.has_value());
+    EXPECT_EQ(model.mesh->nodesPerElement, 3);
     EXPECT_EQ(model.mesh->GetNumElements(), kCubeTriangles);
-    ASSERT_TRUE(model.sdf.has_value());
-    EXPECT_EQ(model.sdf->dims, expectedDims);
-    auto const [lowest, highest] =
-        std::minmax_element(model.sdf->values.begin(), model.sdf->values.end());
-    EXPECT_LT(*lowest, -0.8f * kHalfSide); // deep inside, near the center
-    EXPECT_GT(*highest, 0.0f); // the padding outside
+    ExpectCubeSdf(model, expectedDims);
   }
 
   static int GlbTriangles(fs::path const& path) {
@@ -159,6 +227,200 @@ TEST_F(ProcessCommandTest, ExportsNextToTheAssetThatOwnsThePipeline) {
   EXPECT_TRUE(fs::equivalent(report.stages[2].exportedPath, _root / "collision" / "cube.mochi.h5"));
   ExpectCubeModel(_root / "collision" / "cube.mochi.h5", *report.stages[2].sdfGrid);
   EXPECT_EQ(GlbTriangles(_root / "render" / "cube.glb"), kCubeTriangles);
+}
+
+TEST_F(ProcessCommandTest, NoSdfExportOfATriangleMeshWritesOnlyTheMesh) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(pipeline, {kSourceFromModelViewer, kNoSdfExport});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  EXPECT_TRUE(report.succeeded);
+  fs::path const modelPath = _root / "collision" / "cube.mochi.h5";
+  ASSERT_EQ(report.stages.size(), 2u);
+  EXPECT_EQ(report.stages[0].triangles, kCubeTriangles);
+  EXPECT_EQ(report.stages[1].triangles, kCubeTriangles);
+  EXPECT_TRUE(fs::equivalent(report.stages[1].exportedPath, modelPath));
+  EXPECT_FALSE(report.stages[1].tetMesh.has_value());
+  mochi::ModelData const model = mochi::model_utils::LoadFromFile(modelPath.string(), error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_EQ(model.mesh->nodesPerElement, 3);
+  EXPECT_EQ(model.mesh->GetNumElements(), kCubeTriangles);
+  EXPECT_FALSE(model.sdf.has_value());
+}
+
+TEST_F(ProcessCommandTest, ShippedSoftModelPresetProducesASoftActorAndAccurateVtkEstimate) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  char const* const presetsDir = std::getenv("SUPERDEX_STUDIO_PRESETS_PATH");
+  ASSERT_NE(presetsDir, nullptr);
+  fs::path const preset = fs::path(presetsDir) / "STEP_to_Soft_Mochi_Model.json";
+  ASSERT_TRUE(fs::is_regular_file(preset));
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline(
+      {.pipelinePath = preset.string(),
+       .slots = {.cadPath = (_root / "cad" / "cube.stl").string()}},
+      error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  EXPECT_TRUE(report.succeeded);
+  ASSERT_EQ(report.stages.size(), 6u);
+  for (ProcessStageReport const& stage : report.stages) {
+    EXPECT_TRUE(stage.succeeded) << stage.label << ": " << stage.error;
+  }
+  for (std::size_t stage = 0; stage < 4; ++stage) {
+    EXPECT_GT(report.stages[stage].triangles, 0) << report.stages[stage].label;
+    EXPECT_FALSE(report.stages[stage].tetMesh.has_value()) << report.stages[stage].label;
+  }
+  ASSERT_TRUE(report.stages[4].tetMesh.has_value());
+  EXPECT_EQ(report.stages[5].tetMesh, report.stages[4].tetMesh);
+  fs::path const modelPath = _root / "collision" / "cube.mochi.h5";
+  EXPECT_TRUE(fs::equivalent(report.stages[5].exportedPath, modelPath));
+
+  mochi::ModelData const model = mochi::model_utils::LoadFromFile(modelPath.string(), error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_EQ(model.mesh->nodesPerElement, 4);
+  EXPECT_EQ(model.mesh->GetNumElements(), (*report.stages[4].tetMesh)[1]);
+  EXPECT_FALSE(model.sdf.has_value());
+
+  mochi::Context* const context = mochi::CreateContext(0);
+  MOCHI_DEFER(mochi::DestroyContext(context));
+  mochi::Scene* const scene = context->CreateScene("preset_tetrahedral_export");
+  MOCHI_DEFER(context->DestroyScene(scene));
+  mochi::SoftActorParams params;
+  params.shape = context->LoadShapeFromFile(modelPath.string(), error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  MOCHI_DEFER(context->ReleaseShape(params.shape));
+  EXPECT_NE(scene->CreateSoftActor(params, error), nullptr);
+  EXPECT_TRUE(error.IsOK()) << error.GetDescription();
+
+  fs::path const vtkPath = _root / "cube.vtk";
+  processing::WriteVtkFile(vtkPath.string(), *model.mesh, error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  auto const actualSize = static_cast<double>(fs::file_size(vtkPath));
+  auto const estimatedSize = static_cast<double>(processing::EstimateVtkSizeBytes(*model.mesh));
+  EXPECT_NEAR(estimatedSize, actualSize, kFileSizeEstimateTolerance * actualSize)
+      << "estimated " << estimatedSize << " bytes for a " << actualSize << "-byte file";
+}
+
+TEST_F(ProcessCommandTest, ZeroAxisSrtFailsOnlyForTetrahedralMeshes) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const surfacePipeline = _root / "surface" / "cube.StudioProcessing.json";
+  WriteModifiers(surfacePipeline, {kSourceFromModelViewer, kZeroAxisSrt});
+  fs::path const tetPipeline = _root / "tet" / "cube.StudioProcessing.json";
+  WriteModifiers(tetPipeline, {kSourceFromModelViewer, kTetrahedralize, kZeroAxisSrt});
+  PipelineModelSlots const slots{.cadPath = (_root / "cad" / "cube.stl").string()};
+
+  mochi::Error surfaceError;
+  ProcessReport const surface = RunProcessingPipeline(
+      {.pipelinePath = surfacePipeline.string(), .slots = slots}, surfaceError);
+  mochi::Error tetError;
+  ProcessReport const tet =
+      RunProcessingPipeline({.pipelinePath = tetPipeline.string(), .slots = slots}, tetError);
+
+  ASSERT_TRUE(surfaceError.IsOK()) << surfaceError.GetDescription();
+  ASSERT_TRUE(tetError.IsOK()) << tetError.GetDescription();
+  ASSERT_TRUE(surface.succeeded);
+  ASSERT_EQ(surface.stages.size(), 2u);
+  EXPECT_TRUE(surface.stages[1].succeeded);
+  EXPECT_EQ(surface.stages[1].triangles, kCubeTriangles);
+  EXPECT_FALSE(tet.succeeded);
+  ASSERT_EQ(tet.stages.size(), 3u);
+  EXPECT_TRUE(tet.stages[1].succeeded);
+  EXPECT_FALSE(tet.stages[2].succeeded);
+  EXPECT_NE(tet.stages[2].error.find("finite, nonzero"), std::string::npos) << tet.stages[2].error;
+}
+
+TEST_F(ProcessCommandTest, NonFiniteTetSrtFailsItsStage) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(pipeline, {kSourceFromModelViewer, kTetrahedralize, kNonFiniteSrt});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  EXPECT_FALSE(report.succeeded);
+  ASSERT_EQ(report.stages.size(), 3u);
+  EXPECT_TRUE(report.stages[1].succeeded);
+  EXPECT_FALSE(report.stages[2].succeeded);
+  EXPECT_NE(report.stages[2].error.find("non-finite"), std::string::npos) << report.stages[2].error;
+}
+
+TEST_F(ProcessCommandTest, MirroredTetSrtRestoresPositiveOrientation) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(pipeline, {kSourceFromModelViewer, kTetrahedralize, kMirroredSrt, kNoSdfExport});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_TRUE(report.succeeded);
+  ASSERT_EQ(report.stages.size(), 4u);
+  ASSERT_TRUE(report.stages[2].tetMesh.has_value());
+  mochi::ModelData const model =
+      mochi::model_utils::LoadFromFile((_root / "collision" / "cube.mochi.h5").string(), error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_TRUE(model.mesh.has_value());
+  ASSERT_EQ(model.mesh->nodesPerElement, 4);
+  mochi::real maxAbsX = 0;
+  for (int tet = 0; tet < model.mesh->GetNumElements(); ++tet) {
+    EXPECT_GT(TetSignedVolume(*model.mesh, tet), mochi::real{0}) << "tetrahedron " << tet;
+  }
+  for (int node = 0; node < model.mesh->GetNumNodes(); ++node) {
+    maxAbsX = std::max(maxAbsX, std::abs(NodePosition(*model.mesh, node)[0]));
+  }
+  EXPECT_NEAR(maxAbsX, 2 * kHalfSide, 1e-5f);
+}
+
+TEST_F(ProcessCommandTest, SdfExportOfATetMeshWritesBoth) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(pipeline, {kSourceFromModelViewer, kTetrahedralize, kSdfExport});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  EXPECT_TRUE(report.succeeded);
+  ASSERT_EQ(report.stages.size(), 3u);
+  ASSERT_TRUE(report.stages[1].tetMesh.has_value());
+  ASSERT_TRUE(report.stages[2].sdfGrid.has_value());
+  mochi::ModelData const model =
+      mochi::model_utils::LoadFromFile((_root / "collision" / "cube.mochi.h5").string(), error);
+  ASSERT_TRUE(error.IsOK()) << error.GetDescription();
+  ASSERT_TRUE(model.mesh.has_value());
+  EXPECT_EQ(model.mesh->nodesPerElement, 4);
+  EXPECT_EQ(model.mesh->GetNumNodes(), (*report.stages[1].tetMesh)[0]);
+  EXPECT_EQ(model.mesh->GetNumElements(), (*report.stages[1].tetMesh)[1]);
+  ExpectCubeSdf(model, *report.stages[2].sdfGrid);
+}
+
+TEST_F(ProcessCommandTest, ASurfaceStepAfterTetrahedralizeFailsItsStage) {
+  WriteCubeStl(_root / "cad" / "cube.stl");
+  fs::path const pipeline = _root / "intermediates" / "cube.StudioProcessing.json";
+  WriteModifiers(
+      pipeline,
+      {kSourceFromModelViewer,
+       kTetrahedralize,
+       R"({"modifier": "Refine Mesh", "method": "Make Watertight", "enabled": true,
+           "collapsed": true, "properties": {}})"});
+
+  mochi::Error error;
+  ProcessReport const report = RunProcessingPipeline({.pipelinePath = pipeline.string()}, error);
+
+  EXPECT_FALSE(report.succeeded);
+  ASSERT_EQ(report.stages.size(), 3u);
+  EXPECT_TRUE(report.stages[1].succeeded);
+  EXPECT_FALSE(report.stages[2].succeeded);
+  EXPECT_NE(report.stages[2].error.find("Tetrahedralize"), std::string::npos)
+      << report.stages[2].error;
 }
 
 TEST_F(ProcessCommandTest, OutDirCollectsTheExports) {
@@ -314,17 +576,6 @@ TEST_F(ProcessCommandTest, AnExportThatCannotBeWrittenFailsOnlyItsStage) {
   EXPECT_NE(report.stages[1].error, "produced no mesh");
   EXPECT_TRUE(report.stages[2].succeeded);
   EXPECT_TRUE(fs::is_regular_file(_root / "collision" / "cube.mochi.h5"));
-}
-
-// Writes a pipeline of @p modifiers, each a JSON object, in order.
-void WriteModifiers(fs::path const& path, std::vector<std::string> const& modifiers) {
-  fs::create_directories(path.parent_path());
-  std::ofstream out(path);
-  out << R"({"version": 1, "modifiers": [)";
-  for (std::size_t i = 0; i < modifiers.size(); ++i) {
-    out << (i > 0 ? ",\n" : "\n") << modifiers[i];
-  }
-  out << "]}";
 }
 
 constexpr char const* kMeshExportOnAuto =

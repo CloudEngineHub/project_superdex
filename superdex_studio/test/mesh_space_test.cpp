@@ -31,6 +31,7 @@
 
 #include "meshing/processing_modifiers/processing_mesh_utils.h"
 
+#include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/file_utils.h>
 
 #include <mochi_mesh/step_tessellation.h>
@@ -45,6 +46,8 @@
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -223,6 +226,146 @@ TEST(MeshFileSpace, ObjExportRoundTripsThroughRenderSpace) {
   ASSERT_FALSE(reread.empty());
   ExpectBoundsNear(SectionBounds(reread), kGizmoInRenderSpace);
 }
+
+// --- Tetrahedral stage outputs ------------------------------------------------------------------
+
+// A tetrahedron split into four by a node at its centroid, so the boundary excludes one node.
+mochi::MeshData CentroidSplitTetrahedron() {
+  mochi::MeshData mesh;
+  mesh.nodesPerElement = 4;
+  for (mochi::real const coordinate :
+       {0.0f,
+        0.0f,
+        0.0f,
+        1.0f,
+        0.0f,
+        0.0f,
+        0.0f,
+        1.0f,
+        0.0f,
+        0.0f,
+        0.0f,
+        1.0f,
+        0.25f,
+        0.25f,
+        0.25f}) {
+    mesh.coordinates.push_back(coordinate);
+  }
+  for (int const node : {4, 1, 2, 3, 0, 4, 2, 3, 0, 1, 4, 3, 0, 1, 2, 4}) {
+    mesh.connectivity.push_back(node);
+  }
+  return mesh;
+}
+
+mochi::MeshData SingleTriangle() {
+  mochi::MeshData mesh;
+  mesh.nodesPerElement = 3;
+  for (mochi::real const coordinate : {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f}) {
+    mesh.coordinates.push_back(coordinate);
+  }
+  for (int const node : {0, 1, 2}) {
+    mesh.connectivity.push_back(node);
+  }
+  return mesh;
+}
+
+TEST(TetStageOutput, DisplaySurfaceIsTheBoundaryWithoutInteriorNodes) {
+  mochi::MeshData const surface = DisplaySurface(CentroidSplitTetrahedron());
+
+  EXPECT_EQ(surface.nodesPerElement, 3);
+  EXPECT_EQ(surface.GetNumElements(), 4);
+  EXPECT_EQ(surface.GetNumNodes(), 4);
+}
+
+TEST(TetStageOutput, DisplaySurfacePassesTrianglesThrough) {
+  mochi::MeshData const triangle = SingleTriangle();
+
+  mochi::MeshData const surface = DisplaySurface(triangle);
+
+  EXPECT_EQ(surface.coordinates, triangle.coordinates);
+  EXPECT_EQ(surface.connectivity, triangle.connectivity);
+}
+
+TEST(TetStageOutput, BufferedStageOutputPreservesTheCompleteTetMesh) {
+  mochi::MeshData const tets = CentroidSplitTetrahedron();
+  std::vector<mochi_renderer::MeshSection> const sections{
+      SectionFromMeshData(DisplaySurface(tets))};
+
+  mochi::MeshData const output = BufferedStageOutput(tets, sections);
+
+  EXPECT_EQ(output.nodesPerElement, 4);
+  EXPECT_EQ(output.GetNumNodes(), 5);
+  EXPECT_EQ(output.coordinates, tets.coordinates);
+  EXPECT_EQ(output.connectivity, tets.connectivity);
+}
+
+TEST(TetStageOutput, BufferedStageOutputFallsBackToDisplayedTriangles) {
+  mochi::MeshData const triangle = SingleTriangle();
+  mochi::MeshData emptyTetMesh;
+  emptyTetMesh.nodesPerElement = 4;
+  std::vector<mochi_renderer::MeshSection> const sections{SectionFromMeshData(triangle)};
+
+  mochi::MeshData const output = BufferedStageOutput(emptyTetMesh, sections);
+
+  EXPECT_EQ(output.nodesPerElement, 3);
+  EXPECT_EQ(output.coordinates, triangle.coordinates);
+  EXPECT_EQ(output.connectivity, triangle.connectivity);
+}
+
+// RenderSpace (x, y, z) is Mochi-space (x, -z, y); connectivity is untouched.
+TEST(TetStageOutput, ToMochiSpaceKeepsConnectivity) {
+  mochi::MeshData const tets = CentroidSplitTetrahedron();
+
+  mochi::MeshData const converted = ToMochiSpace(tets);
+
+  EXPECT_EQ(converted.nodesPerElement, 4);
+  EXPECT_EQ(converted.connectivity, tets.connectivity);
+  EXPECT_NEAR(converted.coordinates[(3 * 3) + 1], -1.0f, kTolerance); // node 3 = (0, 0, 1)
+  EXPECT_NEAR(converted.coordinates[(2 * 3) + 2], 1.0f, kTolerance); // node 2 = (0, 1, 0)
+}
+
+// Nodes in Mochi space (see ToMochiSpaceKeepsConnectivity); cells are 0-based VTK_TETRA (type 10).
+TEST(TetStageOutput, VtkFileHoldsTheTetsInMochiSpace) {
+  mochi::ErrorAssert error;
+  mochi::TempDirCleanup const folder = mochi::CreateTempDirectory("mesh_space_test", error);
+  std::filesystem::path const path = folder.Path() / "tets.vtk";
+
+  WriteVtkFile(path.string(), CentroidSplitTetrahedron(), error);
+
+  std::ifstream in(path);
+  std::string const contents{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  std::string const expected =
+      "# vtk DataFile Version 3.0\n"
+      "Superdex Studio tetrahedral mesh\n"
+      "ASCII\n"
+      "DATASET UNSTRUCTURED_GRID\n"
+      "POINTS 5 double\n"
+      "0 0 0\n"
+      "1 0 0\n"
+      "0 0 1\n"
+      "0 -1 0\n"
+      "0.25 -0.25 0.25\n"
+      "CELLS 4 20\n"
+      "4 4 1 2 3\n"
+      "4 0 4 2 3\n"
+      "4 0 1 4 3\n"
+      "4 0 1 2 4\n"
+      "CELL_TYPES 4\n"
+      "10\n10\n10\n10\n";
+  EXPECT_EQ(contents, expected);
+}
+
+TEST(TetStageOutput, VtkFileRejectsTriangles) {
+  mochi::MeshData triangle;
+  triangle.nodesPerElement = 3;
+  WriteVtkFile("unused.vtk", triangle, mochi::test::ExpectNotOK{});
+}
+
+#if MOCHI_PLATFORM_LINUX
+TEST(TetStageOutput, VtkFileReportsDelayedWriteFailure) {
+  WriteVtkFile("/dev/full", CentroidSplitTetrahedron(), mochi::test::ExpectNotOK{});
+}
+#endif
 
 } // namespace
 } // namespace superdex::studio::processing

@@ -54,9 +54,10 @@ struct ProcessStageReport {
   std::string label; // the modifier's header label
   bool succeeded = false;
   std::string error; // why the stage or its export failed
-  int64_t vertices = 0;
+  int64_t vertices = 0; // of the output surface (for a tetrahedral output, its boundary)
   int64_t triangles = 0;
   std::optional<mochi::Int3> sdfGrid; // set by stages that bake an SDF
+  std::optional<mochi::Int2> tetMesh; // nodes and tets, set when the output is tetrahedral
   std::string exportedPath; // the file an export stage wrote
   // Where the pipeline itself puts the export stage's file: exportedPath, unless --out moved it.
   std::string pipelineExportPath;

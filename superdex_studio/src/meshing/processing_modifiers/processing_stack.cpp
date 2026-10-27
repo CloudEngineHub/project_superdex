@@ -16,6 +16,9 @@
 
 #include "meshing/processing_modifiers/processing_stack.h"
 
+#include <mochi_core/geometry/model_data.h>
+#include <mochi_core/geometry/model_utils.h> // model::Validate
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -153,8 +156,10 @@ StackRun::StackRun(
     ModifierStack const& stack,
     std::vector<std::size_t> chain,
     ModifierRunContext ctx,
-    std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentOutput)
-    : _ctx(std::move(ctx)) {
+    std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentOutput,
+    std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentReferenceMesh,
+    std::function<mochi::MeshData(mochi::MeshData const& output)> referenceMeshFromOutput)
+    : _referenceMeshFromOutput(std::move(referenceMeshFromOutput)), _ctx(std::move(ctx)) {
   std::size_t const n = chain.size();
   _modifiers.reserve(n);
   _outputs.reserve(n);
@@ -174,7 +179,7 @@ StackRun::StackRun(
       }
     }
     if (ref.chainPos < 0 && refModIdx >= 0) {
-      ref.currentMesh = currentOutput(static_cast<std::size_t>(refModIdx));
+      ref.currentMesh = currentReferenceMesh(static_cast<std::size_t>(refModIdx));
     }
   }
 }
@@ -184,10 +189,17 @@ bool StackRun::Generate(std::size_t p, mochi::Error& error) {
   ModifierRunContext runCtx = _ctx;
   if (modifier.NeedsReferenceMesh()) {
     Reference const& ref = _references[p];
-    runCtx.referenceMesh =
-        ref.chainPos >= 0 ? _outputs[static_cast<std::size_t>(ref.chainPos)] : ref.currentMesh;
+    runCtx.referenceMesh = ref.chainPos >= 0
+        ? _referenceMeshFromOutput(_outputs[static_cast<std::size_t>(ref.chainPos)])
+        : ref.currentMesh;
   }
   mochi::MeshData out = modifier.Run(Input(p), runCtx, error);
+  if (error.IsOK() && out.nodesPerElement == 4) {
+    // Rejected here so that extracting the boundary surface later (DisplaySurface) cannot fail.
+    mochi::ModelDataView model;
+    model.mesh = out;
+    mochi::model::Validate(model, error);
+  }
   if (!error.IsOK() || out.GetNumElements() == 0) {
     // Leave no output, so the next stage receives an empty input and stops too (see
     // MeshProcessingModifier::Run) instead of running on this stage's stale mesh.
@@ -199,6 +211,10 @@ bool StackRun::Generate(std::size_t p, mochi::Error& error) {
 }
 
 bool StackRun::Export(std::size_t p, mochi::Error& error) const {
+  if (_outputs[p].GetNumElements() == 0) {
+    MOCHI_ERROR_SET(error, "Cannot export a modifier that did not generate successfully.");
+    return false;
+  }
   _modifiers[p]->SaveToFile(Input(p), error);
   return error.IsOK();
 }

@@ -18,6 +18,7 @@
 // the real modifiers.
 
 #include "meshing/processing_modifiers/processing_serialization.h"
+#include "meshing/processing_modifiers/processing_stack.h"
 
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/file_utils.h>
@@ -60,13 +61,12 @@ class ProcessingSerializationTest : public ::testing::Test {
     return saved.get<picojson::object>();
   }
 
+  static picojson::object const& Modifier(picojson::object const& document, int modifier) {
+    return document.at("modifiers").get<picojson::array>().at(modifier).get<picojson::object>();
+  }
+
   static picojson::object const& Properties(picojson::object const& document, int modifier) {
-    return document.at("modifiers")
-        .get<picojson::array>()
-        .at(modifier)
-        .get<picojson::object>()
-        .at("properties")
-        .get<picojson::object>();
+    return Modifier(document, modifier).at("properties").get<picojson::object>();
   }
 
   mochi::TempDirCleanup _rootCleanup =
@@ -103,6 +103,48 @@ TEST_F(ProcessingSerializationTest, ReadsCadSourcesSavedBeforeTheStepMesherRewri
   EXPECT_EQ(step.at("backend").get<std::string>(), "Isotropic");
   EXPECT_TRUE(step.at("combineTouchingSolids").get<bool>());
   EXPECT_EQ(step.count("bodySelection"), 0u);
+}
+
+TEST_F(ProcessingSerializationTest, TetrahedralizeAndNoSdfExportRoundTrip) {
+  LoadedPipeline loaded = Load(R"({
+  "version": 1,
+  "modifiers": [
+    {"modifier": "Tetrahedralize", "method": "Delaunay Refinement", "enabled": true,
+     "collapsed": true,
+     "properties": {"edgeSize": 0.25, "relativeToMeshSize": false,
+                    "facetDistanceBound": 0.04, "facetAngleBound": 24,
+                    "cellRadiusEdgeRatio": 2.5, "detectFeatures": false,
+                    "sharpFeatureAngle": 45, "perturb": false, "exude": false, "odt": true}},
+    {"modifier": "Export Mochi Model", "method": "SDF", "enabled": true, "collapsed": true,
+     "properties": {"bakeSdf": false}}
+  ]
+})");
+  fs::path const source = _rootCleanup.Path() / "cad" / "part.step";
+  RefreshAutoExportPaths(loaded.modifiers, source.string());
+  picojson::object const saved = Save(loaded);
+
+  EXPECT_EQ(loaded.issues, std::vector<std::string>{});
+  ASSERT_EQ(loaded.modifiers.size(), 2u);
+  EXPECT_EQ(Modifier(saved, 0).at("modifier").get<std::string>(), "Tetrahedralize");
+  EXPECT_EQ(Modifier(saved, 0).at("method").get<std::string>(), "Delaunay Refinement");
+  picojson::object const& tet = Properties(saved, 0);
+  EXPECT_DOUBLE_EQ(tet.at("edgeSize").get<double>(), 0.25);
+  EXPECT_DOUBLE_EQ(tet.at("facetDistanceBound").get<double>(), 0.04);
+  EXPECT_DOUBLE_EQ(tet.at("facetAngleBound").get<double>(), 24.0);
+  EXPECT_DOUBLE_EQ(tet.at("cellRadiusEdgeRatio").get<double>(), 2.5);
+  EXPECT_FALSE(tet.at("relativeToMeshSize").get<bool>());
+  EXPECT_FALSE(tet.at("detectFeatures").get<bool>());
+  EXPECT_DOUBLE_EQ(tet.at("sharpFeatureAngle").get<double>(), 45.0);
+  EXPECT_FALSE(tet.at("perturb").get<bool>());
+  EXPECT_FALSE(tet.at("exude").get<bool>());
+  EXPECT_TRUE(tet.at("odt").get<bool>());
+  EXPECT_EQ(Modifier(saved, 1).at("modifier").get<std::string>(), "Export Mochi Model");
+  EXPECT_EQ(Modifier(saved, 1).at("method").get<std::string>(), "SDF");
+  EXPECT_FALSE(Properties(saved, 1).at("bakeSdf").get<bool>());
+  EXPECT_EQ(
+      loaded.modifiers[1]->ExportPath(),
+      (_rootCleanup.Path() / "collision" / "part.mochi.h5").string());
+  EXPECT_EQ(Properties(saved, 1).count("exportPath"), 0u);
 }
 
 TEST_F(ProcessingSerializationTest, ListsWhatItCannotReadAndLoadsTheRest) {

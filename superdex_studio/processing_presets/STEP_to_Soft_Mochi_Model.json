@@ -1,0 +1,12 @@
+{
+  "description": "Processes CAD files into a closed surface and fills it with tetrahedra, producing a Mochi model for soft actors.",
+  "version": 1,
+  "modifiers": [
+    { "modifier": "Source from CAD Model", "method": "From Model Viewer" },
+    { "modifier": "Refine Mesh", "method": "Make Manifold" },
+    { "modifier": "Refine Mesh", "method": "Make Watertight" },
+    { "modifier": "Wrap Mesh", "method": "Alpha Wrap" },
+    { "modifier": "Tetrahedralize", "method": "Delaunay Refinement" },
+    { "modifier": "Export Mochi Model", "method": "SDF", "properties": { "bakeSdf": false } }
+  ]
+}

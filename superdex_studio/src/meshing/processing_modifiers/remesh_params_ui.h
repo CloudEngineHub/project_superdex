@@ -16,16 +16,25 @@
 
 #pragma once
 
-// Shared remeshing parameter widgets used by the Wrap Mesh (alpha wrap) and Remesh (ACVD / surface
-// Delaunay / incremental isotropic) methods. They operate on primitive refs so each method can own
-// its own reflected props struct (the neutral mochi::mesh::SurfaceRemeshingParams is not
-// reflected).
+// Shared meshing parameter widgets used by the Wrap Mesh (alpha wrap), Remesh (ACVD / surface
+// Delaunay / incremental isotropic), and Tetrahedralize methods. They operate on primitive refs so
+// each method can own its own reflected props struct (the neutral mochi::mesh parameter structs are
+// not reflected).
 
 #include "meshing/processing_modifiers/processing_method.h" // ModifierTooltip
 
 namespace superdex::studio::processing {
 
-// Edge-size control: percent of the bbox average dimension when @p relativeToMeshSize, else mm.
+// Length input labeled @p name: percent of the bbox average dimension when @p relativeToMeshSize,
+// else mm. @p description starts its tooltip.
+void ShowLengthControl(
+    char const* name,
+    char const* description,
+    double& length,
+    bool relativeToMeshSize,
+    ModifierTooltip const& tooltip);
+
+// Edge-size length control plus the "Relative to Mesh Size" toggle.
 void ShowEdgeSizeControl(
     double& edgeSize,
     bool& relativeToMeshSize,

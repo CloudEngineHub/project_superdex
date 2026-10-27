@@ -17,6 +17,7 @@
 #include "meshing/processing_modifiers/processing_mesh_utils.h"
 
 #include <mochi_core/geometry/model_data.h>
+#include <mochi_core/geometry/tetrahedral_mesh.h>
 #include <mochi_core/utils/coordinate_space_converter.h>
 #include <mochi_mesh/step_tessellation.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
@@ -31,7 +32,10 @@
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iomanip>
+#include <limits>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -41,9 +45,9 @@ namespace superdex::studio::processing {
 using mochi_renderer::MeshSection;
 
 // --- File-size estimate calibration constants --------------------------------------------------
-// These drive EstimateGlbSizeBytes / EstimateObjSizeBytes / EstimateMochiH5SizeBytes. They are
-// intentionally coarse; tune them against real exported files (the estimates target ~10% accuracy,
-// not exactness).
+// These drive EstimateGlbSizeBytes / EstimateVtkSizeBytes / EstimateObjSizeBytes /
+// EstimateMochiH5SizeBytes. They are intentionally coarse; tune them against real exported files
+// (the estimates target ~10% accuracy, not exactness).
 namespace {
 
 // GLB (binary glTF): float3 position + float3 normal per vertex, 32-bit indices per triangle
@@ -51,6 +55,12 @@ namespace {
 constexpr int64_t kGlbBytesPerVertex = 24; // 3 * float32 position + 3 * float32 normal
 constexpr int64_t kGlbBytesPerIndex = 4; // one uint32 index (3 per triangle)
 constexpr int64_t kGlbOverheadBytes = 1024; // JSON chunk + GLB/binary headers + one material
+
+// ASCII Legacy VTK: one XYZ line per node, and per tetrahedron one connectivity line plus a cell
+// type line, plus the fixed headers. Text width varies with values and index counts.
+constexpr int64_t kVtkBytesPerNode = 37;
+constexpr int64_t kVtkBytesPerTet = 24;
+constexpr int64_t kVtkOverheadBytes = 130;
 
 // OBJ (text): "v x y z" + "vn x y z" lines per vertex and an "f a//na b//nb c//nc" line per
 // triangle. Text size varies with coordinate magnitude/precision, so this is coarser than GLB.
@@ -114,6 +124,15 @@ int64_t EstimateGlbSizeBytes(mochi::MeshData const& mesh) {
   return kGlbOverheadBytes + numVerts * kGlbBytesPerVertex + numTris * 3 * kGlbBytesPerIndex;
 }
 
+int64_t EstimateVtkSizeBytes(mochi::MeshData const& mesh) {
+  auto const numNodes = static_cast<int64_t>(mesh.GetNumNodes());
+  auto const numTets = static_cast<int64_t>(mesh.GetNumElements());
+  if (mesh.nodesPerElement != 4 || numTets == 0) {
+    return 0;
+  }
+  return kVtkOverheadBytes + numNodes * kVtkBytesPerNode + numTets * kVtkBytesPerTet;
+}
+
 int64_t EstimateObjSizeBytes(mochi::MeshData const& mesh) {
   auto const numVerts = static_cast<int64_t>(mesh.GetNumNodes());
   auto const numTris = static_cast<int64_t>(mesh.GetNumElements());
@@ -124,10 +143,10 @@ int64_t EstimateObjSizeBytes(mochi::MeshData const& mesh) {
 }
 
 int64_t EstimateMochiH5SizeBytes(mochi::MeshData const& mesh, int64_t sdfValueCount) {
-  auto const numVerts = static_cast<int64_t>(mesh.GetNumNodes());
-  auto const numTris = static_cast<int64_t>(mesh.GetNumElements());
-  int64_t const coordBytes = numVerts * 3 * static_cast<int64_t>(sizeof(mochi::real));
-  int64_t const connBytes = numTris * 3 * static_cast<int64_t>(sizeof(int32_t));
+  int64_t const coordBytes =
+      static_cast<int64_t>(mesh.coordinates.size()) * static_cast<int64_t>(sizeof(mochi::real));
+  int64_t const connBytes =
+      static_cast<int64_t>(mesh.connectivity.size()) * static_cast<int64_t>(sizeof(int32_t));
   int64_t const sdfBytes =
       std::max<int64_t>(0, sdfValueCount) * static_cast<int64_t>(sizeof(mochi::real));
   double const compressed = kH5OverheadBytes +
@@ -149,6 +168,15 @@ mochi::MeshData MeshDataFromSections(std::vector<MeshSection> const& sections) {
     }
   }
   return mesh;
+}
+
+mochi::MeshData BufferedStageOutput(
+    mochi::MeshData const& tetMesh,
+    std::vector<MeshSection> const& sections) {
+  if (tetMesh.GetNumElements() > 0) {
+    return tetMesh;
+  }
+  return MeshDataFromSections(sections);
 }
 
 MeshSection SectionFromMeshData(mochi::MeshData const& mesh) {
@@ -318,6 +346,69 @@ mochi::MeshData LoadMochiMesh(std::string const& path, mochi::Error& error) {
     mesh.connectivity.push_back(index);
   }
   return mesh;
+}
+
+mochi::MeshData DisplaySurface(mochi::MeshData const& mesh) {
+  if (mesh.nodesPerElement != 4) {
+    return mesh;
+  }
+  mochi::TriangularMesh const boundary = mochi::CreateBoundaryMesh(
+      mochi::TetrahedralMesh{
+          mochi::Unflatten<mochi::Real3 const>(mochi::MakeConstSpan(mesh.coordinates)),
+          mochi::Unflatten<mochi::Int4 const>(mochi::MakeConstSpan(mesh.connectivity))});
+  mochi::Span<mochi::real const> const coordinates = mochi::Flatten(boundary.GetNodeCoordinates());
+  mochi::Span<int const> const connectivity = boundary.GetFlatConnectivity();
+
+  mochi::MeshData surface;
+  surface.nodesPerElement = mochi::TriangularMesh::kNodesPerElement;
+  surface.coordinates.assign(coordinates.begin(), coordinates.end());
+  surface.connectivity.assign(connectivity.begin(), connectivity.end());
+  return surface;
+}
+
+mochi::MeshData ToMochiSpace(mochi::MeshData mesh) {
+  RenderToMochiConverter().TranslationsToOutput(
+      mochi::MakeSpan(mesh.coordinates), mochi::ErrorAssert{});
+  return mesh;
+}
+
+void WriteVtkFile(std::string const& path, mochi::MeshData const& mesh, mochi::Error& error) {
+  MOCHI_ERROR_IF(
+      mesh.nodesPerElement != 4, error, "Only tetrahedral meshes can be written as .vtk.");
+  MOCHI_ERROR_RETURN(error);
+  std::ofstream out(path);
+  MOCHI_ERROR_IF(!out, error, "Failed to open the .vtk file for writing.");
+  MOCHI_ERROR_RETURN(error);
+  out << std::setprecision(std::numeric_limits<mochi::real>::max_digits10);
+  out << "# vtk DataFile Version 3.0\nSuperdex Studio tetrahedral mesh\nASCII\n"
+      << "DATASET UNSTRUCTURED_GRID\nPOINTS " << mesh.GetNumNodes() << " double\n";
+  auto const& converter = RenderToMochiConverter();
+  for (int node = 0; node < mesh.GetNumNodes(); ++node) {
+    mochi::Real3 const position = converter.TranslationToOutput(
+        mochi::Real3{
+            mesh.coordinates[3 * node],
+            mesh.coordinates[(3 * node) + 1],
+            mesh.coordinates[(3 * node) + 2]});
+    for (int axis = 0; axis < 3; ++axis) {
+      // Adding zero writes -0 as 0.
+      out << position[axis] + mochi::real{0} << (axis < 2 ? ' ' : '\n');
+    }
+  }
+  out << "CELLS " << mesh.GetNumElements() << ' ' << 5 * mesh.GetNumElements() << '\n';
+  for (int tet = 0; tet < mesh.GetNumElements(); ++tet) {
+    out << '4';
+    for (int corner = 0; corner < 4; ++corner) {
+      out << ' ' << mesh.connectivity[(4 * tet) + corner];
+    }
+    out << '\n';
+  }
+  // Cell type 10 is VTK_TETRA.
+  out << "CELL_TYPES " << mesh.GetNumElements() << '\n';
+  for (int tet = 0; tet < mesh.GetNumElements(); ++tet) {
+    out << "10\n";
+  }
+  out.close();
+  MOCHI_ERROR_IF(!out, error, "Failed to write the .vtk file.");
 }
 
 void WriteObjFile(std::string const& path, mochi::MeshData const& mesh, mochi::Error& error) {

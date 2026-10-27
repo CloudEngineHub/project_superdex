@@ -52,6 +52,8 @@ struct StageVisualization {
 // the modifier so the buffer travels with the element when the stack is reordered.
 struct StageBuffer {
   std::vector<mochi_renderer::MeshSection> sections;
+  // The stage's output when it is tetrahedral (`sections` then hold its boundary); empty otherwise.
+  mochi::MeshData tetMesh;
   mochi_renderer::SceneObject* surfaceMesh = nullptr;
   mochi_renderer::SceneObject* wireframeMesh = nullptr;
   StageVisualization viz;
@@ -123,6 +125,14 @@ class MeshProcessingModifier {
     if (_kind != ModifierKind::Source && input.GetNumElements() == 0) {
       MOCHI_ERROR_SET(
           error, "Modifier received no input mesh (an upstream modifier produced no output).");
+      return {};
+    }
+    if (_kind != ModifierKind::Source && input.nodesPerElement == 4 &&
+        !ActiveMethod().AcceptsTetrahedralInput()) {
+      MOCHI_ERROR_SET(
+          error,
+          "Modifier takes a triangle surface but received a tetrahedral mesh. Move it above "
+          "Tetrahedralize.");
       return {};
     }
     return ActiveMethod().Run(input, ctx, error);

@@ -91,19 +91,22 @@ void RedirectExports(ModifierStack& stack, std::filesystem::path const& folder);
 // order, one at a time; the stack must outlive this object and stay unchanged while it runs.
 class StackRun {
  public:
-  // @p currentOutput returns a modifier's current output by stack index. It seeds every chain
-  // position and serves the edge-flip references that are not part of @p chain.
+  // @p currentOutput returns a modifier's complete current output by stack index and seeds every
+  // chain position. @p currentReferenceMesh returns cached triangle surfaces for references outside
+  // @p chain; @p referenceMeshFromOutput obtains one from an in-chain output on demand.
   StackRun(
       ModifierStack const& stack,
       std::vector<std::size_t> chain,
       ModifierRunContext ctx,
-      std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentOutput);
+      std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentOutput,
+      std::function<mochi::MeshData(std::size_t modifierIndex)> const& currentReferenceMesh,
+      std::function<mochi::MeshData(mochi::MeshData const& output)> referenceMeshFromOutput);
 
-  // Regenerates chain position @p p. A failure (an error, or no triangles) clears the position's
+  // Regenerates chain position @p p. A failure (an error, or no elements) clears the position's
   // output, so the next stage receives no input and fails as well, and returns false.
   bool Generate(std::size_t p, mochi::Error& error);
-  // Writes the input of the export stage at chain position @p p to its file. Returns false on
-  // error.
+  // Writes the input of the export stage at chain position @p p to its file. Refuses a position
+  // whose canonical output is empty, and returns false on error.
   bool Export(std::size_t p, mochi::Error& error) const;
 
   [[nodiscard]] mochi::MeshData const& Output(std::size_t p) const {
@@ -123,6 +126,7 @@ class StackRun {
   std::vector<MeshProcessingModifier const*> _modifiers; // by chain position
   std::vector<mochi::MeshData> _outputs; // by chain position
   std::vector<Reference> _references; // by chain position
+  std::function<mochi::MeshData(mochi::MeshData const& output)> _referenceMeshFromOutput;
   ModifierRunContext _ctx;
 };
 

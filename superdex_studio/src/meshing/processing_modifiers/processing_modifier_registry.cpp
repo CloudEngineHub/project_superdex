@@ -25,6 +25,7 @@
 #include "meshing/processing_modifiers/source_mochi_model.h"
 #include "meshing/processing_modifiers/source_parts.h"
 #include "meshing/processing_modifiers/source_render_model.h"
+#include "meshing/processing_modifiers/tetrahedralize.h"
 #include "meshing/processing_modifiers/transform.h"
 #include "meshing/processing_modifiers/wrap_mesh.h"
 
@@ -49,6 +50,7 @@ std::vector<ModifierRegistryEntry> const& ProcessingModifierRegistry() {
     entries.push_back(MakeRefineMeshEntry());
     entries.push_back(MakeWrapMeshEntry());
     entries.push_back(MakeRemeshEntry());
+    entries.push_back(MakeTetrahedralizeEntry());
     entries.push_back(MakeTransformEntry());
     // Exports
     entries.push_back(MakeMochiModelExportEntry());

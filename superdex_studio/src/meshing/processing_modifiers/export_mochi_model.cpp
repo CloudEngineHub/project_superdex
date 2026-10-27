@@ -18,7 +18,7 @@
 
 #include "meshing/mesh_conversion.h" // MeshSectionsToModel (render->mochi space conversion for .mochi.h5)
 #include "meshing/processing_modifiers/processing_export_path.h" // DefaultExportPath
-#include "meshing/processing_modifiers/processing_mesh_utils.h" // SectionFromMeshData, WeldIdenticalVertices, EndsWithNoCase
+#include "meshing/processing_modifiers/processing_mesh_utils.h" // SectionFromMeshData, WeldIdenticalVertices, ToMochiSpace, EndsWithNoCase
 
 #include <picojson/picojson.h>
 
@@ -39,6 +39,7 @@
 #include <mochi_physics/utils/mochi_model_utils.h> // BakeSdf, SaveToFile, FileFormat
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -75,13 +76,28 @@ std::string NormalizeMochiModelExportPath(std::string path) {
   return path;
 }
 
+// The input mesh converted from the pipeline's renderer (Y-up) space to Mochi (Z-up) space, which
+// is what a .mochi.h5 stores. Triangle surfaces keep their established section-based conversion;
+// tetrahedral meshes are converted directly so their connectivity is kept.
+mochi::ModelData MochiSpaceModel(mochi::MeshData const& input) {
+  if (input.nodesPerElement == 4) {
+    mochi::ModelData model;
+    model.mesh = processing::ToMochiSpace(input);
+    return model;
+  }
+  std::vector<MeshSection> const sections{processing::SectionFromMeshData(input)};
+  mochi::CoordinateSpaceConverter const renderToMochi(
+      mochi_renderer::RenderSpace(), mochi::CoordinateSpace::Default());
+  return MeshSectionsToModel(sections, &renderToMochi);
+}
+
 class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
  public:
   char const* Name() const override {
     return "SDF";
   }
   char const* Description() const override {
-    return "Bake a grid SDF from the input surface and export the mesh plus SDF as a .mochi.h5 (or "
+    return "Bake a grid SDF from the input mesh and export the mesh plus SDF as a .mochi.h5 (or "
            "the mesh alone, with Bake SDF off).";
   }
   bool ProvidesFileExport() const override {
@@ -119,6 +135,11 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     _autoExportPath = _props.exportPath.empty();
     return issues;
   }
+
+  bool AcceptsTetrahedralInput() const override {
+    return true;
+  }
+
   // Show the input surface (the "Mochi Model") next to the reconstructed SDF surface, matching the
   // Model Viewer's Mochi Model section so the two reads are consistent. The input block is a copy
   // the editor captures at generation (survives reorders); the output block is this method's SDF
@@ -148,10 +169,10 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     }
     ImGui::EndDisabled();
     if (_props.bakeSdf) {
-      ImGui::TextUnformatted("Bakes a grid SDF from the input surface; the output buffer is its");
+      ImGui::TextUnformatted("Bakes a grid SDF from the input mesh; the output buffer is its");
       ImGui::TextUnformatted("reconstructed surface (preview only).");
     } else {
-      ImGui::TextUnformatted("Exports the input surface alone; the output buffer is the input.");
+      ImGui::TextUnformatted("Exports the input mesh alone; the output buffer is the input.");
     }
 
     ImGui::SeparatorText("Mochi Model Export");
@@ -173,7 +194,7 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
       _props.exportPath = NormalizeMochiModelExportPath(
           std::string{_props.exportPath.data(), _props.exportPath.size()});
     }
-    tooltip("Export writes the input mesh plus this baked SDF to a .mochi.h5 file.");
+    tooltip("Export writes the generated Mochi model to a .mochi.h5 file.");
     ImGui::EndDisabled();
     // Browse stays live while Auto is on: choosing a file IS taking the path over, so it turns Auto
     // off. Cancelling leaves everything as it was -- Browse only ever turns Auto off, never on.
@@ -214,13 +235,10 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
       ModifierRunContext const& /*ctx*/,
       mochi::Error& error) const override {
     // Bake the SDF once, in Mochi (Z-up) space -- what a .mochi.h5 stores -- and cache the baked
-    // model so Export reuses it without re-baking. The pipeline is renderer (Y-up) space,
-    // so convert the input first; the preview surface returned to the stack is converted back.
+    // model so Export reuses it without re-baking. The preview surface returned to the stack is
+    // converted back to render space.
     _bakedModel = {};
-    std::vector<MeshSection> const sections{processing::SectionFromMeshData(input)};
-    mochi::CoordinateSpaceConverter const renderToMochi(
-        mochi_renderer::RenderSpace(), mochi::CoordinateSpace::Default());
-    mochi::ModelData md = MeshSectionsToModel(sections, &renderToMochi);
+    mochi::ModelData md = MochiSpaceModel(input);
     if (!md.mesh.has_value()) {
       MOCHI_ERROR_SET(error, "Export Mochi Model: no input geometry.");
       return {};

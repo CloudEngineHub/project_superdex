@@ -17,6 +17,7 @@
 #include "app/process_command.h"
 
 #include "assets/asset_types.h"
+#include "meshing/processing_modifiers/processing_mesh_utils.h" // DisplaySurface
 #include "meshing/processing_modifiers/processing_serialization.h"
 #include "meshing/processing_modifiers/processing_stack.h"
 
@@ -240,7 +241,8 @@ ProcessReport RunPipeline(
     }
   });
 
-  StackRun run(stack, chain, ctx, [](std::size_t /*modifierIndex*/) { return mochi::MeshData{}; });
+  auto const noCurrentMesh = [](std::size_t /*modifierIndex*/) { return mochi::MeshData{}; };
+  StackRun run(stack, chain, ctx, noCurrentMesh, noCurrentMesh, processing::DisplaySurface);
   report.succeeded = true;
   for (std::size_t p = 0; p < chain.size(); ++p) {
     MeshProcessingModifier const& modifier = *stack.at(chain[p]);
@@ -268,8 +270,16 @@ ProcessReport RunPipeline(
     }
 
     mochi::MeshData const& output = run.Output(p);
-    stage.vertices = static_cast<int64_t>(output.GetNumNodes());
-    stage.triangles = static_cast<int64_t>(output.GetNumElements());
+    if (output.nodesPerElement == 4) {
+      // Report a tetrahedral output by its boundary surface, plus its node and tet counts.
+      mochi::MeshData const surface = processing::DisplaySurface(output);
+      stage.vertices = static_cast<int64_t>(surface.GetNumNodes());
+      stage.triangles = static_cast<int64_t>(surface.GetNumElements());
+      stage.tetMesh = mochi::Int2{output.GetNumNodes(), output.GetNumElements()};
+    } else {
+      stage.vertices = static_cast<int64_t>(output.GetNumNodes());
+      stage.triangles = static_cast<int64_t>(output.GetNumElements());
+    }
     MeshStats stats;
     modifier.AnnotateStats(stats);
     stage.sdfGrid = stats.sdfGrid;
@@ -316,10 +326,11 @@ int RunProcessCommand(ProcessOptions const& options) {
   ProcessReport const report =
       RunProcessingPipeline(options, error, [&stageIndex](ProcessStageReport const& stage) {
         std::printf(
-            "[%zu] %s: %s, %lld vertices, %lld triangles",
+            "[%zu] %s: %s, %s%lld vertices, %lld triangles",
             stageIndex++,
             stage.label.c_str(),
             stage.succeeded ? "ok" : "FAILED",
+            stage.tetMesh.has_value() ? "boundary " : "",
             static_cast<long long>(stage.vertices),
             static_cast<long long>(stage.triangles));
         if (stage.sdfGrid.has_value()) {
@@ -328,6 +339,9 @@ int RunProcessCommand(ProcessOptions const& options) {
               (*stage.sdfGrid)[0],
               (*stage.sdfGrid)[1],
               (*stage.sdfGrid)[2]);
+        }
+        if (stage.tetMesh.has_value()) {
+          std::printf(", tet mesh %d nodes, %d tets", (*stage.tetMesh)[0], (*stage.tetMesh)[1]);
         }
         std::printf(" (%.1f s)\n", stage.seconds);
         if (!stage.exportedPath.empty()) {

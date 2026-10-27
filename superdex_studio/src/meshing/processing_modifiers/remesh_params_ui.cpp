@@ -19,28 +19,35 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <string>
 
 namespace superdex::studio::processing {
+
+void ShowLengthControl(
+    char const* name,
+    char const* description,
+    double& length,
+    bool relativeToMeshSize,
+    ModifierTooltip const& tooltip) {
+  double const displayScale = relativeToMeshSize ? 100.0 : 1000.0;
+  double value = length * displayScale;
+  std::string const label = std::string(name) + (relativeToMeshSize ? " (%)" : " (mm)");
+  if (ImGui::InputDouble(label.c_str(), &value, 0.0, 0.0, "%.4f")) {
+    length = std::max(value, 0.0) / displayScale;
+  }
+  tooltip((std::string(description) +
+           (relativeToMeshSize ? " as a percent of the mesh bounding-box average dimension."
+                               : " in millimeters."))
+              .c_str());
+}
 
 void ShowEdgeSizeControl(
     double& edgeSize,
     bool& relativeToMeshSize,
     ModifierTooltip const& tooltip) {
-  if (relativeToMeshSize) {
-    double percent = edgeSize * 100.0;
-    if (ImGui::InputDouble("Edge Size (%)", &percent, 0.0, 0.0, "%.4f")) {
-      edgeSize = std::max(percent, 0.0) / 100.0;
-    }
-    tooltip("Target triangle edge length as a percent of the mesh bounding-box average dimension.");
-  } else {
-    double mm = edgeSize * 1000.0;
-    if (ImGui::InputDouble("Edge Size (mm)", &mm, 0.0, 0.0, "%.4f")) {
-      edgeSize = std::max(mm, 0.0) / 1000.0;
-    }
-    tooltip("Target triangle edge length in millimeters.");
-  }
+  ShowLengthControl("Edge Size", "Target edge length", edgeSize, relativeToMeshSize, tooltip);
   ImGui::Checkbox("Relative to Mesh Size", &relativeToMeshSize);
-  tooltip("Interpret edge size as a fraction of the bounding box (on) or absolute mm (off).");
+  tooltip("Interpret lengths as fractions of the bounding box (on) or absolute mm (off).");
 }
 
 void ShowFeatureControls(
@@ -48,10 +55,10 @@ void ShowFeatureControls(
     double& sharpFeatureAngle,
     ModifierTooltip const& tooltip) {
   ImGui::Checkbox("Detect Features", &detectFeatures);
-  tooltip("Detect sharp feature edges (using the angle below) and preserve them while remeshing.");
+  tooltip("Detect sharp feature edges (using the angle below) and preserve them.");
   ImGui::BeginDisabled(!detectFeatures);
   ImGui::InputDouble("Sharp Feature Angle (deg)", &sharpFeatureAngle, 0.0, 0.0, "%.3f");
-  tooltip("Dihedral angle threshold above which an edge counts as a sharp feature to preserve.");
+  tooltip("Angle between adjacent face normals above which an edge counts as a sharp feature.");
   ImGui::EndDisabled();
 }
 

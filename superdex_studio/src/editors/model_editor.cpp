@@ -141,6 +141,14 @@ MeshSection MeshDataToSection(mochi::MeshData const& mesh) {
   return section;
 }
 
+// Node and tetrahedron counts for the stats block of a tetrahedral mesh; nullopt otherwise.
+std::optional<mochi::Int2> TetCounts(mochi::MeshData const& mesh) {
+  if (mesh.nodesPerElement != 4) {
+    return std::nullopt;
+  }
+  return mochi::Int2{mesh.GetNumNodes(), mesh.GetNumElements()};
+}
+
 // Concatenates all sections into flat positions/indices (offsetting each section's indices) and
 // computes angle-weighted per-vertex normals over the merged mesh.
 void MergeSections(
@@ -270,9 +278,10 @@ std::string FormatByteSize(int64_t bytes) {
 }
 
 // Composites a MeshStats' display string from its base summary plus its annotations: the file-size
-// line first (when set), then an SDF grid line (when set), then the base summary, and a Hausdorff
-// line appended (when >= 0). Cheap; recompute whenever the base or an annotation changes (e.g. when
-// the async Hausdorff result arrives). Extend here to add future annotations.
+// line first (when set), then SDF grid and tet mesh lines (when set), then the base summary (headed
+// as the boundary surface for a tet mesh), and a Hausdorff line appended (when >= 0). Cheap;
+// recompute whenever the base or an annotation changes (e.g. when the async Hausdorff result
+// arrives). Extend here to add future annotations.
 void ComposeStats(MeshStats& stats) {
   std::ostringstream out;
   if (stats.fileSizeBytes.has_value()) {
@@ -282,6 +291,10 @@ void ComposeStats(MeshStats& stats) {
   if (stats.sdfGrid.has_value()) {
     mochi::Int3 const& d = *stats.sdfGrid;
     out << "SDF grid:     " << d[0] << " x " << d[1] << " x " << d[2] << "\n";
+  }
+  if (stats.tetMesh.has_value()) {
+    out << "Tet mesh:     " << (*stats.tetMesh)[0] << " nodes, " << (*stats.tetMesh)[1] << " tets\n"
+        << "Boundary surface:\n";
   }
   out << stats.base;
   if (stats.hausdorff >= 0.0) {
@@ -1289,6 +1302,7 @@ void ModelEditor::ResetStageBuffers() {
   for (auto const& modifier : _modifiers) {
     DestroyStageBufferMeshes(modifier->output);
     modifier->output.sections.clear();
+    modifier->output.tetMesh = {};
     modifier->output.stats = {};
     // The optional input-view buffer (Export Mochi Model) is invalidated with the output.
     DestroyStageBufferMeshes(modifier->inputView);
@@ -1431,6 +1445,9 @@ void ModelEditor::UpdateMochiModel() {
     _mochiStats.base = FormatMeshStats(_mochiSections);
     _mochiStats.fileSizeBytes = OnDiskFileSize(_mochiModelPath);
     _mochiStats.fileSizeLabel = "File Size";
+    if (_mochiModelAsset->GetModelData().mesh.has_value()) {
+      _mochiStats.tetMesh = TetCounts(*_mochiModelAsset->GetModelData().mesh);
+    }
     ComposeStats(_mochiStats);
     RebuildMochiModelSurfaceMesh();
     RebuildMochiModelWireframeMesh();
@@ -1823,8 +1840,8 @@ void ModelEditor::ShowMeshModifierStack() {
         showsInput ? 2 : 1,
         [&modifier, showsInput] {
           if (showsInput) {
-            // Export Mochi Model holds two meshes: the triangle mesh it exports, then the SDF.
-            DrawVizToggles("inputViz", "Mochi triangle mesh", modifier.inputView);
+            // Export Mochi Model's SDF method holds two meshes: the mesh it exports, then the SDF.
+            DrawVizToggles("inputViz", "Mochi mesh", modifier.inputView);
             SameLineAfterTogglePair();
             DrawVizToggles("stageViz", "SDF", modifier.output);
           } else {
@@ -1866,7 +1883,19 @@ void ModelEditor::ShowMeshModifierStack() {
             MeshProcessingMethod const& method = *modifier.Methods()[static_cast<std::size_t>(m)];
             bool const selected = m == modifier.ActiveMethodIndex();
             if (ImGui::Selectable(method.Name(), selected)) {
+              bool const wasShowingInput = modifier.ActiveMethod().ShowsInputVisualization();
               modifier.SelectMethod(m);
+              bool const nowShowsInput = modifier.ActiveMethod().ShowsInputVisualization();
+              if (wasShowingInput != nowShowsInput) {
+                if (modifier.inputView.surfaceMesh) {
+                  modifier.inputView.surfaceMesh->SetVisible(
+                      nowShowsInput && modifier.inputView.viz.showSurface);
+                }
+                if (modifier.inputView.wireframeMesh) {
+                  modifier.inputView.wireframeMesh->SetVisible(
+                      nowShowsInput && modifier.inputView.viz.showWireframe);
+                }
+              }
               SaveProcessingPipelineToDisk();
             }
             methodTooltip(method);
@@ -1890,15 +1919,20 @@ void ModelEditor::ShowMeshModifierStack() {
       tooltip(
           "Generate this modifier's output, first auto-rebuilding any stale modifiers above it. "
           "Stages already up to date are skipped.");
-      // Save this modifier's current output mesh to a .glb/.obj (dialog defaults to the bot's
-      // _intermediates folder). Enabled once the modifier has produced output.
+      // Save this modifier's current output as .vtk for a tetrahedral mesh, otherwise .glb/.obj.
+      // The dialog defaults to the bot's _intermediates folder and is enabled once the modifier
+      // has produced output.
       ImGui::SameLine();
       ImGui::BeginDisabled(modifier.output.sections.empty() || _studio->IsAsyncTasksRunning());
       if (ImGui::Button("Save")) {
         saveOutputIndex = static_cast<int>(i);
       }
       ImGui::EndDisabled();
-      tooltip("Save this modifier's current output mesh to a .glb or .obj file for inspection.");
+      tooltip(
+          modifier.output.tetMesh.GetNumElements() > 0
+              ? "Save this modifier's current tetrahedral output to a .vtk file for inspection."
+              : "Save this modifier's current surface output to a .glb or .obj file for "
+                "inspection.");
       // Export modifiers additionally offer their configured-path export (writes their input mesh).
       if (modifier.ProvidesFileExport()) {
         ImGui::SameLine();
@@ -2158,11 +2192,18 @@ void ModelEditor::RunGenerationCascade(
     std::vector<std::size_t> const& exportChainPositions) {
   std::size_t const n = chain.size();
 
-  // Shared with the serial tasks and onComplete. Stages that are not regenerated, and edge-flip
-  // references outside the chain, resolve to the modifiers' current output.
-  auto run = std::make_shared<StackRun>(_modifiers, chain, ctx, [this](std::size_t index) {
-    return SectionsToMeshData(_modifiers[index]->output.sections);
-  });
+  // Shared with the serial tasks and onComplete. Stages that are not regenerated keep their full
+  // current output; edge-flip references outside the chain use the displayed triangle surface.
+  auto run = std::make_shared<StackRun>(
+      _modifiers,
+      chain,
+      ctx,
+      [this](std::size_t index) {
+        StageBuffer const& output = _modifiers[index]->output;
+        return processing::BufferedStageOutput(output.tetMesh, output.sections);
+      },
+      [this](std::size_t index) { return SectionsToMeshData(_modifiers[index]->output.sections); },
+      processing::DisplaySurface);
 
   // One pass in chain order, each stage's export queued directly after the stage itself rather than
   // in a block at the end. Two things need that: a later source reads back the file an earlier
@@ -2235,6 +2276,8 @@ void ModelEditor::RunGenerationCascade(
       std::move(tasks),
       [this, run, chain, regen, ctx, hadExports](bool allSucceeded) {
         std::size_t const m = chain.size();
+        mochi::MeshData previousOutputSurface;
+        std::size_t previousOutputSurfacePosition = m;
         for (std::size_t p = 0; p < m; ++p) {
           if (!regen[p]) {
             continue;
@@ -2247,7 +2290,18 @@ void ModelEditor::RunGenerationCascade(
           // A source built from a file, not from the stage above it (which a mid-chain source has),
           // so it has no input mesh to record or measure against.
           bool const isSource = mod.Kind() == ModifierKind::Source;
-          mod.output.sections = {MeshDataToSection(run->Output(p))};
+          // A tetrahedral output is displayed by its boundary while the full mesh is retained for
+          // downstream processing, statistics, and Save.
+          mochi::MeshData const& output = run->Output(p);
+          mochi::MeshData outputSurface = processing::DisplaySurface(output);
+          mochi::MeshData inputSurface;
+          if (!isSource && p > 0 && run->Output(p - 1).GetNumElements() > 0) {
+            inputSurface = previousOutputSurfacePosition == p - 1
+                ? previousOutputSurface
+                : processing::DisplaySurface(run->Output(p - 1));
+          }
+          mod.output.sections = {MeshDataToSection(outputSurface)};
+          mod.output.tetMesh = output.nodesPerElement == 4 ? output : mochi::MeshData{};
           mod.outputGenId = _nextGenerationId++;
           mod.inputGenIdAtLastGen =
               (!isSource && p > 0) ? _modifiers[chain[p - 1]]->outputGenId : 0;
@@ -2264,19 +2318,27 @@ void ModelEditor::RunGenerationCascade(
             mochi::Real3 const outColor = StageRoleColor(mod, kOutputSdfColorRole);
             RebuildStageMeshes(mod.output, outColor);
             mod.inputView.sections.clear();
-            if (p > 0 && run->Output(p - 1).GetNumElements() > 0) {
-              mod.inputView.sections = {MeshDataToSection(run->Output(p - 1))};
+            if (inputSurface.GetNumElements() > 0) {
+              mod.inputView.sections = {MeshDataToSection(inputSurface)};
             }
             mochi::Real3 const inColor = StageRoleColor(mod, kInputMeshColorRole);
             RebuildStageMeshes(mod.inputView, inColor);
+            mod.inputView.stats.tetMesh = p > 0 ? TetCounts(run->Output(p - 1)) : std::nullopt;
           } else {
+            DestroyStageBufferMeshes(mod.inputView);
+            mod.inputView.sections.clear();
+            mod.inputView.tetMesh = {};
+            mod.inputView.stats = {};
             mochi::Real3 const color = StageOutputColor(mod);
             RebuildStageMeshes(mod.output, color);
           }
-          // Default a method stage's file-size line to a GLB estimate of its output mesh; an export
-          // modifier's AnnotateStats overrides this with its real export-format estimate below.
-          mod.output.stats.fileSizeBytes = processing::EstimateGlbSizeBytes(run->Output(p));
+          // Match the estimate to the format used by Save. Export modifiers can override it below.
+          mod.output.stats.fileSizeBytes = output.nodesPerElement == 4
+              ? processing::EstimateVtkSizeBytes(output)
+              : processing::EstimateGlbSizeBytes(outputSurface);
           mod.output.stats.fileSizeLabel = "Est. File Size";
+          mod.output.stats.tetMesh = TetCounts(output);
+          mod.output.stats.sdfGrid = std::nullopt;
           // Let the modifier contribute output-specific stats (e.g. the baked SDF grid), then
           // recomposite the display string around the base summary RebuildStageMeshes set.
           mod.AnnotateStats(mod.output.stats);
@@ -2291,9 +2353,12 @@ void ModelEditor::RunGenerationCascade(
           }
           // Kick off the hidden input<->output Hausdorff for this stage (a source has no input);
           // it updates the stats and recomposites when it returns.
-          if (p > 0 && !isSource && run->Output(p - 1).GetNumElements() > 0) {
-            KickoffModifierHausdorff(mod, run->Output(p - 1), run->Output(p));
+          if (inputSurface.GetNumElements() > 0 && outputSurface.GetNumElements() > 0) {
+            KickoffModifierHausdorff(mod, std::move(inputSurface), outputSurface);
           }
+          // Cache the boundary for an adjacent regenerated stage's input.
+          previousOutputSurface = std::move(outputSurface);
+          previousOutputSurfacePosition = p;
         }
         if (!allSucceeded) {
           MOCHI_LOG_WARNING(
@@ -2613,23 +2678,29 @@ void ModelEditor::SaveModifierOutput(std::size_t index) {
   if (index >= _modifiers.size()) {
     return;
   }
-  std::vector<MeshSection> sections = _modifiers[index]->output.sections; // copied for the worker
-  if (sections.empty()) {
+  StageBuffer const& output = _modifiers[index]->output;
+  bool const isTetMesh = output.tetMesh.GetNumElements() > 0;
+  if (!isTetMesh && output.sections.empty()) {
     MOCHI_LOG_WARNING("Save: modifier has no output to save.");
     return;
   }
 
-  std::string const defaultPath = DefaultModifierSavePath(index, ".glb");
+  // A tetrahedral output is saved as its tets (Legacy VTK, for third-party meshing tools), not as
+  // the boundary surface it is displayed by.
+  std::string const defaultPath = DefaultModifierSavePath(index, isTetMesh ? ".vtk" : ".glb");
   // The intermediates folder may not exist yet; create it up front, because the native dialog
   // silently falls back to its last-used directory when a default's parent is missing.
   superdex::robotics::EnsureDirectoriesCreated(
       defaultPath, mochi::ErrorLog{mochi::LogChannel::Warning});
-  char const* filters[] = {"*.glb", "*.obj"};
+  constexpr std::array<char const*, 2> surfaceFilters{"*.glb", "*.obj"};
+  constexpr std::array<char const*, 1> tetFilters{"*.vtk"};
+  std::span<char const* const> const filters =
+      isTetMesh ? std::span<char const* const>{tetFilters} : surfaceFilters;
   mochi::Path const chosen = SuperDexStudio::GetFileDialogPath(
       "Save Modifier Output",
-      filters,
-      2,
-      "Mesh (*.glb, *.obj)",
+      filters.data(),
+      static_cast<int>(filters.size()),
+      isTetMesh ? "VTK mesh (*.vtk)" : "Mesh (*.glb, *.obj)",
       /*isSaveDialog=*/true,
       mochi::Path{defaultPath});
   if (chosen.IsEmpty()) {
@@ -2641,21 +2712,38 @@ void ModelEditor::SaveModifierOutput(std::size_t index) {
   auto endsWith = [&lower](std::string_view ext) {
     return lower.size() >= ext.size() && lower.ends_with(ext);
   };
-  bool const isObj = endsWith(".obj");
-  if (!isObj && !endsWith(".glb") && !endsWith(".gltf")) {
+  bool const isObj = !isTetMesh && endsWith(".obj");
+  if (isTetMesh && !endsWith(".vtk")) {
+    path += ".vtk";
+  } else if (!isTetMesh && !isObj && !endsWith(".glb") && !endsWith(".gltf")) {
     path += ".glb"; // default to GLB when no recognized suffix was chosen
   }
 
-  auto sectionsPtr = std::make_shared<std::vector<MeshSection>>(std::move(sections));
+  std::shared_ptr<mochi::MeshData> tetMesh;
+  std::shared_ptr<std::vector<MeshSection>> sections;
+  if (isTetMesh) {
+    tetMesh = std::make_shared<mochi::MeshData>(output.tetMesh);
+  } else {
+    sections = std::make_shared<std::vector<MeshSection>>(output.sections);
+  }
   std::vector<AsyncTask> tasks;
-  tasks.push_back(AsyncTask{"Save " + path, [path, sectionsPtr, isObj](AsyncCancelToken const&) {
-                              bool const ok = isObj ? WriteObjToFile(path.c_str(), *sectionsPtr)
-                                                    : WriteGlbToFile(path.c_str(), *sectionsPtr);
-                              if (!ok) {
-                                MOCHI_LOG_ERROR("Failed to write mesh file: %s", path.c_str());
-                              }
-                              return ok;
-                            }});
+  tasks.push_back(
+      AsyncTask{
+          "Save " + path, [path, sections, tetMesh, isTetMesh, isObj](AsyncCancelToken const&) {
+            bool ok = false;
+            if (isTetMesh) {
+              mochi::ErrorLog error;
+              processing::WriteVtkFile(path, *tetMesh, error);
+              ok = error.IsOK();
+            } else {
+              ok = isObj ? WriteObjToFile(path.c_str(), *sections)
+                         : WriteGlbToFile(path.c_str(), *sections);
+            }
+            if (!ok) {
+              MOCHI_LOG_ERROR("Failed to write mesh file: %s", path.c_str());
+            }
+            return ok;
+          }});
   bool const started =
       _studio->BeginAsyncTasks("Saving Mesh", std::move(tasks), [this](bool allSucceeded) {
         if (!allSucceeded) {
@@ -3453,15 +3541,20 @@ void ModelEditor::ApplyReferenceModelTransform(ReferenceModel& rm) {
   rm.buffer.sections = rm.sectionsOriginal;
   ApplySectionsTransform(rm.buffer.sections, rm.scale, rm.rotation, rm.translation);
   // Recompute here (the geometry funnel) rather than in RebuildReferenceMeshes, which also runs on
-  // every opacity-drag frame. A mochi reference surfaces its baked SDF's grid dimensions.
+  // every opacity-drag frame. A mochi reference surfaces its baked SDF's grid dimensions and its
+  // tet counts.
   rm.buffer.stats.base = FormatMeshStats(rm.buffer.sections);
   rm.buffer.stats.fileSizeBytes = OnDiskFileSize(rm.path);
   rm.buffer.stats.fileSizeLabel = "File Size";
   rm.buffer.stats.sdfGrid = std::nullopt;
+  rm.buffer.stats.tetMesh = std::nullopt;
   if (rm.type == AssetType::MochiModel) {
     if (auto* asset = _studio->GetAssetManager().FindAssetByPath<MochiModelAsset>(rm.path)) {
       if (asset->GetModelData().sdf.has_value()) {
         rm.buffer.stats.sdfGrid = asset->GetModelData().sdf->dims;
+      }
+      if (asset->GetModelData().mesh.has_value()) {
+        rm.buffer.stats.tetMesh = TetCounts(*asset->GetModelData().mesh);
       }
     }
   }

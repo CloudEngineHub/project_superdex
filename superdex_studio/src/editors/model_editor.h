@@ -253,8 +253,8 @@ class ModelEditor : public AssetEditor {
       std::vector<bool> const& regen,
       ModifierRunContext const& ctx,
       std::vector<std::size_t> const& exportChainPositions);
-  // Saves the modifier at @p index's current output mesh to a .glb/.obj file chosen via a dialog
-  // that defaults to the asset's intermediates folder. Async write.
+  // Saves the modifier at @p index's current output to .vtk when tetrahedral, otherwise .glb/.obj,
+  // chosen via a dialog that defaults to the asset's intermediates folder. Async write.
   void SaveModifierOutput(std::size_t index);
   // Default output-save path for the modifier at @p index:
   // <intermediates>/<openedBaseName>_<TypeName><index><ext>.

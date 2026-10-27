@@ -18,7 +18,10 @@
 
 #include "meshing/processing_modifiers/processing_mesh_utils.h" // ApplyTransform
 
+#include <cmath>
+#include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace superdex::studio {
@@ -47,6 +50,9 @@ class SrtTransformMethod : public ReflectedMethod<TransformSrtProps> {
   char const* Description() const override {
     return "Apply a scale, then rotation, then translation to the mesh.";
   }
+  bool AcceptsTetrahedralInput() const override {
+    return true;
+  }
   void ShowParams(ModifierGuiContext const& gui) override {
     ModifierTooltip const& tooltip = gui.tooltip;
     if (!gui.host) {
@@ -62,9 +68,31 @@ class SrtTransformMethod : public ReflectedMethod<TransformSrtProps> {
   mochi::MeshData Run(
       mochi::MeshData const& input,
       ModifierRunContext const& /*ctx*/,
-      mochi::Error& /*error*/) const override {
+      mochi::Error& error) const override {
+    if (input.nodesPerElement == 4) {
+      auto const invalidScale = [](mochi::real value) {
+        return !std::isfinite(value) || value == mochi::real{0};
+      };
+      MOCHI_ERROR_IF(
+          invalidScale(_props.scale[0]) || invalidScale(_props.scale[1]) ||
+              invalidScale(_props.scale[2]),
+          error,
+          "SRT Transform: tetrahedral meshes require finite, nonzero scale components.");
+      MOCHI_ERROR_RETURN(error, {});
+    }
     mochi::MeshData out(input);
     processing::ApplyTransform(out, _props.scale, _props.rotation, _props.translation);
+    // A mirroring scale inverts every tetrahedron; swap two nodes of each to restore orientation.
+    int const negativeScaleAxes = static_cast<int>(_props.scale[0] < mochi::real{0}) +
+        static_cast<int>(_props.scale[1] < mochi::real{0}) +
+        static_cast<int>(_props.scale[2] < mochi::real{0});
+    bool const mirrored = negativeScaleAxes % 2 != 0;
+    if (out.nodesPerElement == 4 && mirrored) {
+      for (int tet = 0; tet < out.GetNumElements(); ++tet) {
+        std::size_t const offset = 4 * static_cast<std::size_t>(tet);
+        std::swap(out.connectivity[offset + 2], out.connectivity[offset + 3]);
+      }
+    }
     return out;
   }
 };

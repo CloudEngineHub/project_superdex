@@ -48,6 +48,7 @@ struct ModifierSpec {
   std::string sourcePath; // the file a source reads; the context's CAD model when empty
   RunFunction run; // passes the input through when empty
   std::vector<mochi::MeshData>* saved = nullptr; // receives each SaveToFile input
+  bool acceptsTets = false;
 };
 
 // A method that does whatever its spec says. Its Auto export path is the source path plus ".out".
@@ -74,6 +75,9 @@ class TestMethod : public MeshProcessingMethod {
   }
   [[nodiscard]] bool NeedsReferenceMesh() const override {
     return _spec.needsReference;
+  }
+  [[nodiscard]] bool AcceptsTetrahedralInput() const override {
+    return _spec.acceptsTets;
   }
   [[nodiscard]] int ReferenceIndex() const override {
     return _spec.referenceIndex;
@@ -130,6 +134,25 @@ mochi::MeshData Triangle(mochi::real value) {
   return mesh;
 }
 
+mochi::MeshData Tetrahedron() {
+  mochi::MeshData mesh;
+  mesh.nodesPerElement = 4;
+  for (mochi::real const coordinate : {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1}) {
+    mesh.coordinates.push_back(coordinate);
+  }
+  for (int const node : {0, 1, 2, 3}) {
+    mesh.connectivity.push_back(node);
+  }
+  return mesh;
+}
+
+mochi::MeshData ProduceTetrahedron(
+    mochi::MeshData const& /*input*/,
+    ModifierRunContext const& /*ctx*/,
+    mochi::Error& /*error*/) {
+  return Tetrahedron();
+}
+
 RunFunction ProduceTriangle(mochi::real value) {
   return [value](
              mochi::MeshData const& /*input*/,
@@ -161,6 +184,10 @@ mochi::MeshData ReturnReference(
 
 mochi::MeshData NoCurrentOutput(std::size_t /*modifierIndex*/) {
   return {};
+}
+
+mochi::MeshData SameReferenceMesh(mochi::MeshData const& output) {
+  return output;
 }
 
 constexpr ModifierKind kSource = ModifierKind::Source;
@@ -292,7 +319,7 @@ TEST(ProcessingStackTest, StackRunFeedsEachStageThePreviousOutput) {
       {{.kind = kSource, .run = ProduceTriangle(1)},
        {.kind = kTransform, .run = AddOne},
        {.kind = kExport, .exportPath = "out.glb", .saved = &saved}});
-  StackRun run(stack, {0, 1, 2}, {}, NoCurrentOutput);
+  StackRun run(stack, {0, 1, 2}, {}, NoCurrentOutput, NoCurrentOutput, SameReferenceMesh);
 
   mochi::Error error;
   EXPECT_TRUE(run.Generate(0, error));
@@ -305,14 +332,78 @@ TEST(ProcessingStackTest, StackRunFeedsEachStageThePreviousOutput) {
   EXPECT_EQ(saved[0].coordinates[0], 2);
 }
 
+TEST(ProcessingStackTest, StackRunDoesNotExportAfterFailedRegeneration) {
+  std::vector<mochi::MeshData> saved;
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTriangle(1)},
+       {.kind = kExport, .exportPath = "out.glb", .run = Fail, .saved = &saved}});
+  auto const currentOutput = [](std::size_t index) {
+    return Triangle(static_cast<mochi::real>(10 + index));
+  };
+  StackRun run(stack, {0, 1}, {}, currentOutput, NoCurrentOutput, SameReferenceMesh);
+
+  mochi::Error sourceError;
+  mochi::Error generationError;
+  mochi::Error exportError;
+  EXPECT_TRUE(run.Generate(0, sourceError));
+  EXPECT_FALSE(run.Generate(1, generationError));
+  EXPECT_FALSE(run.Export(1, exportError));
+
+  EXPECT_FALSE(generationError.IsOK());
+  EXPECT_FALSE(exportError.IsOK());
+  EXPECT_EQ(run.Output(1).GetNumElements(), 0);
+  EXPECT_TRUE(saved.empty());
+}
+
+TEST(ProcessingStackTest, OnlyStagesThatAcceptTetsRunOnATetMesh) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTetrahedron},
+       {.kind = kTransform, .acceptsTets = true},
+       {.kind = kTransform}});
+  StackRun run(stack, {0, 1, 2}, {}, NoCurrentOutput, NoCurrentOutput, SameReferenceMesh);
+
+  mochi::Error acceptingError;
+  mochi::Error rejectingError;
+  EXPECT_TRUE(run.Generate(0, acceptingError));
+  EXPECT_TRUE(run.Generate(1, acceptingError));
+  EXPECT_FALSE(run.Generate(2, rejectingError));
+
+  EXPECT_EQ(run.Output(1).nodesPerElement, 4);
+  EXPECT_FALSE(rejectingError.IsOK());
+  EXPECT_EQ(run.Output(2).GetNumElements(), 0);
+}
+
+TEST(ProcessingStackTest, SkippedCachedTetKeepsTetTypeChecksForRegeneratedStages) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource}, {.kind = kTransform, .acceptsTets = true}, {.kind = kTransform}});
+  mochi::MeshData const cachedTet = Tetrahedron();
+  StackRun run(
+      stack,
+      {0, 1, 2},
+      {},
+      [&cachedTet](std::size_t index) { return index == 0 ? cachedTet : mochi::MeshData{}; },
+      NoCurrentOutput,
+      SameReferenceMesh);
+
+  mochi::Error acceptingError;
+  mochi::Error rejectingError;
+  EXPECT_TRUE(run.Generate(1, acceptingError));
+  EXPECT_EQ(run.Output(1).nodesPerElement, 4);
+  EXPECT_EQ(run.Output(1).connectivity, cachedTet.connectivity);
+  EXPECT_FALSE(run.Generate(2, rejectingError));
+  EXPECT_FALSE(rejectingError.IsOK());
+  EXPECT_EQ(run.Output(2).GetNumElements(), 0);
+}
+
 TEST(ProcessingStackTest, StackRunFailureLeavesNothingForTheStagesBelow) {
   ModifierStack const stack = MakeStack(
       {{.kind = kSource, .run = ProduceTriangle(1)},
        {.kind = kTransform, .run = Fail},
        {.kind = kTransform, .run = AddOne}});
-  StackRun run(stack, {0, 1, 2}, {}, [](std::size_t index) {
+  auto const currentOutput = [](std::size_t index) {
     return Triangle(static_cast<mochi::real>(10 * index));
-  });
+  };
+  StackRun run(stack, {0, 1, 2}, {}, currentOutput, currentOutput, SameReferenceMesh);
 
   mochi::Error sourceError;
   mochi::Error failError;
@@ -332,9 +423,10 @@ TEST(ProcessingStackTest, StackRunPassesOnTheCurrentOutputOfStagesItSkips) {
       {{.kind = kSource, .run = ProduceTriangle(1)},
        {.kind = kTransform, .run = AddOne},
        {.kind = kTransform, .run = AddOne}});
-  StackRun run(stack, {0, 1, 2}, {}, [](std::size_t index) {
+  auto const currentOutput = [](std::size_t index) {
     return Triangle(static_cast<mochi::real>(10 * index));
-  });
+  };
+  StackRun run(stack, {0, 1, 2}, {}, currentOutput, currentOutput, SameReferenceMesh);
 
   mochi::Error error;
   EXPECT_TRUE(run.Generate(2, error));
@@ -350,15 +442,45 @@ TEST(ProcessingStackTest, StackRunResolvesReferencesInsideAndOutsideTheChain) {
        {.kind = kTransform, .needsReference = true, .run = ReturnReference}});
   // The chain starts at the nearest source, index 1, so the explicit reference to index 0 is
   // outside it while the preceding-source reference of index 3 is inside it.
-  StackRun run(stack, BuildGenerationChain(stack, 3), {}, [](std::size_t index) {
-    return Triangle(static_cast<mochi::real>(10 * index));
-  });
+  mochi::MeshData const cachedTet = Tetrahedron();
+  StackRun run(
+      stack,
+      BuildGenerationChain(stack, 3),
+      {},
+      [&cachedTet](std::size_t index) { return index == 0 ? cachedTet : mochi::MeshData{}; },
+      [](std::size_t index) { return Triangle(static_cast<mochi::real>(100 + index)); },
+      SameReferenceMesh);
 
   mochi::Error error;
   EXPECT_TRUE(run.Generate(0, error));
   EXPECT_TRUE(run.Generate(1, error));
   EXPECT_TRUE(run.Generate(2, error));
 
-  EXPECT_EQ(run.Output(1).coordinates[0], 0); // modifier 0's current output
+  EXPECT_EQ(run.Output(1).nodesPerElement, 3);
+  EXPECT_EQ(run.Output(1).coordinates[0], 100); // modifier 0's current reference surface
   EXPECT_EQ(run.Output(2).coordinates[0], 2); // the chain's own source output
+}
+
+TEST(ProcessingStackTest, StackRunBuildsReferenceSurfacesForGeneratedTetStages) {
+  ModifierStack const stack = MakeStack(
+      {{.kind = kSource, .run = ProduceTetrahedron},
+       {.kind = kSource, .run = ProduceTriangle(2)},
+       {.kind = kTransform, .referenceIndex = 0, .needsReference = true, .run = ReturnReference}});
+  StackRun run(
+      stack,
+      BuildFullGenerationChain(stack),
+      {},
+      NoCurrentOutput,
+      NoCurrentOutput,
+      [](mochi::MeshData const& output) {
+        return output.nodesPerElement == 4 ? Triangle(50) : output;
+      });
+
+  mochi::Error error;
+  EXPECT_TRUE(run.Generate(0, error));
+  EXPECT_TRUE(run.Generate(1, error));
+  EXPECT_TRUE(run.Generate(2, error));
+
+  EXPECT_EQ(run.Output(2).nodesPerElement, 3);
+  EXPECT_EQ(run.Output(2).coordinates[0], 50);
 }
