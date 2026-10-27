@@ -323,7 +323,7 @@ inline RigidInertiaFn<InertiaT> GetRigidInertiaFn(GradTarget gradTarget, bool us
       MOCHI_UNLIKELY default: MOCHI_ASSERT_VERBOSE(false, "Unexpected grad target");
         return nullptr;
     }
-    // clang-format off
+    // clang-format on
   }
 }
 
@@ -476,14 +476,14 @@ inline void AddRigidBodyFriction(
     real ddSmoother{};
     real dSmoother_velNorm;
     StribeckActivation(
-      velNorm,
-      falloffVel,
-      dSmootherInfty,
-      stribeckVel,
-      smoother,
-      dSmoother,
-      ddSmoother,
-      dSmoother_velNorm);
+        velNorm,
+        falloffVel,
+        dSmootherInfty,
+        stribeckVel,
+        smoother,
+        dSmoother,
+        ddSmoother,
+        dSmoother_velNorm);
 
     if (outEnergySlice) {
       (*outEnergySlice) = static_cast<double>(staticFriction * dtStage * smoother);
