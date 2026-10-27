@@ -9629,8 +9629,11 @@ class Actor:
             For rigid actors, it returns the velocity of the center of mass.
 
         Note:
-            For soft actors, it returns an estimate of the linear velocity of the root
-            transform. Requires recentering to be enabled for accurate results.
+            For soft actors, it returns an estimate of the linear velocity of the rest
+            mesh's center of mass, assuming it moves rigidly with the recentering pivot.
+            Soft actors created with
+            :attr:`~superdex.physics.experimental.ExperimentalSoftActorParams.use_recentering`
+            set to false have no pivot and return zero.
 
         Note:
             Not supported for ROM actors.
@@ -9651,8 +9654,10 @@ class Actor:
             For rigid actors, it returns the actual angular velocity.
 
         Note:
-            For soft actors, it returns an estimate of the angular velocity of the root
-            transform. Requires recentering to be enabled for accurate results.
+            For soft actors, it returns an estimate of the angular velocity of the
+            recentering pivot. Soft actors created with
+            :attr:`~superdex.physics.experimental.ExperimentalSoftActorParams.use_recentering`
+            set to false have no pivot and return zero.
 
         Note:
             Not supported for ROM actors.
@@ -13110,6 +13115,9 @@ class Scene:
             partially modified. Restore a known-good checkpoint or recreate the scene
             before continuing.
 
+        Warning:
+            Not supported for scenes with ROM actors.
+
         See Also:
             :meth:`~superdex.physics.Scene.capture_state`,
             :meth:`~superdex.physics.Scene.release_state`,
@@ -13177,7 +13185,8 @@ class Scene:
             when the state was captured.
 
         Warning:
-            Has the same restore scope and non-transactional failure behavior as
+            Has the same restore scope, non-transactional failure behavior, and lack of
+            support for scenes with ROM actors as
             :meth:`~superdex.physics.Scene.restore_state`.
 
         See Also:

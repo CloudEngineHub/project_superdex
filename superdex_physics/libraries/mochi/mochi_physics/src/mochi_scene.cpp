@@ -198,11 +198,14 @@ template <typename EnumT>
   return valueInt >= 0 && valueInt < static_cast<int>(count);
 }
 
-static void CheckStateCaptureSupported(entt::registry const& reg, Error& error) {
+// Captured states never contain ROM state, so restoring one into a scene with ROM actors would
+// silently mix full-order state into them.
+static void CheckStateCaptureAndRestoreSupported(entt::registry const& reg, Error& error) {
   MOCHI_ERROR_IF(
       !reg.storage<TagRomActor>().empty() || !reg.storage<CRomFomSwitchingParams>().empty(),
       error,
-      "State capture is not supported for scenes with ROM actors or ROM/FOM switching.");
+      "State capture and restore are not supported for scenes with ROM actors or ROM/FOM "
+      "switching.");
 }
 
 [[nodiscard]] static bool ActorCanOwnNestedActors(Actor const& actor) {
@@ -780,7 +783,7 @@ void SceneImpl::SetForceSingleIsland(bool forceSingleIsland) {
 
 StateHandle SceneImpl::CaptureState(Error& error) {
   MOCHI_PROFILE_SCOPE();
-  CheckStateCaptureSupported(_registry, error);
+  CheckStateCaptureAndRestoreSupported(_registry, error);
   MOCHI_ERROR_RETURN(error, {});
 
   // Recycle the previously released state buffer (if any)
@@ -830,7 +833,7 @@ void SceneImpl::RestoreState(StateHandle handle, bool releaseImmediately, Error&
 
 void SceneImpl::CaptureStateToBytes(DynamicArray<uint8_t>& outData, Error& error) {
   MOCHI_PROFILE_SCOPE();
-  CheckStateCaptureSupported(_registry, error);
+  CheckStateCaptureAndRestoreSupported(_registry, error);
   MOCHI_ERROR_RETURN(error);
 
   capture::CaptureState(_registry, outData, error);
@@ -838,6 +841,8 @@ void SceneImpl::CaptureStateToBytes(DynamicArray<uint8_t>& outData, Error& error
 
 void SceneImpl::RestoreStateFromBytes(Span<uint8_t const> data, Error& error) {
   MOCHI_PROFILE_SCOPE();
+  CheckStateCaptureAndRestoreSupported(_registry, error);
+  MOCHI_ERROR_RETURN(error);
   ScopedSchedulerBinding schedulerBinding(this);
 
   capture::RestoreState(_registry, data, error);
@@ -854,6 +859,12 @@ void SceneImpl::RestorePartialState(
     Error& error) {
   MOCHI_PROFILE_SCOPE();
 
+  // Optionally release the handle when done (even if !error.IsOK())
+  MOCHI_DEFER(if (releaseImmediately) { ReleaseState(handle); });
+
+  CheckStateCaptureAndRestoreSupported(_registry, error);
+  MOCHI_ERROR_RETURN(error);
+
   // Look it up in the map
   auto const& stateBuffer = FindState(handle, error);
 
@@ -863,11 +874,6 @@ void SceneImpl::RestorePartialState(
   // TODO[T229060237] - Restore CIslandSleepState::numConsecutiveRestSteps and TagIslandIsAwake,
   // so that forward simulation repeats the same deterministic results.
   sleep::WakeAll(_registry);
-
-  // Optionally release the handle now (even if !error.IsOK())
-  if (releaseImmediately) {
-    ReleaseState(handle);
-  }
 }
 
 void SceneImpl::ReleaseState(StateHandle handle) {
@@ -896,7 +902,7 @@ bool SceneImpl::IsEqualState(StateHandle a, StateHandle b) const {
 void SceneImpl::CaptureStateToFile(std::string_view filePath, Error& error) {
   MOCHI_ERROR_RETURN(error);
   MOCHI_ERROR_IF(filePath.empty(), error, "Empty file path");
-  CheckStateCaptureSupported(_registry, error);
+  CheckStateCaptureAndRestoreSupported(_registry, error);
   MOCHI_ERROR_RETURN(error);
   std::string json = capture::CaptureStateToJson(_registry, /*prettyMultiLine*/ true, error);
   WriteFile(filePath, json, error);
@@ -3530,6 +3536,8 @@ void experimental::RestoreStateFromScene(
     Error& error) {
   MOCHI_ERROR_IF(!sceneFrom, error, "Invalid scene");
   MOCHI_ERROR_IF(!sceneTo, error, "Invalid scene");
+  MOCHI_ERROR_RETURN(error);
+  CheckStateCaptureAndRestoreSupported(assert_cast<SceneImpl*>(sceneTo)->GetRegistry(), error);
   MOCHI_ERROR_RETURN(error);
   ScopedSchedulerBinding schedulerBinding(assert_cast<SceneImpl*>(sceneTo));
 

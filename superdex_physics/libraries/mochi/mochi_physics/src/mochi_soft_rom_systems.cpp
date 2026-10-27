@@ -654,6 +654,8 @@ void mochi::rom::RomFomSwitchingPipeline(
         },
         params.params);
     if (shouldSwitch) {
+      // ROM actors do not recenter, so remove the rotation of the last full-order step first.
+      ecs::TryInvokeOnEntity(&soft::RecenterSolutionUsingRigidTransformEval, reg, e);
       FomToRomImpl(reg, e);
       sleep::WakeUp(reg, e);
     }

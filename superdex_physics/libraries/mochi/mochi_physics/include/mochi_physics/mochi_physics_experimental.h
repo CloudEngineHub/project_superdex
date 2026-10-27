@@ -1076,7 +1076,7 @@ MOCHI_API void SetSimulationTime(
 // [Experimental] Function to restore the state of a scene using data from another scene. The
 // function receives pointers to both scenes and the handle of the state to be copied. The function
 // will return an error if the actor types and components in both scenes do not match, but it will
-// not check if the actors and their properties match.
+// not check if the actors and their properties match. Not supported if sceneTo has ROM actors.
 MOCHI_API void
 RestoreStateFromScene(Scene* sceneTo, Scene const* sceneFrom, StateHandle handleFrom, Error& error);
 

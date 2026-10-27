@@ -139,7 +139,8 @@ struct CRootTransform : public NoCopy {
   // For all actors, it stores the current root transform.
   TransformRT worldFromLocal;
   // For all actors, it stores the root transform at the beginning of the step, i.e., the end of the
-  // previous step.
+  // previous step. Recentering moves it along with the previous-step state, so for deformable
+  // actors it is always the frame in which that state is expressed.
   TransformRT worldFromLocalPrev;
   // Used only by dynamic rigid actors (because their root transform represents state), it stores
   // the root transform at the beginning of the stage.

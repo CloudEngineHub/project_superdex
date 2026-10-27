@@ -973,6 +973,7 @@ void mochi::soft::RecenterSolutionUsingRigidTransformEval(
     ecs::Excluded<TagRomActor>,
     CRecenteringParams const& params,
     CSimplicialMesh const& simplicial,
+    CLocal2GlobalMap const& l2g,
     CRigidTransformEvalPoint const& pivot,
     CRootTransform& root,
     CDisplacementSlice<real, TimeStep::Current>& currDispl,
@@ -987,6 +988,9 @@ void mochi::soft::RecenterSolutionUsingRigidTransformEval(
   if (!params.useRecentering) {
     return;
   }
+
+  // The cached evaluation is stale if the state was set since the last solve.
+  UpdateRigidTransformEval(currDispl, l2g, pivot, pivotEval);
 
   // Get the evaluation point (current and reference)
   Real3 const& refPivotPos = pivot.GetPositionReference();
@@ -1022,8 +1026,10 @@ void mochi::soft::RecenterSolutionUsingRigidTransformEval(
   // Reset the pivot eval so that it is correct in the new reference frame.
   pivotEval.value = refPivot;
 
-  // Transform kinematics to compensate for the new root transform.
+  // Transform kinematics to compensate for the new root transform. The previous-step state is
+  // transformed too, so move its root transform to keep it fixed in world space.
   TransformRT const newLocalFromOldLocal = Invert(newWorldFromLocal) * oldWorldFromLocal;
+  root.worldFromLocalPrev = root.worldFromLocalPrev * Invert(newLocalFromOldLocal);
   Span<real const> refCoords = Flatten(simplicial.mesh->GetNodeCoordinates());
 
   currDispl.ApplyTransform(newLocalFromOldLocal, refCoords);
@@ -1392,19 +1398,39 @@ void soft::UpdateRigidVelocity(
     ecs::Excluded<TagRomActor>,
     ecs::CtxGlobal<CSceneTime const> time,
     CRootTransform const& root,
+    CSimplicialMesh const& simplicial,
     CBoundingVolume const& bounds,
+    CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
+    CLocal2GlobalMap const& l2g,
+    CRigidTransformEvalPoint const* pivot,
+    CRigidTransformEval const* pivotEval,
     CPrevRigidVelocity& outRigidVel) {
-  // Approximate the center-of-mass using the center-of-volume.
-  // Then compute velocity of that point based on the change in root transform.
-  //
-  // TODO[Nate]: This only works if recentering is enabled with zero tolerance.
-  //             It may be better to track the movement of CRigidTransformEval instead.
-  outRigidVel.centerOfMassLocal = GetAabb(bounds.localShape).VGetCenter();
+  // Approximate the center-of-mass using that of the rest mesh, moving rigidly with the pivot over
+  // the step, so that the result does not depend on recentering or on how far the mesh has rotated
+  // within the local frame. Actors without a pivot evaluation never recenter, so their root
+  // transform does not move during a step and they report zero velocity at their center-of-volume.
+  // Hybrid actors that switched from ROM to FOM have a pivot eval point without a pivot evaluation;
+  // the reverse never occurs.
+  MOCHI_ASSERT_VERBOSE(
+      !pivotEval || pivot, "Expected a pivot eval point with the pivot evaluation.");
+  TransformRT localFromPivot = TransformRT::Identity();
+  TransformRT localFromPivotPrev = TransformRT::Identity();
+  Vec4r centerOfMassPivot = GetAabb(bounds.localShape).VGetCenter();
+  if (pivotEval) {
+    localFromPivot = pivotEval->value;
+    // Seed with the current rotation, which is kept if the pivot element was inverted at the start
+    // of the step, so that an inverted element does not report a spurious angular velocity.
+    localFromPivotPrev = localFromPivot;
+    ComputeTransformAtEvalPoint(prevDispl.value, l2g, *pivot, localFromPivotPrev);
+    // At rest, the pivot frame is the local frame translated to the pivot's reference position.
+    centerOfMassPivot = ToSimd(simplicial.mesh->GetBarycenter() - pivot->GetPositionReference());
+  }
+  outRigidVel.centerOfMassLocal = localFromPivot.TransformPoint(centerOfMassPivot);
   FiniteDifferenceRigidTransformLie(
       static_cast<real>(time->DeltaTime()),
-      root.worldFromLocal,
-      root.worldFromLocalPrev,
-      outRigidVel.centerOfMassLocal,
+      root.worldFromLocal * localFromPivot,
+      root.worldFromLocalPrev * localFromPivotPrev,
+      centerOfMassPivot,
       outRigidVel.linearVelocityWorld,
       outRigidVel.angularVelocityWorld);
 }

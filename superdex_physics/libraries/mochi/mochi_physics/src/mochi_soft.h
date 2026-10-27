@@ -169,12 +169,14 @@ inline void UpdateRigidTransformEval(
   ComputeTransformAtEvalPoint(currSol.value, l2g, evalPoint, outTransformEval.value);
 }
 
-// Use the information in CRigidTransformEval to perform a recentering of data.
+// Update CRigidTransformEval from the current solution, then use it to perform a recentering of
+// data.
 void RecenterSolutionUsingRigidTransformEval(
     ecs::RequiredTag<TagSoftActor>,
     ecs::Excluded<TagRomActor>,
     CRecenteringParams const& params,
     CSimplicialMesh const& simplicial,
+    CLocal2GlobalMap const& l2g,
     CRigidTransformEvalPoint const& pivot,
     CRootTransform& root,
     CDisplacementSlice<real, TimeStep::Current>& currDispl,
@@ -752,13 +754,18 @@ void EntitySetSolution(
     ecs::Excluded<TagRomActor>,
     CDisplacementSlice<real, TimeStep::Current>& currSol);
 
-// Update CRigidVelocityLocal by approximating the movement of the center-of-mass
+// Update CPrevRigidVelocity by approximating the movement of the center-of-mass
 void UpdateRigidVelocity(
     ecs::Included<TagSoftActor>,
     ecs::Excluded<TagRomActor>,
     ecs::CtxGlobal<CSceneTime const> time,
     CRootTransform const& root,
+    CSimplicialMesh const& simplicial,
     CBoundingVolume const& bounds,
+    CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
+    CLocal2GlobalMap const& l2g,
+    CRigidTransformEvalPoint const* pivot,
+    CRigidTransformEval const* pivotEval,
     CPrevRigidVelocity& outRigidVelWorld);
 
 // Update CBoundingVolume.localShape based on the deformation of the mesh. kStep selects the

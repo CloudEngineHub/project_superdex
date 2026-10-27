@@ -3339,23 +3339,11 @@ void mochi::UpdateQuerySdfSurface(
 
 void mochi::UpdateQueryContactSamples(
     CContactSamples<TimeStep::Current> const& samplePositions,
-    CRootTransform const& rootTransform,
-    CRecenteringParams const* recenterParams,
-    ecs::OptionalTag<TagSoftActor> hasSoftActorTag,
     CQueryContactSamples& outQuery) {
   MOCHI_PROFILE_SCOPE();
 
   auto flatPositions = Flatten(Span<Real3 const>(samplePositions.positions));
   outQuery.contactSamples.assign(flatPositions.begin(), flatPositions.end());
-
-  // Only for soft actors: if recentering is activated, correct last contacts
-  if (hasSoftActorTag && recenterParams && recenterParams->useRecentering &&
-      rootTransform.worldFromLocal != rootTransform.worldFromLocalPrev) {
-    ArrayTransformPoints(
-        Unflatten<Real3>(outQuery.contactSamples),
-        Unflatten<Real3 const>(outQuery.contactSamples),
-        Invert(rootTransform.worldFromLocal) * rootTransform.worldFromLocalPrev);
-  }
 }
 
 struct SdfSample {
@@ -3416,17 +3404,12 @@ static void AppendActiveSdfSamplesWorldSpace(
 void mochi::UpdateQuerySdfDistances(
     CContactSamples<TimeStep::Current> const& collidingSamples,
     CRootTransform const& rootTransform,
-    ecs::OptionalTag<TagDeformableActor> isDeformable,
     CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const* collisionsAsync,
     CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const* collisionsSync,
     CRequiresFarSdfEvaluation const* farSdfEval,
     CConvergenceStatus const* convergenceStatus,
     CQuerySdfDistances& outQuerySdfDistances) {
   MOCHI_PROFILE_SCOPE();
-
-  // Deformable samples are expressed in the frame from before any post-step recentering.
-  auto const& collidingTransform =
-      isDeformable ? rootTransform.worldFromLocalPrev : rootTransform.worldFromLocal;
 
   // Compute the closest contact point for each sample index
   std::unordered_map<int, SdfSample> contactPointDetails;
@@ -3436,11 +3419,11 @@ void mochi::UpdateQuerySdfDistances(
   if (!convergenceStatus || convergenceStatus->stepStatus != ConvergenceStatus::Diverged) {
     if (collisionsAsync) {
       AppendActiveSdfSamplesWorldSpace(
-          *collisionsAsync, collidingSamples, collidingTransform, contactPointDetails);
+          *collisionsAsync, collidingSamples, rootTransform.worldFromLocal, contactPointDetails);
     }
     if (collisionsSync) {
       AppendActiveSdfSamplesWorldSpace(
-          *collisionsSync, collidingSamples, collidingTransform, contactPointDetails);
+          *collisionsSync, collidingSamples, rootTransform.worldFromLocal, contactPointDetails);
     }
   }
 
@@ -3469,6 +3452,16 @@ static bool
 IsQueryForceCollidingLocal(entt::registry const& reg, entt::entity colliding, bool isSync) {
   return !isSync && reg.all_of<TagDeformableActor>(colliding) &&
       !reg.all_of<TagSkinnedContact>(colliding);
+}
+
+// Like the collider's local frame, the colliding actor's local frame for query forces is that of
+// the last solve, so that the forces stay fixed in world space if the actor is moved before the
+// next step. A deformable actor's root transform does not change during a step, so that frame is
+// the one in worldFromLocalPrev, which setters such as SetRootTransform leave unchanged.
+static VMatrix3x3r GetQueryForceJacCollidingFromWorld(
+    entt::registry const& reg,
+    entt::entity colliding) {
+  return ToVMatrix3x3Transpose(GetRootTransform<TimeStep::Previous>(reg, colliding).GetRotation());
 }
 
 void mochi::UpdateQueryActiveContactsWorldSpace(
@@ -3516,17 +3509,11 @@ void mochi::UpdateQueryActiveContactsWorldSpace(
       ActorHandle collidingActor = GetActorHandle(colliding, sceneHandle);
       ActorHandle colliderActor = GetActorHandle(collider, sceneHandle);
 
-      // Fetch colliding actor data. For deformable actors, use the old root transform as it may
-      // have been updated by recentering.
-      auto const isDeformable = reg.all_of<TagDeformableActor>(colliding);
-      auto const isRigid = reg.all_of<TagRigidActor>(colliding);
+      // Fetch colliding actor data
       auto const forceIsCollidingLocal = IsQueryForceCollidingLocal(reg, colliding, isSync);
-      auto const& root = reg.get<CRootTransform const>(colliding);
-      auto const& transformCurrent = isDeformable ? root.worldFromLocalPrev : root.worldFromLocal;
-      auto const jacCollidingFromWorld = ToVMatrix3x3Transpose(transformCurrent.GetRotation());
-      auto const& transformStageStart = isRigid
-          ? root.worldFromLocalStageStart
-          : (isDeformable ? root.worldFromLocalPrev : root.worldFromLocal);
+      auto const jacCollidingFromWorld = GetQueryForceJacCollidingFromWorld(reg, colliding);
+      auto const& transformCurrent = GetRootTransform<TimeStep::Current>(reg, colliding);
+      auto const& transformStageStart = GetRootTransform<TimeStep::StageStart>(reg, colliding);
       auto const& samples = reg.get<CContactSamples<TimeStep::Current> const>(colliding);
       auto const* samplesStageStart =
           reg.try_get<CContactSamples<TimeStep::StageStart> const>(colliding);
@@ -3745,13 +3732,10 @@ void mochi::UpdateQueryActorContactForces(
     auto const& collidingSamples =
         !isColliderRole ? samples : reg.get<CContactSamples<TimeStep::Current> const>(colliding);
 
-    // Define the source entity's transform. For soft actors, note that the transform may have been
-    // modified by recentering, so use worldFromLocalPrev.
-    auto const isCollidingDeformable = reg.all_of<TagDeformableActor>(colliding);
+    // Define the source entity's transform.
     auto const forceIsCollidingLocal = IsQueryForceCollidingLocal(reg, colliding, isSync);
-    auto const& collidingRoot = reg.get<CRootTransform const>(colliding);
-    auto const& worldFromColliding =
-        isCollidingDeformable ? collidingRoot.worldFromLocalPrev : collidingRoot.worldFromLocal;
+    auto const jacCollidingFromWorld = GetQueryForceJacCollidingFromWorld(reg, colliding);
+    auto const& worldFromColliding = GetRootTransform<TimeStep::Current>(reg, colliding);
     VMatrix4x4r const worldFromCollidingMatT = ToVMatrix4x4Transpose(worldFromColliding);
 
     // Force and torque accumulators
@@ -3772,7 +3756,7 @@ void mochi::UpdateQueryActorContactForces(
 
       // Transform the force to world space. See @ref IsQueryForceCollidingLocal.
       if (forceIsCollidingLocal) {
-        force = DotVecMat3x3(force, worldFromCollidingMatT);
+        force = DotVecMat3x3(force, jacCollidingFromWorld);
       } else {
         force = DotVecMat3x3(force, collisionResult.jacColliderFromWorld[iTransform]);
       }

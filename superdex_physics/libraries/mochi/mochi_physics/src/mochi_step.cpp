@@ -267,8 +267,14 @@ void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& de
   TaskSemaphore sem;
 
   for (auto e : descendants.softActors) {
-    Schedule(
-        sem, "PreStepDeformableActorAsync", [&reg, e]() { PreStepDeformableActorAsync(reg, e); });
+    Schedule(sem, "PreStepDeformableActorAsync", [&reg, e]() {
+      // Recenter only in islands that are about to be solved, so that a deformable actor's root
+      // transform stays fixed from here until the next step and all of its state, contact data,
+      // and queries share one local frame. Must come BEFORE anything reads the root transform.
+      ecs::TryInvokeOnEntity(
+          &soft::RecenterSolutionUsingRigidTransformEval, reg, e); // Non-ROM only
+      PreStepDeformableActorAsync(reg, e);
+    });
   }
 
   for (auto e : descendants.shellActors) {
@@ -415,12 +421,8 @@ static void PostStepIslandAsync(entt::registry& reg, CIslandDescendants const& d
   TaskSemaphore sem;
 
   // Optionally verify that each actor's post-solve bounding volume fits within the
-  // CConservativeStepBounds that were predicted at the beginning of the step.
-  //
-  // Ordering constraints:
-  //   1. UpdateBounds must run first (so the check sees the current bounding volumes).
-  //   2. The check must run before recentering (which modifies worldFromLocal for non-ROM soft
-  //      actors, invalidating the check logic).
+  // CConservativeStepBounds that were predicted at the beginning of the step. UpdateBounds must run
+  // first, so that the check sees the current bounding volumes.
   static constexpr bool kVerifyConservativeStepBounds = false;
   if constexpr (kVerifyConservativeStepBounds) {
     // Update CBoundingVolume before the check.
@@ -435,12 +437,9 @@ static void PostStepIslandAsync(entt::registry& reg, CIslandDescendants const& d
 
   for (auto e : descendants.actors) {
     if (reg.any_of<TagSoftActor, TagBlendedActor, TagShellActor>(e)) {
-      // These actor types need to call PostStepDeformableActorAsync. It may be quite expensive, so
-      // we schedule an async task for each one.
+      // Query updates for these actor types may be quite expensive, so we schedule an async task
+      // for each one.
       Schedule(sem, "PostStepDeformableActorAsync", [sem, &reg, e]() {
-        ecs::TryInvokeOnEntity(
-            &soft::RecenterSolutionUsingRigidTransformEval, reg, e); // Non-ROM only
-
         UpdateActorQueriesAsync(sem, reg, e);
       });
     } else {

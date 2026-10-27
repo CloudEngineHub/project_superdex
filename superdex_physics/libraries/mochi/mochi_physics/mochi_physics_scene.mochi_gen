@@ -178,6 +178,7 @@ class Scene [no_init, no_destruct] {
   // is restored; if topology or persistent configuration changes, simulation results may differ.
   // @warning Restoration is not transactional. If restoration fails, the scene may be partially
   // modified. Restore a known-good checkpoint or recreate the scene before continuing.
+  // @warning Not supported for scenes with ROM actors.
   //
   // @note The @ref StateHandle must have been captured from this @ref Scene.
   // @note The scene composition (actors, constraints) must be the same as when the state was captured.
@@ -210,7 +211,8 @@ class Scene [no_init, no_destruct] {
   //
   // @param[in] data State data from a successful call to @ref CaptureStateToBytes.
   //
-  // @warning Has the same restore scope and non-transactional failure behavior as @ref RestoreState.
+  // @warning Has the same restore scope, non-transactional failure behavior, and lack of support for
+  // scenes with ROM actors as @ref RestoreState.
   //
   // @note The byte buffer must have been captured from this or a compatible scene via @ref
   // CaptureStateToBytes.

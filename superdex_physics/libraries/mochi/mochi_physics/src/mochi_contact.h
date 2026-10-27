@@ -952,16 +952,12 @@ void UpdateQuerySdfSurface(
 // Update CQueryContactSamples which is used for debug drawing of contact samples.
 void UpdateQueryContactSamples(
     CContactSamples<TimeStep::Current> const& samplePositions,
-    CRootTransform const& rootTransform,
-    CRecenteringParams const* recenterParams,
-    ecs::OptionalTag<TagSoftActor> hasSoftActorTag,
     CQueryContactSamples& outQuery);
 
 // Update CQuerySdfFarDistances which is used for recording distance to far away objects.
 void UpdateQuerySdfDistances(
     CContactSamples<TimeStep::Current> const& collidingSamples,
     CRootTransform const& rootTransform,
-    ecs::OptionalTag<TagDeformableActor> isDeformable,
     CActiveCollisions</*kIsSync*/ false, TimeStep::Current> const* collisionsAsync,
     CActiveCollisions</*kIsSync*/ true, TimeStep::Current> const* collisionsSync,
     CRequiresFarSdfEvaluation const* farSdfEval,

@@ -428,6 +428,25 @@ TEST_P(SceneSleepPerType, StateIsFrozenWhileAsleep) {
   EXPECT_EQ(rootTransform.GetTranslation(), actor->GetRootTransform().GetTranslation());
 }
 
+// Queries are only refreshed for awake islands, so recentering must not move the root transform
+// when the island falls asleep, or local-space queries would be left in the old frame.
+TEST_F(SceneSleep, SoftActorDoesNotRecenterAsItFallsAsleep) {
+  Actor const* actor = CreateTestActor(ActorType::Soft);
+  ASSERT_TRUE(actor->GetRecenteringParams().useRecentering);
+  TransformRT const initialRoot = actor->GetRootTransform();
+  TransformRT rootBeforeStep;
+  int numSteps = 0;
+  do {
+    ASSERT_LT(numSteps, kMaxStepsToSleep);
+    rootBeforeStep = actor->GetRootTransform();
+    Step();
+    ++numSteps;
+  } while (IsAwake(actor));
+  EXPECT_TRUE(NearEqual(rootBeforeStep, actor->GetRootTransform(), 0_r));
+  // Otherwise, the check above would be vacuous.
+  EXPECT_FALSE(NearEqual(initialRoot, actor->GetRootTransform(), 0_r));
+}
+
 TEST_P(SceneSleepPerType, SleepingActorHasNoConvergenceStatus) {
   Actor const* actor = CreateTestActor(GetParam());
   ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));

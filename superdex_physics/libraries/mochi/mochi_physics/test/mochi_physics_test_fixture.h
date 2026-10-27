@@ -20,6 +20,7 @@
 #include <mochi_core/geometry/model_data.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/math_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/span.h>
 #include <mochi_physics/mochi_physics.h>
@@ -49,6 +50,20 @@ inline ShapeHandle CreateUnitCubeTetMeshShape(Context* context) {
   auto cube = CreateMinimalTetMeshUnitCube();
   return context->CreateTetMeshShape(
       Flatten(MakeSpan(cube.first)), Flatten(MakeSpan(cube.second)), ExpectOK{});
+}
+
+// Set the node velocities of a soft actor to those of a rigid motion with the given velocity at the
+// local-space point `center`. Unlike Actor::SetVelocity, supports nonzero angular velocity.
+inline void SetRigidNodeVelocitiesLocal(
+    Actor* actor,
+    Real3 const& linearVelocity,
+    Real3 const& angularVelocity,
+    Real3 const& center) {
+  DynamicArray<Real3> velocities;
+  for (Real3 const& node : Unflatten<Real3 const>(actor->GetMesh().coordinates)) {
+    velocities.push_back(linearVelocity + Cross(angularVelocity, node - center));
+  }
+  actor->SetNodeVelocitiesLocal(Flatten(MakeConstSpan(velocities)), ExpectOK{});
 }
 
 // Build a minimal SkinningData with 1 weight per node (a "pinned to one bone" weight scheme),

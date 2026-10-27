@@ -845,49 +845,259 @@ TEST_F(MochiSoftContactSkin, PlaneContactUsesSkinnedAssemblyAndQueries) {
   }
 }
 
-// After a step in which recentering moves a soft actor's root transform, the SDF distance query
-// must report sample positions in the same frame as the contact-point query.
-class MochiSoftRecenteringTest : public test::MochiSceneTestBase {};
+static Actor*
+CreateSoftCubeWithContactQueries(Scene* scene, Context* context, Real3 const& translation) {
+  SoftActorParams params;
+  params.shape = test::CreateUnitCubeTetMeshShape(context);
+  params.worldFromLocal.SetTranslation(translation);
+  Actor* const actor = scene->CreateSoftActor(params, test::ExpectOK{});
+  for (QueryType const query :
+       {QueryType::ContactPoints,
+        QueryType::SdfDistances,
+        QueryType::TotalContactForce,
+        QueryType::NodeContactForces}) {
+    actor->RegisterQuery(query, test::ExpectOK{});
+  }
+  return actor;
+}
 
-TEST_F(MochiSoftRecenteringTest, SdfDistancesMatchContactPointsAfterRecentering) {
-  SoftActorParams softParams;
-  softParams.shape = test::CreateUnitCubeTetMeshShape(_mochiContext);
-  softParams.worldFromLocal.SetTranslation(Real3{0_r, 0_r, -0.01_r});
-  Actor* const softActor = _scene->CreateSoftActor(softParams, test::ExpectOK{});
-  softActor->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{});
-  softActor->RegisterQuery(QueryType::SdfDistances, test::ExpectOK{});
-
-  // Slide the cube along the plane so that recentering moves its root transform.
-  softActor->SetVelocity(Real3{1_r, 0_r, 0_r}, Real3{}, test::ExpectOK{});
-
+// Create a static plane at z = 0, without gravity.
+static void CreateGroundPlaneWithoutGravity(Scene* scene, Context* context) {
   RigidActorParams planeParams;
-  planeParams.shape = _mochiContext->CreatePlaneShape(Real3{0_r, 0_r, 1_r}, 0_r, test::ExpectOK{});
+  planeParams.shape = context->CreatePlaneShape(Real3{0_r, 0_r, 1_r}, 0_r, test::ExpectOK{});
   planeParams.isStatic = true;
   planeParams.colliderType = ColliderType::Plane;
-  _scene->CreateRigidActor(planeParams, test::ExpectOK{});
+  scene->CreateRigidActor(planeParams, test::ExpectOK{});
+  scene->SetGravity({});
+}
 
-  _scene->SetGravity({});
-  _scene->Step(1e-3_r);
+static constexpr real kContactForceRelTol = 1e-4_r;
 
-  real const recenteringDistance = Norm(
-      softActor->GetRootTransform().GetTranslation() - softParams.worldFromLocal.GetTranslation());
-  ASSERT_GT(recenteringDistance, 1e-4_r);
-  // Small relative to the recentering distance, so that pairing samples with the wrong root
-  // transform is detected.
-  real const tolerance = 1e-2_r * recenteringDistance;
+// Each force query maps forces to world space separately, so check that they agree.
+static Real3 GetCheckedContactForceWorld(Actor const* actor) {
+  Real3 const total = actor->GetContactForceWorld(test::ExpectOK{});
+  Real3 contactPointSum{};
+  for (ContactPoint const& contact : actor->GetContactPointsWorld(test::ExpectOK{})) {
+    contactPointSum += contact.force;
+  }
+  Real3 nodeSum{};
+  for (NodeContactForce const& node : actor->GetNodeContactForcesWorld(test::ExpectOK{})) {
+    nodeSum += node.force;
+  }
+  real const tolerance = kContactForceRelTol * Norm(total);
+  EXPECT_NEAR_TOL(contactPointSum, total, tolerance);
+  EXPECT_NEAR_TOL(nodeSum, total, tolerance);
+  return total;
+}
 
-  auto const contactPoints = softActor->GetContactPointsWorld(test::ExpectOK{});
-  ASSERT_FALSE(contactPoints.empty());
-  SdfDistances const sdfDistances = softActor->GetSdfDistances(test::ExpectOK{});
-  for (ContactPoint const& contactPoint : contactPoints) {
-    auto const* const sdfIt = std::find(
-        sdfDistances.sampleIndices.begin(),
-        sdfDistances.sampleIndices.end(),
-        contactPoint.sampleIndex);
-    ASSERT_NE(sdfIt, sdfDistances.sampleIndices.end());
+struct RecenteringTestCase {
+  std::string name;
+  Real3 angularVelocity = {};
+  // Nonzero epsilons make recentering skip the steps where the pivot moved less than them.
+  real translationEpsilon = 0_r;
+  real rotationEpsilonDeg = 0_r;
+};
+
+// Recentering only changes a soft actor's local frame, so its world-space results must match those
+// of an identical actor without recentering.
+class MochiSoftRecenteringTest : public test::MochiSceneTestBase,
+                                 public ::testing::WithParamInterface<RecenteringTestCase> {};
+
+TEST_P(MochiSoftRecenteringTest, WorldSpaceResultsAreIndependentOfRecentering) {
+  RecenteringTestCase const& testCase = GetParam();
+  Real3 const start{0_r, 0_r, -0.01_r};
+  Real3 const offset{0_r, 5_r, 0_r};
+  auto const createSlidingCube = [&](Real3 const& translation) {
+    Actor* const actor = CreateSoftCubeWithContactQueries(_scene, _mochiContext, translation);
+    // Slide along the plane, spinning about the cube's center, so that recentering moves the root
+    // transform. The local frame has no rotation, so local and world velocities agree.
+    test::SetRigidNodeVelocitiesLocal(
+        actor,
+        Real3{1_r, 0_r, 0_r},
+        testCase.angularVelocity,
+        actor->GetRigidCenterOfMassLocal(test::ExpectOK{}));
+    return actor;
+  };
+  Actor* const recentered = createSlidingCube(start);
+  Actor* const fixed = createSlidingCube(start + offset);
+  fixed->SetRecenteringParams(RecenteringParams{.useRecentering = false}, test::ExpectOK{});
+  RecenteringParams recenteringParams = recentered->GetRecenteringParams();
+  recenteringParams.translationEpsilon = testCase.translationEpsilon;
+  recenteringParams.rotationEpsilonDeg = testCase.rotationEpsilonDeg;
+  recentered->SetRecenteringParams(recenteringParams, test::ExpectOK{});
+  CreateGroundPlaneWithoutGravity(_scene, _mochiContext);
+  // A rotated local frame changes the solver's iterates, so the two actors only agree to within the
+  // solver tolerance. Make it much smaller than kPosTol.
+  SolverParams solverParams = _scene->GetSolverParams();
+  solverParams.nonLinearSolver.absTol = 0_r;
+  solverParams.nonLinearSolver.relTol = 1e-6_r;
+  solverParams.nonLinearSolver.relStepTol = 0_r;
+  solverParams.nonLinearSolver.maxIter = 50;
+  _scene->SetSolverParams(solverParams, test::ExpectOK{});
+
+  real constexpr kDt = 1e-3_r;
+  // Small relative to the distance travelled per step, so that using the wrong root transform for
+  // either actor is detected.
+  real constexpr kPosTol = 1e-5_r;
+  real constexpr kVelTol = kPosTol / kDt;
+  // The first step cannot recenter, since the pivot starts at its reference position.
+  int constexpr kNumSteps = 6;
+  int numRecenteredSteps = 0;
+  for (int step = 0; step < kNumSteps; ++step) {
+    SCOPED_TRACE("Step " + std::to_string(step));
+    TransformRT const rootBeforeStep = recentered->GetRootTransform();
+    _scene->Step(kDt);
+    if (!NearEqual(recentered->GetRootTransform(), rootBeforeStep, 0_r)) {
+      ++numRecenteredSteps;
+    }
+
+    auto const recenteredContacts = recentered->GetContactPointsWorld(test::ExpectOK{});
+    auto const fixedContacts = fixed->GetContactPointsWorld(test::ExpectOK{});
+    if (step == 0) {
+      ASSERT_FALSE(recenteredContacts.empty());
+    }
+    Real3 const recenteredForce = GetCheckedContactForceWorld(recentered);
+    Real3 const fixedForce = GetCheckedContactForceWorld(fixed);
+    // Friction forces differ between the two cubes even before any recentering, so only compare
+    // normal forces.
+    EXPECT_NEAR(recenteredForce[2], fixedForce[2], kContactForceRelTol * Abs(fixedForce[2]));
+
+    ASSERT_EQ(recenteredContacts.size(), fixedContacts.size());
+    for (ContactPoint const& contact : recenteredContacts) {
+      auto const* const it =
+          std::ranges::find(fixedContacts, contact.sampleIndex, &ContactPoint::sampleIndex);
+      ASSERT_NE(it, fixedContacts.end());
+      EXPECT_NEAR_TOL(contact.posA + offset, it->posA, kPosTol);
+    }
+
+    SdfDistances const recenteredSdf = recentered->GetSdfDistances(test::ExpectOK{});
+    SdfDistances const fixedSdf = fixed->GetSdfDistances(test::ExpectOK{});
+    ASSERT_EQ(recenteredSdf.sampleIndices.size(), fixedSdf.sampleIndices.size());
+    for (int i = 0; i < isize(recenteredSdf.sampleIndices); ++i) {
+      auto const* const it =
+          std::ranges::find(fixedSdf.sampleIndices, recenteredSdf.sampleIndices[i]);
+      ASSERT_NE(it, fixedSdf.sampleIndices.end());
+      EXPECT_NEAR_TOL(
+          recenteredSdf.worldPositions[i] + offset,
+          fixedSdf.worldPositions[it - fixedSdf.sampleIndices.begin()],
+          kPosTol);
+    }
+
+    Real3 const fixedVelocity = fixed->GetLinearVelocity(test::ExpectOK{});
+    EXPECT_GT(fixedVelocity[0], 0.5_r);
+    EXPECT_NEAR_TOL(recentered->GetLinearVelocity(test::ExpectOK{}), fixedVelocity, kVelTol);
     EXPECT_NEAR_TOL(
-        contactPoint.posA,
-        sdfDistances.worldPositions[sdfIt - sdfDistances.sampleIndices.begin()],
-        tolerance);
+        recentered->GetAngularVelocity(test::ExpectOK{}),
+        fixed->GetAngularVelocity(test::ExpectOK{}),
+        kVelTol);
+  }
+
+  // Otherwise, the comparisons above would be vacuous.
+  EXPECT_GT(Norm(recentered->GetRootTransform().GetTranslation() - start), 1e-4_r);
+  EXPECT_NEAR_TOL(fixed->GetRootTransform().GetTranslation(), start + offset, 0_r);
+  if (testCase.translationEpsilon == 0_r && testCase.rotationEpsilonDeg == 0_r) {
+    EXPECT_EQ(numRecenteredSteps, kNumSteps - 1);
+  } else {
+    EXPECT_GT(numRecenteredSteps, 0);
+    EXPECT_LT(numRecenteredSteps, kNumSteps - 1);
+  }
+  if (Norm(testCase.angularVelocity) > 0_r) {
+    EXPECT_GT(Abs(recentered->GetRootTransform().GetRotation().GetAngle()), 1e-3_r);
+  }
+}
+
+// Query forces are results of the last solve, so, as for rigid actors, they must stay fixed in
+// world space when the actor is moved before the next step.
+class MochiSoftContactForceQueryTest : public test::MochiSceneTestBase {};
+
+TEST_F(MochiSoftContactForceQueryTest, ForcesStayFixedInWorldSpaceWhenActorIsMoved) {
+  Actor* const actor =
+      CreateSoftCubeWithContactQueries(_scene, _mochiContext, Real3{0_r, 0_r, -0.01_r});
+  CreateGroundPlaneWithoutGravity(_scene, _mochiContext);
+  _scene->Step(1e-3_r);
+  Real3 const forceBeforeMove = GetCheckedContactForceWorld(actor);
+  ASSERT_GT(Norm(forceBeforeMove), 0_r);
+
+  TransformRT movedRoot = actor->GetRootTransform();
+  movedRoot.SetRotation(
+      Quaternion::FromAxisAngle(Real3{1_r, 0_r, 0_r}, 0.3_r) * movedRoot.GetRotation());
+  actor->SetRootTransform(movedRoot, test::ExpectOK{});
+  _scene->Step(0_r);
+  EXPECT_NEAR_TOL(
+      GetCheckedContactForceWorld(actor),
+      forceBeforeMove,
+      kContactForceRelTol * Norm(forceBeforeMove));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MochiSoftRecenteringTest,
+    MochiSoftRecenteringTest,
+    ::testing::Values(
+        RecenteringTestCase{.name = "Sliding"},
+        RecenteringTestCase{.name = "SlidingAndSpinning", .angularVelocity = {0_r, 0_r, 2_r}},
+        // The pivot moves about 1.1 mm and much less than a degree per step.
+        RecenteringTestCase{
+            .name = "IntermittentRecentering",
+            .translationEpsilon = 1.5e-3_r,
+            .rotationEpsilonDeg = 1_r}),
+    [](::testing::TestParamInfo<RecenteringTestCase> const& info) { return info.param.name; });
+
+// Unlike the cube, a single tetrahedron has no central symmetry, so its center-of-volume moves
+// through the material as it rotates within its local frame. Linear elasticity is not rotation
+// invariant, so any rotation left in the local frame shows up as strain.
+class MochiSoftRecenteringTetTest : public test::MochiSceneTestBase {
+ protected:
+  static constexpr real kDt = 0.01_r;
+  // Rotates the tet by about 0.1 rad per step.
+  static constexpr Real3 kAngularVelocity = {0_r, 0_r, 10_r};
+
+  Actor* CreateTetSpinningAboutItsCenterOfMass() {
+    auto&& [coords, conn] = test::CreateMinimalTetMeshSingleTet();
+    SoftActorParams params;
+    params.material.type = SoftMaterialType::LinearElastic;
+    params.hasGravity = false;
+    params.shape = _scene->GetContext()->CreateTetMeshShape(
+        Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), test::ExpectOK{});
+    Actor* const actor = _scene->CreateSoftActor(params, test::ExpectOK{});
+    test::SetRigidNodeVelocitiesLocal(
+        actor, Real3{}, kAngularVelocity, actor->GetRigidCenterOfMassLocal(test::ExpectOK{}));
+    return actor;
+  }
+};
+
+TEST_F(MochiSoftRecenteringTetTest, SpinningTetHasNoLinearVelocity) {
+  Actor* const actor = CreateTetSpinningAboutItsCenterOfMass();
+  for (int step = 0; step < 3; ++step) {
+    SCOPED_TRACE("Step " + std::to_string(step));
+    _scene->Step(kDt);
+    EXPECT_NEAR_TOL(actor->GetLinearVelocity(test::ExpectOK{}), Real3{}, 1e-3_r);
+    // Otherwise, the check above would be vacuous. The angular velocity precesses, since the spin
+    // axis is not a principal axis of the tet.
+    EXPECT_GT(Norm(actor->GetAngularVelocity(test::ExpectOK{})), 0.5_r * Norm(kAngularVelocity));
+  }
+}
+
+// Setters leave the pivot cached by the last solve stale, so recentering must not use it.
+TEST_F(MochiSoftRecenteringTetTest, TetResetToRestStaysAtRest) {
+  Actor* const actor = CreateTetSpinningAboutItsCenterOfMass();
+  actor->RegisterQuery(QueryType::NodePositions, test::ExpectOK{});
+  for (int step = 0; step < 3; ++step) {
+    _scene->Step(kDt);
+  }
+  // Otherwise, the pivot would not have rotated.
+  ASSERT_GT(Abs(actor->GetRootTransform().GetRotation().GetAngle()), 0.1_r);
+
+  actor->SetZeroDisplacementsAndVelocities(test::ExpectOK{});
+  TransformRT const rootBeforeStep = actor->GetRootTransform();
+  _scene->Step(kDt);
+
+  auto const restPositions = Unflatten<Real3 const>(actor->GetMesh().coordinates);
+  auto const positions = Unflatten<Real3 const>(actor->GetNodePositionsLocal(test::ExpectOK{}));
+  ASSERT_EQ(restPositions.size(), positions.size());
+  for (int i = 0; i < isize(positions); ++i) {
+    EXPECT_NEAR_TOL(
+        actor->GetRootTransform().TransformPoint(positions[i]),
+        rootBeforeStep.TransformPoint(restPositions[i]),
+        1e-5_r);
   }
 }

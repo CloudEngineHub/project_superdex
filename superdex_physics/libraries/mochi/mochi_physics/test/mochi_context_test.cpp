@@ -2078,7 +2078,6 @@ TEST_F(ActorTest, GetVelocitySoft) {
   }
 
   ecs::InvokeOnEntity(&soft::UpdateRigidTransformEval, reg, entity);
-  ecs::InvokeOnEntity(&soft::RecenterSolutionUsingRigidTransformEval, reg, entity);
   ecs::InvokeOnEntity(&soft::UpdateRigidVelocity, reg, entity);
 
   // Get rigid velocity and test

@@ -156,7 +156,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
       }
       return result;
     }
-      , "Get the linear velocity of the actor in world frame.\n\nReturns:\n    Linear velocity in world frame [m/s].\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid and soft actors.\n\nNote:\n    For rigid actors, it returns the velocity of the center of mass.\n\nNote:\n    For soft actors, it returns an estimate of the linear velocity of the root\n    transform. Requires recentering to be enabled for accurate results.\n\nNote:\n    Not supported for ROM actors."
+      , "Get the linear velocity of the actor in world frame.\n\nReturns:\n    Linear velocity in world frame [m/s].\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid and soft actors.\n\nNote:\n    For rigid actors, it returns the velocity of the center of mass.\n\nNote:\n    For soft actors, it returns an estimate of the linear velocity of the rest\n    mesh's center of mass, assuming it moves rigidly with the recentering pivot.\n    Soft actors created with\n    :attr:`~superdex.physics.experimental.ExperimentalSoftActorParams.use_recentering`\n    set to false have no pivot and return zero.\n\nNote:\n    Not supported for ROM actors."
     )
     .def("get_angular_velocity", [](mochi::Actor& self) {
       mochi::Error error;
@@ -166,7 +166,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
       }
       return result;
     }
-      , "Get the angular velocity of the actor in world frame.\n\nReturns:\n    Angular velocity in world frame [rad/s].\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid and soft actors.\n\nNote:\n    For rigid actors, it returns the actual angular velocity.\n\nNote:\n    For soft actors, it returns an estimate of the angular velocity of the root\n    transform. Requires recentering to be enabled for accurate results.\n\nNote:\n    Not supported for ROM actors."
+      , "Get the angular velocity of the actor in world frame.\n\nReturns:\n    Angular velocity in world frame [rad/s].\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for rigid and soft actors.\n\nNote:\n    For rigid actors, it returns the actual angular velocity.\n\nNote:\n    For soft actors, it returns an estimate of the angular velocity of the\n    recentering pivot. Soft actors created with\n    :attr:`~superdex.physics.experimental.ExperimentalSoftActorParams.use_recentering`\n    set to false have no pivot and return zero.\n\nNote:\n    Not supported for ROM actors."
     )
     .def("get_mass", [](mochi::Actor& self) {
       mochi::Error error;

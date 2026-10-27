@@ -5110,7 +5110,7 @@
 ///
 /// @note Only supported for rigid and soft actors.
 /// @note For rigid actors, it returns the velocity of the center of mass.
-/// @note For soft actors, it returns an estimate of the linear velocity of the root transform. Requires recentering to be enabled for accurate results.
+/// @note For soft actors, it returns an estimate of the linear velocity of the rest mesh's center of mass, assuming it moves rigidly with the recentering pivot. Soft actors created with `experimental::ExperimentalSoftActorParams::useRecentering` set to false have no pivot and return zero.
 /// @note Not supported for ROM actors.
 ///
 
@@ -5123,7 +5123,7 @@
 ///
 /// @note Only supported for rigid and soft actors.
 /// @note For rigid actors, it returns the actual angular velocity.
-/// @note For soft actors, it returns an estimate of the angular velocity of the root transform. Requires recentering to be enabled for accurate results.
+/// @note For soft actors, it returns an estimate of the angular velocity of the recentering pivot. Soft actors created with `experimental::ExperimentalSoftActorParams::useRecentering` set to false have no pivot and return zero.
 /// @note Not supported for ROM actors.
 ///
 
@@ -6968,6 +6968,7 @@
 ///
 /// @warning Does not create or destroy actors or constraints, or restore shapes, materials, or scene parameters. Captured mutable state on existing actors, including static actor transforms, is restored; if topology or persistent configuration changes, simulation results may differ.
 /// @warning Restoration is not transactional. If restoration fails, the scene may be partially modified. Restore a known-good checkpoint or recreate the scene before continuing.
+/// @warning Not supported for scenes with ROM actors.
 ///
 /// @see @ref mochi::Scene::CaptureState "CaptureState", @ref mochi::Scene::ReleaseState "ReleaseState", @ref mochi::Scene::ReleaseAllStates "ReleaseAllStates", @ref mochi::Scene::RestoreStateFromBytes "RestoreStateFromBytes"
 ///
@@ -7000,7 +7001,7 @@
 /// @note The capture and restore scenes must use the same SuperDex Physics build.
 /// @note The restore requirements from @ref mochi::Scene::RestoreState "RestoreState" apply, including scene composition (actors, constraints) being the same as when the state was captured.
 ///
-/// @warning Has the same restore scope and non-transactional failure behavior as @ref mochi::Scene::RestoreState "RestoreState".
+/// @warning Has the same restore scope, non-transactional failure behavior, and lack of support for scenes with ROM actors as @ref mochi::Scene::RestoreState "RestoreState".
 ///
 /// @see @ref mochi::Scene::CaptureStateToBytes "CaptureStateToBytes", @ref mochi::Scene::RestoreState "RestoreState"
 ///

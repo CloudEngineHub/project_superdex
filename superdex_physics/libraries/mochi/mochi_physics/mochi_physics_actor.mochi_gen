@@ -202,8 +202,10 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @note Only supported for rigid and soft actors.
   // @note For rigid actors, it returns the velocity of the center of mass.
-  // @note For soft actors, it returns an estimate of the linear velocity of the root transform.
-  // Requires recentering to be enabled for accurate results.
+  // @note For soft actors, it returns an estimate of the linear velocity of the rest mesh's center of
+  // mass, assuming it moves rigidly with the recentering pivot. Soft actors created with
+  // @ref experimental::ExperimentalSoftActorParams::useRecentering set to false have no pivot and
+  // return zero.
   // @note Not supported for ROM actors.
   fn GetLinearVelocity() -> Real3 [pure, virtual, const, mochi_error, units("m/s"), batchable, nodiscard];
 
@@ -213,8 +215,9 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @note Only supported for rigid and soft actors.
   // @note For rigid actors, it returns the actual angular velocity.
-  // @note For soft actors, it returns an estimate of the angular velocity of the root transform.
-  // Requires recentering to be enabled for accurate results.
+  // @note For soft actors, it returns an estimate of the angular velocity of the recentering pivot.
+  // Soft actors created with @ref experimental::ExperimentalSoftActorParams::useRecentering set to
+  // false have no pivot and return zero.
   // @note Not supported for ROM actors.
   fn GetAngularVelocity() -> Real3 [pure, virtual, const, mochi_error, units("rad/s"), batchable, nodiscard];
 
