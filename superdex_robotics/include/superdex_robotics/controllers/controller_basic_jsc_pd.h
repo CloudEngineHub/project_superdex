@@ -111,7 +111,7 @@ class MOCHI_API ControllerBasicJscPd : public ControllerBase {
 
   /* @brief Get controller parameters.
    * @return Reference to parameters. */
-  Params const& GetParams() const;
+  [[nodiscard]] Params const& GetParams() const;
 
   /* @brief Set controller parameters.
    * @param params New parameters.
