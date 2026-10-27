@@ -3464,6 +3464,43 @@ def get_prefab_full_path(
         Other relative paths are resolved against ``root_for_relative_path``.
     """
 
+def scale_articulated_actor_params(
+    params: mochi_physics.ArticulatedActorParams,
+    scale: float,
+) -> None:
+    """Uniformly scale the geometry of articulated actor params in place, as
+    instantiating an :class:`~superdex.physics.prefab.ArticulatedActorPrefab` at a
+    uniform :attr:`~superdex.physics.prefab.ArticulatedActorPrefab.scale` does.
+
+    Scales the translations of
+    :attr:`~superdex.physics.ArticulatedJointParams.parent_link_from_joint`,
+    :attr:`~superdex.physics.ArticulatedLinkParams.parent_joint_from_link` and
+    :attr:`~superdex.physics.ArticulatedCycleJointParams.joint_from_child_link`, and
+    the limits of prismatic joints. Explicit link inertia scales as a solid of
+    constant density: :attr:`~superdex.physics.ArticulatedLinkParams.center_of_mass`
+    by scale, :attr:`~superdex.physics.ArticulatedLinkParams.mass` by scale^3 and
+    :attr:`~superdex.physics.ArticulatedLinkParams.moment_of_inertia` by scale^5.
+
+    Args:
+        params (ArticulatedActorParams): The params to scale.
+        scale (float): The uniform scale factor. Must be strictly positive and
+            finite.
+
+    Raises:
+        :class:`~superdex.physics.Error`: If an error occurs.
+
+    Note:
+        Shapes are not modified: bake the scale into the link and skin shapes when
+        creating them. Rotations, joint limits of rotational joints, gains,
+        friction, stiffnesses and joint inertia
+        (:attr:`~superdex.physics.ArticulatedJointParams.inertia`) are unchanged.
+
+    Note:
+        :attr:`~superdex.physics.ArticulatedActorParams.joint_velocities` is not
+        modified either, so the translational DoFs of the initial velocities stay in
+        unscaled units.
+    """
+
 def shallow_load_from_file(path: str) -> ScenePrefab:
     """Deserialize a single :class:`~superdex.physics.prefab.ScenePrefab` from a file,
     without loading any nested files.

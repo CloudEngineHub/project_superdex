@@ -328,6 +328,9 @@ static_assert(std::is_same_v<decltype(static_cast<mochi::prefab::AddToSceneResul
 // free function mochi::prefab::GetPrefabFullPath
 static_assert(std::is_same_v<decltype(&mochi::prefab::GetPrefabFullPath), mochi::DynamicString (*)(std::string_view, std::string_view, std::string_view)>, "\n  ERROR: Function mochi::prefab::GetPrefabFullPath is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 
+// free function mochi::prefab::ScaleArticulatedActorParams
+static_assert(std::is_same_v<decltype(&mochi::prefab::ScaleArticulatedActorParams), void (*)(mochi::ArticulatedActorParams&, mochi::real, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ScaleArticulatedActorParams is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
+
 // free function mochi::prefab::ShallowLoadFromFile
 static_assert(std::is_same_v<decltype(&mochi::prefab::ShallowLoadFromFile), mochi::prefab::ScenePrefab (*)(std::string_view, mochi::Error&)>, "\n  ERROR: Function mochi::prefab::ShallowLoadFromFile is out-of-sync with C++.\n  Please check the function signature, then run mochi_gen_py to regenerate this file.\n");
 

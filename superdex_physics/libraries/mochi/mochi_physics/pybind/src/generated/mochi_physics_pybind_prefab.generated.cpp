@@ -1413,6 +1413,18 @@ void mochi::DefineMochiPhysics_MochiPhysicsPrefab([[maybe_unused]] nb::module_& 
       , "Resolve a path referenced inside a prefab to a full path.\n\nArgs:\n    input_path (str): The path to resolve, as stored in the prefab (may be\n        prefixed with \"./\" to indicate it is relative to the prefab file).\n    root_for_relative_path (str): Root directory used to resolve paths that are\n        not prefixed with \"./\".\n    prefab_file_path (str): Path to the prefab file that references inputPath,\n        used to resolve \"./\"-prefixed paths relative to its location.\n\nReturns:\n    The resolved full path.\n\nNote:\n    Absolute paths are returned unchanged. Paths starting with \"./\" are resolved\n    relative to the directory containing ``prefab_file_path`` when provided.\n    Other relative paths are resolved against ``root_for_relative_path``."
     );
 
+    m_prefab.def("scale_articulated_actor_params", [](mochi::ArticulatedActorParams& params, mochi::real scale) {
+      mochi::Error error;
+      mochi::prefab::ScaleArticulatedActorParams(params, scale, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+    }
+      , nb::arg("params")
+      , nb::arg("scale")
+      , "Uniformly scale the geometry of articulated actor params in place, as\ninstantiating an :class:`~superdex.physics.prefab.ArticulatedActorPrefab` at a\nuniform :attr:`~superdex.physics.prefab.ArticulatedActorPrefab.scale` does.\n\nScales the translations of\n:attr:`~superdex.physics.ArticulatedJointParams.parent_link_from_joint`,\n:attr:`~superdex.physics.ArticulatedLinkParams.parent_joint_from_link` and\n:attr:`~superdex.physics.ArticulatedCycleJointParams.joint_from_child_link`, and\nthe limits of prismatic joints. Explicit link inertia scales as a solid of\nconstant density: :attr:`~superdex.physics.ArticulatedLinkParams.center_of_mass`\nby scale, :attr:`~superdex.physics.ArticulatedLinkParams.mass` by scale^3 and\n:attr:`~superdex.physics.ArticulatedLinkParams.moment_of_inertia` by scale^5.\n\nArgs:\n    params (ArticulatedActorParams): The params to scale.\n    scale (float): The uniform scale factor. Must be strictly positive and\n        finite.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Shapes are not modified: bake the scale into the link and skin shapes when\n    creating them. Rotations, joint limits of rotational joints, gains,\n    friction, stiffnesses and joint inertia\n    (:attr:`~superdex.physics.ArticulatedJointParams.inertia`) are unchanged.\n\nNote:\n    :attr:`~superdex.physics.ArticulatedActorParams.joint_velocities` is not\n    modified either, so the translational DoFs of the initial velocities stay in\n    unscaled units."
+    );
+
     m_prefab.def("shallow_load_from_file", [](std::string_view path) {
       mochi::Error error;
       auto result = mochi::prefab::ShallowLoadFromFile(path, error);

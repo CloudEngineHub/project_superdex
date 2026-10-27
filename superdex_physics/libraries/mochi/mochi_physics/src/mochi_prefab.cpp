@@ -1189,6 +1189,37 @@ static void ApplyDiagonalScaleToInertia(
   }
 }
 
+void prefab::ScaleArticulatedActorParams(ArticulatedActorParams& params, real scale, Error& error) {
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_VALIDATE_POSITIVE_SCALE(scale, "ScaleArticulatedActorParams scale", error);
+  MOCHI_ERROR_RETURN(error);
+  if (scale == 1_r) {
+    return;
+  }
+  auto scaleTranslation = [scale](TransformRT const& t) {
+    return TransformRT(t.GetRotation(), t.GetTranslation() * scale);
+  };
+  for (auto& joint : params.joints) {
+    joint.parentLinkFromJoint = scaleTranslation(joint.parentLinkFromJoint);
+    if (joint.type == ArticulatedJointType::Prismatic) {
+      if (joint.minLimit.has_value()) {
+        *joint.minLimit *= scale;
+      }
+      if (joint.maxLimit.has_value()) {
+        *joint.maxLimit *= scale;
+      }
+    }
+  }
+  for (auto& link : params.links) {
+    link.parentJointFromLink = scaleTranslation(link.parentJointFromLink);
+    ApplyDiagonalScaleToInertia(
+        link.centerOfMass, link.mass, link.momentOfInertia, Real3{scale, scale, scale});
+  }
+  for (auto& cycle : params.cycles) {
+    cycle.jointFromChildLink = scaleTranslation(cycle.jointFromChildLink);
+  }
+}
+
 [[nodiscard]] static bool HasValues(std::optional<DynamicArray<real>> const& values) {
   return values.has_value() && !values->empty();
 }
@@ -1354,42 +1385,26 @@ static void AddToSceneImpl(
     actorParams.joints.assign(actor.joints.begin(), actor.joints.end());
     actorParams.links.assign(actor.links.begin(), actor.links.end());
 
+    // Explicit inertia of a link with a shape file is authored for the unscaled shape.
+    for (int i = 0; i < isize(actorParams.links); ++i) {
+      if (!actor.links[i].shapeFile.empty()) {
+        auto& link = actorParams.links[i];
+        ApplyDiagonalScaleToInertia(
+            link.centerOfMass, link.mass, link.momentOfInertia, actor.links[i].shapeScale);
+      }
+    }
     // The articulated effective scale composes the per-actor uniform scale
     // with the cumulative outer prefab scale.
     real const effectiveScale = actor.scale * params.scale;
-    auto scaleTranslation = [effectiveScale](TransformRT const& t) {
-      return TransformRT(t.GetRotation(), t.GetTranslation() * effectiveScale);
-    };
-    for (auto& joint : actorParams.joints) {
-      joint.parentLinkFromJoint = scaleTranslation(joint.parentLinkFromJoint);
-      // Prismatic joint limits are translational (meters) and must be scaled.
-      if (joint.type == ArticulatedJointType::Prismatic) {
-        if (joint.minLimit.has_value()) {
-          *joint.minLimit *= effectiveScale;
-        }
-        if (joint.maxLimit.has_value()) {
-          *joint.maxLimit *= effectiveScale;
-        }
-      }
-    }
-    for (int i = 0; i < isize(actorParams.links); ++i) {
-      auto& link = actorParams.links[i];
-      link.parentJointFromLink = scaleTranslation(link.parentJointFromLink);
-
-      Real3 linkEffectiveScale{effectiveScale, effectiveScale, effectiveScale};
-      if (!actor.links[i].shapeFile.empty()) {
-        linkEffectiveScale *= actor.links[i].shapeScale;
-      }
-      ApplyDiagonalScaleToInertia(
-          link.centerOfMass, link.mass, link.momentOfInertia, linkEffectiveScale);
-    }
-    for (auto& cycle : actorParams.cycles) {
-      cycle.jointFromChildLink = scaleTranslation(cycle.jointFromChildLink);
-    }
+    ScaleArticulatedActorParams(actorParams, effectiveScale, error);
+    MOCHI_ERROR_RETURN(error, actorParams);
 
     if (actor.skin.has_value()) {
       actorParams.skin.emplace(*actor.skin);
     }
+    // TODO: scale the translational DoFs of jointVelocities by effectiveScale, as ApplyJointPose
+    // does for jointPose, so a scaled actor starts with matching motion. The DoF layout comes from
+    // the created actor.
     actorParams.jointVelocities = actor.jointVelocities;
     return actorParams;
   };

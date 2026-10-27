@@ -471,6 +471,9 @@ MOCHI_API DynamicString GetPrefabFullPath(
     std::string_view rootForRelativePath,
     std::string_view prefabFilePath);
 
+MOCHI_API void
+ScaleArticulatedActorParams(ArticulatedActorParams& params, real scale, Error& error);
+
 MOCHI_API ScenePrefab ShallowLoadFromFile(std::string_view path, Error& error);
 
 MOCHI_API ScenePrefab ShallowLoadFromJsonString(std::string_view json, Error& error);

@@ -1319,6 +1319,25 @@ fn prefab::AddToScene(StringView prefabPath, StringView rootPath, Scene* scene) 
 // against @ref rootForRelativePath.
 fn prefab::GetPrefabFullPath(StringView inputPath, StringView rootForRelativePath, StringView prefabFilePath) -> String;
 
+// @brief Uniformly scale the geometry of articulated actor params in place, as instantiating an
+// @ref ArticulatedActorPrefab at a uniform @ref ArticulatedActorPrefab::scale does.
+//
+// @param[in,out] params The params to scale.
+// @param[in] scale The uniform scale factor. Must be strictly positive and finite.
+//
+// @details Scales the translations of @ref ArticulatedJointParams::parentLinkFromJoint, @ref
+// ArticulatedLinkParams::parentJointFromLink and @ref ArticulatedCycleJointParams::jointFromChildLink,
+// and the limits of prismatic joints. Explicit link inertia scales as a solid of constant density:
+// @ref ArticulatedLinkParams::centerOfMass by scale, @ref ArticulatedLinkParams::mass by scale^3 and
+// @ref ArticulatedLinkParams::momentOfInertia by scale^5.
+//
+// @note Shapes are not modified: bake the scale into the link and skin shapes when creating them.
+// Rotations, joint limits of rotational joints, gains, friction, stiffnesses and joint inertia (@ref
+// ArticulatedJointParams::inertia) are unchanged.
+// @note @ref ArticulatedActorParams::jointVelocities is not modified either, so the translational
+// DoFs of the initial velocities stay in unscaled units.
+fn prefab::ScaleArticulatedActorParams(ArticulatedActorParams& params, real scale) -> void [mochi_error];
+
 // @brief Deserialize a single @ref ScenePrefab from a file, without loading
 // any nested files.
 //

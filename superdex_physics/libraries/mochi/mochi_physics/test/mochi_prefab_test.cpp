@@ -389,6 +389,70 @@ TEST_IF(MOCHI_HDF5_AND_INTERNAL, Prefab, ArticulatedActor_AddToScene) {
   EXPECT_EQ(result.actors, result.Filter(ActorType::Articulated));
 }
 
+TEST(Prefab, ScaleArticulatedActorParams) {
+  auto makeTransform = [](Quaternion const& rotation, Real3 const& translation) {
+    return TransformRT(rotation, translation);
+  };
+  ArticulatedActorParams params;
+  params.joints.resize(3);
+  params.links.resize(3);
+  params.joints[0].type = ArticulatedJointType::Free;
+  params.joints[1].type = ArticulatedJointType::Revolute;
+  params.joints[1].parentLinkFromJoint =
+      makeTransform(Normalize(Quaternion{0.1_r, 0.2_r, 0.3_r, 0.9_r}), Real3{0.1_r, 0.2_r, 0.3_r});
+  params.joints[1].axis = Real3{0_r, 0_r, 1_r};
+  params.joints[1].minLimit = Real3{0_r, 0_r, -1_r};
+  params.joints[1].maxLimit = Real3{0_r, 0_r, 2_r};
+  params.joints[2].type = ArticulatedJointType::Prismatic;
+  params.joints[2].parentLinkFromJoint = makeTransform(Quaternion{}, Real3{0_r, 0_r, 0.5_r});
+  params.joints[2].axis = Real3{1_r, 0_r, 0_r};
+  params.joints[2].minLimit = Real3{-0.1_r, 0_r, 0_r};
+  params.joints[2].maxLimit = Real3{0.2_r, 0_r, 0_r};
+  params.links[1].parentLink = 0;
+  params.links[1].parentJointFromLink = makeTransform(Quaternion{}, Real3{0.01_r, 0_r, 0_r});
+  params.links[1].mass = 2_r;
+  params.links[1].centerOfMass = Real3{0.1_r, 0_r, 0_r};
+  params.links[1].momentOfInertia = Real6{3_r, 0.1_r, 0.2_r, 4_r, 0.3_r, 5_r};
+  params.links[2].parentLink = 1;
+  params.cycles.resize(1);
+  params.cycles[0].jointFromChildLink = makeTransform(Quaternion{}, Real3{0_r, 0.4_r, 0_r});
+  ArticulatedActorParams const original = params;
+
+  real const s = 0.5_r;
+  real const tol = 1e-6_r;
+  prefab::ScaleArticulatedActorParams(params, s, ExpectOK{});
+
+  EXPECT_TRUE(NearEqual(
+      params.joints[1].parentLinkFromJoint.GetTranslation(),
+      original.joints[1].parentLinkFromJoint.GetTranslation() * s));
+  EXPECT_EQ(
+      params.joints[1].parentLinkFromJoint.GetRotation(),
+      original.joints[1].parentLinkFromJoint.GetRotation());
+  // Revolute limits are angles; prismatic limits are distances.
+  EXPECT_EQ(*params.joints[1].minLimit, *original.joints[1].minLimit);
+  EXPECT_EQ(*params.joints[1].maxLimit, *original.joints[1].maxLimit);
+  EXPECT_TRUE(NearEqual(*params.joints[2].minLimit, Real3{-0.1_r * s, 0_r, 0_r}));
+  EXPECT_TRUE(NearEqual(*params.joints[2].maxLimit, Real3{0.2_r * s, 0_r, 0_r}));
+  EXPECT_TRUE(
+      NearEqual(params.links[1].parentJointFromLink.GetTranslation(), Real3{0.01_r * s, 0_r, 0_r}));
+  // Explicit inertia scales as a solid of constant density.
+  EXPECT_NEAR(*params.links[1].mass, 2_r * s * s * s, tol);
+  EXPECT_TRUE(NearEqual(*params.links[1].centerOfMass, Real3{0.1_r * s, 0_r, 0_r}));
+  Real6 const expectedInertia = *original.links[1].momentOfInertia * (s * s * s * s * s);
+  EXPECT_TRUE(NearEqual(*params.links[1].momentOfInertia, expectedInertia, tol));
+  EXPECT_FALSE(params.links[2].mass.has_value());
+  EXPECT_TRUE(
+      NearEqual(params.cycles[0].jointFromChildLink.GetTranslation(), Real3{0_r, 0.4_r * s, 0_r}));
+
+  // Identity scale leaves the params untouched; invalid scales are rejected.
+  ArticulatedActorParams unscaled = original;
+  prefab::ScaleArticulatedActorParams(unscaled, 1_r, ExpectOK{});
+  EXPECT_EQ(unscaled, original);
+  for (real const bad : {0_r, -1_r, std::numeric_limits<real>::infinity()}) {
+    prefab::ScaleArticulatedActorParams(unscaled, bad, ExpectNotOK{});
+  }
+}
+
 // Verifies that actor.scale on an articulated actor scales both joint (parentLinkFromJoint)
 // and link (parentJointFromLink) translations, and that it composes correctly with per-link
 // shape transforms (shapeScale / shapeRotation / shapeTranslation).

@@ -1413,6 +1413,20 @@
 /// @note Absolute paths are returned unchanged. Paths starting with "./" are resolved relative to the directory containing @p prefabFilePath when provided. Other relative paths are resolved against @p rootForRelativePath.
 ///
 
+/// @fn void mochi::prefab::ScaleArticulatedActorParams(ArticulatedActorParams& params, real scale, Error& error)
+///
+/// @brief Uniformly scale the geometry of articulated actor params in place, as instantiating an @ref mochi::prefab::ArticulatedActorPrefab "ArticulatedActorPrefab" at a uniform @ref mochi::prefab::ArticulatedActorPrefab::scale "ArticulatedActorPrefab::scale" does.
+///
+/// @details Scales the translations of @ref mochi::ArticulatedJointParams::parentLinkFromJoint "ArticulatedJointParams::parentLinkFromJoint", @ref mochi::ArticulatedLinkParams::parentJointFromLink "ArticulatedLinkParams::parentJointFromLink" and @ref mochi::ArticulatedCycleJointParams::jointFromChildLink "ArticulatedCycleJointParams::jointFromChildLink", and the limits of prismatic joints. Explicit link inertia scales as a solid of constant density: @ref mochi::ArticulatedLinkParams::centerOfMass "ArticulatedLinkParams::centerOfMass" by scale, @ref mochi::ArticulatedLinkParams::mass "ArticulatedLinkParams::mass" by scale^3 and @ref mochi::ArticulatedLinkParams::momentOfInertia "ArticulatedLinkParams::momentOfInertia" by scale^5.
+///
+/// @param[in,out] params The params to scale.
+/// @param[in] scale The uniform scale factor. Must be strictly positive and finite.
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+///
+/// @note Shapes are not modified: bake the scale into the link and skin shapes when creating them. Rotations, joint limits of rotational joints, gains, friction, stiffnesses and joint inertia (@ref mochi::ArticulatedJointParams::inertia "ArticulatedJointParams::inertia") are unchanged.
+/// @note @ref mochi::ArticulatedActorParams::jointVelocities "ArticulatedActorParams::jointVelocities" is not modified either, so the translational DoFs of the initial velocities stay in unscaled units.
+///
+
 /// @fn ScenePrefab mochi::prefab::ShallowLoadFromFile(std::string_view path, Error& error)
 ///
 /// @brief Deserialize a single @ref mochi::prefab::ScenePrefab "ScenePrefab" from a file, without loading any nested files.
