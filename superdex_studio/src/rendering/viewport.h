@@ -75,6 +75,9 @@ class Viewport {
   // The back() element is the primary/active object. Empty when nothing is selected.
   std::function<void(std::vector<mochi_renderer::SceneObject*> const&)> onSceneSelectionChanged;
   std::function<bool()> showTransformGizmoTarget;
+  // When false the gizmo toolbar has no Scale button (and R does not select scale), for targets
+  // that can only be moved and rotated.
+  bool enableScaleGizmo = true;
   // Target transform and scale in Mochi/editor space, or nullopt when there is no valid target.
   // For a single selection this is the object's own transform; for a multi-selection it is the
   // pivot the group is manipulated about.
@@ -116,6 +119,9 @@ class Viewport {
   std::function<void(filament::math::float3)> onSceneObjectDragUpdate;
   // Fired once when the drag is released.
   std::function<void()> onSceneObjectDragEnd;
+  // Fired when a left click on a scene object resolves its pick (only while scene-object drag is
+  // enabled), with the world-space hit point. Lets editors place things on a picked surface.
+  std::function<void(mochi_renderer::SceneObject*, filament::math::float3)> onSceneObjectClicked;
   // Gate mirroring @ref enableViewportPicking; consumers that support scene-object drag leave it
   // on.
   bool enableSceneObjectDrag = true;
@@ -160,6 +166,9 @@ class Viewport {
   // Call after geometry changes; do NOT call while a physics sim is running -- the plane should
   // stay fixed as bodies move.
   float UpdateGroundPlane();
+  // Places the drop-shadow ground plane and grid at `height` (e.g. a user override of the height
+  // UpdateGroundPlane would compute).
+  void SetGroundPlaneHeight(float height);
   // Binds the SceneStage backing this viewport (non-owning). The stage owns the per-link highlight
   // clones and their show/hide; the viewport routes selection/hover highlight requests to it and
   // drives the see-through overlay pass from it. Null for viewports without a stage (no highlight).

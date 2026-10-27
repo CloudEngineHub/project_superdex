@@ -131,6 +131,8 @@ class MochiAsyncScene {
   void Initialize(mochi::Context* context, std::string const& sceneName);
   void SetSettings(PhysicsSettings const& settings);
   void SetGroundPlaneHeight(float height);
+  // Contact parameters of the studio ground plane added on the next CreateScene.
+  void SetGroundPlaneContact(mochi::ContactParams const& contact);
   bool IsSimulating() const;
   mochi::AsyncScene* GetAsyncScene() const;
   void Pause(bool pause);
@@ -156,6 +158,10 @@ class MochiAsyncScene {
   void EnableDebugDraw(bool enable);
   void ToggleDebugDraw();
   bool IsDebugDrawEnabled() const;
+  // The session's debug-draw settings (master toggle and per-feature enables).
+  PhysicsDebugSettings const& GetDebugSettings() const {
+    return _settings.debug;
+  }
   void DrawDebug(
       mochi_renderer::DebugDraw* debugDraw,
       mochi::CoordinateSpaceConverter const& converter);
@@ -167,6 +173,9 @@ class MochiAsyncScene {
   // ImGui
   void
   ShowPhysicsSettingsWindow(char const* name, bool* open, AssetSceneOverrides assetOverrides = {});
+  // The Debug Draw part of the Physics Settings window, for editors that show it on its own. Edits
+  // apply live while simulating.
+  void ShowDebugDrawSection();
   void ShowPlayToolbarOverViewport();
   // Draws an "Export Simulation Prefab" main-menu item, enabled only while simulating. Prompts for
   // an output directory and exports under @p exportName.
@@ -195,6 +204,7 @@ class MochiAsyncScene {
   mochi::CallbackHandle _debugDrawCb = {};
   PhysicsSettings _settings;
   float _groundPlaneHeight = 0.0f;
+  mochi::ContactParams _groundPlaneContact;
   // The studio-added ground plane, tracked so it can be excluded from prefab exports. Only ever
   // touched from the simulation thread (inside queued commands). Invalid when none was added.
   mochi::ActorHandle _groundPlaneActor;

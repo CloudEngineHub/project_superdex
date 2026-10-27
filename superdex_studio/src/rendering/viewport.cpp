@@ -370,6 +370,13 @@ float Viewport::UpdateGroundPlane() {
   return height;
 }
 
+void Viewport::SetGroundPlaneHeight(float height) {
+  if (_renderScene) {
+    _renderScene->SetGroundPlaneHeight(height);
+  }
+  _groundPlaneHeight = height;
+}
+
 void Viewport::RenderScene(Renderer const* renderer) {
   if (!_renderScene) {
     return;
@@ -1031,6 +1038,9 @@ void Viewport::ShowViewportContents(bool showCameraOrientationGizmo) {
             _grabArmed = true;
             _grabObject = result.object;
             _grabPlanePoint = result.worldPosition;
+            if (onSceneObjectClicked) {
+              onSceneObjectClicked(result.object, result.worldPosition);
+            }
           }
         });
   }
@@ -1662,9 +1672,13 @@ bool Viewport::ShowTransformGizmoToolbar() {
   float const buttonSize = ToolbarButtonSize();
   // The snap dropdown caret is a narrow button joined directly to the snap toggle (split-button).
   float const caretSize = buttonSize * 0.6f;
-  // translate, rotate, scale, space, snap-toggle (5 full buttons) plus the connected caret. The
-  // caret joins the snap toggle with no spacing, so there are only 4 inter-button gaps.
-  float const totalWidth = buttonSize * 5.0f + caretSize + spacing * 4.0f;
+  // translate, rotate, [scale], space, snap-toggle full buttons plus the connected caret. The
+  // caret joins the snap toggle with no spacing, so there is one gap fewer than full buttons.
+  if (!enableScaleGizmo && _gizmoOperation == ImGuizmo::SCALE) {
+    _gizmoOperation = ImGuizmo::TRANSLATE;
+  }
+  float const fullButtons = enableScaleGizmo ? 5.0f : 4.0f;
+  float const totalWidth = buttonSize * fullButtons + caretSize + spacing * (fullButtons - 1.0f);
 
   // Left edge of the orientation gizmo circle.
   float const gizmoLeft = childSize.x - 2.0f * kGizmoRadius - kGizmoMargin;
@@ -1702,15 +1716,17 @@ bool Viewport::ShowTransformGizmoToolbar() {
   }
 
   ImGui::SameLine();
-  if (activeButton(ICON_FA_EXPAND_ARROWS_ALT "##GizmoScale", _gizmoOperation == ImGuizmo::SCALE)) {
-    _gizmoOperation = ImGuizmo::SCALE;
-    toolbarClicked = true;
+  if (enableScaleGizmo) {
+    if (activeButton(
+            ICON_FA_EXPAND_ARROWS_ALT "##GizmoScale", _gizmoOperation == ImGuizmo::SCALE)) {
+      _gizmoOperation = ImGuizmo::SCALE;
+      toolbarClicked = true;
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Scale (R)");
+    }
+    ImGui::SameLine();
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Scale (R)");
-  }
-
-  ImGui::SameLine();
 
   bool const isSpaceLocal = (_gizmoMode == ImGuizmo::LOCAL);
   if (ImGui::Button(
@@ -1759,7 +1775,7 @@ bool Viewport::ShowTransformGizmoToolbar() {
     if (ImGui::IsKeyChordPressed(ImGuiKey_E)) {
       _gizmoOperation = ImGuizmo::ROTATE;
     }
-    if (ImGui::IsKeyChordPressed(ImGuiKey_R)) {
+    if (enableScaleGizmo && ImGui::IsKeyChordPressed(ImGuiKey_R)) {
       _gizmoOperation = ImGuizmo::SCALE;
     }
   }

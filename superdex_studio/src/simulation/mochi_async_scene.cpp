@@ -215,6 +215,10 @@ void MochiAsyncScene::SetGroundPlaneHeight(float height) {
   _groundPlaneHeight = height;
 }
 
+void MochiAsyncScene::SetGroundPlaneContact(mochi::ContactParams const& contact) {
+  _groundPlaneContact = contact;
+}
+
 void MochiAsyncScene::UpdateStats() {
   if (_asyncScene == nullptr || _mochiSteps <= _previousMochiSteps) {
     return;
@@ -290,13 +294,15 @@ void MochiAsyncScene::CreateScene(std::string_view name, bool startPaused) {
   }
   _asyncScene->QueueCommand([this,
                              addGroundPlane = _settings.studio.groundPlane,
-                             groundHeight = _groundPlaneHeight](mochi::Scene* physicsScene) {
+                             groundHeight = _groundPlaneHeight,
+                             groundContact = _groundPlaneContact](mochi::Scene* physicsScene) {
     _groundPlaneActor = {};
     if (addGroundPlane) {
       mochi::ErrorLog planeError;
       mochi::RigidActorParams groundParams;
       groundParams.isStatic = true;
       groundParams.name = "StudioGroundPlane";
+      groundParams.contact = groundContact;
       groundParams.shape = _context->CreatePlaneShape({0.0f, 0.0f, 1.0f}, groundHeight, planeError);
       mochi::Actor* groundActor = physicsScene->CreateRigidActor(groundParams, planeError);
       if (groundActor) {
@@ -538,18 +544,7 @@ void MochiAsyncScene::ShowPhysicsSettingsWindow(
     ImGui::Unindent();
   }
   if (ImGui::CollapsingHeader("Debug Draw", ImGuiTreeNodeFlags_DefaultOpen)) {
-    DebugDrawSettingsEdit const edit = ShowDebugDrawSettings(_context, _settings.debug);
-    if (edit.masterToggled) {
-      EnableDebugDraw(_settings.debug.enabled);
-    }
-    if (edit.toggledFeature >= 0 && IsSimulating()) {
-      int const index = edit.toggledFeature;
-      bool const enabled =
-          IsDebugDrawFeatureEnabled(_settings.debug, GetMochiDebugDrawFeatures(_context)[index]);
-      _asyncScene->QueueCommand([index, enabled](mochi::Scene* scene) {
-        scene->GetDebugDraw().EnableFeature(index, enabled);
-      });
-    }
+    ShowDebugDrawSection();
   }
   if (ImGui::CollapsingHeader("Studio")) {
     ImGui::Indent();
@@ -557,6 +552,21 @@ void MochiAsyncScene::ShowPhysicsSettingsWindow(
     ImGui::Unindent();
   }
   ImGui::End();
+}
+
+void MochiAsyncScene::ShowDebugDrawSection() {
+  DebugDrawSettingsEdit const edit = ShowDebugDrawSettings(_context, _settings.debug);
+  if (edit.masterToggled) {
+    EnableDebugDraw(_settings.debug.enabled);
+  }
+  if (edit.toggledFeature >= 0 && IsSimulating()) {
+    int const index = edit.toggledFeature;
+    bool const enabled =
+        IsDebugDrawFeatureEnabled(_settings.debug, GetMochiDebugDrawFeatures(_context)[index]);
+    _asyncScene->QueueCommand([index, enabled](mochi::Scene* scene) {
+      scene->GetDebugDraw().EnableFeature(index, enabled);
+    });
+  }
 }
 
 void MochiAsyncScene::ShowPlayToolbarOverViewport() {
