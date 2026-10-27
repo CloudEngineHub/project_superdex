@@ -20,6 +20,7 @@
 #include "editors/asset_editor.h"
 #include "meshing/processing_modifiers/processing_modifier.h"
 #include "rendering/viewport.h"
+#include "ui/reorderable_list.h"
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/utils/dynamic_string.h>
@@ -86,14 +87,6 @@ struct ReferenceModel {
   bool needsCadTessellation = false;
   // On-disk modification time of `path`, for hot-reload of the reference (see PollSlotFileChanges).
   std::filesystem::file_time_type mtime = {};
-};
-
-// Persistent drag state for one drag-to-reorder "bubble" list (see DrawReorderableBubbleList in
-// model_editor.cpp). While a drag is active `draggingId` is the stable id of the grabbed row (0 =
-// not dragging) and `dropSlot` is the highlighted insertion gap (the final array index on release).
-struct DragReorderState {
-  uint64_t draggingId = 0;
-  int dropSlot = -1;
 };
 
 class ModelEditor : public AssetEditor {
