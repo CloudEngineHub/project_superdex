@@ -158,11 +158,13 @@ struct RigidBodyModesAMGPrec : Preconditioner<Scalar> {
 
   /// @brief Weight of the neighbors in the smoothed aggregate weights, as in @ref AMGPrec.
   static constexpr double kSmoothingWeight = AMGOptions<double>{}.prolongationSmoothingWeight;
+
   /// @brief Level-0 weights below this value are dropped.
   static constexpr double kTruncation = 0.15;
   static_assert(
       kTruncation < 1.0 - kSmoothingWeight,
       "A row's weight on its own aggregate, at least 1 - kSmoothingWeight, must be kept.");
+
   /// @brief Level-0 reference-position margin below which an aggregate's members interpolate only
   /// from it. Since the margin is at most σ_min / σ_max (@ref details::RigidModeMarginAtLeast),
   /// every aggregate whose pure rows have σ_min / σ_max below it switches.
@@ -187,9 +189,11 @@ struct RigidBodyModesAMGPrec : Preconditioner<Scalar> {
     /// @brief P^T A for the interpolation P from the next coarser level. Empty at the coarsest
     /// level.
     CoarseMatrix PtA;
+
     /// @brief Smoother. Unused at the coarsest level.
     details::CheckedBlockJacobi6<Scalar> smoother;
     Scalar relaxationFactor = 0;
+
     /// @brief Right-hand side and solution of the cycle, which @ref ConcurrentSolve overwrites.
     mutable ColumnVector<Scalar> b;
     mutable ColumnVector<Scalar> x;
@@ -231,19 +235,23 @@ struct RigidBodyModesAMGPrec : Preconditioner<Scalar> {
   BSpMatrixView _A0;
   BlockJacobiPrec<Scalar, 3, /*kIsSymmetric*/ true> _fineSmoother;
   Scalar _fineRelaxationFactor = 0;
+
   /// @brief Random RHS of the damping estimates, drawn with the larger of the fine and first coarse
   /// sizes. Each level uses its leading entries.
   ColumnVector<Scalar> _spectralRadiusRhs;
+
   /// @brief Pattern of P^T A_0 for the interpolation P from level 1.
   Graph<int, int> _PtA0Pattern = {};
   /// @brief Level-0 aggregates whose rotation DoFs are decoupled.
   DynamicArray<bool> _decoupled = {};
   /// @brief Cached node positions x = reference + displacement.
   DynamicArray<double> _positions = {};
+
   DynamicArray<CoarseLevel> _levels = {};
   /// @brief Number of coarse levels, from the first, that the latest update accepted.
   int _numAcceptedCoarseLevels = 0;
   Matrix<Scalar> _coarsestInverse;
+
   /// @brief Fine-level temporaries of the cycle, which @ref ConcurrentSolve overwrites.
   mutable ColumnVector<Scalar> _fineU;
   mutable ColumnVector<Scalar> _fineR;
@@ -334,6 +342,7 @@ template <typename Scalar>
     }
     rowK[k] = pivot;
   }
+
   for (int k = 0; k < n; ++k) {
     a[k * n + k] = Scalar(1) / a[k * n + k];
   }
@@ -355,6 +364,7 @@ void InverseFromLDLt6(Scalar const* factors, Scalar* inverse) {
       y[i][j] = sum;
     }
   }
+
   for (int i = 0; i < 6; ++i) {
     for (int j = 0; j <= i; ++j) {
       Scalar sum = 0;
@@ -390,6 +400,7 @@ void InverseFromLDLt6(Scalar const* factors, Scalar* inverse) {
   if (count < 3) {
     return false;
   }
+
   // G = [[count I, -[sum]x], [[sum]x, trace I - sumOuter]], the sum of the blocks' Gram matrices.
   double const trace = sumOuter[0] + sumOuter[3] + sumOuter[5];
   double const sumSq = Sqr(sum[0]) + Sqr(sum[1]) + Sqr(sum[2]);
@@ -399,6 +410,7 @@ void InverseFromLDLt6(Scalar const* factors, Scalar* inverse) {
   if (!(translation > 0.0)) {
     return false;
   }
+
   double const invTranslation = 1.0 / translation;
   double schur[3][3] = {
       {trace - sumOuter[0] - shift - (Sqr(sum[1]) + Sqr(sum[2])) * invTranslation, 0.0, 0.0},
@@ -434,6 +446,7 @@ template <typename Scalar>
   int count = 0;
   double sum[3] = {0.0, 0.0, 0.0};
   double sumOuter[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
   for (int const i : T.members[a]) {
     if (T.pointers[i + 1] - T.pointers[i] != 1) {
       continue;
@@ -510,6 +523,7 @@ void FilterWeights(KeepFn const& keep, RigidModeTransfer<Scalar>& T) {
     }
     T.pointers[i] = keptBegin;
   }
+
   T.pointers[T.numNodes] = numKept;
   T.aggregates.resize(numKept);
   T.weights.resize(numKept);
@@ -523,9 +537,11 @@ void SetRestrictionPattern(RigidModeTransfer<Scalar>& T) {
   for (int const a : T.aggregates) {
     ++T.restrictionPointers[a + 1];
   }
+
   for (int a = 0; a < T.numAggregates; ++a) {
     T.restrictionPointers[a + 1] += T.restrictionPointers[a];
   }
+
   T.restrictionNodes.resize_noinit(numEntries);
   T.restrictionEntries.resize_noinit(numEntries);
   DynamicArray<int> next(T.restrictionPointers.begin(), T.restrictionPointers.end() - 1);
@@ -564,6 +580,7 @@ void SetAggregateGeometry(
     RigidModeTransfer<Scalar>& T) {
   T.centroids.resize_noinit(3 * T.numAggregates);
   T.radii.resize_noinit(T.numAggregates);
+
   // About 50 ns per aggregate, so 400 aggregates take about 20 µs.
   ParallelForN("RigidModeAMGGeometry", T.numAggregates, 400, [&](int a) {
     auto const members = T.members[a];
@@ -578,6 +595,7 @@ void SetAggregateGeometry(
       centroid[d] *= invCount;
       T.centroids[3 * a + d] = centroid[d];
     }
+
     double sumSqr = 0.0;
     for (int const i : members) {
       for (int d = 0; d < 3; ++d) {
@@ -607,6 +625,7 @@ void SetCoefficients(
     RigidModeTransfer<Scalar>& T) {
   T.coefficients.resize_noinit(T.aggregates.size());
   T.restrictionCoefficients.resize_noinit(T.aggregates.size());
+
   // About 6 ns per fine node, so 3200 nodes take about 20 µs.
   ParallelForN("RigidModeAMGCoefficients", T.numNodes, 3200, [&](int i) {
     for (int k = T.pointers[i]; k < T.pointers[i + 1]; ++k) {
@@ -624,6 +643,7 @@ void SetCoefficients(
       p.r = radii.empty() ? Scalar(0) : static_cast<Scalar>(radii[i] * scale);
     }
   });
+
   for (int k = 0; k < isize(T.coefficients); ++k) {
     T.restrictionCoefficients[k] = T.coefficients[T.restrictionEntries[k]];
   }
@@ -668,6 +688,7 @@ void MirrorUpperTriangle(BlockSparseMatrix<Scalar, kBlockSize, int, int>& M) {
             int const b = columns[k];
             row[k] = M.Values(b)[BlockIndex(M.Indices(b), a)].Transpose();
           }
+
           auto block = row[diagonal];
           for (int r = 1; r < kBlockSize; ++r) {
             for (int c = 0; c < r; ++c) {
@@ -715,6 +736,7 @@ void Galerkin(
           }
           rowPtA.resize_noinit(6 * kHalves * static_cast<size_t>(numBlocks));
           std::fill(rowPtA.begin(), rowPtA.end(), SimdZero<V4>());
+
           for (int t = T.restrictionPointers[a]; t < T.restrictionPointers[a + 1]; ++t) {
             int const i = T.restrictionNodes[t];
             auto const& p = T.restrictionCoefficients[t];
@@ -749,6 +771,7 @@ void Galerkin(
               }
             }
           }
+
           if (ptA != nullptr) {
             Scalar* out = ptA->Values(a).Data();
             int const ld = kFineDofs * numBlocks;
@@ -761,6 +784,7 @@ void Galerkin(
               }
             }
           }
+
           auto const columnsC = Ac.Indices(a);
           int const numBlocksC = isize(columnsC);
           Scalar* out = Ac.Values(a).Data();
@@ -776,6 +800,7 @@ void Galerkin(
               translation[row] = SimdZero<V4>();
               rotation[row] = SimdZero<V4>();
             }
+
             // TODO: Explore precomputing, once per hierarchy, the contributing fine nodes of each
             // block of A_next, so this loop skips the nodes absent from row a of P^T A.
             for (int t = T.restrictionPointers[b]; t < T.restrictionPointers[b + 1]; ++t) {
@@ -801,16 +826,19 @@ void Galerkin(
                 }
               }
             }
+
             for (int row = 0; row < 6; ++row) {
               Store<3>(out + row * ldC + 6 * k, translation[row]);
               Store<3>(out + row * ldC + 6 * k + 3, rotation[row]);
             }
           }
+
           for (int const j : columns) {
             fineSlot[j] = -1;
           }
         }
       });
+
   MirrorUpperTriangle(Ac);
 }
 
@@ -868,6 +896,7 @@ void InterpolateRigidModes(
         rotation += Broadcast<V4>(p.r) * hr;
       }
     }
+
     Store<3>(e.Data() + kFineDofs * i, translation);
     if constexpr (kFineDofs == 6) {
       Store<3>(e.Data() + kFineDofs * i + 3, rotation);
@@ -898,6 +927,7 @@ void RestrictRigidModes(
         rotation += Broadcast<V4>(p.r) * Load<3, V4>(xi + 3);
       }
     }
+
     Store<3>(g.Data() + 6 * a, translation);
     Store<3>(g.Data() + 6 * a + 3, rotation);
   }
@@ -915,6 +945,7 @@ RigidBodyModesAMGPrec<Scalar>::RigidBodyModesAMGPrec(
   MOCHI_ASSERT_VERBOSE(
       isize(referencePositions) == _A0.Rows() && isize(displacements) == _A0.Rows(),
       "Expected 3 position coordinates per block row.");
+
 #if MOCHI_ASSERT_VERBOSE_ENABLED
   for (int i = 0; i < _A0.BlockRows(); ++i) {
     auto const columns = _A0.Indices(i);
@@ -924,6 +955,7 @@ RigidBodyModesAMGPrec<Scalar>::RigidBodyModesAMGPrec(
     }
   }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
+
   DynamicArray<double> const reference(referencePositions.begin(), referencePositions.end());
   BuildHierarchy(MakeConstSpan(reference));
 
@@ -948,6 +980,7 @@ void RigidBodyModesAMGPrec<Scalar>::Update(
   MOCHI_ASSERT_VERBOSE(
       isize(referencePositions) == _A0.Rows() && isize(displacements) == _A0.Rows(),
       "Expected 3 position coordinates per block row.");
+
 #if MOCHI_ASSERT_VERBOSE_ENABLED
   {
     auto const [partition, numAggregates] = details::Aggregate(AsGraphView(A));
@@ -961,6 +994,7 @@ void RigidBodyModesAMGPrec<Scalar>::Update(
         "The reference positions must decide the level-0 weights of construction.");
   }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
+
   _A0 = A;
   _fineSmoother.Update(_A0);
   if (SetPositions(referencePositions, displacements)) {
@@ -978,11 +1012,13 @@ void RigidBodyModesAMGPrec<Scalar>::SetLevel0Weights(
   details::SetSmoothedWeights(A, partition, kSmoothingWeight, T);
   details::FilterWeights([](int, int, double weight) { return weight >= kTruncation; }, T);
   details::SetAggregateGeometry(referencePositions, {}, T);
+
   DynamicArray<bool> memberOnly(T.numAggregates);
   // About 40 ns per aggregate, so 500 aggregates take about 20 µs.
   ParallelForN("RigidModeAMGMemberOnly", T.numAggregates, 500, [&](int a) {
     memberOnly[a] = !details::PureRowMarginAtLeast(T, a, referencePositions, kMemberOnlyMargin);
   });
+
   details::FilterWeights(
       [&](int i, int aggregate, double) {
         int const a = partition[i];
@@ -1005,6 +1041,7 @@ void RigidBodyModesAMGPrec<Scalar>::BuildHierarchy(Span<double const> referenceP
   level1.A = CoarseMatrix(
       numAggregates0,
       Traverse(_PtA0Pattern, details::InterpolationGraph(level1.transfer)).SortTargets());
+
   // Coarser levels, while they reduce the node count to more than one node, as in AMGPrec.
   while (true) {
     auto& current = _levels.back();
@@ -1014,6 +1051,7 @@ void RigidBodyModesAMGPrec<Scalar>::BuildHierarchy(Span<double const> referenceP
     if (numAggregates == numNodes || numAggregates <= 1) {
       break;
     }
+
     CoarseLevel next;
     details::SetAggregates(partition, numAggregates, next.transfer);
     details::SetSmoothedWeights(current.A, partition, kSmoothingWeight, next.transfer);
@@ -1025,6 +1063,7 @@ void RigidBodyModesAMGPrec<Scalar>::BuildHierarchy(Span<double const> referenceP
     current.PtA = CoarseMatrix(numNodes, std::move(ptAPattern));
     _levels.push_back(std::move(next));
   }
+
   _fineU = ColumnVector<Scalar>(_A0.Rows());
   _fineR = ColumnVector<Scalar>(_A0.Rows());
   for (int s = 0; s < isize(_levels); ++s) {
@@ -1061,12 +1100,14 @@ void RigidBodyModesAMGPrec<Scalar>::UpdateInterpolation() {
   auto const positions = MakeConstSpan(_positions);
   auto& T0 = _levels.front().transfer;
   details::SetAggregateGeometry(positions, {}, T0);
+
   double const decoupleMargin = DecoupleMargin();
   // About 40 ns per aggregate, so 500 aggregates take about 20 µs.
   ParallelForN("RigidModeAMGDecouple", T0.numAggregates, 500, [&](int a) {
     _decoupled[a] = !details::PureRowMarginAtLeast(T0, a, positions, decoupleMargin);
   });
   details::SetCoefficients(positions, {}, MakeConstSpan(_decoupled), T0);
+
   for (int s = 1; s < isize(_levels); ++s) {
     auto const& fine = _levels[s - 1].transfer;
     auto& T = _levels[s].transfer;
@@ -1094,6 +1135,7 @@ void RigidBodyModesAMGPrec<Scalar>::UpdateNumerics() {
       block.Block(3, 3, 3, 3) *= scale;
     }
   }
+
   int const numLevels = isize(_levels);
   // Each coarse level is formed once the levels above it are accepted.
   _numAcceptedCoarseLevels = 0;
@@ -1110,6 +1152,7 @@ void RigidBodyModesAMGPrec<Scalar>::UpdateNumerics() {
     auto& next = _levels[s + 1];
     details::Galerkin(next.transfer, current.A, AsGraphView(current.PtA), &current.PtA, next.A);
   }
+
   auto const dense = ToMatrix(_levels.back().A);
   // Checking first also keeps the inversion from logging a singular matrix.
   if (!details::IsPositiveDefinite(dense)) {
@@ -1137,6 +1180,7 @@ void RigidBodyModesAMGPrec<Scalar>::ConcurrentSolve(
   MOCHI_ASSERT_VERBOSE(
       data.rBegin % 3 == 0 && data.rEnd % 3 == 0,
       "Row ranges must begin and end at multiples of 3.");
+
   Scalar const omega = _fineRelaxationFactor;
   int const rowBegin = data.rBegin;
   int const rowEnd = data.rEnd;
@@ -1154,6 +1198,7 @@ void RigidBodyModesAMGPrec<Scalar>::ConcurrentSolve(
   _fineSmoother.ConcurrentSolve(b, u, data);
   u.MiddleRows(rowBegin, numRows) *= omega;
   data.BarrierWait(); // Wait for 'u' to be up-to-date.
+
   if (_numAcceptedCoarseLevels > 0) {
     // Coarse correction: u += P h, where h, in level1.x, is the coarse cycle of g = P^T (b - A u),
     // in level1.b.
@@ -1174,6 +1219,7 @@ void RigidBodyModesAMGPrec<Scalar>::ConcurrentSolve(
     u.MiddleRows(rowBegin, numRows) += r.MiddleRows(rowBegin, numRows);
     data.BarrierWait(); // Wait for 'u' to be up-to-date.
   }
+
   // Post-smoothing: x = u + omega D^{-1} (b - A u).
   setResidual();
   _fineSmoother.ConcurrentSolve(r, x, data);
@@ -1188,11 +1234,13 @@ void RigidBodyModesAMGPrec<Scalar>::CoarseCycle(int s) const {
     level.x = _coarsestInverse * level.b;
     return;
   }
+
   Scalar const omega = level.relaxationFactor;
 
   // Pre-smoothing from zero: u = omega D^{-1} b.
   level.smoother.Solve(level.b, level.u);
   level.u *= omega;
+
   if (s + 1 < _numAcceptedCoarseLevels) {
     // Coarse correction: u += P h, where h is the coarse cycle of P^T b - (P^T A) u. The coarser
     // level's x holds (P^T A) u until its cycle overwrites it.
@@ -1204,6 +1252,7 @@ void RigidBodyModesAMGPrec<Scalar>::CoarseCycle(int s) const {
     details::InterpolateRigidModes<6>(next.transfer, next.x, level.r, 0, next.transfer.numNodes);
     level.u += level.r;
   }
+
   // Post-smoothing: x = u + omega D^{-1} (b - A u).
   level.A.Apply(level.u, level.r);
   level.r = level.b - level.r;
