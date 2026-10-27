@@ -356,12 +356,13 @@ static void BuildPrefabRequests(
         // Optional GPU-skinned render model: when present it renders in the Render-Model view (the
         // collision surface still stages as the shape rep) and is posed each frame from the link
         // FK transforms. The GLB is authored in the articulation root frame, so its root is placed
-        // at the actor world transform with no extra model offset/scale (offsets would break the
-        // skin's inverse-bind math).
+        // at the actor world transform with no model offset (offsets would break the skin's
+        // inverse-bind math) and only the actor's uniform scale (see ApplySkinnedJointPose).
         mochi::Path const skinRenderPath =
             ResolvePrefabModelPath(art.skin->renderModelFile, rootPath, prefabSource);
         if (!skinRenderPath.IsEmpty()) {
           req.renderModelFile = skinRenderPath;
+          req.renderModelScale = Real3{effectiveScale, effectiveScale, effectiveScale};
         }
         // The collision wireframe (shape slot) always exists; the render GLB is optional. Route
         // visibility on the real render presence so fallback mode shows the collision when no GLB.
@@ -663,12 +664,25 @@ static void ApplySkinnedJointPose(
   }
   auto const boneSpan = mochi::MakeConstSpan(boneMatrices);
   if (actor.skinnedRenderObject) {
-    actor.skinnedRenderObject->SetBoneMatrices(boneSpan);
+    // A scaled articulation's link frames carry its uniform scale s, which the render GLB (authored
+    // at scale 1) gets as its model scale, outside the bones. Its bones are then S^-1 * bone * S:
+    // the same rotations, translations divided by s. The collision surface has s baked in, so it
+    // keeps the bones as they are.
+    real const renderScale = actor.render.modelScale[0];
+    std::vector<filament::math::mat4f> renderBoneMatrices = boneMatrices;
+    if (renderScale != 1_r) {
+      float const inverseScale = static_cast<float>(1_r / renderScale);
+      for (auto& bone : renderBoneMatrices) {
+        bone[3].xyz *= inverseScale;
+      }
+    }
+    auto const renderBoneSpan = mochi::MakeConstSpan(renderBoneMatrices);
+    actor.skinnedRenderObject->SetBoneMatrices(renderBoneSpan);
     // The selection/hover highlight clone is a separate skinned instance, so it must be driven too
     // or it freezes at the pose it was cloned in while the base animates.
     if (actor.render.highlightClone) {
       if (auto* clone = actor.render.highlightClone->AsSkinnedModelInstance()) {
-        clone->SetBoneMatrices(boneSpan);
+        clone->SetBoneMatrices(renderBoneSpan);
       }
     }
   }
@@ -750,15 +764,18 @@ static void BuildBotRequests(
     req.worldTransform = linkActor->GetRootTransform();
     linkWorldTransforms.push_back(linkActor->GetRootTransform());
     // Stage both representations (either may be absent); bot links reference model files directly.
+    // The link world transforms already carry the bot scale; the link-local models scale with it.
+    real const scale = prefab.scale;
     if (!link.renderModelFile.empty()) {
       req.renderModelFile = mochi::Path(link.renderModelFile);
-      req.renderModelTransform = TransformRT(link.renderModelRotation, link.renderModelTranslation);
-      req.renderModelScale = link.renderModelScale;
+      req.renderModelTransform =
+          TransformRT(link.renderModelRotation, link.renderModelTranslation * scale);
+      req.renderModelScale = link.renderModelScale * scale;
     }
     if (!link.shapeFile.empty()) {
       req.shapeModelFile = mochi::Path(link.shapeFile);
-      req.shapeModelTransform = TransformRT(link.shapeRotation, link.shapeTranslation);
-      req.shapeModelScale = link.shapeScale;
+      req.shapeModelTransform = TransformRT(link.shapeRotation, link.shapeTranslation * scale);
+      req.shapeModelScale = link.shapeScale * scale;
     }
     ComputeStageVisibility(
         !req.renderModelFile.IsEmpty(),
@@ -815,7 +832,7 @@ static void BuildBotRequests(
       req.shapeModelFile = skinShapePath;
       req.isSoft = true;
       req.softVertexCount = skinVertexCount;
-      req.softBakeScale = Real3{1_r, 1_r, 1_r};
+      req.softBakeScale = Real3{prefab.scale, prefab.scale, prefab.scale};
       req.softShapeTransform = TransformRT{};
       // Populate link transforms for ANY articulated skin so the collision skin can be posed
       // independently of the render model (see the prefab path). Current + bind (zero/rest) poses.
@@ -860,9 +877,11 @@ static void BuildBotRequests(
       }
       // Optional GPU-skinned render model (see the prefab path for the rationale): the GLB renders
       // in the Render-Model view and is posed from the link world transforms captured above (in GLB
-      // joint order). No model offset/scale is applied so its inverse-bind math stays valid.
+      // joint order). No model offset is applied so its inverse-bind math stays valid; the bot
+      // scale is its model scale (see ApplySkinnedJointPose).
       if (!prefab.skin->renderModelFile.empty()) {
         req.renderModelFile = mochi::Path(prefab.skin->renderModelFile);
+        req.renderModelScale = Real3{prefab.scale, prefab.scale, prefab.scale};
       }
       // The collision wireframe (shape slot) always exists; the render GLB is optional. Route
       // visibility on the real render presence so fallback mode shows the collision when no GLB.

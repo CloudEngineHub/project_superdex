@@ -2161,6 +2161,14 @@ bool BotEditor::ShowBotPrefabEditorWidgets(superdex::robotics::BotPrefab& botPre
   if (ImGui::DragTransformRT("World Transform", botPrefab.worldFromRoot)) {
     changed |= true;
   }
+  ImGui::SeparatorText("Scale (Experimental)");
+  if (ImGui::DragReal("Scale", &botPrefab.scale, 0.005f, 0.05f, 20.0f, "%.3f")) {
+    botPrefab.scale = mochi::Max(botPrefab.scale, 0.05_r);
+    changed |= true;
+  }
+  ImGui::SetItemTooltip(
+      "Uniform scale applied when the bot is spawned, for sizing hand bots to a tracked hand.\n"
+      "Not supported with transmissions, tendons or mods.");
   // Cycle Joints. Soft spherical-joint constraints that close kinematic loops
   // (topologies beyond a simple tree). Parent/child links are chosen by name; valid
   // stored indices are remapped during sorting, while malformed cycles remain for validation.
