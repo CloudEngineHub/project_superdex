@@ -20,6 +20,7 @@
 #include "rendering/scene_stage.h"
 #include "simulation/mochi_async_scene.h"
 #include "simulation/physics_drag_controller.h"
+#include "simulation/prefab_sim_sync.h"
 
 #include <mochi_physics/utils/mochi_prefab.h>
 
@@ -263,18 +264,8 @@ class MochiPrefabEditor : public AssetEditor {
   StageType _stageType = StageType::RenderModelFallbackToMochiModel;
   // physics scene state
   MochiAsyncScene _mochiScene;
-  std::vector<mochi::ActorHandle> _physicsActors;
+  PrefabSimSync _simSync;
   std::unique_ptr<PhysicsDragController> _dragController;
-  struct SimData {
-    std::vector<std::string> actorNames;
-    std::vector<mochi::TransformRT> actorTransforms;
-    std::vector<SoftMeshUpdate> softMeshUpdates;
-    // Per-step skin joint poses (one per skinned articulated actor), applied to each staged skin's
-    // GPU-skinned render model. Each carries the actor's per-link world transforms in nested-link
-    // (== GLB joint) order.
-    std::vector<SkinnedPoseUpdate> skinnedPoseUpdates;
-  };
-  mochi_renderer::ProducerConsumerBuffer<SimData> _simData;
   // UI state
   // Ordered multi-selection of hierarchy items; back() is the primary/active item. Top-level actor
   // rows (Rigid, Soft, Articulated actor, Nested prefab) support multi-select; articulated links
@@ -287,16 +278,7 @@ class MochiPrefabEditor : public AssetEditor {
   // child indices.
   std::vector<HierarchyRow> _hierarchyRows;
   std::vector<std::vector<int>> _linkChildrenScratch;
-  // Per-soft-actor query registration held while simulating. The two surface queries are registered
-  // once in CreatePhysicsActors and cancelled on stop; `name` matches the staged actor for the
-  // per-frame mesh update.
-  struct SoftQueryState {
-    mochi::ActorHandle actor;
-    mochi::QueryHandle positions;
-    mochi::QueryHandle normals;
-    std::string name;
-  };
-  std::vector<SoftQueryState> _softQueryState;
+  // One-shot flag
   // One-shot flag: when set, the hierarchy expands ancestors of and scrolls to the selected
   // articulated link (set on viewport pick, consumed while rendering the tree).
   bool _forceLinkFocus = false;

@@ -280,6 +280,32 @@ void ClearCachedShapes(mochi::prefab::ScenePrefab& prefab) {
   }
 }
 
+void ResolveNestedPrefabsFromMemory(
+    mochi::prefab::ScenePrefab& prefab,
+    AssetManager& manager,
+    std::string const& rootPath) {
+  std::string_view const prefabFilePath = prefab.sourceFilePath.has_value()
+      ? std::string_view(*prefab.sourceFilePath)
+      : std::string_view();
+  for (auto& nested : prefab.prefabs) {
+    if (nested.path.empty()) {
+      continue;
+    }
+    if (auto* asset =
+            manager.FindAssetByPath<MochiPrefabAsset>(mochi::Path{std::string(nested.path)})) {
+      nested.prefab = std::make_shared<mochi::prefab::ScenePrefab>(asset->GetPrefab());
+    } else {
+      mochi::ErrorLog error;
+      auto const fullPath = mochi::prefab::GetPrefabFullPath(nested.path, rootPath, prefabFilePath);
+      nested.prefab = std::make_shared<mochi::prefab::ScenePrefab>(
+          mochi::prefab::ShallowLoadFromFile(fullPath, error));
+    }
+    // Clear cached shapes so the nested reference's scale re-bakes correctly on the next sim.
+    ClearCachedShapes(*nested.prefab);
+    ResolveNestedPrefabsFromMemory(*nested.prefab, manager, rootPath);
+  }
+}
+
 std::unique_ptr<MochiPrefabAsset>
 MochiPrefabAsset::Create(std::string const& name, mochi::Path const& path, AssetManager* manager) {
   mochi::ErrorLog error;

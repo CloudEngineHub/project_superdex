@@ -36,6 +36,15 @@ class AssetManager;
 /// bake transform) it was first loaded with.
 void ClearCachedShapes(mochi::prefab::ScenePrefab& prefab);
 
+/// Re-populate each nested prefab reference in @p prefab (recursively), preferring the live
+/// in-memory prefab of a loaded MochiPrefabAsset, so edits made in a nested prefab's own editor
+/// (saved or not) propagate, and falling back to a fresh disk load otherwise. A prefab's nested
+/// copies are otherwise only loaded once, when its asset is created.
+void ResolveNestedPrefabsFromMemory(
+    mochi::prefab::ScenePrefab& prefab,
+    AssetManager& manager,
+    std::string const& rootPath);
+
 class MochiPrefabAsset : public Asset, public IAssetReferencer {
  public:
   ~MochiPrefabAsset() override = default;
