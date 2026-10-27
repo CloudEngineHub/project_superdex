@@ -1831,7 +1831,20 @@ void AssetBrowser::ShowWindow(bool* open) {
   TryApplyPendingAssetAction();
   TryRefreshDirectoryTree();
 
-  ImGui::Begin("Asset Browser", open);
+  // Skip the contents while hidden (e.g. a background dock tab): ImGui still hit-tests a hidden
+  // child's resize border, so the panels' borders would take clicks meant for the visible tab and
+  // focus this one.
+  if (ImGui::Begin("Asset Browser", open)) {
+    ShowContents();
+  }
+  ShowDeleteBlockedModal();
+  ShowBatchRenameModal();
+  ShowReplaceWithModal();
+  ImGui::End();
+}
+
+void AssetBrowser::ShowContents() {
+  // Mouse back/forward buttons
 
   // Mouse back/forward buttons (buttons 4/5, ImGui indices 3/4) navigate the folder history like a
   // web browser, while the Asset Browser or one of its panels is hovered.
@@ -2470,15 +2483,9 @@ void AssetBrowser::ShowWindow(bool* open) {
 
   ImGui::EndGroup();
 
-  ShowDeleteBlockedModal();
-  ShowBatchRenameModal();
-  ShowReplaceWithModal();
-
   if (assetToOpen) {
     _studio->OpenAssetEditor(assetToOpen);
   }
-
-  ImGui::End();
 }
 
 void AssetBrowser::SelectAsset(Asset* asset) {

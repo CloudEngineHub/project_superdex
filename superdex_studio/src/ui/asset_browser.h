@@ -141,6 +141,7 @@ class AssetBrowser {
   void GoBack();
   void GoForward();
 
+  void ShowContents();
   void ShowFilter(float width);
   void ShowFolderTree(DirectoryNode const& node, bool isRoot);
   void ShowBreadcrumb();
