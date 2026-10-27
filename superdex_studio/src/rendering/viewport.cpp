@@ -1892,7 +1892,8 @@ void Viewport::ShowDebugText(ImVec2 contentOrigin, float logicalWidth, float log
       _renderScene->GetCameraProjectionMatrix(),
       contentOrigin,
       logicalWidth,
-      logicalHeight);
+      logicalHeight,
+      static_cast<float>(_studio->GetAppSettings().viewport.labels.backgroundOpacity));
   _debugText.Clear();
 }
 

@@ -283,16 +283,31 @@ struct TransformGizmoSettings {
   MOCHI_STRUCT_END()
 };
 
+// World-anchored viewport labels: drag forces, measurements.
+struct ViewportLabelSettings {
+  double backgroundOpacity = 0.55;
+  MOCHI_STRUCT_BEGIN(superdex::studio::ViewportLabelSettings)
+  MOCHI_FIELD(backgroundOpacity)
+  MOCHI_ATTRIBUTE(DisplayName("Background Opacity"));
+  MOCHI_ATTRIBUTE(Description(
+      "Opacity of the label background (0 = text only, 1 = solid). Lower it to see the arrows "
+      "and geometry behind the labels."));
+  MOCHI_ATTRIBUTE(FloatRange(0.0, 1.0));
+  MOCHI_STRUCT_END()
+};
+
 // Everything that applies to every viewport, grouped into the sections the Settings window shows.
 struct ViewportSettings {
   ViewportCameraSettings camera;
   ViewportSelectionSettings selection;
+  ViewportLabelSettings labels;
   TransformGizmoSettings transformGizmo;
   GroundGridSettings groundGrid;
 
   MOCHI_STRUCT_BEGIN(superdex::studio::ViewportSettings)
   MOCHI_FIELD(camera)
   MOCHI_FIELD(selection)
+  MOCHI_FIELD(labels)
   MOCHI_FIELD(transformGizmo) MOCHI_ATTRIBUTE(DisplayName("Transform Gizmo"));
   MOCHI_FIELD(groundGrid) MOCHI_ATTRIBUTE(DisplayName("Ground Grid"));
   MOCHI_STRUCT_END()

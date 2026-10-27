@@ -63,12 +63,14 @@ class DebugText {
   // apart, and emits them into the current ImGui window's draw list. @p contentOrigin and
   // @p logicalWidth / @p logicalHeight describe the viewport image in ImGui (logical) coordinates,
   // and also bound which way a displaced label moves. Labels behind the camera are dropped.
+  // @p backgroundOpacity scales the chip fill (0 = text only, 1 = solid).
   void Show(
       filament::math::mat4 const& viewMatrix,
       filament::math::mat4 const& projMatrix,
       ImVec2 contentOrigin,
       float logicalWidth,
-      float logicalHeight) const;
+      float logicalHeight,
+      float backgroundOpacity = 1.0f) const;
 
   void Clear();
 

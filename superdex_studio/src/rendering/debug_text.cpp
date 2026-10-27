@@ -79,7 +79,8 @@ void DebugText::Show(
     filament::math::mat4 const& projMatrix,
     ImVec2 contentOrigin,
     float logicalWidth,
-    float logicalHeight) const {
+    float logicalHeight,
+    float backgroundOpacity) const {
   if (_items.empty()) {
     return;
   }
@@ -154,7 +155,9 @@ void DebugText::Show(
   }
 
   ImDrawList* drawList = ImGui::GetWindowDrawList();
-  ImU32 const backgroundColor = ImGui::GetColorU32(ImGuiCol_Button);
+  ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+  background.w *= std::clamp(backgroundOpacity, 0.0f, 1.0f);
+  ImU32 const backgroundColor = ImGui::ColorConvertFloat4ToU32(background);
   for (PlacedLabel const& label : placed) {
     // Half the chip's height rounds it into a pill, matching the viewport's toolbar buttons.
     drawList->AddRectFilled(
