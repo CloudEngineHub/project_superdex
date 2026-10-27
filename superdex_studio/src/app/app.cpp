@@ -15,6 +15,7 @@
  */
 
 #include "app/app.h"
+#include "app/folder_dialog.h"
 #include "assets/asset_manager.h"
 #include "core/common.h"
 #include "rendering/render_target.h"
@@ -1442,6 +1443,12 @@ mochi::Path SuperDexStudio::GetFolderDialogPath(char const* title, mochi::Path c
   }
 #endif
   std::string const defaultStr = defaultPath.ToString();
+  // tinyfd's Windows folder picker is the legacy tree-only SHBrowseForFolder; prefer the Explorer
+  // dialog (Quick Access, recents, address bar) where it exists.
+  if (auto const chosen = ShowNativeFolderDialog(
+          title, std::filesystem::path(defaultStr).make_preferred().string())) {
+    return chosen->empty() ? mochi::Path{} : mochi::Path{*chosen};
+  }
   char const* result = tinyfd_selectFolderDialog(title, defaultStr.c_str());
   return result ? mochi::Path{std::string{result}} : mochi::Path{};
 }
