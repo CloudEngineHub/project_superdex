@@ -93,21 +93,21 @@ mochi::ModelData MochiSpaceModel(mochi::MeshData const& input) {
 
 class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "SDF";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Bake a grid SDF from the input mesh and export the mesh plus SDF as a .mochi.h5 (or "
            "the mesh alone, with Bake SDF off).";
   }
-  bool ProvidesFileExport() const override {
+  [[nodiscard]] bool ProvidesFileExport() const override {
     return true;
   }
-  std::string ExportPath() const override {
+  [[nodiscard]] std::string ExportPath() const override {
     return NormalizeMochiModelExportPath(
         std::string{_props.exportPath.data(), _props.exportPath.size()});
   }
-  std::vector<std::string_view> PathPropKeys() const override {
+  [[nodiscard]] std::vector<std::string_view> PathPropKeys() const override {
     return {"exportPath"};
   }
   void RefreshAutoExportPath(std::string const& sourceFilePath) override {
@@ -136,7 +136,7 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
     return issues;
   }
 
-  bool AcceptsTetrahedralInput() const override {
+  [[nodiscard]] bool AcceptsTetrahedralInput() const override {
     return true;
   }
 
@@ -144,13 +144,13 @@ class MochiModelExportMethod : public ReflectedMethod<MochiModelExportProps> {
   // Model Viewer's Mochi Model section so the two reads are consistent. The input block is a copy
   // the editor captures at generation (survives reorders); the output block is this method's SDF
   // surface.
-  bool ShowsInputVisualization() const override {
+  [[nodiscard]] bool ShowsInputVisualization() const override {
     return true;
   }
-  char const* InputVisualizationLabel() const override {
+  [[nodiscard]] char const* InputVisualizationLabel() const override {
     return "Mochi Model Visualization";
   }
-  char const* OutputVisualizationLabel() const override {
+  [[nodiscard]] char const* OutputVisualizationLabel() const override {
     return "SDF Visualization";
   }
 

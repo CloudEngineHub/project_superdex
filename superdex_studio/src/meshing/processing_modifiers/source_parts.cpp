@@ -88,17 +88,17 @@ class PartsSourceMethod : public ReflectedMethod<SourcePartsProps> {
     _props.parts.assign(parts.begin(), parts.end());
   }
 
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Parts";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Assembles mesh files and primitives, each placed in the model's frame.";
   }
-  bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
     return !_props.parts.empty();
   }
   // The first mesh part's file, which an Auto export is named after.
-  std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
     for (SourcePart const& part : _props.parts) {
       if (part.shape == SourcePartShape::Mesh && !part.path.empty()) {
         return std::string(part.path);
@@ -106,7 +106,7 @@ class PartsSourceMethod : public ReflectedMethod<SourcePartsProps> {
     }
     return {};
   }
-  std::vector<std::string_view> PathPropKeys() const override {
+  [[nodiscard]] std::vector<std::string_view> PathPropKeys() const override {
     return {"parts[].path"};
   }
 

@@ -524,21 +524,21 @@ void ShowStepTessellationParams(
 // ---- From Model Viewer --------------------------------------------------------------------------
 class CadFromViewerMethod : public ReflectedMethod<CadStepToMeshProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "From Model Viewer";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Uses the editor's current CAD Model (its Model Viewer slot) as the source. A STEP file "
            "is tessellated with the options below; an STL is read directly.";
   }
-  bool CanGenerate(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& ctx) const override {
     return !ctx.cadFilePath.empty();
   }
-  std::string SourceFilePath(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& ctx) const override {
     return ctx.cadFilePath;
   }
   // Fold the slotted file + baked CAD transform into the signature so changing either re-generates.
-  std::string PropsSignature(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] std::string PropsSignature(ModifierRunContext const& ctx) const override {
     mochi::Real4 const r = ctx.cadRotation.ToReal4();
     std::string sig = SReflect::ToJsonString(_props, /*pretty=*/false);
     sig += '|';
@@ -596,20 +596,20 @@ class CadFromViewerMethod : public ReflectedMethod<CadStepToMeshProps> {
 // ---- From File ----------------------------------------------------------------------------------
 class CadFromFileMethod : public ReflectedMethod<CadFileSourceProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "From File";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Uses a CAD Model from this modifier's own slot, independent of the editor's Model "
            "Viewer. A STEP file is tessellated with the options below; an STL is read directly.";
   }
-  bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
     return !_props.path.empty();
   }
-  std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
     return std::string{_props.path.data(), _props.path.size()};
   }
-  std::vector<std::string_view> PathPropKeys() const override {
+  [[nodiscard]] std::vector<std::string_view> PathPropKeys() const override {
     return {"path"};
   }
   int DeserializeProps(picojson::value const& in) override {

@@ -43,19 +43,19 @@ struct MochiFileSourceProps {
 // ---- From Model Viewer --------------------------------------------------------------------------
 class MochiFromViewerMethod : public ReflectedMethod<EmptyMethodProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "From Model Viewer";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Uses the editor's current Mochi Model surface (its Model Viewer slot) as the source.";
   }
-  bool CanGenerate(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& ctx) const override {
     return !ctx.mochiModelPath.empty();
   }
-  std::string SourceFilePath(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& ctx) const override {
     return ctx.mochiModelPath;
   }
-  std::string PropsSignature(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] std::string PropsSignature(ModifierRunContext const& ctx) const override {
     return "|" + ctx.mochiModelPath; // input is the editor's mochi slot (external to props)
   }
   void ShowParams(ModifierGuiContext const& /*gui*/) override {
@@ -75,20 +75,20 @@ class MochiFromViewerMethod : public ReflectedMethod<EmptyMethodProps> {
 // ---- From File ----------------------------------------------------------------------------------
 class MochiFromFileMethod : public ReflectedMethod<MochiFileSourceProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "From File";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Uses a Mochi Model from this modifier's own slot, independent of the editor's Model "
            "Viewer.";
   }
-  bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
     return !_props.path.empty();
   }
-  std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
     return std::string{_props.path.data(), _props.path.size()};
   }
-  std::vector<std::string_view> PathPropKeys() const override {
+  [[nodiscard]] std::vector<std::string_view> PathPropKeys() const override {
     return {"path"};
   }
   void ShowParams(ModifierGuiContext const& gui) override {

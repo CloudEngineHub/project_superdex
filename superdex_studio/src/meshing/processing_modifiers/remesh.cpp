@@ -104,10 +104,10 @@ mochi::MeshData FillHolesFirst(mochi::MeshData const& input, mochi::Error& error
 // ---- Approx Centroidal Voronoi Diagram (ACVD) ---------------------------------------------------
 class AcvdMethod : public ReflectedMethod<RemeshAcvdProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Approx Centroidal Voronoi Diagram (ACVD)";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Resample the surface toward a target vertex count via Approximate Centroidal Voronoi "
            "Diagram clustering (fills holes first).";
   }
@@ -145,10 +145,10 @@ class AcvdMethod : public ReflectedMethod<RemeshAcvdProps> {
 // ---- Surface Delaunay Triangulation -------------------------------------------------------------
 class SurfaceDelaunayMethod : public ReflectedMethod<RemeshSurfaceDelaunayProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Surface Delaunay Triangulation";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Resample the surface with Delaunay refinement bounded by facet angle and distance "
            "(fills holes first).";
   }
@@ -191,10 +191,10 @@ class SurfaceDelaunayMethod : public ReflectedMethod<RemeshSurfaceDelaunayProps>
 // ---- Incremental Isotropic Remesh ---------------------------------------------------------------
 class IsotropicRemeshMethod : public ReflectedMethod<RemeshIsotropicProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Incremental Isotropic Remesh";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Iteratively split, collapse, flip, and relax edges toward a uniform target edge "
            "length.";
   }

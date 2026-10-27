@@ -29,13 +29,13 @@ namespace {
 
 class TetBoundaryMethod : public ReflectedMethod<EmptyMethodProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Boundary";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Replace the tetrahedral input with the triangle mesh of its boundary surface.";
   }
-  bool AcceptsTetrahedralInput() const override {
+  [[nodiscard]] bool AcceptsTetrahedralInput() const override {
     return true;
   }
   void ShowParams(ModifierGuiContext const& /*gui*/) override {

@@ -61,10 +61,10 @@ struct TetrahedralizeProps {
 
 class DelaunayRefinementMethod : public ReflectedMethod<TetrahedralizeProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Delaunay Refinement";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Fill the closed input surface with tetrahedra by Delaunay refinement (CGAL Mesh_3).";
   }
 

@@ -52,10 +52,10 @@ struct MergeUnionProps {
 
 class UnionMethod : public ReflectedMethod<MergeUnionProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return kMergeUnionMethod;
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "One watertight surface, the exact boolean union of the input's pieces. Pieces are "
            "repaired first; one that cannot be is wrapped.";
   }

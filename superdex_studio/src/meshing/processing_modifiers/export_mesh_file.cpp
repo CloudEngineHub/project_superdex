@@ -63,25 +63,25 @@ std::string NormalizeMeshExportPath(std::string path) {
 
 class MeshFileExportMethod : public ReflectedMethod<ExportMeshFileProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Mesh File";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Export the input mesh to a mesh file (.glb / .obj) in a chosen material color.";
   }
-  bool ProvidesFileExport() const override {
+  [[nodiscard]] bool ProvidesFileExport() const override {
     return true;
   }
-  std::string ExportPath() const override {
+  [[nodiscard]] std::string ExportPath() const override {
     return NormalizeMeshExportPath(std::string{_props.path.data(), _props.path.size()});
   }
   // The Export Mesh File stage previews in its own configured material color, so the viewport
   // matches what it will write, rather than a hashed stage color.
-  std::optional<mochi::Real3> PreferredDisplayColor() const override {
+  [[nodiscard]] std::optional<mochi::Real3> PreferredDisplayColor() const override {
     return _props.color;
   }
 
-  std::vector<std::string_view> PathPropKeys() const override {
+  [[nodiscard]] std::vector<std::string_view> PathPropKeys() const override {
     return {"path"};
   }
   void RefreshAutoExportPath(std::string const& sourceFilePath) override {

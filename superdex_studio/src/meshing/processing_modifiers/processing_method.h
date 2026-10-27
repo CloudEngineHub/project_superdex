@@ -159,12 +159,12 @@ class MeshProcessingMethod {
 
   // Stable, human-readable identifier used both in the method combo and as the JSON "method" value.
   // Renaming it changes the JSON key, so keep it stable.
-  virtual char const* Name() const = 0;
+  [[nodiscard]] virtual char const* Name() const = 0;
 
   // One-line explanation of what this method does, shown as a hover tooltip on the modifier's
   // Method combo (on both the collapsed selector and each option). Only surfaced when the modifier
   // has more than one method -- single-method modifiers hide the combo. Empty default = no tooltip.
-  virtual char const* Description() const {
+  [[nodiscard]] virtual char const* Description() const {
     return "";
   }
 
@@ -185,51 +185,51 @@ class MeshProcessingMethod {
   // A compact string encoding every parameter that affects this method's output, used by the
   // editor's generation cascade to detect changes. @p ctx lets source methods fold in their
   // external inputs (slotted file path / CAD transform).
-  virtual std::string PropsSignature(ModifierRunContext const& ctx) const = 0;
+  [[nodiscard]] virtual std::string PropsSignature(ModifierRunContext const& ctx) const = 0;
 
   // JSON keys of this method's props that hold a file path. The pipeline serializer rewrites the
   // value at each key between the absolute path kept in memory and the bot-relative form written to
   // disk (via superdex::robotics::MakePathRelative / MakePathAbsolute), so the saved JSON never
   // embeds an absolute path. "list[].field" names a field of every element of an array prop. Empty
   // for methods with no path parameter (the default).
-  virtual std::vector<std::string_view> PathPropKeys() const {
+  [[nodiscard]] virtual std::vector<std::string_view> PathPropKeys() const {
     return {};
   }
 
   // --- optional capabilities (defaults suit most methods) ---------------------------------------
   // True for Edge Flip, which fits toward an upstream reference mesh resolved into
   // ctx.referenceMesh.
-  virtual bool NeedsReferenceMesh() const {
+  [[nodiscard]] virtual bool NeedsReferenceMesh() const {
     return false;
   }
-  virtual int ReferenceIndex() const {
+  [[nodiscard]] virtual int ReferenceIndex() const {
     return kReferencePrecedingSource;
   }
   virtual void RemapReferences(std::vector<int> const& /*oldToNew*/) {}
   // Whether Run accepts a tetrahedral input mesh (e.g. downstream of Tetrahedralize). Most methods
   // operate on triangle surfaces only.
-  virtual bool AcceptsTetrahedralInput() const {
+  [[nodiscard]] virtual bool AcceptsTetrahedralInput() const {
     return false;
   }
   // Whether this method can currently produce output given @p ctx (sources check their file /
   // slot).
-  virtual bool CanGenerate(ModifierRunContext const& /*ctx*/) const {
+  [[nodiscard]] virtual bool CanGenerate(ModifierRunContext const& /*ctx*/) const {
     return true;
   }
   // A source method's input file path (used to derive export default paths); empty otherwise.
-  virtual std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const {
+  [[nodiscard]] virtual std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const {
     return {};
   }
   // Export methods (Export Mochi Model, Export Mesh File) show a separate Export button and write a
   // file from their current input mesh via SaveToFile.
-  virtual bool ProvidesFileExport() const {
+  [[nodiscard]] virtual bool ProvidesFileExport() const {
     return false;
   }
   // The file SaveToFile would write, normalized exactly as it will be written. Empty when this
   // method has no export path or none is set yet -- which is what the editor tests to decide
   // whether Build/Export All should include this modifier, and what it compares across modifiers to
   // detect two exports writing to the same file.
-  virtual std::string ExportPath() const {
+  [[nodiscard]] virtual std::string ExportPath() const {
     return {};
   }
   virtual void SaveToFile(mochi::MeshData const& /*input*/, mochi::Error& /*error*/) const {}
@@ -251,7 +251,7 @@ class MeshProcessingMethod {
   // Optional override for the color the editor shows this method's output surface with. Most
   // methods return nullopt (the editor derives a hashed stage color); the Export Mesh File method
   // returns its configured material color so its viewport preview matches the color it will write.
-  virtual std::optional<mochi::Real3> PreferredDisplayColor() const {
+  [[nodiscard]] virtual std::optional<mochi::Real3> PreferredDisplayColor() const {
     return std::nullopt;
   }
   // Lets a method contribute extra stats for its output after generation (e.g. Export Mochi Model
@@ -262,15 +262,15 @@ class MeshProcessingMethod {
   // copy captured at generation, so it survives reorders) alongside the output, each under its own
   // SeparatorText heading. Used by Export Mochi Model so the source surface can be compared with
   // the SDF surface it reconstructs. Most methods show only the single output block.
-  virtual bool ShowsInputVisualization() const {
+  [[nodiscard]] virtual bool ShowsInputVisualization() const {
     return false;
   }
   // Section headings for the input-mesh and output-mesh visualization blocks (only used when
   // ShowsInputVisualization() is true).
-  virtual char const* InputVisualizationLabel() const {
+  [[nodiscard]] virtual char const* InputVisualizationLabel() const {
     return "Input Visualization";
   }
-  virtual char const* OutputVisualizationLabel() const {
+  [[nodiscard]] virtual char const* OutputVisualizationLabel() const {
     return "Output Visualization";
   }
 };
@@ -290,7 +290,7 @@ class ReflectedMethod : public MeshProcessingMethod {
     SReflect::FromJsonValue(_props, in, SReflect::DeserializeFlags::Default, numIssues);
     return numIssues;
   }
-  std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
     return SReflect::ToJsonString(_props, /*pretty=*/false);
   }
 

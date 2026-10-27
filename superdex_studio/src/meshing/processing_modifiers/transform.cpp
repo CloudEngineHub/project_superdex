@@ -44,13 +44,13 @@ struct TransformSrtProps {
 
 class SrtTransformMethod : public ReflectedMethod<TransformSrtProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "SRT Transform";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Apply a scale, then rotation, then translation to the mesh.";
   }
-  bool AcceptsTetrahedralInput() const override {
+  [[nodiscard]] bool AcceptsTetrahedralInput() const override {
     return true;
   }
   void ShowParams(ModifierGuiContext const& gui) override {

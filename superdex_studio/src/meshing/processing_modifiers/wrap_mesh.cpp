@@ -64,10 +64,10 @@ struct WrapAlphaWrapProps {
 // ---- Shrink Wrap --------------------------------------------------------------------------------
 class ShrinkWrapMethod : public ReflectedMethod<WrapShrinkWrapProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return kShrinkWrapMethod;
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Build a fresh watertight envelope by shrinking a hull onto the surface, bridging "
            "concavities and covering holes.";
   }
@@ -113,10 +113,10 @@ class ShrinkWrapMethod : public ReflectedMethod<WrapShrinkWrapProps> {
 // ---- Convex Hull --------------------------------------------------------------------------------
 class ConvexHullMethod : public ReflectedMethod<EmptyMethodProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Convex Hull";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Replace the surface with its convex hull (remeshed).";
   }
   void ShowParams(ModifierGuiContext const& /*gui*/) override {
@@ -137,10 +137,10 @@ class ConvexHullMethod : public ReflectedMethod<EmptyMethodProps> {
 // ---- Alpha Wrap ---------------------------------------------------------------------------------
 class AlphaWrapMethod : public ReflectedMethod<WrapAlphaWrapProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Alpha Wrap";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Build a fresh watertight envelope by alpha-wrapping the surface; alpha sets the finest "
            "captured detail.";
   }

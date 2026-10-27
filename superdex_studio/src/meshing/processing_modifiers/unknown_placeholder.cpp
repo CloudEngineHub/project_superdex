@@ -37,7 +37,7 @@ class UnknownMethod : public MeshProcessingMethod {
   UnknownMethod(std::string methodName, std::string propertiesJson)
       : _methodName(std::move(methodName)), _propertiesJson(std::move(propertiesJson)) {}
 
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return _methodName.c_str();
   }
   void ShowParams(ModifierGuiContext const& /*gui*/) override {
@@ -61,7 +61,7 @@ class UnknownMethod : public MeshProcessingMethod {
     _propertiesJson = in.serialize(/*prettify=*/false);
     return 0;
   }
-  std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] std::string PropsSignature(ModifierRunContext const& /*ctx*/) const override {
     return _propertiesJson;
   }
 

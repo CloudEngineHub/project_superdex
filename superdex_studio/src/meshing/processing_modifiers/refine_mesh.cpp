@@ -78,10 +78,10 @@ struct RefineTangentialProps {
 // ---- Make Manifold ------------------------------------------------------------------------------
 class MakeManifoldMethod : public ReflectedMethod<RefineMakeManifoldProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Make Manifold";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Weld coincident vertices, remove internal/overlapping faces, and repair non-manifold "
            "topology (optionally filling holes afterward).";
   }
@@ -119,10 +119,10 @@ class MakeManifoldMethod : public ReflectedMethod<RefineMakeManifoldProps> {
 // ---- Make Watertight ----------------------------------------------------------------------------
 class MakeWatertightMethod : public ReflectedMethod<EmptyMethodProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Make Watertight";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Fill boundary holes so the surface is closed (watertight).";
   }
   void ShowParams(ModifierGuiContext const& /*gui*/) override {
@@ -143,17 +143,17 @@ class MakeWatertightMethod : public ReflectedMethod<EmptyMethodProps> {
 // ---- Edge Flip Optimization ---------------------------------------------------------------------
 class EdgeFlipMethod : public ReflectedMethod<RefineEdgeFlipProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Edge Flip Optimization";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Retriangulate by flipping edges to better fit an upstream reference surface, leaving "
            "vertex positions unchanged.";
   }
-  bool NeedsReferenceMesh() const override {
+  [[nodiscard]] bool NeedsReferenceMesh() const override {
     return true;
   }
-  int ReferenceIndex() const override {
+  [[nodiscard]] int ReferenceIndex() const override {
     return _props.referenceIndex;
   }
   void RemapReferences(std::vector<int> const& oldToNew) override {
@@ -243,10 +243,10 @@ class EdgeFlipMethod : public ReflectedMethod<RefineEdgeFlipProps> {
 // ---- Edge Collapse (Simplification) -------------------------------------------------------------
 class EdgeCollapseMethod : public ReflectedMethod<RefineEdgeCollapseProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Edge Collapse (Simplification)";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Decimate the mesh by collapsing edges shorter than a distance threshold.";
   }
   void ShowParams(ModifierGuiContext const& gui) override {
@@ -269,10 +269,10 @@ class EdgeCollapseMethod : public ReflectedMethod<RefineEdgeCollapseProps> {
 // ---- Tangential Relaxation (Smoothing) ----------------------------------------------------------
 class TangentialRelaxationMethod : public ReflectedMethod<RefineTangentialProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "Tangential Relaxation (Smoothing)";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Slide vertices along the surface to even out triangle quality without changing "
            "connectivity.";
   }

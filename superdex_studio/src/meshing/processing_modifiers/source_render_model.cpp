@@ -43,19 +43,19 @@ struct RenderFileSourceProps {
 // ---- From Model Viewer --------------------------------------------------------------------------
 class RenderFromViewerMethod : public ReflectedMethod<EmptyMethodProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "From Model Viewer";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Uses the editor's current Render Model surface (its Model Viewer slot) as the source.";
   }
-  bool CanGenerate(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& ctx) const override {
     return !ctx.renderModelPath.empty();
   }
-  std::string SourceFilePath(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& ctx) const override {
     return ctx.renderModelPath;
   }
-  std::string PropsSignature(ModifierRunContext const& ctx) const override {
+  [[nodiscard]] std::string PropsSignature(ModifierRunContext const& ctx) const override {
     return "|" + ctx.renderModelPath; // input is the editor's render slot (external to props)
   }
   void ShowParams(ModifierGuiContext const& /*gui*/) override {
@@ -75,20 +75,20 @@ class RenderFromViewerMethod : public ReflectedMethod<EmptyMethodProps> {
 // ---- From File ----------------------------------------------------------------------------------
 class RenderFromFileMethod : public ReflectedMethod<RenderFileSourceProps> {
  public:
-  char const* Name() const override {
+  [[nodiscard]] char const* Name() const override {
     return "From File";
   }
-  char const* Description() const override {
+  [[nodiscard]] char const* Description() const override {
     return "Uses a Render Model from this modifier's own slot, independent of the editor's Model "
            "Viewer.";
   }
-  bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] bool CanGenerate(ModifierRunContext const& /*ctx*/) const override {
     return !_props.path.empty();
   }
-  std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
+  [[nodiscard]] std::string SourceFilePath(ModifierRunContext const& /*ctx*/) const override {
     return std::string{_props.path.data(), _props.path.size()};
   }
-  std::vector<std::string_view> PathPropKeys() const override {
+  [[nodiscard]] std::vector<std::string_view> PathPropKeys() const override {
     return {"path"};
   }
   void ShowParams(ModifierGuiContext const& gui) override {
