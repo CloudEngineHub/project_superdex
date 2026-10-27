@@ -604,6 +604,19 @@ class BotPrefab:
     def links(self, value: ArrayLikeBotLinkPrefab) -> None: ...
     world_from_root: mochi_physics.TransformRT
     """Transform from the root link to the world frame."""
+    scale: float
+    """[Experimental] Uniform scale applied when the bot is instantiated. Meant for
+    sizing human hand bots to a tracked hand (XR teleoperation), not for robots. The
+    asset stays in nominal units; the created actor's geometry, shapes, skin, sensor
+    offsets, prismatic limits and default pose are scaled, masses by scale^3 and
+    rotational inertias by scale^5, and joint friction, inertia, limit stiffness and
+    damping and cycle stiffness for dynamic similarity. Rotational limits are
+    unchanged. Contact parameters are not scaled. Spawn poses, controller gains and
+    prefab-space utilities are nominal; effort limits and anything read from or sent
+    to the live actor, such as pose-controller targets, are in scaled units. Must be
+    positive and finite; values other than 1 are rejected for bots with linear
+    transmissions or spatial tendons, and for bots composed with mods.
+    """
     @property
     def default_pose(self) -> mochi_physics.DynamicArrayReal:
         """Default pose (array of joint DOF angles/translations) used when spawning the
@@ -663,6 +676,7 @@ class BotPrefab:
         joints: ArrayLikeBotJointPrefab = ...,
         links: ArrayLikeBotLinkPrefab = ...,
         world_from_root: mochi_physics.TransformRT = ...,
+        scale: float = ...,
         default_pose: mochi_physics.ArrayLikeReal = ...,
         linear_transmissions: ArrayLikeBotLinearTransmissionPrefab = ...,
         spatial_tendons: ArrayLikeBotSpatialTendonPrefab = ...,

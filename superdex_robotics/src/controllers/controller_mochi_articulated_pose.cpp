@@ -15,9 +15,13 @@
  */
 
 #include <superdex_robotics/controllers/controller_mochi_articulated_pose.h>
+#include <superdex_robotics/superdex_robotics.h>
+#include <superdex_robotics/utils/bot_utils.h>
 #include <superdex_robotics/utils/file_utils.h>
 
 #include <mochi_physics/utils/mochi_physics_reflection.generated.h>
+
+#include <algorithm>
 
 using namespace mochi;
 using namespace superdex::robotics;
@@ -102,7 +106,9 @@ void ControllerMochiArticulatedPose::Initialize(bool removeExisting, Error& erro
   // explicit flag rather than inferring intent from empty tracking arrays, so params
   // whose non-tracking fields (gains, limits, ...) were configured are not discarded.
   if (_hasUserParams) {
-    actor->AddArticulatedPoseController(_params.poseControllerParams, error);
+    PoseControllerParams const scaled = ScaledPoseControllerParams(error);
+    MOCHI_ERROR_RETURN(error);
+    actor->AddArticulatedPoseController(scaled, error);
   } else {
     PoseControllerParams defaults;
     defaults.linkPosTracking = {PoseTrackingParams{}};
@@ -114,6 +120,100 @@ void ControllerMochiArticulatedPose::Initialize(bool removeExisting, Error& erro
 
   // AddArticulatedPoseController sets target pose and velocity from the actor's current state.
   _needsReset = false;
+}
+
+real ControllerMochiArticulatedPose::GetBotScale() const {
+  if (_prefab != nullptr) {
+    return _prefab->scale;
+  }
+  Bot const* const bot = GetOwningBot();
+  return bot != nullptr ? bot->GetBotPrefab().scale : 1_r;
+}
+
+PoseControllerParams ControllerMochiArticulatedPose::ScaledPoseControllerParams(
+    Error& error) const {
+  MOCHI_ERROR_RETURN(error, {});
+  PoseControllerParams scaled = _params.poseControllerParams;
+  real const s = GetBotScale();
+  if (s == 1_r) {
+    return scaled;
+  }
+  auto scaleTranslational = [s](PoseTrackingParams& p) {
+    real const gainScale =
+        superdex::robotics::details::JointGainScale(ArticulatedJointType::Prismatic, s);
+    p.stiffness *= gainScale;
+    p.damping *= gainScale;
+    if (p.saturation > 0_r) {
+      p.saturation *= s;
+    }
+  };
+  auto scaleRotational = [s](PoseTrackingParams& p) {
+    real const gainScale =
+        superdex::robotics::details::JointGainScale(ArticulatedJointType::Revolute, s);
+    p.stiffness *= gainScale;
+    p.damping *= gainScale;
+  };
+  for (auto& p : scaled.linkPosTracking) {
+    scaleTranslational(p);
+  }
+  for (auto& p : scaled.linkRotTracking) {
+    scaleRotational(p);
+  }
+  if (scaled.jointTracking.empty()) {
+    return scaled;
+  }
+  // Joint tracking acts on each link's parent joint: prismatic joints track a distance, the others
+  // (including a free or spherical root) a rotation, and hard joints are not tracked. A broadcast
+  // entry covering both kinds is expanded per link.
+  Actor const* const actor = GetActor();
+  MOCHI_ERROR_IF(actor == nullptr, error, "ControllerMochiArticulatedPose requires a live actor");
+  MOCHI_ERROR_RETURN(error, {});
+  ArticulatedShapeInfo const shapeInfo = actor->GetArticulatedShapeInfo(error);
+  MOCHI_ERROR_RETURN(error, {});
+  auto isHard = [&](int link) { return shapeInfo.jointTypes[link] == ArticulatedJointType::Hard; };
+  auto isPrismatic = [&](int link) {
+    return shapeInfo.jointTypes[link] == ArticulatedJointType::Prismatic;
+  };
+  int const numLinks = isize(shapeInfo.jointTypes);
+  if (isize(scaled.jointTracking) == 1) {
+    int numPrismatic = 0;
+    int numRotational = 0;
+    for (int i = 0; i < numLinks; ++i) {
+      if (!isHard(i)) {
+        ++(isPrismatic(i) ? numPrismatic : numRotational);
+      }
+    }
+    if (numPrismatic == 0) {
+      scaleRotational(scaled.jointTracking[0]);
+      return scaled;
+    }
+    if (numRotational == 0) {
+      scaleTranslational(scaled.jointTracking[0]);
+      return scaled;
+    }
+    // Mochi ignores tracking on hard joints, but warns about non-default per-link entries there.
+    PoseTrackingParams const broadcast = scaled.jointTracking[0];
+    scaled.jointTracking.resize(numLinks);
+    for (int i = 0; i < numLinks; ++i) {
+      scaled.jointTracking[i] = isHard(i) ? PoseTrackingParams{} : broadcast;
+    }
+  }
+  MOCHI_ERROR_IF(
+      isize(scaled.jointTracking) != numLinks,
+      error,
+      "ControllerMochiArticulatedPose: jointTracking must be empty, size 1, or one entry per link");
+  MOCHI_ERROR_RETURN(error, {});
+  for (int i = 0; i < numLinks; ++i) {
+    if (isHard(i)) {
+      continue;
+    }
+    if (isPrismatic(i)) {
+      scaleTranslational(scaled.jointTracking[i]);
+    } else {
+      scaleRotational(scaled.jointTracking[i]);
+    }
+  }
+  return scaled;
 }
 
 ControllerMochiArticulatedPose::Params const& ControllerMochiArticulatedPose::GetParams() const {
@@ -133,7 +233,9 @@ void ControllerMochiArticulatedPose::SetParams(
     MOCHI_ERROR_IF(
         actor == nullptr, error, "ControllerMochiArticulatedPose::SetParams requires a live actor");
     MOCHI_ERROR_RETURN(error);
-    actor->SetArticulatedPoseControllerParams(_params.poseControllerParams, error);
+    PoseControllerParams const scaled = ScaledPoseControllerParams(error);
+    MOCHI_ERROR_RETURN(error);
+    actor->SetArticulatedPoseControllerParams(scaled, error);
     MOCHI_ERROR_RETURN(error);
   }
 }

@@ -189,7 +189,9 @@ void BotImpl::CreateSensors(Error& error) {
       MOCHI_ERROR_RETURN(error);
       // Place the sensor relative to its link actor.
       if (auto* created = _botsContext->GetSensor(handle); created != nullptr) {
-        created->SetParentFromSensor(sensor.parentFromSensor);
+        TransformRT const& parentFromSensor = sensor.parentFromSensor;
+        created->SetParentFromSensor(TransformRT(
+            parentFromSensor.GetRotation(), parentFromSensor.GetTranslation() * _botPrefab.scale));
       }
     }
   }

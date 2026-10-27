@@ -55,7 +55,9 @@ struct ControllerMochiArticulatedPoseParams {
 struct ControllerMochiArticulatedPoseObsv {};
 
 /* @brief Target to drive the ArticulatedPoseController toward.
- * Provide exactly one of localToParentTransforms or poseDofs. */
+ * Provide exactly one of localToParentTransforms or poseDofs. Targets are passed to the live actor
+ * as given, so for a bot at BotPrefab::scale != 1 translations and prismatic DOFs are in scaled
+ * units (unlike the controller gains, which are nominal). */
 struct ControllerMochiArticulatedPoseTarget {
   TransformRT worldFromRoot = TransformRT::Identity(); /* Root link pose in world frame */
   DynamicArray<TransformRT> localToParentTransforms; /* Per-link LocalToParent transforms */
@@ -112,9 +114,17 @@ class MOCHI_API ControllerMochiArticulatedPose : public ControllerBase {
   [[nodiscard]] Params const& GetParams() const;
 
   /* @brief Set controller parameters.
+   * @details The gains are nominal: they are tuned for the bot at BotPrefab::scale = 1. For a bot
+   * instantiated at another scale s, the controller hands Mochi gains scaled for dynamic
+   * similarity: translational stiffness and damping by s^3 and saturation by s, rotational
+   * stiffness and damping by s^5. The response then matches the nominal bot's.
    * @param params Params.
    * @param error Error status. */
   void SetParams(Params const& params, superdex::Error& error);
+
+  /* @brief The uniform scale the controlled bot was instantiated at: BotPrefab::scale of the
+   * borrowed prefab, else of the owning bot, else 1. */
+  [[nodiscard]] real GetBotScale() const;
 
   /* @brief Configure from a scene entry: load params (if @p paramArgs is non-empty), then add the
    * pose controller to the actor so it is ready to receive targets. Override of ControllerBase. */
@@ -135,6 +145,9 @@ class MOCHI_API ControllerMochiArticulatedPose : public ControllerBase {
   void Reset() override;
 
  protected:
+  /* @brief @ref _params with the gains scaled for @ref GetBotScale (see SetParams). */
+  [[nodiscard]] PoseControllerParams ScaledPoseControllerParams(superdex::Error& error) const;
+
   Params _params;
 
   int _numLinks = 0;

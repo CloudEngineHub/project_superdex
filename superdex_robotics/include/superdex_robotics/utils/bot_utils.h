@@ -463,9 +463,11 @@ MakeBotPose(BotPrefab const& botPrefab, MakeBotPoseType type, superdex::Error& e
  * (bot-space is mochi's DOF space excluding the base link's free DOFs, if present; a Spherical
  * joint's @c effortLimit repeats across its 3 DOFs).
  *
- * @details Values pass through verbatim per @ref BotJointPrefab::effortLimit semantics: a negative
- * value (default @ref kEffortUnbounded) is unbounded, @c 0 is non-actuated, and a positive value is
- * a finite limit. Errors only if the prefab has not been rebuilt with @ref RebuildBotData. To
+ * @details Values follow @ref BotJointPrefab::effortLimit semantics: a negative value (default
+ * @ref kEffortUnbounded) is unbounded, @c 0 is non-actuated, and a positive value is a finite
+ * limit. Finite limits are those of the instantiated bot: they are scaled by
+ * @ref details::JointEffortScale for @ref BotPrefab::scale. Errors only if the prefab has not been
+ * rebuilt with @ref RebuildBotData. To
  * source limits from a bot file, call @ref LoadBotPrefabFromFile first and pass the resulting
  * prefab.
  *
@@ -476,4 +478,23 @@ MakeBotPose(BotPrefab const& botPrefab, MakeBotPoseType type, superdex::Error& e
 [[nodiscard]] MOCHI_API DynamicArray<real> GetEffortLimitsPerDof(
     BotPrefab const& botPrefab,
     superdex::Error& error);
+
+namespace details {
+
+/* @brief Factor by which @ref BotPrefab::scale scales a joint's stiffness, damping and inertia for
+ * dynamic similarity (lengths scaled at constant density, time scale unchanged): scale^3 for a
+ * prismatic joint, scale^5 for a rotational one. */
+[[nodiscard]] inline real JointGainScale(ArticulatedJointType type, real scale) {
+  real const s3 = scale * scale * scale;
+  return type == ArticulatedJointType::Prismatic ? s3 : s3 * scale * scale;
+}
+
+/* @brief Factor by which @ref BotPrefab::scale scales a joint's forces (prismatic, scale^4) or
+ * torques (rotational, scale^5) for dynamic similarity. */
+[[nodiscard]] inline real JointEffortScale(ArticulatedJointType type, real scale) {
+  real const s4 = scale * scale * scale * scale;
+  return type == ArticulatedJointType::Prismatic ? s4 : s4 * scale;
+}
+
+} // namespace details
 } // namespace superdex::robotics

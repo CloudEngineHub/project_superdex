@@ -182,6 +182,17 @@ struct bots::BotPrefab [no_reflection] {
   DynamicArray<bots::BotLinkPrefab> links [no_serialize_defaults];
   // @brief Transform from the root link to the world frame.
   TransformRT worldFromRoot [no_serialize_defaults];
+  // @brief [Experimental] Uniform scale applied when the bot is instantiated. Meant for sizing
+  // human hand bots to a tracked hand (XR teleoperation), not for robots. The asset stays in
+  // nominal units; the created actor's geometry, shapes, skin, sensor offsets, prismatic limits and
+  // default pose are scaled, masses by scale^3 and rotational inertias by scale^5, and joint
+  // friction, inertia, limit stiffness and damping and cycle stiffness for dynamic similarity.
+  // Rotational limits are unchanged. Contact parameters are not scaled. Spawn poses, controller
+  // gains and prefab-space utilities are nominal; effort limits and anything read from or sent to
+  // the live actor, such as pose-controller targets, are in scaled units. Must be positive and
+  // finite; values other than 1 are rejected for bots with linear
+  // transmissions or spatial tendons, and for bots composed with mods.
+  real scale [no_serialize_defaults] = 1;
   // @brief Default pose (array of joint DOF angles/translations) used when spawning the bot.
   DynamicArray<real> defaultPose [no_serialize_defaults];
   // @brief Linear transmissions that couple multiple joint DOFs via per-joint coefficients. Each

@@ -21,6 +21,7 @@
 #include <mochi_core/utils/defer.h>
 #include <mochi_physics/cpp_api/mochi_context.h>
 #include <mochi_physics/utils/mochi_model_utils.h>
+#include <mochi_physics/utils/mochi_prefab.h>
 
 #include <algorithm>
 #include <numeric>
@@ -379,6 +380,9 @@ void superdex::robotics::ApplyMod(
   // Load child bot recursively (supports nested combos)
   BotPrefab child = LoadBotPrefab(mod.path, loader, validate, error);
   MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(
+      child.scale != 1_r, error, "BotPrefab::scale is not supported for bots attached by mods");
+  MOCHI_ERROR_RETURN(error);
   if (child.links.empty()) {
     MOCHI_LOG_WARNING("BuiltBot: Child bot '%s' has no links", mod.path.c_str());
     MOCHI_ERROR_SET(error, "Child bot has no links");
@@ -569,6 +573,10 @@ BotPrefab superdex::robotics::BuildBot(
   BotPrefab botPrefab;
   if (!buildParams.base.empty()) {
     botPrefab = LoadBotPrefab(buildParams.base, loader, validate, error);
+    MOCHI_ERROR_IF(
+        botPrefab.scale != 1_r,
+        error,
+        "BotPrefab::scale is not supported for bots composed with mods");
     MOCHI_ERROR_RETURN(error, {});
     if (validate) {
       Validate(botPrefab, nullptr, error);
@@ -713,6 +721,20 @@ void superdex::robotics::Validate(
         results, "expected %d joints for %d links, got %d", numLinks, numLinks, numJoints);
   }
   MOCHI_ERROR_IF(numJoints != numLinks, error, "Invalid BotPrefab; see log warnings for details");
+  MOCHI_ERROR_RETURN(error);
+
+  // Experimental uniform scale
+  bool const validScale = IsFinite(botPrefab.scale) && botPrefab.scale > 0_r;
+  if (!validScale) {
+    REPORT_BOT_ISSUE(results, "scale must be positive and finite, got %g", botPrefab.scale);
+  }
+  bool const unsupportedScale = botPrefab.scale != 1_r &&
+      (!botPrefab.linearTransmissions.empty() || !botPrefab.spatialTendons.empty());
+  if (unsupportedScale) {
+    REPORT_BOT_ISSUE(results, "scale is not supported for bots with transmissions or tendons");
+  }
+  MOCHI_ERROR_IF(
+      !validScale || unsupportedScale, error, "Invalid BotPrefab; see log warnings for details");
   MOCHI_ERROR_RETURN(error);
 
   // Name uniqueness
@@ -1325,11 +1347,78 @@ void superdex::robotics::SortBotPrefab(BotPrefab& botPrefab, Error& error) {
   botPrefab.defaultPose = std::move(newDefaultPose);
 }
 
+/* Scales joint friction, joint inertia, joint limit stiffness/damping and cycle stiffness so the
+ * scaled bot responds like the nominal one on the same time scale (dynamic similarity).
+ * Stiffness, damping and inertia scale by @ref details::JointGainScale, Coulomb and stiction
+ * forces/torques by @ref details::JointEffortScale, and velocity thresholds of translational joints
+ * by s. Free and hard joints are left unchanged; cycle stiffness scales by s^3. */
+static void ScaleJointDynamics(ArticulatedActorParams& params, real scale) {
+  if (scale == 1_r) {
+    return;
+  }
+  for (auto& joint : params.joints) {
+    bool const translational = joint.type == ArticulatedJointType::Prismatic;
+    bool const rotational = joint.type == ArticulatedJointType::Revolute ||
+        joint.type == ArticulatedJointType::Spherical;
+    if (!translational && !rotational) {
+      continue;
+    }
+    real const gainScale = superdex::robotics::details::JointGainScale(joint.type, scale);
+    real const effortScale = superdex::robotics::details::JointEffortScale(joint.type, scale);
+    joint.friction.viscous *= gainScale;
+    joint.friction.coulomb *= effortScale;
+    joint.friction.stictionExtra *= effortScale;
+    if (translational) {
+      joint.friction.falloffVel *= scale;
+      joint.friction.stribeckVel *= scale;
+    }
+    if (joint.inertia.has_value()) {
+      *joint.inertia *= gainScale;
+    }
+    joint.limitStiffness *= gainScale;
+    joint.limitDamping *= gainScale;
+  }
+  for (auto& cycle : params.cycles) {
+    cycle.stiffness *= scale * scale * scale;
+  }
+}
+
+/* A bot-space pose for a bot instantiated at BotPrefab::scale: prismatic DOFs are distances and
+ * scale, rotational DOFs are angles and do not. */
+static DynamicArray<real>
+ScaleBotPose(BotPrefab const& botPrefab, Span<real const> pose, Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  DynamicArray<real> scaled(pose.begin(), pose.end());
+  if (botPrefab.scale == 1_r) {
+    return scaled;
+  }
+  MOCHI_ERROR_IF(
+      isize(pose) != isize(botPrefab._dofIndices),
+      error,
+      "Pose size does not match the bot's DOF count (call RebuildBotData first)");
+  MOCHI_ERROR_RETURN(error, {});
+  for (int dof = 0; dof < isize(scaled); ++dof) {
+    if (botPrefab.joints[botPrefab._dofIndices[dof]].type == ArticulatedJointType::Prismatic) {
+      scaled[dof] *= botPrefab.scale;
+    }
+  }
+  return scaled;
+}
+
 ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
     BotPrefab const& botPrefab,
     IBotLoader const& loader,
     Context* context,
     Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  real const scale = botPrefab.scale;
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(scale) && scale > 0_r, error, "BotPrefab::scale must be positive and finite");
+  // Validate reports this too, but CreateBot does not validate.
+  MOCHI_ERROR_IF(
+      scale != 1_r && (!botPrefab.linearTransmissions.empty() || !botPrefab.spatialTendons.empty()),
+      error,
+      "BotPrefab::scale is not supported for bots with linear transmissions or spatial tendons");
   MOCHI_ERROR_RETURN(error, {});
 
   // Joints
@@ -1358,8 +1447,8 @@ ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
     if (!link.shapeFile.empty()) {
       linkShape = loader.LoadShape(
           link.shapeFile,
-          link.shapeScale,
-          TransformRT(link.shapeRotation, link.shapeTranslation),
+          link.shapeScale * scale,
+          TransformRT(link.shapeRotation, link.shapeTranslation * scale),
           context,
           error);
     }
@@ -1388,7 +1477,7 @@ ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
   articulatedParams.cycles = botPrefab.cycles;
 
   // Skin (optional). The skin has no baked transform (see ArticulatedSkinPrefab), so the shape is
-  // loaded with identity scale/transform.
+  // loaded with only BotPrefab::scale baked in.
   if (botPrefab.skin.has_value() && botPrefab.skin->shapeFile.empty()) {
     // Every other failure in this block is reported; make the drop diagnosable too.
     MOCHI_LOG_WARNING(
@@ -1401,7 +1490,7 @@ ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
       // Identity bone->link mapping: the skin's baked bone indices already match the link order, so
       // the cached file shape can be used directly.
       skinShape = loader.LoadShape(
-          botPrefab.skin->shapeFile, {1_r, 1_r, 1_r}, TransformRT{}, context, error);
+          botPrefab.skin->shapeFile, {scale, scale, scale}, TransformRT{}, context, error);
       MOCHI_ERROR_RETURN(error, {});
     } else {
       // A composed (mod) bot re-sorts links, so the skin's baked bone indices (which index link
@@ -1439,7 +1528,7 @@ ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
       // root frame. Re-express the rest coordinates by baking the transform of the skin's origin
       // link (skin bone 0's link) relative to the composed root, evaluated at the zero pose -- the
       // same reference pose at which the actor captures its reference bone frames. For a standalone
-      // bot this transform is identity, which is why the branch above needs no bake.
+      // bot this transform is identity, which is why the branch above bakes only the scale.
       DynamicArray<TransformRT> rootFromLink;
       DynamicArray<real> const zeroPose(botPrefab._numDofs, 0_r);
       ComputeLinkTransformsFromPose(
@@ -1453,7 +1542,12 @@ ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
         MOCHI_ERROR_RETURN(error, {});
       }
       TransformRT const rootFromSkinOrigin = rootFromLink[boneRemap[0]];
-      model_utils::BakeTransform(skinModel, {1_r, 1_r, 1_r}, rootFromSkinOrigin, error);
+      model_utils::BakeTransform(
+          skinModel,
+          {scale, scale, scale},
+          TransformRT(
+              rootFromSkinOrigin.GetRotation(), rootFromSkinOrigin.GetTranslation() * scale),
+          error);
       MOCHI_ERROR_RETURN(error, {});
       for (int& boneIndex : skinModel.mesh->skinning->indices) {
         if (boneIndex < 0 || boneIndex >= isize(boneRemap)) {
@@ -1480,6 +1574,10 @@ ArticulatedActorParams superdex::robotics::BuildArticulatedActorParams(
     skinParams.shape = skinShape;
     articulatedParams.skin.emplace(std::move(skinParams));
   }
+
+  prefab::ScaleArticulatedActorParams(articulatedParams, scale, error);
+  MOCHI_ERROR_RETURN(error, {});
+  ScaleJointDynamics(articulatedParams, scale);
 
   return articulatedParams;
 }
@@ -1673,8 +1771,10 @@ static Actor* AddToSceneImpl(
   auto params = BuildArticulatedActorParams(botPrefab, loader, context, error);
   auto* actor = scene->CreateArticulatedActor(params, error);
   MOCHI_ERROR_RETURN(error, nullptr);
+  DynamicArray<real> const scaledPose = ScaleBotPose(botPrefab, pose, error);
+  MOCHI_ERROR_RETURN(error, nullptr);
   DynamicArray<real> actorPose =
-      BuildArticulatedPoseFromBotPose(botPrefab, pose, actor->GetNumDofs(), error);
+      BuildArticulatedPoseFromBotPose(botPrefab, scaledPose, actor->GetNumDofs(), error);
   MOCHI_ERROR_RETURN(error, nullptr);
   actor->SetArticulatedPoseFromJoints(actorPose, error);
   MOCHI_ERROR_RETURN(error, nullptr);
@@ -2097,8 +2197,9 @@ DynamicArray<real> superdex::robotics::GetEffortLimitsPerDof(
   MOCHI_ERROR_RETURN(error, {});
 
   // Walk _dofIndices (bot-space DOF order) exactly as RebuildBotData builds defaultPose, so a
-  // Spherical joint's single effortLimit repeats across its 3 DOF slots. Values pass through
-  // verbatim per BotJointPrefab::effortLimit semantics (< 0 unbounded, 0 non-actuated, > 0 finite).
+  // Spherical joint's single effortLimit repeats across its 3 DOF slots. Values keep their
+  // BotJointPrefab::effortLimit semantics (< 0 unbounded, 0 non-actuated, > 0 finite); finite
+  // limits are scaled for BotPrefab::scale.
   DynamicArray<real> limits;
   limits.resize(isize(botPrefab._dofIndices));
   for (int dof = 0; dof < isize(botPrefab._dofIndices); ++dof) {
@@ -2108,7 +2209,10 @@ DynamicArray<real> superdex::robotics::GetEffortLimitsPerDof(
         error,
         "GetEffortLimitsPerDof: _dofIndices is stale or unrebuilt (call RebuildBotData first)");
     MOCHI_ERROR_RETURN(error, {});
-    limits[dof] = botPrefab.joints[jointIndex].effortLimit;
+    BotJointPrefab const& joint = botPrefab.joints[jointIndex];
+    limits[dof] = joint.effortLimit > 0_r ? joint.effortLimit *
+            superdex::robotics::details::JointEffortScale(joint.type, botPrefab.scale)
+                                          : joint.effortLimit;
   }
   return limits;
 }

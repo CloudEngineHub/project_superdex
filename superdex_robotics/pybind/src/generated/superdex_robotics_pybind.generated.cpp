@@ -421,12 +421,13 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
   ;
 
   registry.GetClass<superdex::robotics::BotPrefab>()
-    .def("__init__", [](superdex::robotics::BotPrefab* self, nb::object name, nb::object joints, nb::object links, nb::object world_from_root, nb::object default_pose, nb::object linear_transmissions, nb::object spatial_tendons, nb::object contact_overrides, nb::object cycles, nb::object skin) {
+    .def("__init__", [](superdex::robotics::BotPrefab* self, nb::object name, nb::object joints, nb::object links, nb::object world_from_root, nb::object scale, nb::object default_pose, nb::object linear_transmissions, nb::object spatial_tendons, nb::object contact_overrides, nb::object cycles, nb::object skin) {
       superdex::robotics::BotPrefab result{};
       result.name = nb::cast<mochi::DynamicString>(name);
       result.joints = nb::cast<mochi::DynamicArray<superdex::robotics::BotJointPrefab>>(joints);
       result.links = nb::cast<mochi::DynamicArray<superdex::robotics::BotLinkPrefab>>(links);
       result.worldFromRoot = nb::cast<mochi::TransformRT>(world_from_root);
+      result.scale = nb::cast<mochi::real>(scale);
       result.defaultPose = nb::cast<mochi::DynamicArray<mochi::real>>(default_pose);
       result.linearTransmissions = nb::cast<mochi::DynamicArray<superdex::robotics::BotLinearTransmissionPrefab>>(linear_transmissions);
       result.spatialTendons = nb::cast<mochi::DynamicArray<superdex::robotics::BotSpatialTendonPrefab>>(spatial_tendons);
@@ -440,6 +441,7 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
       , nb::arg("joints").sig("...") = superdex::robotics::BotPrefab{}.joints
       , nb::arg("links").sig("...") = superdex::robotics::BotPrefab{}.links
       , nb::arg("world_from_root").sig("...") = superdex::robotics::BotPrefab{}.worldFromRoot
+      , nb::arg("scale") = superdex::robotics::BotPrefab{}.scale
       , nb::arg("default_pose").sig("...") = superdex::robotics::BotPrefab{}.defaultPose
       , nb::arg("linear_transmissions").sig("...") = superdex::robotics::BotPrefab{}.linearTransmissions
       , nb::arg("spatial_tendons").sig("...") = superdex::robotics::BotPrefab{}.spatialTendons
@@ -454,6 +456,7 @@ void mochi::DefineSuperdexRobotics_SuperdexRobotics([[maybe_unused]] nb::module_
     .def_prop_rw("joints", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<superdex::robotics::BotJointPrefab>& { return self.joints; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.joints = nb::cast<mochi::DynamicArray<superdex::robotics::BotJointPrefab>>(val); }, "Joint parameters for each joint in the articulation.")
     .def_prop_rw("links", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<superdex::robotics::BotLinkPrefab>& { return self.links; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.links = nb::cast<mochi::DynamicArray<superdex::robotics::BotLinkPrefab>>(val); }, "Link parameters for each link in the articulation.")
     .def_rw("world_from_root", &superdex::robotics::BotPrefab::worldFromRoot, "Transform from the root link to the world frame.")
+    .def_rw("scale", &superdex::robotics::BotPrefab::scale, "[Experimental] Uniform scale applied when the bot is instantiated. Meant for\nsizing human hand bots to a tracked hand (XR teleoperation), not for robots. The\nasset stays in nominal units; the created actor's geometry, shapes, skin, sensor\noffsets, prismatic limits and default pose are scaled, masses by scale^3 and\nrotational inertias by scale^5, and joint friction, inertia, limit stiffness and\ndamping and cycle stiffness for dynamic similarity. Rotational limits are\nunchanged. Contact parameters are not scaled. Spawn poses, controller gains and\nprefab-space utilities are nominal; effort limits and anything read from or sent\nto the live actor, such as pose-controller targets, are in scaled units. Must be\npositive and finite; values other than 1 are rejected for bots with linear\ntransmissions or spatial tendons, and for bots composed with mods.")
     .def_prop_rw("default_pose", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<mochi::real>& { return self.defaultPose; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.defaultPose = nb::cast<mochi::DynamicArray<mochi::real>>(val); }, "Default pose (array of joint DOF angles/translations) used when spawning the\nbot.")
     .def_prop_rw("linear_transmissions", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<superdex::robotics::BotLinearTransmissionPrefab>& { return self.linearTransmissions; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.linearTransmissions = nb::cast<mochi::DynamicArray<superdex::robotics::BotLinearTransmissionPrefab>>(val); }, "Linear transmissions that couple multiple joint DOFs via per-joint coefficients.\nEach entry produces one mochi::experimental::LinearTransmissionParams at\ninstantiation time.")
     .def_prop_rw("spatial_tendons", [](superdex::robotics::BotPrefab& self) -> mochi::DynamicArray<superdex::robotics::BotSpatialTendonPrefab>& { return self.spatialTendons; }, [](superdex::robotics::BotPrefab& self, nb::object val) { self.spatialTendons = nb::cast<mochi::DynamicArray<superdex::robotics::BotSpatialTendonPrefab>>(val); }, "Spatial tendons routed through waypoint and linear-joint elements. Each entry\nproduces one mochi::experimental::SpatialTendonParams at instantiation time.")

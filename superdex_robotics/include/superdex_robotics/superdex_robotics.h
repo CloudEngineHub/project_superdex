@@ -306,6 +306,21 @@ struct BotPrefab {
   /// Transform from the root link to the world frame.
   TransformRT worldFromRoot;
 
+  /// [Experimental] Uniform scale applied when the bot is instantiated. Meant for sizing human
+  /// hand bots to a tracked hand (XR teleoperation), not for robots.
+  /// @details The asset stays in nominal units; @ref CreateBot builds an actor whose geometry,
+  /// shapes, skin, sensor offsets, prismatic limits and default pose are scaled by it. Masses scale
+  /// by scale^3 and rotational inertias by scale^5. Joint friction, joint inertia, joint limit
+  /// stiffness/damping and cycle stiffness are scaled for dynamic similarity, so the scaled bot
+  /// responds like the nominal one on the same time scale. Rotational limits are unchanged. Contact
+  /// parameters are not scaled.
+  /// Units: spawn poses and controller gains are nominal. Prefab-space utilities such as
+  /// @ref ComputeLinkTransformsFromPose stay nominal, while @ref GetEffortLimitsPerDof and anything
+  /// read from or sent to the live actor, such as pose-controller targets, are in scaled units.
+  /// @note Must be positive and finite. Values other than 1 are rejected for bots with linear
+  /// transmissions or spatial tendons, and for bots composed with mods.
+  real scale = 1;
+
   /// Default pose (array of joint DOF angles/translations) used when spawning the bot.
   DynamicArray<real> defaultPose;
 
@@ -352,6 +367,7 @@ struct BotPrefab {
   MOCHI_FIELD(joints) MOCHI_ATTRIBUTE(NoSerializeDefaults);
   MOCHI_FIELD(links) MOCHI_ATTRIBUTE(NoSerializeDefaults);
   MOCHI_FIELD(worldFromRoot) MOCHI_ATTRIBUTE(NoSerializeDefaults);
+  MOCHI_FIELD(scale) MOCHI_ATTRIBUTE(NoSerializeDefaults);
   MOCHI_FIELD(defaultPose) MOCHI_ATTRIBUTE(NoSerializeDefaults);
   MOCHI_FIELD(linearTransmissions) MOCHI_ATTRIBUTE(NoSerializeDefaults);
   MOCHI_FIELD(spatialTendons) MOCHI_ATTRIBUTE(NoSerializeDefaults);

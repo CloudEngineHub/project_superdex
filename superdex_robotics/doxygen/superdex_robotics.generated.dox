@@ -147,6 +147,11 @@
 /// @brief Ordered routing elements defining the tendon path. Must contain at least one element, and every waypoint must be adjacent to another waypoint.
 ///
 
+/// @var superdex::robotics::BotPrefab::scale
+///
+/// @brief [Experimental] Uniform scale applied when the bot is instantiated. Meant for sizing human hand bots to a tracked hand (XR teleoperation), not for robots. The asset stays in nominal units; the created actor's geometry, shapes, skin, sensor offsets, prismatic limits and default pose are scaled, masses by scale^3 and rotational inertias by scale^5, and joint friction, inertia, limit stiffness and damping and cycle stiffness for dynamic similarity. Rotational limits are unchanged. Contact parameters are not scaled. Spawn poses, controller gains and prefab-space utilities are nominal; effort limits and anything read from or sent to the live actor, such as pose-controller targets, are in scaled units. Must be positive and finite; values other than 1 are rejected for bots with linear transmissions or spatial tendons, and for bots composed with mods.
+///
+
 /// @var superdex::robotics::BotPrefab::skin
 ///
 /// @brief Optional deformable skin skinned over the articulation's links, acting as a contact collidee. When present, produces the mochi::ArticulatedActorParams::skin at instantiation time.
