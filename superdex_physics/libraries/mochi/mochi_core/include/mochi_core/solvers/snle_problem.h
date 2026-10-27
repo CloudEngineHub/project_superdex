@@ -20,6 +20,7 @@
 #include <mochi_core/solvers/interaction_matrix_info.h>
 #include <mochi_core/solvers/island_operators.h>
 #include <mochi_core/utils/assembly_params.h>
+#include <mochi_core/utils/dynamic_array.h>
 
 #include <functional>
 #include <utility>
@@ -69,7 +70,8 @@ class SnleProblem {
   // Returns the vector containing the current solution increment.
   ColumnVectorView<T const> GetIncrement() const;
 
-  // Returns the current scalar value of the objective/merit function.
+  // Returns the current objective. Line searches test LineSearchMerit instead, which differs from
+  // it when some terms have no potential.
   double GetObjective() const;
 
   // Get the residual vector for the full problem.
@@ -95,7 +97,7 @@ class SnleProblem {
   // the new solution.
   void SetSolution(ColumnVectorView<T const> val, bool invokePost = true);
 
-  // Updates and returns the value of the objective merit function. Calls UpdateObjResDRes.
+  // Updates the objective. Calls UpdateObjResDRes.
   void UpdateObjective();
 
   // Updates and returns the value of the current problem residual. Calls UpdateObjResDRes.
@@ -157,6 +159,13 @@ class SnleProblem {
   // Objective value for the global problem.
   double objective = 0.0;
 
+  // Energy and residuals of the non-potential terms, whose residual has no potential. The
+  // objective and the residual include them too. The assembly callback sets them with the
+  // objective, and their rows at fixed DoFs must be zero, as in the residual. The residuals are
+  // paired with the actor's DOF offset.
+  double nonPotentialEnergy = 0.0;
+  DynamicArray<std::pair</*offset*/ int, ColumnVector<T>*>> nonPotentialResiduals;
+
   // Collection of residual vectors for each actor. Paired with the actor's DOF offset.
   std::vector<std::pair</*offset*/ int, ColumnVector<T>*>> actorResiduals;
 
@@ -179,6 +188,46 @@ class SnleProblem {
   // Contributions to the global dresidual from contact, constraints and other terms that involve 2
   // or more actors.
   std::vector<AnyInteractionMatrixPtrInfo<T>> interactionMatrices;
+
+  /**
+   * Merit of a line search: the objective E, with the energy N of the non-potential terms replaced
+   * by the trapezoidal estimate of the work of their residual g along the step. For the trial
+   * x + s dx from the start x, M(s) = E(x + s dx) - N(x + s dx) + N(x) + (s / 2) (g(x)·dx +
+   * g(x + s dx)·dx). M(0) = E(x), and if E - N is a potential of F - g, with F the residual,
+   * M'(0) = F(x)·dx. Without non-potential terms, M = E.
+   */
+  class LineSearchMerit {
+   public:
+    // Must be built at x, with the objective assembled and the increment holding dx.
+    explicit LineSearchMerit(SnleProblem const& problem)
+        : _problem(problem),
+          _startNonPotentialEnergy(problem.nonPotentialEnergy),
+          _startNonPotentialSlope(NonPotentialSlope()) {
+      MOCHI_ASSERT_VERBOSE(!problem._dirtyObj, "The objective must be assembled at the start.");
+    }
+
+    // M(s). The objective must be assembled at the trial, with the increment holding s dx.
+    [[nodiscard]] double operator()(T scale) const {
+      MOCHI_ASSERT_VERBOSE(!_problem._dirtyObj, "The objective must be assembled at the trial.");
+      return _problem.objective +
+          (_startNonPotentialEnergy - _problem.nonPotentialEnergy +
+           0.5 * (scale * _startNonPotentialSlope + NonPotentialSlope()));
+    }
+
+   private:
+    // g·increment, the non-potential terms' part of the slope F·increment
+    [[nodiscard]] double NonPotentialSlope() const {
+      double slope = 0.0;
+      for (auto const& [offset, residual] : _problem.nonPotentialResiduals) {
+        slope += residual->Dot(_problem.increment.MiddleRows(offset, residual->Rows()));
+      }
+      return slope;
+    }
+
+    SnleProblem const& _problem;
+    double const _startNonPotentialEnergy; // N(x)
+    double const _startNonPotentialSlope; // g(x)·dx
+  };
 
  protected:
   void SortActors();

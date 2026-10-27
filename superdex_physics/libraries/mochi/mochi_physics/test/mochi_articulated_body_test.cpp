@@ -1260,6 +1260,99 @@ TEST_F(ArticulatedBodyDynamicsTest, ExternalForces) {
   }
 }
 
+// Along a step p, the central differences of E - N equal (F - g)·p, with N and g the energy and
+// residual of the non-potential terms, here external torques and Newton-Euler inertia. Checked:
+// - away from the stage-start rotations, where E only approximates the energy of these terms;
+// - with the non-potential terms of objective-only assemblies, which later assemblies that
+//   reuse the objective keep;
+// - with a fixed DoF that p moves.
+TEST_IF_F(
+    MOCHI_USE_DOUBLE_PRECISION,
+    ArticulatedBodyDynamicsTest,
+    NonPotentialTermsLeaveAPotential) {
+  auto generator = mochi::RandomGenerator(7);
+  // In one island, at nonzero offsets: a free anisotropic box under torques only, a copy spinning
+  // with Newton-Euler inertia and no forces, and a tree whose links' DoF columns are not a prefix
+  // of the DoFs, with armature and a fixed revolute DoF, spinning with Newton-Euler inertia under
+  // forces on every DoF and on every link but the last. The box reports torques only, the copy and
+  // the last link Newton-Euler only, and the other links both. Only the copy has a gyroscopic term:
+  // the tree's cubes and armature are isotropic.
+  auto [coordinates, connectivity] = test::CreateMinimalTetMeshUnitCube(Real3{1_r, 2_r, 0.5_r});
+  RigidActorParams boxParams;
+  boxParams.shape = _mochiContext->CreateTetMeshShape(
+      Flatten(MakeSpan(coordinates)), Flatten(MakeSpan(connectivity)), test::ExpectOK{});
+  boxParams.colliderType = ColliderType::None;
+  Actor* box = _scene->CreateRigidActor(boxParams, test::ExpectOK{});
+  box->SetVelocity(Real3{0.3_r, -0.2_r, 0.1_r}, Real3{1.5_r, 0.3_r, 0.6_r}, test::ExpectOK{});
+  Actor* newtonEulerBox = _scene->CreateRigidActor(boxParams, test::ExpectOK{});
+  newtonEulerBox->SetVelocity(Real3{}, Real3{1.5_r, 0.3_r, 0.6_r}, test::ExpectOK{});
+  DynamicArray<ArticulatedJointParams> joints(4);
+  for (auto& joint : joints) {
+    joint.type = ArticulatedJointType::Spherical;
+    joint.inertia = 100_r;
+  }
+  joints[0].type = ArticulatedJointType::Free;
+  joints[2].type = ArticulatedJointType::Revolute;
+  joints[2].axis = Normalize(Real3{1_r, 0.5_r, 0.2_r});
+  test::CubeTreeOptions treeOptions;
+  treeOptions.parents = {-1, 0, 0, 2};
+  Actor* tree = test::CreateCubeTree(_scene, std::move(joints), treeOptions);
+  tree->AddBoundaryConditionDofsWorldPermanent(std::array{9}, std::array{0_r}, test::ExpectOK{});
+  tree->SetArticulatedJointVelocities(
+      RandomVector(generator, tree->GetNumDofs()), test::ExpectOK{});
+  std::vector<Actor*> actors{box, tree};
+  Span<ActorHandle const> const links = tree->GetNestedLinkActors(test::ExpectOK{});
+  for (int i = 0; i + 1 < isize(links); ++i) {
+    actors.push_back(_scene->GetActor(links[i]));
+  }
+  for (Actor* actor : actors) {
+    int const firstDof = actor == box ? 3 : 0;
+    std::vector<int> dofs(actor->GetNumDofs() - firstDof);
+    std::iota(dofs.begin(), dofs.end(), firstDof);
+    std::vector<real> forces = RandomVector(generator, isize(dofs));
+    AsView(forces) *= 1e5_r;
+    actor->SetExternalForcesOnDofs(dofs, forces, test::ExpectOK{});
+  }
+  experimental::EnableNewtonEulerInertia(newtonEulerBox, true, test::ExpectOK{});
+  experimental::EnableNewtonEulerInertia(tree, true, test::ExpectOK{});
+  _scene->SetForceSingleIsland(true);
+  _scene->Step(1e-2_r);
+
+  auto& reg = GetRegistry();
+  for (entt::entity const island : reg.view<CIslandDescendants const>()) {
+    SnleProblem<real> problem = solver::InitIslandAssembly(
+        reg, island, reg.get<CIslandDescendants const>(island), /*syncCurrentState*/ true);
+    ColumnVector<real> x0 = problem.solution.Duplicate();
+    auto moveBy = [&](std::vector<real> increment, real scale) {
+      AsView(increment) *= scale;
+      problem.solution = x0;
+      solver::PostNewIncrementLocalPipeline(reg, island, AsConstView(increment), problem.solution);
+      problem.InvalidateCachedData();
+    };
+    moveBy(RandomVector(generator, problem.GetDofsSize()), 0.3_r);
+    x0 = problem.solution.Duplicate();
+    std::vector<real> const p = RandomVector(generator, problem.GetDofsSize());
+    auto keptEnergy = [&](real scale) {
+      moveBy(p, scale);
+      problem.UpdateObjective();
+      return problem.GetObjective() - problem.nonPotentialEnergy;
+    };
+    real constexpr kStep = 1e-6_r;
+    double const keptSlope = (keptEnergy(kStep) - keptEnergy(-kStep)) / (2.0 * kStep);
+    moveBy(p, 0_r);
+    problem.UpdateObjective();
+    problem.UpdateObjResDRes({.assemObj = true, .assemRes = true, .assemDRes = true});
+    double nonPotentialSlope = 0.0;
+    for (auto const& [offset, residual] : problem.nonPotentialResiduals) {
+      nonPotentialSlope += residual->Dot(AsConstView(p).MiddleRows(offset, residual->Rows()));
+    }
+    EXPECT_NEAR(
+        keptSlope,
+        problem.GetResidual().Dot(AsConstView(p)) - nonPotentialSlope,
+        1e-6 * problem.GetResidual().Norm() * AsConstView(p).Norm());
+  }
+}
+
 TEST_F(ArticulatedBodyDynamicsTest, TransmissionForces) {
   // Test transmission forces on a body with revolute and prismatic joints that can have
   // transmissions

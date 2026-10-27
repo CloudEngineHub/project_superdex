@@ -611,6 +611,7 @@ void GetLinkTransformsComFromPose(
 void AssembleInertiaForces(
     AssemblyParams const& params,
     ecs::OptionalTag<TagUseNewtonEulerInertia> useNewtonEulerInertia,
+    CArticulatedProps const& props,
     CArticulatedBodyShape const& bodyShape,
     CArticulatedJointPoseInfo const& poseInfo,
     CArticulatedInertiaParams const& inertiaParams,

@@ -311,9 +311,9 @@ TEST(NewtonSolver, SmoothLocalMinimum) {
         if (params.lineSearch.type == LineSearchType::None ||
             params.lineSearch.type == LineSearchType::ResidualNorm) {
           // None and ResidualNorm do not update the objective
-          EXPECT_NEAR(result.merit, 0_r, kAbsTol);
+          EXPECT_NEAR(result.objective, 0_r, kAbsTol);
         } else {
-          EXPECT_NEAR(result.merit, obj, kAbsTol);
+          EXPECT_NEAR(result.objective, obj, kAbsTol);
         }
 
         EXPECT_NEAR(problem.GetSolution()[0], real(ref), kAbsTol);
@@ -479,9 +479,9 @@ TEST(NewtonSolver, LinearToleranceStrategy) {
 
     if (params.lineSearch.type == LineSearchType::ResidualNorm) {
       // The objective function is not updated
-      EXPECT_NEAR(resultConstant.merit, 0_r, kAbsTol);
-      EXPECT_NEAR(resultEW1.merit, 0_r, kAbsTol);
-      EXPECT_NEAR(resultEW2.merit, 0_r, kAbsTol);
+      EXPECT_NEAR(resultConstant.objective, 0_r, kAbsTol);
+      EXPECT_NEAR(resultEW1.objective, 0_r, kAbsTol);
+      EXPECT_NEAR(resultEW2.objective, 0_r, kAbsTol);
     }
 
     // Check the total number of linear iterations is smaller with Eisenstat-Walker strategies.
@@ -576,9 +576,9 @@ TEST(NewtonSolver, LinearToleranceStrategy2) {
 
   if (params.lineSearch.type == LineSearchType::ResidualNorm) {
     // The objective function is not updated
-    EXPECT_NEAR(resultConstant.merit, 0_r, kAbsTol);
-    EXPECT_NEAR(resultEW1.merit, 0_r, kAbsTol);
-    EXPECT_NEAR(resultEW2.merit, 0_r, kAbsTol);
+    EXPECT_NEAR(resultConstant.objective, 0_r, kAbsTol);
+    EXPECT_NEAR(resultEW1.objective, 0_r, kAbsTol);
+    EXPECT_NEAR(resultEW2.objective, 0_r, kAbsTol);
   }
 
   // This structured problem can converge in one CG iteration per Newton step for every strategy.
@@ -821,7 +821,7 @@ TEST(NewtonSolver, LineSearchRejectsNonFiniteValues) {
         problem.increment.SetConstant(step);
         problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
         NewtonSolverStatus<real> status;
-        status.merit = invalidStartMerit ? value : problem.GetObjective();
+        status.objective = invalidStartMerit ? value : problem.GetObjective();
 
         bool const accepts =
             (start == 1_r) && (!invalidStartMerit || type == LineSearchType::ResidualNorm);
@@ -836,17 +836,29 @@ TEST(NewtonSolver, LineSearchRejectsNonFiniteValues) {
 /**
  * Two-DoF problem for the step dx = (1, 0) from the zero solution, where the objective is merit0
  * and the residual (startSlope, 0). Elsewhere, the residual is (slope, 1), and the objective is
- * merit0 + rise up to the step maxScale dx and merit0 + |merit0| beyond.
+ * merit0 + rise up to the step maxScale dx and merit0 + |merit0| beyond. They include a
+ * non-potential term, whose energy rises by nonPotentialRise from the start and whose residual is
+ * (2 nonPotentialResidual, 0) at the start and (nonPotentialResidual, 0) elsewhere.
  */
-static SnleProblem<real>
-GetLineSearchTrialProblem(double merit0, real startSlope, double rise, real slope, real maxScale) {
+static SnleProblem<real> GetLineSearchTrialProblem(
+    double merit0,
+    real startSlope,
+    double rise,
+    real slope,
+    real maxScale,
+    double nonPotentialRise,
+    real nonPotentialResidual) {
   auto residual = ColumnVector<real>{2};
+  auto nonPotential = ColumnVector<real>::Zero(2);
   auto assembleFn = [=](SnleProblem<real>& problem, AssemblyParams const& params) mutable {
     real const x = problem.GetSolution()[0];
     if (params.assemObj) {
       problem.objective = (x == 0_r) ? merit0
           : (x <= maxScale)          ? merit0 + rise
                                      : merit0 + Abs(merit0);
+      problem.nonPotentialEnergy = (x == 0_r ? -0.5 : 0.5) * nonPotentialRise;
+      nonPotential[0] = (x == 0_r ? 2_r : 1_r) * nonPotentialResidual;
+      problem.nonPotentialResiduals = {{0, &nonPotential}};
     }
     if (params.assemRes) {
       residual[0] = (x == 0_r) ? startSlope : slope;
@@ -892,12 +904,15 @@ TEST(NewtonSolver, MeritLineSearches) {
     real startSlope{};
     real slope{};
     std::array<bool, 4> accepted{}; // In the order of kSearches
+    double nonPotentialRise{};
+    real nonPotentialResidual{};
     real maxScale = 0.25_r;
     int maxIter = 3;
     std::array<real, 4> scale = {0.25_r, 0.25_r, 0.25_r, 0.25_r}; // Final step scales
   };
   for (double const merit0 : {4.0, -0.25}) {
     real const unit = Abs(real(merit0));
+    // clang-format off
     for (Case const& c :
          {Case{1500 * kEps, -kG, -0.5_r * kG, {true, true, true, true}},
           Case{1500 * kEps, -kG, 1.5_r * kG, {false, false, false, false}},
@@ -916,25 +931,41 @@ TEST(NewtonSolver, MeritLineSearches) {
           Case{-10 * kEps, -1e6_r * kEps, -0.5e6_r * kEps, {true, true, true, true}},
           Case{-10 * kEps, -kG, 2_r * kG, {true, true, true, false}}, // Merit test passes
           Case{kNaN, -kG, -0.5_r * kG, {false, false, false, false}}, // NaN merit
+          // The merit replaces the energy of a non-potential term by its work, here zero: it falls
+          // while the objective rises, rises while it falls, or changes within the band
+          Case{4000 * kEps, -kG, -0.5_r * kG, {true, true, true, true}, 8000 * kEps},
+          Case{-10 * kEps, -kG, -0.5_r * kG, {false, false, false, false}, -8000 * kEps},
+          Case{4000 * kEps, -kG, -0.5_r * kG, {true, true, true, true}, 3000 * kEps},
+          // Its work is the trapezoid rule on its residual: it turns the rise into a drop, or into
+          // an in-band rise that the uphill slope fails
+          Case{4000 * kEps, -kG, 1.5_r * kG, {true, true, true, false}, {}, -12e3_r * kEps},
+          Case{4000 * kEps, -kG, 1.5_r * kG, {false, false, false, false}, {}, -8e3_r * kEps},
           // Steep drops up to maxScale dx: Wolfe accepts dx, ...
-          Case{-10 * kEps, -kG, kSteep, kAllAccept, 2_r, 3, {1_r, 1_r, 1_r, 1_r}},
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, {}, {}, 2_r, 3, {1_r, 1_r, 1_r, 1_r}},
           // ... bisects towards dx and takes the last trial, ...
-          Case{-10 * kEps, -kG, kSteep, kAllAccept, 0.8_r, 3, {0.5_r, 0.5_r, 0.75_r, 0.75_r}},
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, {}, {}, 0.8_r, 3, {0.5_r, 0.5_r, 0.75_r, 0.75_r}},
           // ... or an earlier one, assembled again, ...
-          Case{-10 * kEps, -kG, kSteep, kAllAccept, 0.6_r, 3, {0.5_r, 0.5_r, 0.5_r, 0.5_r}},
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, {}, {}, 0.6_r, 3, {0.5_r, 0.5_r, 0.5_r, 0.5_r}},
           // ... also once the bisection has closed in on maxScale
-          Case{-10 * kEps, -kG, kSteep, kAllAccept, 0.6_r, 1000, {0.5_r, 0.5_r, 0.6_r, 0.6_r}}}) {
+          Case{-10 * kEps, -kG, kSteep, kAllAccept, {}, {}, 0.6_r, 1000, {0.5_r, 0.5_r, 0.6_r, 0.6_r}}}) {
+      // clang-format on
       std::array<bool, 4> accepted{};
       for (int i = 0; i < isize(kSearches); ++i) {
         auto const [type, search] = kSearches[i];
         SnleProblem<real> problem = GetLineSearchTrialProblem(
-            merit0, unit * c.startSlope, unit * c.rise, unit * c.slope, c.maxScale);
+            merit0,
+            unit * c.startSlope,
+            unit * c.rise,
+            unit * c.slope,
+            c.maxScale,
+            unit * c.nonPotentialRise,
+            unit * c.nonPotentialResidual);
         problem.SetSolution(ColumnVector<real>::Zero(2));
         problem.UpdateObjResDRes({.assemObj = true, .assemRes = true});
         problem.increment[0] = 1_r;
         problem.increment[1] = 0_r;
         NewtonSolverStatus<real> status;
-        status.merit = problem.GetObjective();
+        status.objective = problem.GetObjective();
         accepted[i] = search(
             problem,
             status,
@@ -947,9 +978,9 @@ TEST(NewtonSolver, MeritLineSearches) {
 
         EXPECT_NEAR(problem.GetSolution()[0], c.scale[i], 1e-5_r);
         EXPECT_EQ(problem.GetIncrement()[0], problem.GetSolution()[0]); // The step taken
-        if (accepted[i]) { // Assembled, with its merit in status.merit
+        if (accepted[i]) { // Assembled, with its objective in status.objective
           EXPECT_FALSE(problem.HasSolutionChangedSinceLastAssembly());
-          EXPECT_EQ(status.merit, problem.GetObjective());
+          EXPECT_EQ(status.objective, problem.GetObjective());
         }
         EXPECT_LT(status.numLastLSIterDone, 100); // Wolfe stops once the bisection closes in
       }

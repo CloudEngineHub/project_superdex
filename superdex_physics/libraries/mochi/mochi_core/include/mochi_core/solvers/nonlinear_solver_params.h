@@ -140,18 +140,19 @@ namespace mochi {
 /**
  * @brief Line search methods for the non-linear solver.
  *
- * @note In the line searches that test the objective (@ref LineSearchType::Simple, @ref
- * LineSearchType::Armijo, @ref LineSearchType::WolfeWeak and @ref LineSearchType::WolfeStrong), a
- * step that fails the test but changes the objective by no more than an estimate of its rounding
- * error is tested on the slope of the objective along the step instead.
+ * @note The line searches @ref LineSearchType::Simple, @ref LineSearchType::Armijo, @ref
+ * LineSearchType::WolfeWeak and @ref LineSearchType::WolfeStrong test a merit: the objective,
+ * except that terms without a potential may count their work along the step instead of their
+ * energy. A step that fails the test but changes the merit by no more than an estimate of its
+ * rounding error is tested on the slope of the merit along the step instead.
  */
 enum struct LineSearchType {
   /** @brief No line search. May substantially degrade stability. */
   None,
 
   /**
-   * @brief Simple line search. Accepts a step if the objective function does not increase by more
-   * than a specified relative tolerance.
+   * @brief Simple line search. Accepts a step if the merit does not increase by more than a
+   * specified relative tolerance.
    *
    * @see NonLinearSolverParams::lineSearchMaxRelIncrease. */
   Simple,
@@ -167,7 +168,7 @@ enum struct LineSearchType {
    * @brief Line search with weak Wolfe conditions.
    *
    * @details Steps are no longer than the full step. A trial that meets the 1st condition, but
-   * along which the objective still decreases too steeply for the 2nd, is accepted if it is the
+   * along which the merit still decreases too steeply for the 2nd, is accepted if it is the
    * full step and otherwise leads to longer trials. If no trial meets both conditions, the line
    * search takes the longest such trial, if any, at the cost of one more assembly unless it was
    * the last.
@@ -180,7 +181,7 @@ enum struct LineSearchType {
    * @brief Line search with strong Wolfe conditions.
    *
    * @details Like @ref LineSearchType::WolfeWeak, but also rejects a trial along which the
-   * objective increases too steeply for the strong 2nd condition.
+   * merit increases too steeply for the strong 2nd condition.
    *
    * @see NonLinearSolverParams::lineSearchWolfe1, NonLinearSolverParams::lineSearchWolfe2
    */
@@ -436,11 +437,11 @@ struct NonLinearSolverParams {
   real lineSearchWolfe2 = 0.9_r;
 
   /**
-   * @brief Maximum relative increase in the objective to accept the step.
+   * @brief Maximum relative increase in the merit to accept the step.
    *
    * @note Only applies to @ref LineSearchType::Simple.
-   * @note An increase beyond this maximum but within an estimate of the objective's rounding error
-   * is tested on the slope of the objective along the step instead (see @ref LineSearchType).
+   * @note An increase beyond this maximum but within an estimate of the merit's rounding error is
+   * tested on the slope of the merit along the step instead (see @ref LineSearchType).
    */
   real lineSearchMaxRelIncrease = 0.0_r;
 

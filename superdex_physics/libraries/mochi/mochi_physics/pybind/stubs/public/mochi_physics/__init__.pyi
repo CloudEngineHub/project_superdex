@@ -1356,19 +1356,20 @@ class LineSearchType:
     """Line-search strategy used by the non-linear solver.
 
     Note:
-        In the line searches that test the objective (:class:`SIMPLE
-        <superdex.physics.LineSearchType>`, :class:`ARMIJO
-        <superdex.physics.LineSearchType>`, :class:`WOLFE_WEAK
+        The line searches :class:`SIMPLE <superdex.physics.LineSearchType>`,
+        :class:`ARMIJO <superdex.physics.LineSearchType>`, :class:`WOLFE_WEAK
         <superdex.physics.LineSearchType>` and :class:`WOLFE_STRONG
-        <superdex.physics.LineSearchType>`), a step that fails the test but changes
-        the objective by no more than an estimate of its rounding error is tested on
-        the slope of the objective along the step instead.
+        <superdex.physics.LineSearchType>` test a merit: the objective, except that
+        terms without a potential may count their work along the step instead of
+        their energy. A step that fails the test but changes the merit by no more
+        than an estimate of its rounding error is tested on the slope of the merit
+        along the step instead.
     """
     NONE: LineSearchType
     """No line search. May substantially degrade stability."""
     SIMPLE: LineSearchType
-    """Simple line search. Accepts a step if the objective function does not increase
-    by more than a specified relative tolerance.
+    """Simple line search. Accepts a step if the merit does not increase by more than a
+    specified relative tolerance.
 
     See Also:
         :attr:`~superdex.physics.NonLinearSolverParams.line_search_max_rel_increase`
@@ -1383,10 +1384,10 @@ class LineSearchType:
     """Line search with weak Wolfe conditions.
 
     Steps are no longer than the full step. A trial that meets the 1st condition,
-    but along which the objective still decreases too steeply for the 2nd, is
-    accepted if it is the full step and otherwise leads to longer trials. If no
-    trial meets both conditions, the line search takes the longest such trial, if
-    any, at the cost of one more assembly unless it was the last.
+    but along which the merit still decreases too steeply for the 2nd, is accepted
+    if it is the full step and otherwise leads to longer trials. If no trial meets
+    both conditions, the line search takes the longest such trial, if any, at the
+    cost of one more assembly unless it was the last.
 
     See Also:
         :attr:`~superdex.physics.NonLinearSolverParams.line_search_wolfe1`,
@@ -1396,8 +1397,7 @@ class LineSearchType:
     """Line search with strong Wolfe conditions.
 
     Like :class:`WOLFE_WEAK <superdex.physics.LineSearchType>`, but also rejects a
-    trial along which the objective increases too steeply for the strong 2nd
-    condition.
+    trial along which the merit increases too steeply for the strong 2nd condition.
 
     See Also:
         :attr:`~superdex.physics.NonLinearSolverParams.line_search_wolfe1`,
@@ -4007,15 +4007,15 @@ class NonLinearSolverParams:
         :class:`WOLFE_STRONG <superdex.physics.LineSearchType>` line search types.
     """
     line_search_max_rel_increase: float
-    """Maximum relative increase in the objective to accept the step.
+    """Maximum relative increase in the merit to accept the step.
 
     Note:
         Only applies to :class:`SIMPLE <superdex.physics.LineSearchType>`.
 
     Note:
-        An increase beyond this maximum but within an estimate of the objective's
-        rounding error is tested on the slope of the objective along the step
-        instead (see :class:`~superdex.physics.LineSearchType`).
+        An increase beyond this maximum but within an estimate of the merit's
+        rounding error is tested on the slope of the merit along the step instead
+        (see :class:`~superdex.physics.LineSearchType`).
     """
     line_search_type: LineSearchType
     """Line search type."""

@@ -219,6 +219,16 @@ static void AssembleRigidBodyAsyncContactResponse(
   ECS Dynamic Rigid-body Actor Utils
 */
 
+// Whether the external forces include a nonzero torque.
+[[nodiscard]] static bool HasTorque(CExternalForces const& externalForces) {
+  for (int i = 0; i < isize(externalForces.dofs); ++i) {
+    if (externalForces.dofs[i] >= RigidSize::kDTrans && externalForces.forces[i] != 0_r) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static void ComputePoseAtStageStart(
     CTimeIntegratorState const& intState,
     CIntegrationRigidStates& intPoses,
@@ -643,6 +653,17 @@ void mochi::rigid::EntityAssemble(
   RigidGradient* gradient = params.assemRes ? &tempGradient : nullptr;
   RigidHessian tempHessian{};
   RigidHessian* hessian = params.assemDRes ? &tempHessian : nullptr;
+  bool const assembleInertia = hasInertiaTag && IsFinite(intState.dtStage) &&
+      IsAssemblyNeeded(StateDependency::SecondOrder, false /*inputDependency*/, gradTarget);
+  bool const assembleExternalForces = !externalForces.Empty() &&
+      IsAssemblyNeeded(StateDependency::ZeroOrder, false /*inputDependency*/, gradTarget);
+
+  // Newton-Euler inertia and external torques report their non-potential terms with the objective
+  bool const reportsNonPotential = params.assemObj &&
+      ((assembleInertia && useNewtonEulerInertia) ||
+       (assembleExternalForces && HasTorque(externalForces)));
+  RigidNonPotentialTerms tempNonPotential;
+  RigidNonPotentialTerms* nonPotential = reportsNonPotential ? &tempNonPotential : nullptr;
 
   // Compute async contact term first. It assumes that energy starts at zero.
   bool bContactEnabled = hasContactTag && activeCollisions &&
@@ -695,8 +716,7 @@ void mochi::rigid::EntityAssemble(
   }
 
   // Compute inertial terms
-  if (hasInertiaTag && IsFinite(intState.dtStage) &&
-      IsAssemblyNeeded(StateDependency::SecondOrder, false /*inputDependency*/, gradTarget)) {
+  if (assembleInertia) {
     auto inertiaFunc = GetRigidInertiaFn<VMatrix3x3r>(gradTarget, useNewtonEulerInertia);
 
     // We need a separate hessian storage to project the rotational part to its PSD cone
@@ -713,7 +733,8 @@ void mochi::rigid::EntityAssemble(
         stageStartVel.value,
         energy,
         gradient,
-        inertiaHessian);
+        inertiaHessian,
+        nonPotential);
 
     if (params.assemDRes && params.psdDRes) {
       VMatrix3x3r outHessian, outInertiaHessian;
@@ -732,20 +753,28 @@ void mochi::rigid::EntityAssemble(
   }
 
   // Compute contact terms
-  if (!externalForces.Empty() &&
-      IsAssemblyNeeded(StateDependency::ZeroOrder, false /*inputDependency*/, gradTarget)) {
+  if (assembleExternalForces) {
     AddRigidBodyExternalForces(
         currPose.value,
         stageStartPose.value,
         externalForces.dofs,
         externalForces.forces,
         energy,
-        gradient);
+        gradient,
+        nonPotential);
   }
 
   // Sum energy
   if (params.assemObj) {
     outActorSnle.objective = tempEnergy;
+    outActorSnle.ResetNonPotentialTerms();
+    if (reportsNonPotential) {
+      outActorSnle.AddNonPotentialTerms(
+          tempNonPotential.energy,
+          AsConstView(tempNonPotential.rotGradient),
+          RigidSize::kDTrans,
+          RigidSize::kDAll);
+    }
   }
 
   // Assemble residual at offset.

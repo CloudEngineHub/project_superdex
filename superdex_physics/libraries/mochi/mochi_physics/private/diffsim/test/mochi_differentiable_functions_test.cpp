@@ -48,7 +48,6 @@ int constexpr kSolverMaxIter = 25;
 struct TestParams {
   real tol = 1e-2_r;
   real epsFiniteDiff = 1e-7_r;
-  real solverAbsTol = kSolverAbsTol;
 };
 
 /// @brief Base fixture for gradient consistency tests of differentiable I/O backward functions.
@@ -196,13 +195,6 @@ class DifferentiableFunctionsTest : public MochiSceneTestBase {
       OutputBackwardFn const& outputBackwardFn,
       TestParams const& params) {
     int const inputSize = isize(input);
-
-    auto simParams = _scene->GetSolverParams();
-    simParams.nonLinearSolver.absTol = params.solverAbsTol;
-    _scene->SetSolverParams(simParams, ExpectOK{});
-    auto diffParams = GetBackPropagationSolverParams(_scene, ExpectOK{});
-    diffParams.outerSolverAbsTol = params.solverAbsTol;
-    SetBackPropagationSolverParams(_scene, diffParams, ExpectOK{});
 
     // Capture initial scene state before any runs.
     StateHandle initialSceneState = _scene->CaptureState(ExpectOK{});
@@ -1488,13 +1480,7 @@ TEST_IF_F(
     });
   };
 
-  // Near convergence, the Armijo line search rejects the Newton steps in this test and the solver
-  // cannot reach kSolverAbsTol.
-  RunInputFunctionTest(
-      forceControl,
-      inputFn,
-      inputBackwardFn,
-      TestParams{.solverAbsTol = BackPropagationSolverParams{}.outerSolverAbsTol});
+  RunInputFunctionTest(forceControl, inputFn, inputBackwardFn);
 }
 
 #undef MOCHI_TEST_DIFFERENTIABLE_FUNCTIONS

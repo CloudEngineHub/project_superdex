@@ -370,6 +370,14 @@ static void ApplyBoundaryConditionsToProblem(
       int dofOffset = reg.get<CDofOffset const>(e).dofsOffset;
 
       // Apply BCs to actors and interactions
+      if (params.assemObj) {
+        for (auto&& [actorOffset, nonPotentialRes] : problem.nonPotentialResiduals) {
+          if (actorOffset == dofOffset) {
+            SetZeroOnRows(*nonPotentialRes, dirichlet->dofIndices, 0); // No DoF offset
+            break;
+          }
+        }
+      }
       if (params.assemRes) {
         for (auto&& [actorOffset, actorRes] : problem.actorResiduals) {
           if (actorOffset == dofOffset) {
@@ -480,6 +488,11 @@ static void GatherSnleDataFromActors(
 
       if (params.assemObj) {
         outProblem.objective += actorSnle->objective;
+        if (actorSnle->hasNonPotentialResidual) {
+          outProblem.nonPotentialEnergy += actorSnle->nonPotentialEnergy;
+          outProblem.nonPotentialResiduals.emplace_back(
+              dofOffset, &actorSnle->nonPotentialResidual);
+        }
       }
       if (params.assemRes) {
         MOCHI_ASSERT(isInputTarget || !res.empty(), "Residual must not be empty.");
@@ -542,6 +555,8 @@ static void GatherSnleDataFromActors(
   // Clear previous per-actor data
   if (params.assemObj) {
     outProblem.objective = 0.0;
+    outProblem.nonPotentialEnergy = 0.0;
+    outProblem.nonPotentialResiduals.clear();
   }
   if (params.assemRes) {
     outProblem.actorResiduals.clear();
@@ -1176,7 +1191,7 @@ void mochi::solver::AssembleIsland(
       InitIslandAssembly(reg, island, descendants, /*syncCurrentState*/ false);
 
   problem.UpdateObjResDRes(
-      {.assemObj = false, // Can be set to false if the merit isn't needed
+      {.assemObj = false, // Can be set to false if the objective isn't needed
        .assemRes = !outRes.empty(),
        .assemDRes = !outDRes.empty(),
        .psdDRes = false}); // Set to true if you need the SPD projection of the Hessian

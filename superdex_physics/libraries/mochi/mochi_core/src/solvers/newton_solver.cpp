@@ -365,7 +365,7 @@ bool NewtonSolver<T>::TakeStep(
   if (!improved && !takeFinalLsStepIfNoImprovement) {
     problem.SetSolution(sol0);
     problem.UpdateObjResDRes({.assemObj = true, .assemRes = true, .assemDRes = false});
-    status.merit = problem.GetObjective();
+    status.objective = problem.GetObjective();
   }
 
   if (_params.verbosity >= VerbosityLevel::Verbose) {
@@ -402,7 +402,7 @@ bool NewtonSolver<T>::IsSolverDone(
             "\nFinished Newton-Raphson solve with |res|=%.5e, obj=%.5e |step|=%.5e\n"
             "Solver finished after iter=%i, with stopping reason: %s\n",
             status.resNorm,
-            status.merit,
+            status.objective,
             stepSize,
             status.numIterDone,
             status.stopReasonStr.c_str());
@@ -648,7 +648,7 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
     // Only start the first trial with fitted Hessian if requested externally.
     auto fittedSaturationHessian = _params.fittedSaturationHessian;
 
-    // Compute residual (always) and merit (only if using a merit-based line search).
+    // Compute residual (always) and objective (only if using a merit-based line search).
     // On the first step we compute dresidual at the same time, assuming we will need it.
     {
       AssemblyParams assemblyParams;
@@ -667,15 +667,14 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
         status.itersSinceDResidualAssembly = 0;
       }
       if (assemblyParams.assemObj) {
-        status.merit = problem.GetObjective();
+        status.objective = problem.GetObjective();
       }
       _workspace.AdvanceResidual(problem, /*savePrevious*/ !isFirstIter);
     }
 
-    // Set initial residual and merit.
+    // Set initial residual.
     if (isFirstIter) {
       status.resNorm0 = status.resNorm;
-      status.merit0 = status.merit; // Dummy value if not using a merit-based line search
     }
 
     // Log iteration status.
@@ -686,7 +685,7 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
           status.numIterDone,
           status.resNorm,
           (_params.convergenceMode != NonLinearSolverConvergenceMode::Global) ? " (global)" : "",
-          status.merit,
+          status.objective,
           _params.absTolRes,
           _params.relTolRes,
           _params.solRelTol,
@@ -709,7 +708,7 @@ NewtonSolverStatus<T> NewtonSolver<T>::Solve(Problem& problem) {
     bool retry = false;
     do {
       // Assemble the dresidual, if needed. Skip it in the first iteration (unless it's a retry)
-      // because it was assembled above together with the residual and (possibly) the merit.
+      // because it was assembled above together with the residual and (possibly) the objective.
       if ((!isFirstIter &&
            (status.itersSinceDResidualAssembly >= _params.dResidualAssemblyPeriod ||
             !status.improvedInLastIter)) ||

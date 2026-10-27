@@ -25,6 +25,14 @@
 
 namespace mochi {
 
+// Energy and rotational gradient of a rigid body's terms without a potential, which kernels report
+// besides their totals. rotGradient must match the rotational rows of RigidGradient, from
+// RigidSize::kDTrans.
+struct RigidNonPotentialTerms {
+  double energy = 0.0;
+  Real3 rotGradient{};
+};
+
 // Function to add rigid-body gravity terms. The energy is relative to the stage start.
 inline void AddRigidBodyGravity(
     TransformRT const& state,
@@ -82,6 +90,8 @@ inline void AddRigidBodyGravity(
  *nullptr if not needed.
  * @param[out] outHessian Pointer to a RigidHessian to accumulate Hessian contributions. Can be
  *nullptr if not needed.
+ * @param[out] outNonPotential Unused, as these terms have a potential. For dispatch with
+ * @ref AddRigidBodyInertiaNewtonEuler.
  */
 template <GradTarget kGradTarget, typename InertiaT>
 inline void AddRigidBodyInertiaFromMerit(
@@ -93,7 +103,8 @@ inline void AddRigidBodyInertiaFromMerit(
     RigidBodyVel const& stageStartVel,
     double* outEnergy,
     RigidGradient* outGradient,
-    RigidHessian* outHessian) {
+    RigidHessian* outHessian,
+    RigidNonPotentialTerms* /*outNonPotential*/ = nullptr) {
   // Early exit if no outputs are requested
   if (!outEnergy && !outGradient && !outHessian) {
     return;
@@ -229,6 +240,8 @@ inline void AddRigidBodyInertiaFromMerit(
  *nullptr if not needed.
  * @param[out] outHessian Pointer to a RigidHessian to accumulate Hessian contributions. Can be
  *nullptr if not needed.
+ * @param[out] outNonPotential Pointer to also accumulate the rotational energy and gradient, as
+ * these terms have no potential. Can be nullptr if not needed.
  */
 template <typename InertiaT>
 inline void AddRigidBodyInertiaNewtonEuler(
@@ -240,7 +253,10 @@ inline void AddRigidBodyInertiaNewtonEuler(
     RigidBodyVel const& stageStartVel,
     double* outEnergy,
     RigidGradient* outGradient,
-    RigidHessian* outHessian) {
+    RigidHessian* outHessian,
+    RigidNonPotentialTerms* outNonPotential = nullptr) {
+  MOCHI_ASSERT_VERBOSE(
+      !outNonPotential || outEnergy, "Non-potential terms must be reported with the energy.");
   if (!outEnergy && !outGradient && !outHessian) {
     return;
   }
@@ -253,13 +269,19 @@ inline void AddRigidBodyInertiaNewtonEuler(
   Vec4r deltaOmega = omega - stageStartVel.GetOmegaAndVSym().first;
   VMatrix3x3r M = RotateInertia(inertia, state.GetRotation());
 
+  // The rotation merit assumes:
+  // 1. dM/dR = 0. This is correct if inertia is constant.
+  // 2. dw/dR = 1/h eye. This is correct when currentRot = stageStartRot.
+  double const rotEnergy = outEnergy
+      ? static_cast<double>(0.5_r * Dot<3>(deltaOmega, DotVecMat3x3(deltaOmega, M)))
+      : 0.0;
+  Vec4r const rotGradient = (outGradient || outNonPotential)
+      ? DotVecMat3x3(deltaOmega / dtStage, M) + Cross3(omega, DotVecMat3x3(omega, M))
+      : Vec4r{};
+
   if (outEnergy) {
     (*outEnergy) += static_cast<double>(NormSqr<3>(deltaVCom) * mass * 0.5_r);
-
-    // The rotation merit assumes:
-    // 1. dM/dR = 0. This is correct if inertia is constant.
-    // 2. dw/dR = 1/h eye. This is correct when currentRot = stageStartRot.
-    (*outEnergy) += static_cast<double>(0.5_r * Dot<3>(deltaOmega, DotVecMat3x3(deltaOmega, M)));
+    (*outEnergy) += rotEnergy;
   }
 
   if (outGradient) {
@@ -268,8 +290,12 @@ inline void AddRigidBodyInertiaNewtonEuler(
     Store(outGradient->data() + 0, outGradientCom);
 
     Vec4r outGradientRot = Load<3, Vec4r>(outGradient->data() + 3);
-    outGradientRot += DotVecMat3x3(deltaOmega / dtStage, M) + Cross3(omega, DotVecMat3x3(omega, M));
+    outGradientRot += rotGradient;
     Store<3>(outGradient->data() + 3, outGradientRot);
+  }
+  if (outNonPotential) {
+    outNonPotential->energy += rotEnergy;
+    outNonPotential->rotGradient += ToReal3(rotGradient);
   }
 
   if (outHessian) {
@@ -299,7 +325,8 @@ using RigidInertiaFn = void (*)(
     RigidBodyVel const&,
     double*,
     RigidGradient*,
-    RigidHessian*);
+    RigidHessian*,
+    RigidNonPotentialTerms*);
 template <typename InertiaT>
 inline RigidInertiaFn<InertiaT> GetRigidInertiaFn(GradTarget gradTarget, bool useNewtonEuler) {
   static_assert(
@@ -593,14 +620,18 @@ inline void AddRigidBodyFriction(
   }
 }
 
-// Function to add rigid-body external force terms. The energy is relative to the stage start.
+// Function to add rigid-body external force terms. The energy is relative to the stage start. The
+// torque terms, which have no potential, are also added to outNonPotential, if not null.
 inline void AddRigidBodyExternalForces(
     TransformRT const& state,
     TransformRT const& stageStartPos,
     Span<int const> dofs,
     Span<real const> forces,
     double* outEnergy,
-    RigidGradient* outGradient) {
+    RigidGradient* outGradient,
+    RigidNonPotentialTerms* outNonPotential = nullptr) {
+  MOCHI_ASSERT_VERBOSE(
+      !outNonPotential || outEnergy, "Non-potential terms must be reported with the energy.");
   if (!outEnergy && !outGradient) {
     return;
   }
@@ -628,18 +659,16 @@ inline void AddRigidBodyExternalForces(
   Vec4r force = ToSimd(force3);
   Vec4r torque = ToSimd(torque3);
 
+  // 0.5 tr(skew(torque) R(step)) = -2 w (torque·v) for the rotation step (v, w) from the stage
+  // start. Its gradient at the stage start is -torque.
+  double torqueEnergy = 0.0;
   if (outEnergy) {
+    Quaternion const step = state.GetRotation() * stageStartPos.GetRotation().GetConjugate();
+    real const w = Get<3>(step.data); // Scalar part
+    Real3 const v = ToReal3(step.data); // Vector part
+    torqueEnergy = -2.0 * w * Dot(torque3, v);
     (*outEnergy) -= Dot(state.VGetTranslation() - stageStartPos.VGetTranslation(), force);
-    // The rotation residual term is given simply by the torque. However, this residual is not
-    // integrable. Here, we approximate a merit function that is valid only near rotStep = eye.
-    // Psi = 0.5 * tr(skew(torque) * rotStep), with rotStep = rot * rotStart^T
-    // dPsi/drot = dPsi/drotStep * drotStep/drot = dPsi/drotStep, because drotStep/drot = eye
-    // dPsi/drotStep = 0.5 * torque^T * (rotStep - tr(rotStep))
-    // If rotStep = eye, then dPsi/drotStep = - torque^T
-    auto const& rot = state.GetRotation();
-    auto const& rotStart = stageStartPos.GetRotation();
-    auto rotStep = rot * rotStart.GetConjugate();
-    (*outEnergy) += 0.5_r * Trace3x3(Dot3x3(Skew3(torque), ToVMatrix3x3(rotStep)));
+    (*outEnergy) += torqueEnergy;
   }
 
   if (outGradient) {
@@ -653,6 +682,10 @@ inline void AddRigidBodyExternalForces(
     // Store output
     Store(outGradient->data() + 0, outGradientCom);
     Store<3>(outGradient->data() + RigidSize::kDTrans, outGradientRot);
+  }
+  if (outNonPotential) {
+    outNonPotential->energy += torqueEnergy;
+    outNonPotential->rotGradient -= torque3;
   }
 }
 

@@ -28,11 +28,12 @@ namespace mochi {
 /** @brief Struct storing information on the status of @ref NewtonSolver::Solve. */
 template <typename T>
 struct NewtonSolverStatus {
-  /// @brief Initial merit.
-  double merit0 = 0.0;
-
-  /// @brief Current merit.
-  double merit = 0.0;
+  /// @brief Current objective.
+  ///
+  /// @note Not the merit the line searches test (@ref SnleProblem::LineSearchMerit). That merit
+  /// differs when some terms have no potential: it replaces their energy with their work along the
+  /// step from the search's start, so it isn't a function of the state.
+  double objective = 0.0;
 
   /// @brief Initial residual norm (global, unweighted).
   T resNorm0 = T(0);

@@ -2157,6 +2157,7 @@ void articulated::compound::AssembleDampingForces(
 void articulated::compound::AssembleInertiaForces(
     AssemblyParams const& params,
     ecs::OptionalTag<TagUseNewtonEulerInertia> useNewtonEulerInertia,
+    CArticulatedProps const& props,
     CArticulatedBodyShape const& bodyShape,
     CArticulatedJointPoseInfo const& poseInfo,
     CArticulatedInertiaParams const& inertiaParams,
@@ -2178,6 +2179,10 @@ void articulated::compound::AssembleInertiaForces(
     if (inertiaParams[i] == 0_r) {
       return false;
     }
+
+    // Newton-Euler inertia reports its non-potential terms with the objective
+    bool const reportsNonPotential = energy && useNewtonEulerInertia;
+    RigidNonPotentialTerms nonPotential;
     inertiaFuncRigidBody(
         inertiaParams[i] /*mass*/,
         inertiaParams[i] * (useNewtonEulerInertia ? 1_r : 0.5_r) /*inertia*/,
@@ -2187,7 +2192,15 @@ void articulated::compound::AssembleInertiaForces(
         stageStartJointVels.value[i],
         energy,
         gradient,
-        hessian);
+        hessian,
+        reportsNonPotential ? &nonPotential : nullptr);
+    if (reportsNonPotential) {
+      outCompoundSnle.AddNonPotentialTerms(
+          nonPotential.energy,
+          AsConstView(nonPotential.rotGradient),
+          dofInfo[i].GetRotOffset(),
+          props.reducedDofsDim);
+    }
 
     if (params.psdDRes && hessian) {
       VMatrix3x3r outHessianRot;
@@ -2331,12 +2344,30 @@ void articulated::compound::AssembleExternalForces(
       Unflatten<Real3>(forces)[0] = Unflatten<Real3 const>(force)[0];
     }
     auto torque = Span(&allForces[dofInfo.GetRotOffset()], RigidSize::kDRot);
-    Unflatten<Real3>(forces)[1] = Unflatten<Real3 const>(torque)[0];
+    Real3 const& jointTorque = Unflatten<Real3 const>(torque)[0];
+    Unflatten<Real3>(forces)[1] = jointTorque;
     if (forces == RigidGradient{}) {
       return false;
     }
+
+    // A nonzero torque reports its non-potential terms with the objective
+    bool const reportsNonPotential = energy && jointTorque != Real3{};
+    RigidNonPotentialTerms nonPotential;
     AddRigidBodyExternalForces(
-        currJointTxs[i], stageStartJointTxs[i], kDofs, forces, energy, gradient);
+        currJointTxs[i],
+        stageStartJointTxs[i],
+        kDofs,
+        forces,
+        energy,
+        gradient,
+        reportsNonPotential ? &nonPotential : nullptr);
+    if (reportsNonPotential) {
+      outCompoundSnle.AddNonPotentialTerms(
+          nonPotential.energy,
+          AsConstView(nonPotential.rotGradient),
+          dofInfo.GetRotOffset(),
+          props.reducedDofsDim);
+    }
     return true;
   };
   auto assemblerSingleDof =
@@ -2639,6 +2670,27 @@ static void AssembleReducedDResidual(
   }
 }
 
+// Adds the non-potential terms of a link, whose residual its compact Jacobian projects onto the
+// compound's DoFs. The terms are rotational, so the projection skips the translation rows.
+static void AddLinkNonPotentialTerms(
+    ActorSnle const& linkSnle,
+    CArticulatedRigidJacobian const& linkJacobian,
+    int numDofs,
+    ActorSnle& outCompoundSnle) {
+  MOCHI_ASSERT_VERBOSE(
+      linkSnle.nonPotentialResidual.TopRows(RigidSize::kDTrans).NormSqr() == 0_r,
+      "Link non-potential terms must be rotational.");
+  outCompoundSnle.nonPotentialEnergy += linkSnle.nonPotentialEnergy;
+  auto residual = outCompoundSnle.NonPotentialResidual(numDofs);
+  for (int p = 0; p < isize(linkJacobian.dofs); ++p) {
+    real projected = 0_r;
+    for (int row = RigidSize::kDTrans; row < RigidSize::kDAll; ++row) {
+      projected += linkJacobian.value(row, p) * linkSnle.nonPotentialResidual[row];
+    }
+    residual[linkJacobian.dofs[p]] += projected;
+  }
+}
+
 void articulated::compound::EntityAssemble(
     AssemblyParams const& params,
     ecs::RequiredTag<TagArticulatedActor>,
@@ -2692,6 +2744,13 @@ void articulated::compound::EntityAssemble(
       auto const& bodyDofOffset = reg.get<CDofOffset const>(bodyEntity);
       if (params.assemObj) {
         outCompoundSnle.objective += bodySnle.objective;
+        if (bodySnle.hasNonPotentialResidual) {
+          AddLinkNonPotentialTerms(
+              bodySnle,
+              reg.get<CArticulatedRigidJacobian const>(bodyEntity),
+              props.reducedDofsDim,
+              outCompoundSnle);
+        }
       }
       if (params.assemRes) {
         MOCHI_ASSERT(bodySnle.fullResidual.size() == RigidSize::kDAll);
@@ -2791,6 +2850,7 @@ void articulated::compound::EntityAssemble(
     AssembleInertiaForces(
         params,
         useNewtonEulerInertia,
+        props,
         bodyShape,
         poseInfo,
         inertiaParams,

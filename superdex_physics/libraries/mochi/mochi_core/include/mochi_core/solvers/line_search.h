@@ -26,7 +26,9 @@
 namespace mochi {
 
 /**
- * Utility struct implementing line search algorithms. It has no internal state.
+ * Utility struct implementing line search algorithms. It has no internal state. Simple, Armijo and
+ * the Wolfe searches test the merit of @ref SnleProblem::LineSearchMerit, and keep the objective in
+ * @ref NewtonSolverStatus::objective.
  */
 template <typename T>
 struct LineSearch {
@@ -80,13 +82,13 @@ struct LineSearch {
    *
    * Near convergence, typically in single precision, the merit change of a good step can be
    * smaller than its rounding error, so the merit test can reject the step on rounding error. With
-   * E0 and E1 the merits at x and at the trial x + s dx, ε the machine epsilon of T and
+   * M0 and M1 the merits at x and at the trial x + s dx, ε the machine epsilon of T and
    * k = @ref kRoundingErrorFactor, a trial that fails the merit test with
-   * |E1 - E0| <= 2 k ε |E0| is accepted if
+   * |M1 - M0| <= 2 k ε |M0| is accepted if
    * F(x + s dx)·dx <= (2 c1 - 1) F(x)·dx, with F the residual and c1 the Armijo constant of the
    * merit test. This is the Armijo condition on (s / 2) (F(x)·dx + F(x + s dx)·dx), the
-   * trapezoidal estimate of E1 - E0, which is exact on quadratic merits and free of the
-   * cancellation in E1 - E0: Hager and Zhang's approximate Armijo condition (2005). It applies
+   * trapezoidal estimate of M1 - M0, which is exact on quadratic merits and free of the
+   * cancellation in M1 - M0: Hager and Zhang's approximate Armijo condition (2005). It applies
    * only to trials that have a finite merit and fail the merit test, and never accepts one whose
    * slope or slope bound is not finite.
    */
@@ -94,7 +96,7 @@ struct LineSearch {
   class RoundingErrorSlopeTest {
    public:
     /**
-     * @param[in] merit0 Merit E0 at the start of the line search.
+     * @param[in] merit0 Merit M0 at the start of the line search.
      * @param[in] slope0 F(x)·dx at the start of the line search.
      * @param[in] c1 Armijo constant c1 of the merit test.
      */
@@ -119,14 +121,14 @@ struct LineSearch {
     }
 
    private:
-    // The band allows each of the two merits a rounding error of k ε |E0|. |E0| stands in for the
+    // The band allows each of the two merits a rounding error of k ε |M0|. |M0| stands in for the
     // rounding magnitudes of the merit's terms, which cancellation within the terms can make
     // orders of magnitude larger, hence the large k.
-    // TODO: Explore per-term rounding magnitudes instead of |E0| for the band. See D125958065.
+    // TODO: Explore per-term rounding magnitudes instead of |M0| for the band. See D125958065.
     static constexpr double kRoundingErrorFactor = 1000.0;
 
     double const _merit0;
-    double const _band; // 2 k ε |E0|
+    double const _band; // 2 k ε |M0|
     double const _slopeBound; // (2 c1 - 1) F(x)·dx
   };
 };
@@ -158,8 +160,9 @@ bool LineSearch<T>::Simple(Problem& problem, Status& status, LsParams const& par
 
   // Simple requires no sufficient decrease, hence c1 = 0
   RoundingErrorSlopeTest const slopeTest(
-      status.merit, problem.GetResidual().Dot(problem.GetIncrement()), /*c1*/ 0.0);
-  bool const finiteStart = IsFinite(status.merit);
+      status.objective, problem.GetResidual().Dot(problem.GetIncrement()), /*c1*/ 0.0);
+  typename Problem::LineSearchMerit const searchMerit(problem);
+  bool const finiteStart = IsFinite(status.objective);
 
   bool improved = false;
   auto scale = T(1);
@@ -173,15 +176,15 @@ bool LineSearch<T>::Simple(Problem& problem, Status& status, LsParams const& par
     }
     problem.UpdateSolution();
 
-    // Compute objective at x + dx position
+    // Compute merit at x + dx position
     problem.UpdateObjective();
-    double const merit = problem.GetObjective();
+    double const merit = searchMerit(scale);
 
     // Check enough improvement
     if (finiteStart && IsFinite(merit) &&
-        (merit <= (status.merit + Abs(status.merit * params.maxRelIncrease)) ||
+        (merit <= (status.objective + Abs(status.objective * params.maxRelIncrease)) ||
          slopeTest.Passes(problem, merit, scale))) {
-      status.merit = merit;
+      status.objective = problem.GetObjective();
       improved = true;
       break;
     }
@@ -204,8 +207,9 @@ bool LineSearch<T>::Armijo(Problem& problem, Status& status, LsParams const& par
   // Compute Armijo factor
   double const dotDx0Res0 = problem.GetResidual().Dot(problem.GetIncrement());
   double const factor0 = dotDx0Res0 * params.wolfe1;
-  RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
-  bool const finiteStart = IsFinite(status.merit) && IsFinite(dotDx0Res0);
+  RoundingErrorSlopeTest const slopeTest(status.objective, dotDx0Res0, params.wolfe1);
+  typename Problem::LineSearchMerit const searchMerit(problem);
+  bool const finiteStart = IsFinite(status.objective) && IsFinite(dotDx0Res0);
 
   bool improved = false;
   auto scale = T(1);
@@ -221,12 +225,12 @@ bool LineSearch<T>::Armijo(Problem& problem, Status& status, LsParams const& par
 
     // Compute merit at x + dx position
     problem.UpdateObjective();
-    double const merit = problem.GetObjective();
+    double const merit = searchMerit(scale);
 
     // Check enough improvement
     if (finiteStart && IsFinite(merit) &&
-        (merit <= status.merit + scale * factor0 || slopeTest.Passes(problem, merit, scale))) {
-      status.merit = merit;
+        (merit <= status.objective + scale * factor0 || slopeTest.Passes(problem, merit, scale))) {
+      status.objective = problem.GetObjective();
       improved = true;
       break;
     }
@@ -263,8 +267,9 @@ bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& para
   double const dotDx0Res0 = problem.GetResidual().Dot(problem.GetIncrement());
   double const t1 = params.wolfe1 * dotDx0Res0;
   double const t2 = params.wolfe2 * dotDx0Res0;
-  RoundingErrorSlopeTest const slopeTest(status.merit, dotDx0Res0, params.wolfe1);
-  bool const finiteStart = IsFinite(status.merit) && IsFinite(dotDx0Res0);
+  RoundingErrorSlopeTest const slopeTest(status.objective, dotDx0Res0, params.wolfe1);
+  typename Problem::LineSearchMerit const searchMerit(problem);
+  bool const finiteStart = IsFinite(status.objective) && IsFinite(dotDx0Res0);
 
   bool improved = false;
   auto scale = T(1);
@@ -293,12 +298,12 @@ bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& para
 
     // Compute values for Wolfe conditions
     double const dotDxRes = problem.GetResidual().Dot(problem.GetIncrement());
-    double const merit = problem.GetObjective();
+    double const merit = searchMerit(scale);
 
     // TODO: Explore choosing the next trial by safeguarded interpolation of the trials' merits and
     // slopes.
     if (!finiteStart || !IsFinite(dotDxRes) || !IsFinite(merit) ||
-        !(merit <= status.merit + scale * t1 || slopeTest.Passes(problem, merit, scale)) ||
+        !(merit <= status.objective + scale * t1 || slopeTest.Passes(problem, merit, scale)) ||
         (strong && dotDxRes > Abs(t2 * scale))) {
       // If not finite, or neither the 1st Wolfe condition nor the slope test is met, or the strong
       // 2nd Wolfe condition is not met by above, reduce the scale.
@@ -309,8 +314,8 @@ bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& para
       scaleMin = scale;
       scaleNew = T(0.5) * (scale + scaleMax);
     } else {
-      // Otherwise, update merit and exit line search.
-      status.merit = merit;
+      // Otherwise, update the objective and exit line search.
+      status.objective = problem.GetObjective();
       improved = true;
       break;
     }
@@ -326,7 +331,7 @@ bool LineSearch<T>::Wolfe(Problem& problem, Status& status, LsParams const& para
       problem.UpdateObjResDRes(
           {.assemObj = true, .assemRes = true, .assemDRes = false, .psdDRes = false});
     }
-    status.merit = problem.GetObjective();
+    status.objective = problem.GetObjective();
     improved = true;
   }
 
