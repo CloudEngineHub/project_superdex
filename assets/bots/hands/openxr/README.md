@@ -45,6 +45,16 @@ Differences:
 - Self-contact differs. Mochi disables contact between adjacent links, looking through Hard joints and shapeless links. Through the shapeless metacarpals, the index, middle, and ring proximal phalanges are adjacent to the wrist and everything attached to it, so contact that `oculus_xr` allowed among them, the thumb metacarpal, and the little metacarpal is off.
 - The wrist's collision mesh is the boolean union of the merged meshes, and its SDF is baked at the finest SDF resolution of the source links. The `oculus_xr` low-poly wrist SDF is much coarser.
 
+## Proxy-hand meshes
+
+`render/openxr_proxy_hand_<side>.glb` is a skinned mesh of the user's hand for showing tracked OpenXR poses, such as the hand a Roboperator mirrors. Its joints are the bot's links, in link order, and its bind pose is the bot's rest pose, so it shares the bones and reference pose of the bot's skeletal mesh in Unreal.
+
+It is the TeleOperator hand mesh (`intermediates/source_hand_<side>.glb`, exported from Unreal) re-skinned and scaled by 0.74 onto the bot by [`openxr_proxy_hand_from_nimble.py`](../../../../superdex_robotics/tools/internal/openxr_proxy_hand_from_nimble.py):
+
+```
+fbpython ../../../../superdex_robotics/tools/internal/openxr_proxy_hand_from_nimble.py <side>/intermediates/source_hand_<side>.glb --bot <side>/openxr_hand_highpoly_<side>.superdex_bot --out <side>/render/openxr_proxy_hand_<side>.glb
+```
+
 ## License
 
 These assets are the original work of Meta Platforms, Inc. and affiliates and are distributed under the [Creative Commons Attribution 4.0 International License (CC-BY-4.0)](./LICENSE). You must give appropriate credit to Meta Platforms, Inc. when you use or redistribute these assets.
