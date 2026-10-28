@@ -19,6 +19,7 @@
 #include "scene_utils.h"
 #include "superdex_asset_tuner/tuner_runner.h"
 
+#include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/utils/defer.h>
 
 #include <cmath>
@@ -40,20 +41,46 @@ mochi::DynamicArray<mochi::Actor*> details::GetTopLevelActors(mochi::Scene& scen
   return topLevel;
 }
 
-bool details::IsBounded(mochi::Actor const& actor) {
+std::optional<mochi::Aabb> details::WorldBounds(mochi::Actor const& actor) {
   // Planes report huge or non-finite boxes.
   constexpr real kMaxBoundedExtent = 1e6f;
-  mochi::ErrorLog error;
-  mochi::Aabb const box = actor.GetAabbWorld(error);
-  Real3 const min = box.GetMin();
-  Real3 const max = box.GetMax();
-  for (int d = 0; d < 3; ++d) {
-    if (!std::isfinite(min[d]) || !std::isfinite(max[d]) || std::abs(min[d]) >= kMaxBoundedExtent ||
-        std::abs(max[d]) >= kMaxBoundedExtent) {
-      return false;
+  std::optional<mochi::Aabb> bounds;
+  auto const include = [&](mochi::Actor const& part) {
+    // A fresh error per part: an articulated actor without a skin has no box of its own, and that
+    // failure must not empty the boxes of the parts after it.
+    mochi::Error error;
+    mochi::Aabb const box = part.GetAabbWorld(error);
+    Real3 const min = box.GetMin();
+    Real3 const max = box.GetMax();
+    if (!error.IsOK() || min == max) {
+      return; // no box, or a shapeless link (a point at its origin)
+    }
+    for (int d = 0; d < 3; ++d) {
+      if (!std::isfinite(min[d]) || !std::isfinite(max[d]) ||
+          std::abs(min[d]) >= kMaxBoundedExtent || std::abs(max[d]) >= kMaxBoundedExtent) {
+        return;
+      }
+    }
+    bounds = bounds ? mochi::EncloseShapes(*bounds, box) : box;
+  };
+  include(actor);
+  if (actor.GetType() == mochi::ActorType::Articulated) {
+    mochi::Scene const* scene = actor.GetScene();
+    mochi::Error error;
+    for (Span<mochi::ActorHandle const> const nested :
+         {actor.GetNestedLinkActors(error), actor.GetNestedSoftActors(error)}) {
+      for (mochi::ActorHandle const handle : nested) {
+        if (mochi::Actor const* part = scene->GetActor(handle)) {
+          include(*part);
+        }
+      }
     }
   }
-  return true;
+  return bounds;
+}
+
+bool details::IsBounded(mochi::Actor const& actor) {
+  return WorldBounds(actor).has_value();
 }
 
 SceneTargets CollectSceneTargets(mochi::Scene& scene) {

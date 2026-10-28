@@ -60,10 +60,9 @@ void PrepareScene(mochi::Scene& scene) {
 real ComputeAutoGroundHeight(Span<mochi::Actor* const> actors) {
   // Planes (and anything else unbounded) do not rest on the ground, so they must not drag it down.
   std::optional<real> lowest;
-  mochi::ErrorLog error;
   for (mochi::Actor const* actor : actors) {
-    if (details::IsBounded(*actor)) {
-      real const minZ = actor->GetAabbWorld(error).GetMin()[2];
+    if (std::optional<mochi::Aabb> const bounds = details::WorldBounds(*actor)) {
+      real const minZ = bounds->GetMin()[2];
       lowest = lowest ? std::min(*lowest, minZ) : minZ;
     }
   }

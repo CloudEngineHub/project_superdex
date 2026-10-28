@@ -41,8 +41,8 @@ inline constexpr std::string_view kGroundPlaneName = "TunerGroundPlane";
 // AddGroundPlane and ApplyRunSpecOverrides.
 void PrepareScene(mochi::Scene& scene);
 
-// Lowest point (world Z) of `actors`' bounding boxes, ignoring unbounded ones such as planes; 0 if
-// none is bounded. This is the automatic ground height.
+// Lowest point (world Z) of `actors`' geometry, including articulated actors' links, ignoring
+// unbounded geometry such as planes; 0 if none is bounded. This is the automatic ground height.
 [[nodiscard]] real ComputeAutoGroundHeight(Span<mochi::Actor* const> actors);
 
 // Adds the RunSpec ground plane (if enabled) at RunSpec::groundHeight, or at the automatic height

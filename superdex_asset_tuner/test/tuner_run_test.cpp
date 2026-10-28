@@ -333,6 +333,34 @@ TEST_F(TunerTest, PrefabOverridesReachIntoOneNestedReference) {
   EXPECT_FALSE(isStatic("b/cube")) << "Overrides must not leak into other references";
 }
 
+TEST_F(TunerTest, AutoGroundHeightCountsArticulatedLinksAndTheActorsAfterThem) {
+  // A single-link articulation with its bottom at z = 0.2, then a rigid cube at z = 0.5. The
+  // articulated actor has no box of its own (only its link does), which must neither put the
+  // ground at z = 0 nor hide the cube created after it.
+  TunerSpec spec = MakeSpec(R"({
+    "actors": {
+      "articulated": [ {
+        "name": "arm", "translation": [0, 0, 0.2],
+        "joints": [ { "name": "root", "type": "Free" } ],
+        "links": [ { "name": "body", "parentLink": -1, "shape": "cube/cube_fine_mesh.mochi.h5",
+                     "shapeScale": [0.1, 0.1, 0.1], "colliderType": "Box", "density": 1000 } ] } ],
+      "rigid": [ {
+        "name": "cube", "shape": "cube/cube_fine_mesh.mochi.h5", "scale": [0.1, 0.1, 0.1],
+        "translation": [1, 0, 0.5], "colliderType": "Box", "density": 1000 } ] }
+  })");
+  spec.run.groundPlane = true;
+  EXPECT_NEAR(Describe(spec).groundHeight.value_or(-1), 0.2f, 1e-3f);
+
+  // Without the articulation, the lowest point is the cube's.
+  TunerSpec cubeOnly = MakeSpec(R"({
+    "actors": { "rigid": [ {
+      "name": "cube", "shape": "cube/cube_fine_mesh.mochi.h5", "scale": [0.1, 0.1, 0.1],
+      "translation": [1, 0, 0.5], "colliderType": "Box", "density": 1000 } ] }
+  })");
+  cubeOnly.run.groundPlane = true;
+  EXPECT_NEAR(Describe(cubeOnly).groundHeight.value_or(-1), 0.5f, 1e-3f);
+}
+
 TEST_F(TunerTest, GroundPlaneDefaultsToPrefabLowestPointAndCanBeOverridden) {
   // A 0.1 m cube authored with its bottom at z = 0.5, under gravity.
   constexpr char kRaisedCube[] = R"({
