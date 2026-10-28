@@ -453,6 +453,8 @@ class AMGActorPrec : public ActorPreconditioner<T> {
     return PreconditionerType::AMG;
   }
 
+  // TODO: Explore viewing the actor matrix instead of copying it when no interaction falls in its
+  // rows. See D128075407.
   BlockSparseMatrix<T, kBlockSize> Afine;
   std::unique_ptr<krylov::AMGPrec<T, kBlockSize>> prec;
 };
@@ -517,6 +519,8 @@ class RigidBodyModesAMGActorPrec : public ActorPreconditioner<T> {
     return PreconditionerType::AMG;
   }
 
+  // TODO: Explore viewing the actor matrix instead of copying it when no interaction falls in its
+  // rows. See D128075407.
   BlockSparseMatrix<T, 3> Afine;
   std::unique_ptr<krylov::RigidBodyModesAMGPrec<T>> prec;
 };
