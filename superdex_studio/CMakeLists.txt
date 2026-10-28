@@ -216,6 +216,7 @@ mochi_set_compiler_options(superdex_studio)
 mochi_set_output_directories(superdex_studio)
 mochi_set_sibling_library_rpath(superdex_studio)
 mochi_set_gui_subsystem(superdex_studio)
+mochi_set_long_path_aware(superdex_studio)
 
 #-----------------------------------------------------------------------------
 # Runtime resources

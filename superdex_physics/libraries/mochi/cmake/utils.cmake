@@ -75,6 +75,19 @@ function (mochi_set_gui_subsystem target_name)
 endfunction ()
 
 #-----------------------------------------------------------------------------
+# mochi_set_long_path_aware
+#-----------------------------------------------------------------------------
+
+# Embed a manifest that marks the executable longPathAware, so file APIs accept paths longer than
+# MAX_PATH (260 characters) on machines that enable long paths (the LongPathsEnabled registry
+# value). Without it, the registry value alone has no effect. No-op off Windows.
+function (mochi_set_long_path_aware target_name)
+    if (MSVC)
+        target_sources(${target_name} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/long_path_aware.manifest")
+    endif ()
+endfunction ()
+
+#-----------------------------------------------------------------------------
 # mochi_collect_shared_link_libraries
 #-----------------------------------------------------------------------------
 
