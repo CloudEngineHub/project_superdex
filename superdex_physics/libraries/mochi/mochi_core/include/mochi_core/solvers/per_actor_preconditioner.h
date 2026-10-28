@@ -380,8 +380,8 @@ struct PerActorPrec final : Preconditioner<T> {
     MOCHI_ASSERT_VERBOSE(
         isize(_solveOrder) == isize(_actorPrecs) && _solveItemRanges.back() == isize(_actorPrecs),
         "Stale Solve items.");
-    // TODO[T175051452]: Use a dynamically balanced, cost-aware ParallelForN once available, so work
-    // can move away from tasks that start late or run longer than estimated.
+    // TODO[T175051452]: Use a cost-aware ParallelForN once available, so work can move away from
+    // tasks that run longer than estimated.
     ParallelForN("PerActorPrecSolve", isize(_solveItemRanges) - 1, /*minPerTask*/ 1, [&](int item) {
       for (int i = _solveItemRanges[item]; i < _solveItemRanges[item + 1]; ++i) {
         _actorPrecs[_solveOrder[i]].Solve(x, y);

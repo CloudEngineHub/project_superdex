@@ -74,6 +74,9 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
   }
 
   void Solve(ColumnVectorView<real const> x, ColumnVectorView<real> Px) const override {
+    if (_solveGate != nullptr) {
+      _solveGate->wait();
+    }
     {
       std::lock_guard lock(_callsMutex);
       _solvePhysicalWorkerIds.push_back(gPhysicalWorkerId);
@@ -118,6 +121,11 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
     return _solvePhysicalWorkerIds;
   }
 
+  // Makes every Solve wait for `gate` first.
+  void WaitBeforeSolve(std::shared_future<void> const& gate) {
+    _solveGate = &gate;
+  }
+
   void SignalAfterNextSolve(std::promise<void>& signal) const {
     std::promise<void>* expected = nullptr;
     [[maybe_unused]] bool const installed =
@@ -139,6 +147,7 @@ class RecordingActorPreconditioner final : public ActorPreconditioner<real> {
   ActorPreconditionerParallelism _parallelism;
   ActorPreconditionerCost _cost;
   real _scale;
+  std::shared_future<void> const* _solveGate = nullptr;
   mutable std::atomic<std::promise<void>*> _solveCompletionSignal = nullptr;
   mutable std::mutex _callsMutex;
   mutable DynamicArray<ConcurrentCall> _calls;
@@ -930,7 +939,8 @@ TEST(PerActorPreconditioner, BuiltInCostsAreValidAndRepresentativeModesMatchSeri
 
 TEST(PerActorPreconditioner, SolveSplitsActorsAcrossThreads) {
   // Called from a bound thread that is not a worker, with one worker, ParallelForN queues every
-  // item but the last on the worker and runs the last item on the caller.
+  // item but the last for the worker and runs the last item on the caller. The caller's item waits
+  // until the worker has solved its item; otherwise the caller could run that item itself.
   auto expectSolve = [](double denseCost, int denseThreadId, double smallCost, int smallThreadId) {
     constexpr int kNumSparseRows = 30000;
     TaskScheduler scheduler(1);
@@ -957,6 +967,13 @@ TEST(PerActorPreconditioner, SolveSplitsActorsAcrossThreads) {
     expected.TopRows(2) = 2_r * x.TopRows(2);
     expected.MiddleRows(2, 2) = 3_r * x.MiddleRows(2, 2);
     expected.BottomRows(kNumSparseRows) = 5_r * x.BottomRows(kNumSparseRows);
+
+    std::promise<void> workerItemSolved;
+    std::shared_future<void> const workerItemDone = workerItemSolved.get_future().share();
+    if (denseThreadId == -1 || smallThreadId == -1) {
+      (denseThreadId == -1 ? first : second).SignalAfterNextSolve(workerItemSolved);
+      third.WaitBeforeSolve(workerItemDone); // [third] is in the caller's item.
+    }
 
     gPhysicalWorkerId = 0; // Tags the caller; the scheduler's worker keeps -1.
     prec.Solve(x, Px);

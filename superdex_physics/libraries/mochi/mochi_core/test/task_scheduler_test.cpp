@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -785,6 +786,30 @@ TEST(TaskScheduler, NumThreads2) {
 
 TEST(TaskScheduler, NumThreads3) {
   TestTaskScheduler(3);
+}
+
+TEST(TaskScheduler, ParallelForRangeCallerRunsUnstartedSubRanges) {
+  // The only worker stays busy until ParallelForRange returns, so the calling thread must run every
+  // sub-range. Waiting for the worker instead would deadlock.
+  TaskScheduler scheduler(1);
+  std::promise<void> started;
+  std::promise<void> release;
+  TaskSemaphore busy;
+  scheduler.AddTask(busy, "Busy", [&started, released = release.get_future().share()]() {
+    started.set_value();
+    released.wait();
+  });
+  started.get_future().wait();
+
+  auto const callingThreadId = std::this_thread::get_id();
+  int numSubRanges = 0;
+  ParallelForRange("Test", 0, 64, 1, std::numeric_limits<int>::max(), [&](int, int) {
+    EXPECT_EQ(callingThreadId, std::this_thread::get_id());
+    ++numSubRanges;
+  });
+  EXPECT_GT(numSubRanges, 1);
+  release.set_value();
+  busy.Wait();
 }
 
 TEST(TaskScheduler, IsCurrentThreadAWorker) {

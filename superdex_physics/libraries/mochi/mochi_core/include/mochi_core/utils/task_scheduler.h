@@ -383,7 +383,8 @@ void Schedule(TaskSemaphore const& sem, std::string_view debugNameStringLiteral,
   each index. If each call is very cheap, then set minPerTask to a larger value to reduce overhead.
 
   The calling thread runs the last sub-range itself. Callers may rely on this, e.g. to keep work on
-  the calling thread.
+  the calling thread. It then runs every sub-range no worker has started, so it waits only for
+  sub-ranges already in progress.
 */
 template <typename FN>
 void ParallelForRange(
@@ -403,7 +404,7 @@ void ParallelForRange(
   each index. If each call is very cheap, then set minPerTask to a larger value to reduce overhead.
 
   The calling thread runs the sub-range containing index n - 1. Callers may rely on this, e.g. to
-  keep work on the calling thread.
+  keep work on the calling thread. It then runs every sub-range no worker has started.
 
   Example:
     ParallelForN("DoSomething", 100, 1, [](int i) { DoSomething(i); });

@@ -109,6 +109,15 @@ Schedule(TaskSemaphore const& sem, std::string_view debugNameStringLiteral, FN&&
   }
 }
 
+namespace details {
+// Claim state of one ParallelForRange call, shared by the calling thread and its tasks.
+struct ParallelForClaims {
+  explicit ParallelForClaims(int numUnfinished) : unfinished(numUnfinished) {}
+  TaskSemaphore const unfinished;
+  std::atomic<int> next{0};
+};
+} // namespace details
+
 template <typename FN>
 void ParallelForRange(
     [[maybe_unused]] std::string_view debugName,
@@ -148,34 +157,43 @@ void ParallelForRange(
       numTasksTarget ? std::min(std::max(count / numTasksTarget, minPerTask), maxPerTask) : count;
 
   // Schedule tasks to handle each sub-range except the last one, which this thread will handle.
+  // Each task claims the next unclaimed sub-range when it starts. After its own sub-range, this
+  // thread claims and handles the rest, so it never waits for a busy or sleeping worker to start
+  // one. A task that starts after every sub-range is claimed does nothing, so it never touches
+  // forRange after this call returns. The tasks keep the claim state alive until they finish.
   int numTasks = numPerTask ? (count - 1) / numPerTask : 0;
-  int localRangeBegin = globalRangeBegin;
-  TaskSemaphore const sem(numTasks);
+  std::shared_ptr<mochi::details::ParallelForClaims> claims;
+  auto claimRange = [&forRange, globalRangeBegin, numPerTask, numTasks](
+                        mochi::details::ParallelForClaims& state) {
+    int const range = state.next.fetch_add(1, std::memory_order_relaxed);
+    if (range >= numTasks) {
+      return false;
+    }
+    int const localRangeBegin = globalRangeBegin + range * numPerTask;
+    forRange(localRangeBegin, localRangeBegin + numPerTask);
+    state.unfinished.Done();
+    return true;
+  };
   if (numTasks > 0) {
+    claims = std::make_shared<mochi::details::ParallelForClaims>(numTasks);
 #if MOCHI_TASK_PROFILE_VERBOSITY == MOCHI_TASK_PROFILE_VERBOSITY_HIGH
     MOCHI_PROFILE_DESCRIPTION_F("%d items, %d tasks", count, numTasks);
 #endif
     for (int i = 0; i < numTasks; ++i) {
-      int localRangeEnd = localRangeBegin + numPerTask;
 #if MOCHI_TASK_PROFILE_VERBOSITY == MOCHI_TASK_PROFILE_VERBOSITY_HIGH
       // TaskScheduler will wrap our std::function in another one, which will add custom formatted
       // profile labels.
-      scheduler->AddTask(debugName, [sem, &forRange, localRangeBegin, localRangeEnd]() {
-        forRange(localRangeBegin, localRangeEnd);
-        sem.Done();
-      });
+      scheduler->AddTask(debugName, [claimRange, claims]() { claimRange(*claims); });
 #else
       scheduler->AddTaskNoProfile(
-          [sem, &forRange, localRangeBegin, localRangeEnd]() {
+          [claimRange, claims]() {
 #if MOCHI_TASK_PROFILE_VERBOSITY == MOCHI_TASK_PROFILE_VERBOSITY_LOW
             MOCHI_PROFILE_SCOPE_N("RunTask");
 #endif
-            forRange(localRangeBegin, localRangeEnd);
-            sem.Done();
+            claimRange(*claims);
           },
           false);
 #endif
-      localRangeBegin = localRangeEnd;
     }
   }
 
@@ -196,11 +214,15 @@ void ParallelForRange(
 #elif MOCHI_TASK_PROFILE_VERBOSITY == MOCHI_TASK_PROFILE_VERBOSITY_LOW
     MOCHI_PROFILE_SCOPE_N("RunTask");
 #endif
-    forRange(localRangeBegin, globalRangeEnd);
+    forRange(globalRangeBegin + numTasks * numPerTask, globalRangeEnd);
+    if (numTasks > 0) {
+      while (claimRange(*claims)) {
+      }
+    }
   }
 
   if (numTasks > 0) {
-    sem.Wait();
+    claims->unfinished.Wait();
   }
 }
 
