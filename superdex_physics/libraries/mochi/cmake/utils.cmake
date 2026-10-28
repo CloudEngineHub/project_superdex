@@ -267,6 +267,7 @@ function (mochi_add_executable target_name target_dir)
 
     mochi_set_compiler_options(${target_name})
     mochi_set_output_directories(${target_name})
+    mochi_set_long_path_aware(${target_name})
 
     # Enable reflection for src files within this executable.
     target_compile_definitions(${target_name} PRIVATE "MOCHI_USE_REFLECTION=1")

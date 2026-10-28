@@ -83,6 +83,7 @@ endif ()
 
 mochi_set_compiler_options(superdex_mesh_cli)
 mochi_set_output_directories(superdex_mesh_cli)
+mochi_set_long_path_aware(superdex_mesh_cli)
 set_property(TARGET superdex_mesh_cli PROPERTY CXX_STANDARD 20)
 
 mochi_install_runtime_dependencies(superdex_mesh_cli COMPONENT superdex_mesh_cli)
