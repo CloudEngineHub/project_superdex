@@ -21,7 +21,6 @@
 #include <mochi_core/utils/log.h>
 
 #include <rerun.hpp>
-#include <algorithm>
 
 #include <algorithm>
 #include <array>
