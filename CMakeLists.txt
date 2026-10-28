@@ -51,6 +51,7 @@ set(MOCHI_INTERNAL OFF CACHE BOOL "Only external builds are supported with CMake
 
 if (SUPERDEX_BUILD_ALL)
     set(SUPERDEX_BUILD_ROBOTICS ON CACHE BOOL "" FORCE)
+    set(SUPERDEX_BUILD_ASSET_TUNER ON CACHE BOOL "" FORCE)
     set(SUPERDEX_BUILD_STUDIO ON CACHE BOOL "" FORCE)
     set(SUPERDEX_PHYSICS_BUILD_ALL ON CACHE BOOL "" FORCE)
 endif ()
@@ -98,6 +99,10 @@ endif ()
 
 if (SUPERDEX_BUILD_RECORDER)
     add_subdirectory(superdex_recorder)
+endif ()
+
+if (SUPERDEX_BUILD_ASSET_TUNER)
+    add_subdirectory(superdex_asset_tuner)
 endif ()
 
 if (SUPERDEX_BUILD_STUDIO)
