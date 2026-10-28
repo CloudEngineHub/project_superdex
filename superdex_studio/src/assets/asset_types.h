@@ -36,6 +36,7 @@ enum class AssetType {
   BotScene,
   BotTask,
   CadModel,
+  Tuner,
   Unknown,
   Count
 };
@@ -50,6 +51,7 @@ constexpr std::array<char const*, kAssetTypeCount> kAssetTypeLabels = {
     "Bot Scene",
     "Task",
     "CAD Model",
+    "Asset Tuner",
     "(Unknown)"};
 
 inline constexpr char const* GetAssetTypeLabel(AssetType type) {
@@ -69,7 +71,7 @@ struct AssetTypeExtension {
 //
 // Order is significant twice over: the first matching entry wins, so an extension must precede any
 // shorter one that is its own suffix; and within a type, earlier means preferred.
-constexpr std::array<AssetTypeExtension, 17> kAssetTypeExtensions{
+constexpr std::array<AssetTypeExtension, 18> kAssetTypeExtensions{
     {{".glb", AssetType::RenderModel},
      {".gltf", AssetType::RenderModel},
      {".dae", AssetType::RenderModel},
@@ -89,7 +91,8 @@ constexpr std::array<AssetTypeExtension, 17> kAssetTypeExtensions{
      {".mochi_bot_archive", AssetType::Bot},
      {".mochi_bot", AssetType::Bot},
      {".mochi_scene", AssetType::MochiPrefab},
-     {".mochi_prefab", AssetType::MochiPrefab}}};
+     {".mochi_prefab", AssetType::MochiPrefab},
+     {".superdex_tuner", AssetType::Tuner}}};
 
 AssetType ClassifyAssetTypeByFilename(std::string_view filename);
 AssetType ClassifyAssetTypeByPath(mochi::Path const& path);

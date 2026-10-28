@@ -57,8 +57,9 @@ if (SUPERDEX_BUILD_ALL)
 endif ()
 
 if (SUPERDEX_BUILD_STUDIO)
-    # Needed to build the studio: it links all four.
+    # Needed to build the studio: it links all five.
     set(SUPERDEX_BUILD_ROBOTICS ON CACHE BOOL "" FORCE)
+    set(SUPERDEX_BUILD_ASSET_TUNER ON CACHE BOOL "" FORCE)
     set(MOCHI_BUILD_RENDERER ON CACHE BOOL "" FORCE)
     set(MOCHI_BUILD_MESH_LIB ON CACHE BOOL "" FORCE)
     set(MOCHI_BUILD_IMGUIOS ON CACHE BOOL "" FORCE)

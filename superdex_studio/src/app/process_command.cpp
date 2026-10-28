@@ -52,6 +52,7 @@ std::string* SlotForType(PipelineModelSlots& slots, AssetType type) {
     case AssetType::Bot:
     case AssetType::BotScene:
     case AssetType::BotTask:
+    case AssetType::Tuner:
     case AssetType::Unknown:
     case AssetType::Count:
       break;

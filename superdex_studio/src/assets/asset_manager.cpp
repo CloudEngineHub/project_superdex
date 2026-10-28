@@ -71,6 +71,8 @@ Asset* AssetManager::LoadAsset(mochi::Path const& path) {
       return LoadMochiPrefabAsset(path);
     case AssetType::Bot:
       return LoadBotAsset(path);
+    case AssetType::Tuner:
+      return LoadTunerAsset(path);
 #if MOCHI_INTERNAL
     case AssetType::BotScene:
       return LoadBotSceneAsset(path);
@@ -202,6 +204,23 @@ BotSceneAsset* AssetManager::LoadBotSceneAsset(mochi::Path const& path) {
   return nullptr;
 }
 #endif // MOCHI_INTERNAL
+
+TunerAsset* AssetManager::LoadTunerAsset(mochi::Path const& path) {
+  if (auto* existing = FindAssetByPath(path)) {
+    if (existing->GetType() == AssetType::Tuner) {
+      return static_cast<TunerAsset*>(existing);
+    }
+    MOCHI_LOG_ERROR(
+        "Failed to cast previously loaded asset to TunerAsset: %s", path.ToString().c_str());
+    return nullptr;
+  }
+  auto asset = TunerAsset::Create(GetAssetNameFromPath(path), path, this);
+  if (asset) {
+    return static_cast<TunerAsset*>(RegisterAsset(path, std::move(asset)));
+  }
+  MOCHI_LOG_ERROR("Failed to load TunerAsset: %s", path.ToString().c_str());
+  return nullptr;
+}
 
 bool AssetManager::UnloadAssetByPath(mochi::Path const& path) {
   auto it = _assets.find(path);

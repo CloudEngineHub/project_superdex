@@ -23,6 +23,7 @@
 #endif
 
 #include <mochi_physics/utils/mochi_prefab.h>
+#include <superdex_asset_tuner/tuner_spec.h>
 #include <superdex_robotics/utils/file_utils.h>
 
 #include <imguios/fonts/icons_font_awesome5.h>
@@ -834,6 +835,13 @@ void AssetBrowser::ShowItemContextMenuContents(TileItem const& item, Asset const
     showedAssetActions = true;
   }
 #endif // MOCHI_INTERNAL
+  if (selectedCount == 1 && !item.isFolder &&
+      ClassifyAssetTypeByFilename(item.fullPath.GetFilename()) == AssetType::MochiPrefab) {
+    if (ImGui::IconSelectable("Create Asset Tuner...", ICON_FA_PLUS)) {
+      CreateTunerAsset(item.fullPath);
+    }
+    showedAssetActions = true;
+  }
   if (showedAssetActions) {
     ImGui::Separator(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
   }
@@ -1422,6 +1430,30 @@ void AssetBrowser::CreateModBotAsset(mochi::Path const& dir, std::string const& 
       // The file was written with a placeholder name before the user picked one.
       bot->Save();
     }
+  });
+}
+
+void AssetBrowser::CreateTunerAsset(mochi::Path const& prefabPath) {
+  std::string const extension{superdex::tuner::kTunerFileExtension};
+  mochi::Path const dir = prefabPath.GetParentPath();
+  std::string const tunerName =
+      MakeUniqueFileName(GetAssetNameFromPath(prefabPath) + "_tuner", dir, extension);
+  auto const newPath = dir / (tunerName + extension);
+
+  superdex::tuner::TunerSpec spec;
+  spec.prefab = "./" + prefabPath.GetFilename();
+  superdex::tuner::ProbeSpec solverStats;
+  solverStats.kind = superdex::tuner::ProbeKind::SolverStats;
+  spec.probes.push_back(std::move(solverStats));
+
+  std::string error;
+  if (!superdex::tuner::SaveTunerSpecToFile(spec, newPath.AsFilesystemPath(), error)) {
+    MOCHI_LOG_ERROR("Failed to create asset tuner: %s", error.c_str());
+    return;
+  }
+  BeginRenaming(newPath, tunerName, [this, extension](std::string const& newName) {
+    RenameAsset(_renamingPath, newName);
+    _studio->OpenPath(_renamingPath.GetParentPath() / (newName + extension));
   });
 }
 

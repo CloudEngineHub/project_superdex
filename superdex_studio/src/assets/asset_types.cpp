@@ -148,6 +148,8 @@ std::string_view AssetTypeToToken(AssetType type) {
       return "BotTask";
     case AssetType::CadModel:
       return "CadModel";
+    case AssetType::Tuner:
+      return "Tuner";
     case AssetType::Unknown:
     case AssetType::Count:
       return "Unknown";
@@ -219,6 +221,7 @@ std::string_view AssetRoleFolderForType(AssetType type) {
     case AssetType::Bot:
     case AssetType::BotScene:
     case AssetType::BotTask:
+    case AssetType::Tuner:
     case AssetType::Unknown:
     case AssetType::Count:
       break;

@@ -63,6 +63,7 @@
 #include "editors/bot_scene_editor.h"
 #include "editors/mochi_prefab_editor.h"
 #include "editors/model_editor.h"
+#include "editors/tuner_editor.h"
 #include "io/mjcf_importer.h"
 #include "io/urdf_importer.h"
 
@@ -1681,6 +1682,7 @@ void SuperDexStudio::ShowMainMenu() {
             "*.mochi_bot_archive",
             "*.mochi_scene",
             "*.mochi_prefab",
+            "*.superdex_tuner",
 #if MOCHI_INTERNAL
             "*.mochi_bot_scene",
             "*.mochi_bot_scene_archive",
@@ -2549,6 +2551,7 @@ void SuperDexStudio::BuildDefaultDockLayout() {
   DockEditorDefaultWindows<ModelEditor>(dock_right, dock_right_bottom, dock_bottom);
   DockEditorDefaultWindows<BotEditor>(dock_right, dock_right_bottom, dock_bottom);
   DockEditorDefaultWindows<MochiPrefabEditor>(dock_right, dock_right_bottom, dock_bottom);
+  DockEditorDefaultWindows<TunerEditor>(dock_right, dock_right_bottom, dock_bottom);
 #if MOCHI_INTERNAL
   DockEditorDefaultWindows<BotSceneEditor>(dock_right, dock_right_bottom, dock_bottom);
 #endif

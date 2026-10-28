@@ -19,6 +19,7 @@
 #include "assets/asset.h"
 #include "assets/asset_referencer.h"
 #include "assets/bot_asset.h"
+#include "assets/tuner_asset.h"
 #if MOCHI_INTERNAL
 #include "assets/bot_scene_asset.h"
 #endif
@@ -61,6 +62,7 @@ class AssetManager {
   MochiModelAsset* LoadMochiModelAsset(mochi::Path const& path);
   MochiPrefabAsset* LoadMochiPrefabAsset(mochi::Path const& path);
   BotAsset* LoadBotAsset(mochi::Path const& path);
+  TunerAsset* LoadTunerAsset(mochi::Path const& path);
 #if MOCHI_INTERNAL
   BotSceneAsset* LoadBotSceneAsset(mochi::Path const& path);
 #endif

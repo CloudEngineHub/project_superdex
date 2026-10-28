@@ -123,6 +123,8 @@ class AssetBrowser {
   bool RenameAsset(mochi::Path const& assetPath, std::string const& newStem);
   void DuplicateItem(TileItem const& item);
   void CreateModBotAsset(mochi::Path const& dir, std::string const& base = {});
+  // Creates a .superdex_tuner next to `prefabPath` that references it, then renames and opens it.
+  void CreateTunerAsset(mochi::Path const& prefabPath);
 
   DirectoryNode const* FindNode(mochi::Path const& path) const;
   mochi::Path const* FindOwningRoot(mochi::Path const& path) const;

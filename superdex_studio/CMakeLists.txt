@@ -134,6 +134,7 @@ target_include_directories(superdex_studio_static SYSTEM PUBLIC "${CMAKE_CURRENT
 target_link_libraries(superdex_studio_static
     PUBLIC
         superdex_studio_processing
+        superdex_asset_tuner_static
         mochi_core
         mochi_physics
         mochi_renderer
