@@ -769,10 +769,10 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
 #endif
     if (!isSdfGradUnitary) {
       V norm = Norm(normal);
-      normal *= 1_r / norm;
+      normal *= 1_r / (norm + std::numeric_limits<real>::min());
 
       V isNearZero = norm < kNormalIsZeroThreshold;
-      if (AnyTrue(isNearZero)) MOCHI_UNLIKELY {
+      if (AnyTrue<kBatchSize>(isNearZero)) MOCHI_UNLIKELY {
         // TODO: Support member-wise Select with NdArray
         if (config.validCollidingNormals) {
           normal[0] = Select(isNearZero, -nColliding[0], normal[0]);
