@@ -2861,18 +2861,7 @@ void ModelEditor::MoveModifier(std::size_t from, std::size_t to) {
       oldToNew[k] = static_cast<int>(k);
     }
   }
-  auto const begin = _modifiers.begin();
-  if (from < to) {
-    std::rotate(
-        begin + static_cast<long>(from),
-        begin + static_cast<long>(from) + 1,
-        begin + static_cast<long>(to) + 1);
-  } else {
-    std::rotate(
-        begin + static_cast<long>(to),
-        begin + static_cast<long>(from),
-        begin + static_cast<long>(from) + 1);
-  }
+  MoveElement(_modifiers, from, to);
   RemapModifierReferences(oldToNew);
 }
 
@@ -3239,18 +3228,7 @@ void ModelEditor::ShowReferenceModelsSection() {
   };
   // Reference models don't reference each other, so a reorder is a plain rotate with no upkeep.
   list.move = [&](std::size_t from, std::size_t to) {
-    auto const begin = _referenceModels.begin();
-    if (from < to) {
-      std::rotate(
-          begin + static_cast<std::ptrdiff_t>(from),
-          begin + static_cast<std::ptrdiff_t>(from) + 1,
-          begin + static_cast<std::ptrdiff_t>(to) + 1);
-    } else if (to < from) {
-      std::rotate(
-          begin + static_cast<std::ptrdiff_t>(to),
-          begin + static_cast<std::ptrdiff_t>(from),
-          begin + static_cast<std::ptrdiff_t>(from) + 1);
-    }
+    MoveElement(_referenceModels, from, to);
     SaveProcessingPipelineToDisk();
   };
   list.drawContent = [&](std::size_t i) {

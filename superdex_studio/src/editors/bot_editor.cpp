@@ -2330,6 +2330,30 @@ static void PrepopulateModification(
       newMod);
 }
 
+static mochi::DynamicString const& ModificationName(superdex::robotics::BotMod const& mod) {
+  return std::visit([](auto const& m) -> mochi::DynamicString const& { return m.name; }, mod);
+}
+
+// Card title of a mod bot modification: its type, plus its name when it has one.
+static std::string ModificationLabel(superdex::robotics::BotMod const& mod) {
+  return std::visit(
+      [](auto const& m) {
+        using T = std::decay_t<decltype(m)>;
+        std::string label = std::is_same_v<T, superdex::robotics::AttachBot> ? "Attach Bot"
+            : std::is_same_v<T, superdex::robotics::AttachLink>              ? "Attach Link"
+            : std::is_same_v<T, superdex::robotics::ReplaceLink>             ? "Replace Link"
+            : std::is_same_v<T, superdex::robotics::AttachSkin>              ? "Attach Skin"
+                                                                : "Replace Link With Bot";
+        if (!m.name.empty()) {
+          label += " (";
+          label += m.name.c_str();
+          label += ")";
+        }
+        return label;
+      },
+      mod);
+}
+
 // Returns the valid link names present in the mod bot after applying modifications [0, modIndex).
 // Used to populate parent/target link dropdowns for the modification at position modIndex.
 static mochi::DynamicArray<mochi::DynamicString> LinkNamesUpToMod(
@@ -2456,6 +2480,38 @@ bool BotEditor::RecomputeModBuildStatus() {
   return buildOk;
 }
 
+// Keeps _modRows paired with the modifications. The card list moves, removes and renames rows in
+// step with its own edits. Any other edit (undo, paste, the skin panel) re-pairs each modification
+// with the old row of the same type and name, so its card keeps its state, and cancels a drag in
+// progress, whose row may now belong to another modification.
+void BotEditor::SyncModRows(mochi::DynamicArray<superdex::robotics::BotMod> const& mods) {
+  auto const matches = [](ModRowState const& row, superdex::robotics::BotMod const& mod) {
+    return row.kind == mod.index() && row.name == ModificationName(mod);
+  };
+  bool inSync = _modRows.size() == mods.size();
+  for (std::size_t i = 0; inSync && i < mods.size(); ++i) {
+    inSync = matches(_modRows[i], mods[i]);
+  }
+  if (inSync) {
+    return;
+  }
+  std::vector<ModRowState> rows;
+  rows.reserve(mods.size());
+  for (auto const& mod : mods) {
+    auto const old = std::find_if(_modRows.begin(), _modRows.end(), [&](ModRowState const& row) {
+      return row.id != 0 && matches(row, mod);
+    });
+    if (old != _modRows.end()) {
+      rows.push_back(std::move(*old));
+      old->id = 0; // taken
+    } else {
+      rows.push_back({_nextModRowId++, true, mod.index(), ModificationName(mod)});
+    }
+  }
+  _modRows = std::move(rows);
+  _modDrag = {};
+}
+
 bool BotEditor::ShowModBotPrefabEditorWidgets(
     superdex::robotics::ModBotPrefab& modBotPrefab,
     AssetManager const& assetManager) {
@@ -2470,8 +2526,6 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
   changed |= CopyPasteContextMenu("ModificationsPopup", modBotPrefab.modifications);
 
   int indexToDelete = -1;
-  int indexToMoveUp = -1;
-  int indexToMoveDown = -1;
 
   auto linkNameCombo = [&](char const* label, mochi::DynamicString& value, int modIndex) -> bool {
     bool comboChanged = false;
@@ -2491,85 +2545,79 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
     }
     return comboChanged;
   };
-  for (size_t i = 0; i < modBotPrefab.modifications.size(); ++i) {
-    ImGui::PushID(static_cast<int>(i));
 
-    // A failing mod is highlighted; mods below it have no effect yet (BuildBot
-    // stops at the failure) so they are dimmed. State is read from the cached
-    // index — no building happens here.
-    bool const isFailing = (static_cast<int>(i) == _firstFailingModIndex);
-    bool const isBelowFailure = _firstFailingModIndex != superdex::robotics::kIndexNone &&
-        _firstFailingIsBuildError && static_cast<int>(i) > _firstFailingModIndex;
+  auto& mods = modBotPrefab.modifications;
+  SyncModRows(mods);
+
+  // A failing mod is highlighted; mods below it have no effect yet (BuildBot stops at the failure)
+  // so they are dimmed. State is read from the cached index -- no building happens here.
+  auto isFailing = [&](std::size_t i) { return static_cast<int>(i) == _firstFailingModIndex; };
+  auto isBelowFailure = [&](std::size_t i) {
+    return _firstFailingModIndex != superdex::robotics::kIndexNone && _firstFailingIsBuildError &&
+        static_cast<int>(i) > _firstFailingModIndex;
+  };
+  auto isEnabled = [&](std::size_t i) {
+    return std::visit([](auto const& m) { return m.enabled; }, mods[i]);
+  };
+
+  ReorderableBubbleList list;
+  list.count = mods.size();
+  list.id = [&](std::size_t i) { return _modRows[i].id; };
+  list.bubbleColor = [&](std::size_t i, bool isPlaceholder) {
+    if (isPlaceholder || !isEnabled(i) || isBelowFailure(i)) {
+      return ImGui::GetColorU32(ImVec4(0.13f, 0.13f, 0.15f, 1.0f));
+    }
+    if (isFailing(i)) {
+      return ImGui::GetColorU32(ImVec4(0.36f, 0.30f, 0.10f, 1.0f));
+    }
+    return ImGui::GetColorU32(ImVec4(0.24f, 0.24f, 0.28f, 1.0f));
+  };
+  list.ghostLabel = [&](std::size_t i) { return ModificationLabel(mods[i]); };
+  list.move = [&](std::size_t from, std::size_t to) {
+    if (from == to) {
+      return;
+    }
+    MoveElement(mods, from, to);
+    MoveElement(_modRows, from, to);
+    changed = true;
+  };
+  list.drawContent = [&](std::size_t i) {
     ImGuiStyle const& style = ImGui::GetStyle();
-    if (isBelowFailure) {
+    bool const dimmed = isBelowFailure(i);
+    if (dimmed) {
       ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * style.DisabledAlpha);
     }
 
-    auto& mod = modBotPrefab.modifications[i];
-    changed |= std::visit(
-        [&](auto&& m) -> bool {
-          using T = std::decay_t<decltype(m)>;
-          bool modChanged = false;
+    std::string label = ModificationLabel(mods[i]);
+    if (isFailing(i)) {
+      label += " " ICON_FA_EXCLAMATION_TRIANGLE;
+    }
+    bool& enabled = std::visit([](auto& m) -> bool& { return m.enabled; }, mods[i]);
+    bool const wasEnabled = enabled;
+    bool remove = false;
+    bool const bodyOpen = DrawBubbleHeader(
+        i,
+        &enabled,
+        "When unchecked this modification is skipped.",
+        label,
+        _modRows[i].collapsed,
+        "Remove this modification.",
+        remove);
+    changed |= enabled != wasEnabled;
+    if (remove) {
+      indexToDelete = static_cast<int>(i);
+    }
+    if (isFailing(i) && !_modBuildError.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+      ImGui::TextWrapped("%s", _modBuildError.c_str());
+      ImGui::PopStyleColor();
+    }
 
-          char const* typeName = std::is_same_v<T, superdex::robotics::AttachBot> ? "Attach Bot"
-              : std::is_same_v<T, superdex::robotics::AttachLink>                 ? "Attach Link"
-              : std::is_same_v<T, superdex::robotics::ReplaceLink>                ? "Replace Link"
-              : std::is_same_v<T, superdex::robotics::AttachSkin>                 ? "Attach Skin"
-                                                                  : "Replace Link With Bot";
-          char const* warnIcon = isFailing ? " " ICON_FA_EXCLAMATION_TRIANGLE : "";
-          std::array<char, 128> label{};
-          if (m.name.empty()) {
-            snprintf(label.data(), label.size(), "%s #%zu%s###Mod%zu", typeName, i, warnIcon, i);
-          } else {
-            snprintf(
-                label.data(),
-                label.size(),
-                "%s (%s)%s###Mod%zu",
-                typeName,
-                m.name.c_str(),
-                warnIcon,
-                i);
-          }
-
-          ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1, 0));
-          if (ImGui::Button(ICON_FA_TRASH)) {
-            indexToDelete = static_cast<int>(i);
-          }
-          ImGui::SameLine();
-          if (ImGui::Checkbox("##Enabled", &m.enabled)) {
-            modChanged = true;
-            changed = true;
-          }
-          ImGui::SameLine();
-          ImGui::BeginDisabled(i == 0);
-          if (ImGui::Button(ICON_FA_CARET_UP)) {
-            indexToMoveUp = static_cast<int>(i);
-          }
-          ImGui::EndDisabled();
-          ImGui::SameLine();
-          ImGui::BeginDisabled(i == modBotPrefab.modifications.size() - 1);
-          if (ImGui::Button(ICON_FA_CARET_DOWN)) {
-            indexToMoveDown = static_cast<int>(i);
-          }
-          ImGui::EndDisabled();
-          ImGui::SameLine();
-          ImGui::PopStyleVar();
-
-          if (isFailing) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-          }
-          bool const headerOpen = ImGui::CollapsingHeader(label.data());
-          if (isFailing && ImGui::IsItemHovered() && !_modBuildError.empty()) {
-            ImGui::SetTooltip("%s", _modBuildError.c_str());
-          }
-          if (isFailing) {
-            ImGui::PopStyleColor();
-          }
-          if (headerOpen) {
-            if (ImGui::InputText("Name", &m.name, ImGuiInputTextFlags_CharsNoBlank)) {
-              modChanged = true;
-              changed = true;
-            }
+    if (bodyOpen) {
+      changed |= std::visit(
+          [&](auto& m) -> bool {
+            using T = std::decay_t<decltype(m)>;
+            bool modChanged = ImGui::InputText("Name", &m.name, ImGuiInputTextFlags_CharsNoBlank);
             if constexpr (std::is_same_v<T, superdex::robotics::AttachBot>) {
               modChanged |= ImGui::AssetSlot(
                   "Attach Bot", m.path, assetManager, _studio, AssetType::Bot, true);
@@ -2621,34 +2669,24 @@ bool BotEditor::ShowModBotPrefabEditorWidgets(
                   modelChanged);
               modChanged |= modelChanged;
             }
-          }
-          return modChanged;
-        },
-        mod);
+            return modChanged;
+          },
+          mods[i]);
+    }
 
-    if (isBelowFailure) {
+    if (dimmed) {
       ImGui::PopStyleVar();
     }
-    ImGui::PopID();
-  }
+    // A rename here is the card's own edit, not a reason for SyncModRows to re-pair the rows.
+    if (_modRows[i].name != ModificationName(mods[i])) {
+      _modRows[i].name = ModificationName(mods[i]);
+    }
+  };
+  DrawReorderableBubbleList(_modDrag, list);
 
-  // Handle reordering
-  if (indexToMoveUp > 0) {
-    std::swap(
-        modBotPrefab.modifications[indexToMoveUp], modBotPrefab.modifications[indexToMoveUp - 1]);
-    changed = true;
-  }
-  if (indexToMoveDown >= 0 &&
-      indexToMoveDown < static_cast<int>(modBotPrefab.modifications.size()) - 1) {
-    std::swap(
-        modBotPrefab.modifications[indexToMoveDown],
-        modBotPrefab.modifications[indexToMoveDown + 1]);
-    changed = true;
-  }
-
-  // Handle deletion
   if (indexToDelete >= 0) {
-    modBotPrefab.modifications.erase(modBotPrefab.modifications.begin() + indexToDelete);
+    mods.erase(mods.begin() + indexToDelete);
+    _modRows.erase(_modRows.begin() + indexToDelete);
     changed = true;
   }
 

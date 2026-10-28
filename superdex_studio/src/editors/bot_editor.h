@@ -26,10 +26,15 @@
 #include "simulation/mochi_async_scene.h"
 #include "simulation/physics_drag_controller.h"
 #include "ui/imgui_widgets.h"
+#include "ui/reorderable_list.h"
 
 #include <superdex_robotics/superdex_robotics.h>
 
 #include <mochi_renderer/buffer.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 namespace superdex::studio {
 
@@ -120,6 +125,7 @@ class BotEditor : public AssetEditor {
   bool ShowModBotPrefabEditorWidgets(
       superdex::robotics::ModBotPrefab& modBotPrefab,
       AssetManager const& assetManager);
+  void SyncModRows(mochi::DynamicArray<superdex::robotics::BotMod> const& mods);
   // Mod bot recipe build status. ComputeFirstFailingModIndex sets outIsBuildError
   // to distinguish a hard build failure (chain stops; mods below have no effect)
   // from a validation failure (chain completes but the built bot is invalid).
@@ -232,8 +238,19 @@ class BotEditor : public AssetEditor {
   // stops the modification chain, so mods below are dimmed). False for a
   // validation failure, where subsequent mods still take effect.
   bool _firstFailingIsBuildError = false;
-  // Error/issue message from the failing modification (for hover tooltip).
+  // Error/issue message from the failing modification (shown on its card).
   mochi::DynamicString _modBuildError;
+  // UI state of one modification card, parallel to ModBotPrefab::modifications (see SyncModRows).
+  struct ModRowState {
+    uint64_t id = 0; // stable, nonzero; follows the modification across reorders
+    bool collapsed = true;
+    // The modification's type (variant index) and name as of the last frame, to re-pair rows.
+    std::size_t kind = 0;
+    mochi::DynamicString name;
+  };
+  std::vector<ModRowState> _modRows;
+  uint64_t _nextModRowId = 1;
+  DragReorderState _modDrag;
   // bot visualization visibility, toggled from the viewport Show menu. Appearance lives in
   // AppSettings::botVisualization.
   BotVisualizationFlags _botVizFlags;

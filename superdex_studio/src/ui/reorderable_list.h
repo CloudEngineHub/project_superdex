@@ -18,6 +18,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -71,6 +72,20 @@ struct ReorderableBubbleList {
 // in @p state across frames. Each bubble pads its widgets on all sides, so rows need no margins of
 // their own.
 void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList const& list);
+
+// Moves array[from] to index `to`, shifting the elements between them by one: the reorder that
+// ReorderableBubbleList::move commits, for each array kept in the list's order.
+template <typename Array>
+void MoveElement(Array& array, std::size_t from, std::size_t to) {
+  auto const begin = array.begin();
+  auto const f = static_cast<std::ptrdiff_t>(from);
+  auto const t = static_cast<std::ptrdiff_t>(to);
+  if (f < t) {
+    std::rotate(begin + f, begin + f + 1, begin + t + 1);
+  } else if (t < f) {
+    std::rotate(begin + t, begin + f, begin + f + 1);
+  }
+}
 
 // Header row for a bubble (call first in ReorderableBubbleList::drawContent):
 //   [index] [enable checkbox] [collapsible header] ... [trash]
