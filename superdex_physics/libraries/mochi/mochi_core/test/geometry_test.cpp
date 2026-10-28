@@ -2741,6 +2741,28 @@ TEST(Distances, VDistancePointTriangle_Obtuse) {
   EXPECT_NEAR_RTOL(Get0(VNorm<3>(par - parM)), 0_r, tol);
 }
 
+// A skewed millimeter tetrahedron several centimeters from the origin, the scale of a tetrahedral
+// mesh of a hand-held object. Its coordinates for interior and exterior queries must stay accurate
+// to within 100 epsilon and sum to one well within the skinning tolerance (1e-5).
+TEST(GeometryUtils, BarycentricCoords4StaysAccurateAwayFromTheOrigin) {
+  real constexpr kTolerance = 100_r * std::numeric_limits<real>::epsilon();
+  Real3 const offset{0.0124_r, 0.075_r, 0.0022_r};
+  real constexpr kSize = 1e-3_r;
+  Real3 const v1 = offset;
+  Real3 const v2 = offset + kSize * Real3{1.0_r, 0.2_r, 0.1_r};
+  Real3 const v3 = offset + kSize * Real3{0.3_r, 0.9_r, -0.2_r};
+  Real3 const v4 = offset + kSize * Real3{-0.1_r, 0.3_r, 1.1_r};
+  for (Real4 const& expected :
+       {Real4{0.1_r, 0.2_r, 0.3_r, 0.4_r}, Real4{-0.5_r, 0.25_r, 1.0_r, 0.25_r}}) {
+    Real3 const query = expected[0] * v1 + expected[1] * v2 + expected[2] * v3 + expected[3] * v4;
+    Real4 const coords = BarycentricCoords4(v1, v2, v3, v4, query);
+    for (int i = 0; i < 4; ++i) {
+      EXPECT_NEAR(coords[i], expected[i], kTolerance) << i;
+    }
+    EXPECT_NEAR(Sum(coords), 1_r, 1e-6_r);
+  }
+}
+
 TEST(Distances, VDistancePointTetrahedron) {
   static constexpr int kGrid = 25;
   static constexpr real kGridR = static_cast<real>(kGrid);

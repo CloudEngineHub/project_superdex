@@ -903,6 +903,8 @@ template <typename ShapeT, MOCHI_CONCEPT(IsPrimitiveShape<ShapeT>)>
 
 // Gets the barycentric coordinates of a query with respect to the physical node coordinates
 // See https://en.wikipedia.org/wiki/Barycentric_coordinate_system
+// Computed relative to v1, so their accuracy does not degrade with the tetrahedron's distance from
+// the origin, and the first is one minus the others, so they sum to one up to rounding.
 template <typename T>
 [[nodiscard]] inline constexpr NdArray<T, 4> BarycentricCoords4(
     T const v1[3],
@@ -910,16 +912,14 @@ template <typename T>
     T const v3[3],
     T const v4[3],
     NdArray<T, 3> const& query) {
-  NdArray<T, 4, 4> barycenter_matrix{
-      NdArray<T, 4>{v1[0], v2[0], v3[0], v4[0]},
-      NdArray<T, 4>{v1[1], v2[1], v3[1], v4[1]},
-      NdArray<T, 4>{v1[2], v2[2], v3[2], v4[2]},
-      NdArray<T, 4>{(T)1.0, (T)1.0, (T)1.0, (T)1.0}};
-
-  auto inv = Invert(barycenter_matrix);
-  NdArray<T, 4> query4{query[0], query[1], query[2], (T)1.0};
-
-  return DotMatVec(inv, query4);
+  // Rows are the edges from v1, so r = c * edges for the coordinates c of v2, v3 and v4.
+  NdArray<T, 3, 3> const edges{
+      NdArray<T, 3>{v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]},
+      NdArray<T, 3>{v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2]},
+      NdArray<T, 3>{v4[0] - v1[0], v4[1] - v1[1], v4[2] - v1[2]}};
+  NdArray<T, 3> const r{query[0] - v1[0], query[1] - v1[1], query[2] - v1[2]};
+  NdArray<T, 3> const c = DotVecMat(r, Invert(edges));
+  return {T(1) - c[0] - c[1] - c[2], c[0], c[1], c[2]};
 }
 
 template <typename T>
