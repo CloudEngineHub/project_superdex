@@ -48,5 +48,18 @@ if (MOCHI_BUILD_SHARED)
     )
 endif ()
 
+#-----------------------------------------------------------------------------
+# superdex_asset_tuner_test
+#-----------------------------------------------------------------------------
+
+if (MOCHI_BUILD_TESTS)
+    # The tests resolve prefab shapes against the SuperDex assets root.
+    set(MOCHI_TEST_ASSETS_DIR "${PROJECT_SOURCE_DIR}/assets")
+    mochi_add_test_executable(superdex_asset_tuner_test "${CMAKE_CURRENT_SOURCE_DIR}/test")
+    target_include_directories(superdex_asset_tuner_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test")
+    # The tests have no main.cpp of their own.
+    target_link_libraries(superdex_asset_tuner_test PRIVATE superdex_asset_tuner_static gtest_main)
+endif ()
+
 unset(_tuner_srcs)
 unset(_tuner_headers)
