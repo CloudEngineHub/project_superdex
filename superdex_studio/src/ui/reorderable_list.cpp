@@ -37,8 +37,10 @@ void PushHeaderRowFramePadding() {
 
 void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList const& list) {
   constexpr float kBubbleRounding = 6.0f;
+  // Space between a bubble's edge and its widgets.
   constexpr float kBubblePadX = 4.0f;
   constexpr float kBubblePadY = 4.0f;
+  constexpr float kBubbleGap = 8.0f;
 
   ImDrawList* const drawList = ImGui::GetWindowDrawList();
 
@@ -67,20 +69,28 @@ void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList co
   std::vector<float> bottomY;
   int startDragIndex = -1; // a grip that begins a drag this frame
 
+  ImGuiWindow* const window = ImGui::GetCurrentWindow();
+  // Ends a row at `bottom`, kBubbleGap above whatever follows (the gap item adds no item spacing).
+  auto const endRow = [&](float bottom) {
+    ImGui::SetCursorScreenPos(ImVec2(contentX0, bottom));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+    ImGui::Dummy(ImVec2(0.0f, kBubbleGap));
+    ImGui::PopStyleVar();
+  };
+
   for (std::size_t i = 0; i < list.count; ++i) {
+    float const rowTop = ImGui::GetCursorScreenPos().y;
     if (dragging && static_cast<int>(i) == draggingIndex) {
       // The grabbed row is replaced by a thin placeholder bubble marking its original slot.
-      float const placeholderHeight = ImGui::GetFrameHeight() * 0.35f;
-      ImVec2 const placeholderPos = ImGui::GetCursorScreenPos();
-      ImGui::Dummy(ImVec2(contentWidth, placeholderHeight));
+      float const rowBottom = rowTop + ImGui::GetFrameHeight() * 0.35f;
       drawList->AddRectFilled(
-          ImVec2(contentX0 - kBubblePadX, placeholderPos.y),
-          ImVec2(contentX0 + contentWidth + kBubblePadX, placeholderPos.y + placeholderHeight),
+          ImVec2(contentX0, rowTop),
+          ImVec2(contentX0 + contentWidth, rowBottom),
           list.bubbleColor(i, /*isPlaceholder=*/true),
           kBubbleRounding);
-      topY.push_back(placeholderPos.y);
-      bottomY.push_back(placeholderPos.y + placeholderHeight);
-      ImGui::Dummy(ImVec2(0.0f, 8.0f));
+      topY.push_back(rowTop);
+      bottomY.push_back(rowBottom);
+      endRow(rowBottom);
       continue;
     }
 
@@ -88,6 +98,14 @@ void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList co
     // Widgets on the front draw-list channel; the bubble background is filled behind them after.
     drawList->ChannelsSplit(2);
     drawList->ChannelsSetCurrent(1);
+    // Inset the row's widgets by the bubble padding: the group starts kBubblePadX in (lines inside
+    // it wrap back to that x), and the right edges that size widgets and framed headers move in by
+    // the same amount until the row ends.
+    ImGui::SetCursorScreenPos(ImVec2(contentX0 + kBubblePadX, rowTop + kBubblePadY));
+    float const savedWorkRectMaxX = window->WorkRect.Max.x;
+    float const savedContentRegionMaxX = window->ContentRegionRect.Max.x;
+    window->WorkRect.Max.x -= kBubblePadX;
+    window->ContentRegionRect.Max.x -= kBubblePadX;
     ImGui::BeginGroup();
     // As tall as the row's header bar (see CollapsingHeaderWithToggles).
     PushHeaderRowFramePadding();
@@ -100,24 +118,23 @@ void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList co
       startDragIndex = static_cast<int>(i);
     }
     list.drawContent(i);
-
     ImGui::EndGroup();
-    ImVec2 const groupMin = ImGui::GetItemRectMin();
-    ImVec2 const groupMax = ImGui::GetItemRectMax();
-    float const bubbleTop = groupMin.y - kBubblePadY;
-    float const bubbleBottom = groupMax.y + kBubblePadY;
+    window->WorkRect.Max.x = savedWorkRectMaxX;
+    window->ContentRegionRect.Max.x = savedContentRegionMaxX;
+
+    float const rowBottom = ImGui::GetItemRectMax().y + kBubblePadY;
     drawList->ChannelsSetCurrent(0);
     drawList->AddRectFilled(
-        ImVec2(contentX0 - kBubblePadX, bubbleTop),
-        ImVec2(contentX0 + contentWidth + kBubblePadX, bubbleBottom),
+        ImVec2(contentX0, rowTop),
+        ImVec2(contentX0 + contentWidth, rowBottom),
         list.bubbleColor(i, /*isPlaceholder=*/false),
         kBubbleRounding);
     drawList->ChannelsMerge();
-    topY.push_back(bubbleTop);
-    bottomY.push_back(bubbleBottom);
+    topY.push_back(rowTop);
+    bottomY.push_back(rowBottom);
 
     ImGui::PopID();
-    ImGui::Dummy(ImVec2(0.0f, 8.0f)); // gap between bubbles
+    endRow(rowBottom);
   }
 
   float const sectionBottom = ImGui::GetCursorScreenPos().y;

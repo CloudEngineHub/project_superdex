@@ -63,12 +63,13 @@ struct ReorderableBubbleList {
   float gripWidth = 0.0f;
 };
 
-// Draws `list` as a vertical stack of rounded "bubbles", each with a left-edge drag grip that
-// reorders the rows: a thin placeholder marks the grabbed row's slot, a blue drop line shows where
-// it will land (60% hysteresis so it doesn't jitter at separators; snaps back when the cursor
-// leaves the section), and a cursor-attached ghost carries the row's label. On release,
-// list.move(from, to) commits the reorder. State (the active drag + cached slot) persists in @p
-// state across frames.
+// Draws `list` as a vertical stack of rounded "bubbles" spanning the available width, each with a
+// left-edge drag grip that reorders the rows: a thin placeholder marks the grabbed row's slot, a
+// blue drop line shows where it will land (60% hysteresis so it doesn't jitter at separators; snaps
+// back when the cursor leaves the section), and a cursor-attached ghost carries the row's label. On
+// release, list.move(from, to) commits the reorder. State (the active drag + cached slot) persists
+// in @p state across frames. Each bubble pads its widgets on all sides, so rows need no margins of
+// their own.
 void DrawReorderableBubbleList(DragReorderState& state, ReorderableBubbleList const& list);
 
 // Header row for a bubble (call first in ReorderableBubbleList::drawContent):
