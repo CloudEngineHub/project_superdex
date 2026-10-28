@@ -1290,6 +1290,43 @@ TEST(AMG, RigidModesAcceptanceTransitions) {
   }
 }
 
+// With a bound task scheduler, construction and an update with moved positions match the
+// single-threaded results. The bar, 2084 x 2 x 2 nodes, is just long enough for each parallel loop
+// of the setup over the fine nodes, their weights or their aggregates to split into several tasks.
+TEST(AMG, RigidModesParallelSetup) {
+  constexpr Int3 kCells{2083, 1, 1};
+  AMGProblem<BlockSparseMatrix<real, 3>> problem{
+      .A = mochi::test::MakeBlockSparseMatrix<real, 3>(kCells[0], kCells[1], kCells[2])};
+  // The matrix's nodes, in its order, on unit cells.
+  auto const nodes =
+      mochi::test::CreateMinimalTetMeshUnitGrid(StaticCast<Real3>(kCells), kCells).first;
+  for (auto const& x : nodes) {
+    for (int d = 0; d < 3; ++d) {
+      problem.referencePositions.push_back(x[d]);
+      problem.displacements.push_back(0_r);
+    }
+  }
+  AMGProblem<BlockSparseMatrix<real, 3>> moved = problem;
+  for (int k = 0; k < isize(moved.displacements); ++k) {
+    moved.displacements[k] = 0.01_r * Sin(real(k));
+  }
+  int const n = problem.A.Rows();
+  ColumnVector<real> r(n);
+  r.SetRandom(1);
+  // The Solve outputs after construction and after the update.
+  auto const solveOutputs = [&]() {
+    ColumnVector<real> z(2 * n);
+    RigidModesAMGUnderTest prec(problem);
+    prec.Solve(r, z.TopRows(n));
+    prec.Update(moved);
+    prec.Solve(r, z.BottomRows(n));
+    return z;
+  };
+  ColumnVector<real> const serial = solveOutputs();
+  TaskScheduler scheduler(2);
+  EXPECT_TRUE(NearEqualVectors(serial, solveOutputs()));
+}
+
 // The margin of the centered points (+-1, 0, 0) and (0, +-a, 0), normalized by their RMS radius,
 // is a / sqrt(1 + a^2): their Gram matrix has eigenvalues 4 a^2 / (1 + a^2), 4 / (1 + a^2) and 4
 // (four times), and with s = 0 and S = 4, the bound lambda is 4, the largest. Off their centroid,

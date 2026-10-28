@@ -467,6 +467,15 @@ template <typename Scalar>
   return RigidModeMarginAtLeast(count, sum, sumOuter, margin);
 }
 
+/// @brief Minimum rows per task, for @p numRows rows that hold @p numItems items, so that a task
+/// gets about @p itemsPerTask items.
+[[nodiscard]] inline int RowsPerTask(int numRows, int64_t numItems, int64_t itemsPerTask) {
+  return Clamp(
+      static_cast<int>((itemsPerTask * static_cast<int64_t>(numRows)) / Max<int64_t>(1, numItems)),
+      1,
+      Max(1, numRows));
+}
+
 /// @brief Set the aggregates of a transfer, and their members, from a partition of the fine nodes.
 template <typename Scalar>
 void SetAggregates(
@@ -581,8 +590,11 @@ void SetAggregateGeometry(
   T.centroids.resize_noinit(3 * T.numAggregates);
   T.radii.resize_noinit(T.numAggregates);
 
-  // About 50 ns per aggregate, so 400 aggregates take about 20 µs.
-  ParallelForN("RigidModeAMGGeometry", T.numAggregates, 400, [&](int a) {
+  constexpr int kMinFlopsPerTask = 100000; // 20 μs @ 5 GFLOP/s.
+  constexpr int kFlopsPerMember = 12; // 3 for the centroid and 9 for the squared distance.
+  int const minAggregatesPerTask =
+      RowsPerTask(T.numAggregates, T.numNodes, kMinFlopsPerTask / kFlopsPerMember);
+  ParallelForN("RigidModeAMGGeometry", T.numAggregates, minAggregatesPerTask, [&](int a) {
     auto const members = T.members[a];
     double const invCount = 1.0 / isize(members);
     double centroid[3] = {0.0, 0.0, 0.0};
@@ -626,8 +638,11 @@ void SetCoefficients(
   T.coefficients.resize_noinit(T.aggregates.size());
   T.restrictionCoefficients.resize_noinit(T.aggregates.size());
 
-  // About 6 ns per fine node, so 3200 nodes take about 20 µs.
-  ParallelForN("RigidModeAMGCoefficients", T.numNodes, 3200, [&](int i) {
+  constexpr int kMinOpsPerTask = 30000; // 20 μs @ 1.5 G operations/s.
+  constexpr int kFlopsPerWeight = 7; // A division for the scale and 6 for q.
+  int const minNodesPerTask =
+      RowsPerTask(T.numNodes, isize(T.aggregates), kMinOpsPerTask / kFlopsPerWeight);
+  ParallelForN("RigidModeAMGCoefficients", T.numNodes, minNodesPerTask, [&](int i) {
     for (int k = T.pointers[i]; k < T.pointers[i + 1]; ++k) {
       int const a = T.aggregates[k];
       double const w = T.weights[k];
@@ -644,9 +659,12 @@ void SetCoefficients(
     }
   });
 
-  for (int k = 0; k < isize(T.coefficients); ++k) {
-    T.restrictionCoefficients[k] = T.coefficients[T.restrictionEntries[k]];
-  }
+  constexpr int kAccessesPerEntry = 3; // Index, source and destination.
+  ParallelForN(
+      "RigidModeAMGRestrictionCoefficients",
+      isize(T.coefficients),
+      kMinOpsPerTask / kAccessesPerEntry,
+      [&](int k) { T.restrictionCoefficients[k] = T.coefficients[T.restrictionEntries[k]]; });
 }
 
 /// @brief Index of a block column, which must be present, in a block row with sorted columns.
@@ -657,27 +675,20 @@ void SetCoefficients(
   return index;
 }
 
-/// @brief Minimum rows per task, for @p numRows rows that hold @p numBlocks blocks, so that a task
-/// gets about @p blocksPerTask blocks.
-[[nodiscard]] inline int RowsPerTask(int numRows, int64_t numBlocks, int64_t blocksPerTask) {
-  return Clamp<int>(
-      static_cast<int>(
-          (blocksPerTask * static_cast<int64_t>(numRows)) / Max<int64_t>(1, numBlocks)),
-      1,
-      Max(1, numRows));
-}
-
 /// @brief Make a block-sparse matrix with a symmetric pattern and sorted columns exactly symmetric
 /// by copying its upper triangle, diagonal blocks included, onto its lower triangle.
 template <typename Scalar, int kBlockSize>
 void MirrorUpperTriangle(BlockSparseMatrix<Scalar, kBlockSize, int, int>& M) {
   int const numRows = M.BlockRows();
+  constexpr int kMinOpsPerTask = 30000; // 20 μs @ 1.5 G operations/s.
+  // Per block, on average: the lower blocks, half of all blocks, each binary-search their upper
+  // transpose (about 4 steps) and copy its 36 values, so (4 + 36) / 2 = 20.
+  constexpr int kAccessesPerBlock = 20;
   ParallelForRange(
       "RigidModeAMGMirror",
       0,
       numRows,
-      // About 9 ns per block, so 2200 blocks take about 20 µs.
-      RowsPerTask(numRows, static_cast<int64_t>(M.NumNonZeroBlocks()), 2200),
+      RowsPerTask(numRows, M.NumNonZeroBlocks(), kMinOpsPerTask / kAccessesPerBlock),
       numRows,
       [&](int rowBegin, int rowEnd) {
         for (int a = rowBegin; a < rowEnd; ++a) {
