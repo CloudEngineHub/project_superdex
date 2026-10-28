@@ -296,6 +296,61 @@ struct ViewportLabelSettings {
   MOCHI_STRUCT_END()
 };
 
+// Which tuner loads a viewport overlay (labels, arrows, paths) is drawn for. Disabled loads are
+// never drawn.
+enum class TunerOverlayVisibility {
+  All,
+  // While simulating, loads applying something this step (a pose path: while its drive is engaged).
+  // When stopped, all of them.
+  OnlyActive,
+  OnlySelected,
+  HideWhileSimulating,
+  None,
+};
+
+} // namespace superdex::studio
+
+MOCHI_ENUM_BEGIN(superdex::studio::TunerOverlayVisibility)
+MOCHI_ENUM_ITEM(All)
+MOCHI_ENUM_ITEM(OnlyActive)
+MOCHI_ENUM_ITEM(OnlySelected)
+MOCHI_ENUM_ITEM(HideWhileSimulating)
+MOCHI_ENUM_ITEM(None)
+MOCHI_ENUM_END()
+
+namespace superdex::studio {
+
+struct TunerViewportSettings {
+  float arrowMetersPerNewton = 0.02f;
+  TunerOverlayVisibility labels = TunerOverlayVisibility::All;
+  TunerOverlayVisibility arrows = TunerOverlayVisibility::All;
+  TunerOverlayVisibility paths = TunerOverlayVisibility::OnlySelected;
+
+  MOCHI_STRUCT_BEGIN(superdex::studio::TunerViewportSettings)
+  MOCHI_FIELD(arrowMetersPerNewton)
+  MOCHI_ATTRIBUTE(DisplayName("Load Arrow Scale"));
+  MOCHI_ATTRIBUTE(Description(
+      "Length of the asset tuner viewport's load arrows per newton (or newton-meter) of load."));
+  MOCHI_ATTRIBUTE(Units("m/N"));
+  MOCHI_ATTRIBUTE(FloatRange(0.001, 0.2));
+  MOCHI_FIELD(labels)
+  MOCHI_ATTRIBUTE(DisplayName("Load Labels"));
+  MOCHI_ATTRIBUTE(Description(
+      "Which loads show their name and magnitude in the asset tuner viewport. OnlyActive: while "
+      "simulating, loads applying something this step (all when stopped)."));
+  MOCHI_FIELD(arrows)
+  MOCHI_ATTRIBUTE(DisplayName("Load Arrows"));
+  MOCHI_ATTRIBUTE(Description(
+      "Which loads show their force or torque arrow in the asset tuner viewport. OnlyActive: while "
+      "simulating, loads applying something this step (all when stopped)."));
+  MOCHI_FIELD(paths)
+  MOCHI_ATTRIBUTE(DisplayName("Pose Paths"));
+  MOCHI_ATTRIBUTE(Description(
+      "Which pose paths show their path, waypoints and live target in the asset tuner viewport. "
+      "OnlyActive: while simulating, paths whose drive is engaged (all when stopped)."));
+  MOCHI_STRUCT_END()
+};
+
 // Everything that applies to every viewport, grouped into the sections the Settings window shows.
 struct ViewportSettings {
   ViewportCameraSettings camera;
@@ -303,6 +358,7 @@ struct ViewportSettings {
   ViewportLabelSettings labels;
   TransformGizmoSettings transformGizmo;
   GroundGridSettings groundGrid;
+  TunerViewportSettings tuner;
 
   MOCHI_STRUCT_BEGIN(superdex::studio::ViewportSettings)
   MOCHI_FIELD(camera)
@@ -310,6 +366,7 @@ struct ViewportSettings {
   MOCHI_FIELD(labels)
   MOCHI_FIELD(transformGizmo) MOCHI_ATTRIBUTE(DisplayName("Transform Gizmo"));
   MOCHI_FIELD(groundGrid) MOCHI_ATTRIBUTE(DisplayName("Ground Grid"));
+  MOCHI_FIELD(tuner)
   MOCHI_STRUCT_END()
 };
 

@@ -127,6 +127,7 @@ class TunerEditor : public AssetEditor {
   // Rebuilds _describedTargets and _targets from a temporary Mochi scene of the tuner (prefab plus
   // overrides). Runs once per frame, and only after the prefab or overrides change.
   void RefreshTargets();
+  [[nodiscard]] std::string MakeUniqueLoadName(std::string_view base) const;
 
   // Recording
   bool OpenRunWriter();
@@ -137,18 +138,51 @@ class TunerEditor : public AssetEditor {
   }
 
   // Viewport
+  void DrawLoadArrows();
   // Wireframe boxes of box stop conditions and planes of position thresholds (red once triggered).
   void DrawStopBoxes();
   // Banner shown after a stop condition paused the run.
   void ShowStopBanner();
+  void OnScenePressed(mochi_renderer::SceneObject* object, filament::math::float3 worldHit);
+  // Index of the load whose card is selected (the transform gizmo edits it), or -1.
+  [[nodiscard]] int SelectedLoadIndex() const;
+  void SelectLoad(int index);
+  // Index of the selected waypoint of the selected pose path (the gizmo edits it), or -1.
+  [[nodiscard]] int SelectedWaypointIndex() const;
+  // The selected key if load `index` is the selected load, else -1. Keyed directions and points are
+  // shown and edited at this key (the first when none is selected; see ClampKey).
+  [[nodiscard]] int KeyShownFor(size_t index) const;
+  // Gizmo frame of the selected load in editor space: at its application point, X along its
+  // direction, or a pose path's selected waypoint. Empty when the selected load has no gizmo (joint
+  // efforts, unresolved targets, no waypoint selected).
+  [[nodiscard]] std::optional<mochi::TransformRT> SelectedLoadGizmoFrame() const;
+  void OnLoadGizmoDelta(mochi::TransformRT const& delta);
   // Index of the stop condition whose box the gizmo edits, or -1 (box conditions only).
   [[nodiscard]] int SelectedStopBoxIndex() const;
   // The staged body a load or probe target refers to, or null.
   StagedActor const* FindStagedBody(std::string_view target) const;
   // Target names for loads of `type` from the prefab's top-level actors.
   std::vector<std::string> GetTargetCandidates(superdex::tuner::LoadType type) const;
+  // The most recently selected viewport body that can take a load of `type`: the body itself, or
+  // for Joint Effort the joint driving it. Nullopt when nothing selected fits.
+  std::optional<std::string> SelectedLoadTarget(superdex::tuner::LoadType type) const;
 
   // Windows
+  void ShowLoadsWindow(bool* open);
+  // Draws one load card's body. Returns true on any edit; sets `structural` for edits that need a
+  // new run (name, type, target).
+  bool ShowLoadBody(size_t index, bool& structural);
+  // Pose path settings of a load card: drive gains and the waypoint editor.
+  void ShowPosePathEditor(size_t index, bool& changed);
+  // Strip of the path's waypoints over run time, with each span's drive mode shaded. Markers select
+  // a waypoint on click and retime it on drag. `compact` draws a short read-only strip instead.
+  void ShowWaypointTimeline(size_t index, bool compact, bool& changed);
+  // Profile settings of a load card. Keyframes get a key table and draggable markers on the
+  // preview.
+  void ShowProfileEditor(size_t index, bool& changed);
+  // Load `index`'s profile over the run, with the sim time marked and keyframes as markers that
+  // select a key on click and move it on drag. `compact` draws a short read-only strip.
+  void ShowProfilePreview(size_t index, bool compact, bool& changed);
   void ShowPlotsWindow(bool* open);
   // Channel list: checkboxes plus drag sources for the plot areas.
   void ShowChannelList(bool& structural);
@@ -215,6 +249,7 @@ class TunerEditor : public AssetEditor {
   bool _debugSettingsInitialized = false;
   // Ground height the viewport found for the staged prefab (its lowest point).
   float _autoGroundHeight = 0.0f;
+  CardListState _loadCards;
   CardListState _probeCards;
   CardListState _overrideCards;
   // One entry per prefab override; empty when the override applies cleanly.
@@ -223,6 +258,18 @@ class TunerEditor : public AssetEditor {
   // failed to load into Mochi.
   std::optional<superdex::tuner::SceneTargets> _describedTargets;
   bool _describedTargetsStale = true;
+  // Load whose card is under the mouse (its arrow is highlighted), or -1.
+  int _hoveredLoad = -1;
+  // Card id of the selected load (0 = none); an id so it survives reordering and removal.
+  uint64_t _selectedLoadCard = 0;
+  // Waypoint of the selected pose path the gizmo edits (-1 = none).
+  int _selectedWaypoint = -1;
+  // Waypoint whose timeline marker is being dragged (-1 = none); sorted by time on release.
+  int _timelineDragWaypoint = -1;
+  // Keyframe of the selected load's profile (-1 = none), and the one whose preview marker is being
+  // dragged (-1 = none; sorted by time on release).
+  int _selectedKey = -1;
+  int _keyDragIndex = -1;
   // Stable ids of the plot areas, for drag-to-reorder.
   CardListState _plotCards;
   CardListState _stopCards;
@@ -236,6 +283,7 @@ class TunerEditor : public AssetEditor {
     double time = 0.0;
   };
   std::optional<StopEvent> _stopEvent;
+  int _placingLoad = -1;
   bool _autoFitPlots = true;
 };
 
