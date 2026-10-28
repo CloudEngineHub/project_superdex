@@ -1,0 +1,18 @@
+{
+  "actors": {
+    "rigid": [
+      {
+        "name": "block",
+        "shape": "./../../assets/cube/cube_fine_mesh.mochi.h5",
+        "scale": [0.1, 0.1, 0.1],
+        "translation": [-0.05, -0.05, 0.001],
+        "colliderType": "Box",
+        "density": 1000,
+        "contact": { "coulombFrictionCoefficient": 0.5 }
+      }
+    ]
+  },
+  "scene": {
+    "description": "A 1 kg, 10 cm block resting on the ground (add a ground plane via the tuner)."
+  }
+}

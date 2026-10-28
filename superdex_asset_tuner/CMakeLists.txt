@@ -20,6 +20,7 @@ file(GLOB _tuner_srcs
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
 )
+list(FILTER _tuner_srcs EXCLUDE REGEX "/src/cli_main\\.cpp$")
 file(GLOB _tuner_headers "${CMAKE_CURRENT_SOURCE_DIR}/include/superdex_asset_tuner/*.h")
 
 add_library(superdex_asset_tuner_static STATIC ${_tuner_srcs} ${_tuner_headers})
@@ -47,6 +48,20 @@ if (MOCHI_BUILD_SHARED)
         POSITION_INDEPENDENT_CODE ${MOCHI_BUILD_SHARED}
     )
 endif ()
+
+#-----------------------------------------------------------------------------
+# superdex_asset_tuner – the command line tool
+#-----------------------------------------------------------------------------
+
+add_executable(superdex_asset_tuner "${CMAKE_CURRENT_SOURCE_DIR}/src/cli_main.cpp")
+target_link_libraries(superdex_asset_tuner PRIVATE superdex_asset_tuner_static)
+target_compile_definitions(superdex_asset_tuner PRIVATE MOCHI_USE_REFLECTION=1)
+
+mochi_set_compiler_options(superdex_asset_tuner)
+mochi_set_output_directories(superdex_asset_tuner)
+
+# The `superdex_asset_tuner` component tag lets a consumer install exactly this tool's files.
+mochi_install_runtime_dependencies(superdex_asset_tuner COMPONENT superdex_asset_tuner)
 
 #-----------------------------------------------------------------------------
 # superdex_asset_tuner_test
