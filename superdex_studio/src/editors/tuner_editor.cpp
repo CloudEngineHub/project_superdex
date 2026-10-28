@@ -33,10 +33,12 @@
 #include <mochi_renderer/type_conversions.h>
 
 #include <imguios/fonts/icons_font_awesome5.h>
+#include <implot.h>
 
 #include <algorithm>
 #include <array>
 #include <cfloat>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -74,6 +76,9 @@ constexpr ImVec4 kWarningColor{1.0f, 0.7f, 0.2f, 1.0f};
 constexpr ImVec4 kErrorColor{1.0f, 0.45f, 0.35f, 1.0f};
 // Plot history cap, so a long session cannot grow without bound (~1.5 h at 100 Hz).
 constexpr size_t kMaxPlotSamples = 500'000;
+constexpr float kPlotLineWeight = 2.0f;
+// Fraction of the data range added when fitting Y, so values at the extremes stay visible.
+constexpr float kPlotFitPaddingY = 0.1f;
 constexpr double kTimeEpsilon = 1e-9;
 
 // Joint Effort
@@ -81,6 +86,11 @@ constexpr double kTimeEpsilon = 1e-9;
 // Joint Effort weights 1-3 DoFs (see TunerSession::ResolveLoad).
 bool TakesJointEffort(int numDofs) {
   return numDofs >= 1 && numDofs <= 3;
+}
+
+std::string_view ChannelGroup(std::string_view channel) {
+  size_t const dot = channel.rfind('.');
+  return dot == std::string_view::npos ? channel : channel.substr(0, dot);
 }
 
 void Tooltip(char const* text) {
@@ -457,6 +467,7 @@ std::vector<AssetEditor::WindowDeclaration> TunerEditor::GetDefaultWindows() {
   return {
       {"Asset Tuner Run", true, Dock::SidePanelTop, false},
       {"Asset Tuner Prefab Overrides", false, Dock::SidePanelBottom, false},
+      {"Asset Tuner Plots", true, Dock::BottomBar, false},
       {"Physics Settings", false, Dock::SidePanelBottom, false},
       MeasureWindowDeclaration()};
 }
@@ -472,6 +483,9 @@ void TunerEditor::ShowAuxiliaryWindows() {
   }
   if (bool& open = _studio->GetWindowVisible("Asset Tuner Prefab Overrides")) {
     ShowOverridesWindow(&open);
+  }
+  if (bool& open = _studio->GetWindowVisible("Asset Tuner Plots")) {
+    ShowPlotsWindow(&open);
   }
   if (bool& open = _studio->GetWindowVisible("Physics Settings")) {
     ShowPhysicsSettingsWindow(&open);
@@ -1134,6 +1148,417 @@ void TunerEditor::ShowStopBanner() {
 //--------------------------------------------------------------------------------------------------
 // Windows
 //--------------------------------------------------------------------------------------------------
+
+namespace {
+constexpr char kChannelPayload[] = "TUNER_CHANNELS";
+constexpr float kMinPlotHeight = 80.0f;
+
+// Drag payload: the source plot index (-1 for the channel list), then one channel name per line.
+struct ChannelDrop {
+  int fromPlot = -1;
+  std::vector<std::string> names;
+};
+
+void SetChannelPayload(int fromPlot, std::vector<std::string> const& names) {
+  std::string data = std::to_string(fromPlot);
+  for (std::string const& name : names) {
+    data += '\n';
+    data += name;
+  }
+  ImGui::SetDragDropPayload(kChannelPayload, data.data(), data.size());
+  if (names.size() == 1) {
+    ImGui::TextUnformatted(names.front().c_str());
+  } else {
+    ImGui::Text("%d channels", static_cast<int>(names.size()));
+  }
+}
+
+std::optional<ChannelDrop> AcceptChannelPayload() {
+  ImGuiPayload const* payload = ImGui::AcceptDragDropPayload(kChannelPayload);
+  if (payload == nullptr) {
+    return std::nullopt;
+  }
+  std::string_view data(
+      static_cast<char const*>(payload->Data), static_cast<size_t>(payload->DataSize));
+  ChannelDrop drop;
+  bool first = true;
+  while (!data.empty() || first) {
+    size_t const end = data.find('\n');
+    std::string_view const part = data.substr(0, end);
+    if (first) {
+      std::from_chars(part.data(), part.data() + part.size(), drop.fromPlot);
+      first = false;
+    } else if (!part.empty()) {
+      drop.names.emplace_back(part);
+    }
+    data = end == std::string_view::npos ? std::string_view() : data.substr(end + 1);
+  }
+  return drop;
+}
+
+bool PlotHasChannel(tuner::PlotSpec const& plot, std::string_view name) {
+  return std::any_of(plot.channels.begin(), plot.channels.end(), [&](DynamicString const& c) {
+    return std::string_view(c) == name;
+  });
+}
+
+void AddChannel(tuner::PlotSpec& plot, std::string_view name) {
+  if (!PlotHasChannel(plot, name)) {
+    plot.channels.push_back(DynamicString(name));
+  }
+}
+
+void RemoveChannel(tuner::PlotSpec& plot, std::string_view name) {
+  auto const it =
+      std::find_if(plot.channels.begin(), plot.channels.end(), [&](DynamicString const& c) {
+        return std::string_view(c) == name;
+      });
+  if (it != plot.channels.end()) {
+    plot.channels.erase(it);
+  }
+}
+
+} // namespace
+
+mochi::DynamicArray<tuner::PlotSpec>& TunerEditor::EditablePlots() {
+  auto& plots = _tunerAsset->GetSpec().plots;
+  if (plots.empty()) {
+    tuner::PlotSpec plot;
+    for (ChannelHistory const& channel : _channels) {
+      if (channel.name.starts_with("load.")) {
+        plot.channels.push_back(DynamicString(channel.name));
+      }
+    }
+    plots.push_back(std::move(plot));
+  }
+  return plots;
+}
+
+bool TunerEditor::IsChannelPlotted(std::string_view channel) const {
+  auto const& plots = _tunerAsset->GetSpec().plots;
+  return std::any_of(plots.begin(), plots.end(), [&](tuner::PlotSpec const& plot) {
+    return PlotHasChannel(plot, channel);
+  });
+}
+
+void TunerEditor::ShowChannelList(bool& structural) {
+  auto& plots = EditablePlots();
+  ImGui::Checkbox("Auto-fit All", &_autoFitPlots);
+  Tooltip(
+      "Fit every plot to its data each frame. Turn off to pan and zoom (all plots share time).");
+  if (ImGui::Button(ICON_FA_PLUS " Add Plot", ImVec2(-FLT_MIN, 0))) {
+    plots.emplace_back();
+    structural = true;
+  }
+  Tooltip("Add an empty plot area below the others, then drag channels onto it.");
+  if (ImGui::Button("Clear", ImVec2(-FLT_MIN, 0))) {
+    for (tuner::PlotSpec& plot : plots) {
+      plot.channels.clear();
+    }
+    structural = true;
+  }
+  Tooltip("Remove every channel from every plot (the plot areas are kept).");
+  ImGui::Separator();
+
+  float const trashWidth =
+      ImGui::CalcTextSize(ICON_FA_TRASH).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  std::string_view openGroup;
+  bool groupOpen = false;
+  for (size_t c = 0; c < _channels.size(); ++c) {
+    ChannelHistory const& channel = _channels[c];
+    std::string_view const group = ChannelGroup(channel.name);
+    if (group != openGroup) {
+      if (groupOpen) {
+        ImGui::TreePop();
+      }
+      openGroup = group;
+      // Framed so group headers match the buttons below them (same height, rounded corners).
+      groupOpen = ImGui::TreeNodeEx(
+          std::string(group).c_str(),
+          ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth);
+      if (ImGui::BeginDragDropSource()) {
+        std::vector<std::string> names;
+        for (ChannelHistory const& other : _channels) {
+          if (ChannelGroup(other.name) == group) {
+            names.push_back(other.name);
+          }
+        }
+        SetChannelPayload(-1, names);
+        ImGui::EndDragDropSource();
+      }
+      Tooltip("Drag onto a plot to add all of these channels.");
+    }
+    if (!groupOpen) {
+      continue;
+    }
+    ImGui::PushID(static_cast<int>(c));
+    bool const isPlotted = IsChannelPlotted(channel.name);
+    char const* const shortName =
+        channel.name.c_str() + group.size() + (group.size() < channel.name.size() ? 1 : 0);
+    // The row is only a drag handle; drawn as a left-aligned button to match the other controls.
+    float const rowWidth = std::max(
+        1.0f, ImGui::GetContentRegionAvail().x - trashWidth - ImGui::GetStyle().ItemSpacing.x);
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+    ImGui::Button(shortName, ImVec2(rowWidth, 0));
+    ImGui::PopStyleVar();
+    if (ImGui::BeginDragDropSource()) {
+      SetChannelPayload(-1, {channel.name});
+      ImGui::EndDragDropSource();
+    }
+    Tooltip(
+        isPlotted ? "Drag onto another plot to add it there too." : "Drag onto a plot to plot it.");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!isPlotted);
+    if (ImGui::Button(ICON_FA_TRASH)) {
+      for (tuner::PlotSpec& plot : plots) {
+        RemoveChannel(plot, channel.name);
+      }
+      structural = true;
+    }
+    ImGui::EndDisabled();
+    Tooltip(isPlotted ? "Remove this channel from every plot." : "Not plotted.");
+    ImGui::PopID();
+  }
+  if (groupOpen) {
+    ImGui::TreePop();
+  }
+}
+
+void TunerEditor::ShowPlotArea(size_t index, bool& structural, bool& outRemove) {
+  auto& plots = _tunerAsset->GetSpec().plots;
+  tuner::PlotSpec& plot = plots[index];
+
+  // A left column of the bubble list's drag grip (the last item) with the remove button under it,
+  // then the plot to its right.
+  ImVec2 const gripMin = ImGui::GetItemRectMin();
+  ImVec2 const gripMax = ImGui::GetItemRectMax();
+  PushHeaderRowFramePadding();
+  ImGui::BeginDisabled(plots.size() <= 1);
+  if (ImGui::Button(ICON_FA_TRASH, ImVec2(gripMax.x - gripMin.x, 0.0f))) {
+    outRemove = true;
+  }
+  ImGui::EndDisabled();
+  ImGui::PopStyleVar();
+  Tooltip(plots.size() <= 1 ? "The last plot cannot be removed." : "Remove this plot area.");
+  ImGui::SetCursorScreenPos(ImVec2(gripMax.x + ImGui::GetStyle().ItemSpacing.x, gripMin.y));
+  ImGui::BeginGroup();
+
+  std::string pendingRemoval;
+  float const height = std::max(kMinPlotHeight, plot.height);
+  ImPlot::PushStyleVar(ImPlotStyleVar_FitPadding, ImVec2(0.0f, kPlotFitPaddingY));
+  if (ImPlot::BeginPlot("##plot", ImVec2(-1, height))) {
+    ImPlotAxisFlags const fit = _autoFitPlots ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
+    ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_None, fit);
+    ImPlot::SetupAxisLinks(ImAxis_X1, &_plotTimeMin, &_plotTimeMax);
+    ImPlot::SetupLegend(
+        ImPlotLocation_North, ImPlotLegendFlags_Outside | ImPlotLegendFlags_Horizontal);
+    int const count = static_cast<int>(_sampleTimes.size());
+    for (DynamicString const& name : plot.channels) {
+      auto const it =
+          std::find_if(_channels.begin(), _channels.end(), [&](ChannelHistory const& c) {
+            return c.name == std::string_view(name);
+          });
+      if (it == _channels.end()) {
+        continue; // not produced by the current run (e.g. its probe was removed)
+      }
+      ImPlot::PlotLine(
+          it->name.c_str(),
+          _sampleTimes.data(),
+          it->values.data(),
+          count,
+          {ImPlotProp_LineWeight, kPlotLineWeight});
+      if (ImPlot::BeginDragDropSourceItem(it->name.c_str())) {
+        SetChannelPayload(static_cast<int>(index), {it->name});
+        ImPlot::EndDragDropSource();
+      }
+      if (ImPlot::BeginLegendPopup(it->name.c_str())) {
+        if (ImGui::MenuItem("Remove from plot")) {
+          pendingRemoval = it->name;
+        }
+        ImPlot::EndLegendPopup();
+      }
+    }
+    if (plot.channels.empty()) {
+      ImVec2 const pos = ImPlot::GetPlotPos();
+      ImVec2 const size = ImPlot::GetPlotSize();
+      char const* const hint = "Drag channels here";
+      ImVec2 const textSize = ImGui::CalcTextSize(hint);
+      ImPlot::GetPlotDrawList()->AddText(
+          ImVec2(pos.x + 0.5f * (size.x - textSize.x), pos.y + 0.5f * (size.y - textSize.y)),
+          ImGui::GetColorU32(ImGuiCol_TextDisabled),
+          hint);
+    }
+    auto const acceptDrop = [&] {
+      if (auto drop = AcceptChannelPayload()) {
+        for (std::string const& name : drop->names) {
+          AddChannel(plot, name);
+          if (drop->fromPlot >= 0 && drop->fromPlot != static_cast<int>(index) &&
+              drop->fromPlot < static_cast<int>(plots.size())) {
+            RemoveChannel(plots[static_cast<size_t>(drop->fromPlot)], name);
+          }
+        }
+        structural = true;
+      }
+    };
+    if (ImPlot::BeginDragDropTargetPlot()) {
+      acceptDrop();
+      ImPlot::EndDragDropTarget();
+    }
+    if (ImPlot::BeginDragDropTargetLegend()) {
+      acceptDrop();
+      ImPlot::EndDragDropTarget();
+    }
+    ImPlot::EndPlot();
+  }
+  ImPlot::PopStyleVar();
+  if (!pendingRemoval.empty()) {
+    RemoveChannel(plot, pendingRemoval);
+    structural = true;
+  }
+
+  // Resize handle below the plot.
+  ImGui::InvisibleButton("##resize", ImVec2(-1, 6));
+  if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    ImVec2 const min = ImGui::GetItemRectMin();
+    ImVec2 const max = ImGui::GetItemRectMax();
+    float const y = 0.5f * (min.y + max.y);
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(min.x, y), ImVec2(max.x, y), ImGui::GetColorU32(ImGuiCol_SeparatorHovered), 2.0f);
+  }
+  if (ImGui::IsItemActive()) {
+    plot.height = std::max(kMinPlotHeight, height + ImGui::GetIO().MouseDelta.y);
+  }
+  if (ImGui::IsItemDeactivated()) {
+    structural = true;
+  }
+  ImGui::EndGroup();
+}
+
+void TunerEditor::ShowNewPlotDropZone(bool& structural) {
+  ImVec2 const size(
+      ImGui::GetContentRegionAvail().x, std::max(ImGui::GetContentRegionAvail().y, kMinPlotHeight));
+  if (size.x <= 0.0f) {
+    return;
+  }
+  ImGui::InvisibleButton("##newPlotDrop", size);
+  ImGuiPayload const* const dragged = ImGui::GetDragDropPayload();
+  if (dragged != nullptr && dragged->IsDataType(kChannelPayload)) {
+    ImVec2 const min = ImGui::GetItemRectMin();
+    ImVec2 const max = ImGui::GetItemRectMax();
+    ImDrawList* const drawList = ImGui::GetWindowDrawList();
+    drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_TextDisabled), 4.0f, 0, 1.5f);
+    char const* const hint = ICON_FA_PLUS " Drop to add a new plot";
+    ImVec2 const textSize = ImGui::CalcTextSize(hint);
+    drawList->AddText(
+        ImVec2(
+            0.5f * (min.x + max.x - textSize.x),
+            min.y + std::min(0.5f * (size.y - textSize.y), kMinPlotHeight * 0.5f)),
+        ImGui::GetColorU32(ImGuiCol_TextDisabled),
+        hint);
+  }
+  if (!ImGui::BeginDragDropTarget()) {
+    return;
+  }
+  if (auto drop = AcceptChannelPayload()) {
+    auto& plots = _tunerAsset->GetSpec().plots;
+    tuner::PlotSpec plot;
+    for (std::string const& name : drop->names) {
+      AddChannel(plot, name);
+      if (drop->fromPlot >= 0 && drop->fromPlot < static_cast<int>(plots.size())) {
+        RemoveChannel(plots[static_cast<size_t>(drop->fromPlot)], name);
+      }
+    }
+    plots.push_back(std::move(plot));
+    structural = true;
+  }
+  ImGui::EndDragDropTarget();
+}
+
+void TunerEditor::ShowPlotsWindow(bool* open) {
+  if (!ImGui::Begin("Asset Tuner Plots", open)) {
+    ImGui::End();
+    return;
+  }
+  if (_channels.empty()) {
+    ImGui::TextDisabled(
+        "Press Play to see load and probe channels. The plot layout is saved with the asset tuner.");
+    ImGui::End();
+    return;
+  }
+  bool structural = false;
+  EditablePlots();
+  if (_autoFitPlots) {
+    _plotTimeMin = 0.0;
+    _plotTimeMax =
+        std::max(_sampleTimes.empty() ? 0.0 : static_cast<double>(_sampleTimes.back()), 1e-3);
+  }
+
+  ImGui::BeginChild(
+      "##channels", ImVec2(220, 0), ImGuiChildFlags_ResizeX | ImGuiChildFlags_Borders);
+  ShowChannelList(structural);
+  ImGui::EndChild();
+  // Dropping a plotted trace back on the channel list removes it from its plot.
+  if (ImGui::BeginDragDropTarget()) {
+    if (auto drop = AcceptChannelPayload(); drop && drop->fromPlot >= 0) {
+      auto& plots = _tunerAsset->GetSpec().plots;
+      if (drop->fromPlot < static_cast<int>(plots.size())) {
+        for (std::string const& name : drop->names) {
+          RemoveChannel(plots[static_cast<size_t>(drop->fromPlot)], name);
+        }
+        structural = true;
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
+
+  ImGui::SameLine();
+  ImGui::BeginChild("##plots", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+  int removePlot = -1;
+  auto& plots = _tunerAsset->GetSpec().plots;
+  _plotCards.Resize(plots.size());
+  ReorderableBubbleList list;
+  list.count = plots.size();
+  list.id = [&](size_t i) { return _plotCards.cards[i].id; };
+  list.bubbleColor = [&](size_t, bool isPlaceholder) {
+    return CardColor(kNeutralAccent, !isPlaceholder);
+  };
+  list.ghostLabel = [&](size_t i) { return "Plot " + std::to_string(i + 1); };
+  // As wide as the remove button below it, so the two form a column.
+  list.gripWidth = ImGui::CalcTextSize(ICON_FA_TRASH).x + 2.0f * ImGui::GetStyle().FramePadding.x;
+  list.move = [&](size_t from, size_t to) {
+    if (from != to) {
+      MoveItem(plots, from, to);
+      MoveItem(_plotCards.cards, from, to);
+      structural = true;
+    }
+  };
+  list.drawContent = [&](size_t i) {
+    bool remove = false;
+    ShowPlotArea(i, structural, remove);
+    if (remove) {
+      removePlot = static_cast<int>(i);
+    }
+  };
+  DrawReorderableBubbleList(_plotCards.drag, list);
+  ImGui::TextDisabled(
+      "Drag channels or probe groups onto a plot, or below the plots to add a new one. Drag a "
+      "legend entry to move it, or back to the list to remove it. Right-click a legend entry for "
+      "more. Drag a plot's = grip to reorder the plots.");
+  ShowNewPlotDropZone(structural);
+  ImGui::EndChild();
+
+  if (removePlot >= 0 && plots.size() > 1) {
+    plots.erase(plots.begin() + removePlot);
+    _plotCards.cards.erase(_plotCards.cards.begin() + removePlot);
+    structural = true;
+  }
+  if (structural) {
+    _tunerAsset->SetDirty(true);
+    GetUndoStack().PushNow();
+  }
+  ImGui::End();
+}
 
 void TunerEditor::ShowStopConditionCards(bool& structural) {
   tuner::TunerSpec& spec = _tunerAsset->GetSpec();

@@ -149,6 +149,16 @@ class TunerEditor : public AssetEditor {
   std::vector<std::string> GetTargetCandidates(superdex::tuner::LoadType type) const;
 
   // Windows
+  void ShowPlotsWindow(bool* open);
+  // Channel list: checkboxes plus drag sources for the plot areas.
+  void ShowChannelList(bool& structural);
+  // One plot area; `outRemove` is set when its remove button is pressed.
+  void ShowPlotArea(size_t index, bool& structural, bool& outRemove);
+  // Empty space below the plots; dropping channels there adds a new plot with them.
+  void ShowNewPlotDropZone(bool& structural);
+  // The saved plot layout, creating the default (every load channel in one plot) on first edit.
+  mochi::DynamicArray<superdex::tuner::PlotSpec>& EditablePlots();
+  [[nodiscard]] bool IsChannelPlotted(std::string_view channel) const;
   void ShowRunWindow(bool* open);
   void ShowProbeCards(bool& structural);
   void ShowStopConditionCards(bool& structural);
@@ -183,6 +193,9 @@ class TunerEditor : public AssetEditor {
   std::vector<superdex::tuner::LoadSpec> _boundLoads;
   std::vector<float> _sampleTimes;
   std::vector<ChannelHistory> _channels;
+  // Shared time-axis range of every plot area (ImPlot axis links), so they pan and zoom together.
+  double _plotTimeMin = 0.0;
+  double _plotTimeMax = 1.0;
   superdex::tuner::Sample _lastSample;
   bool _hasSample = false;
 
@@ -210,6 +223,8 @@ class TunerEditor : public AssetEditor {
   // failed to load into Mochi.
   std::optional<superdex::tuner::SceneTargets> _describedTargets;
   bool _describedTargetsStale = true;
+  // Stable ids of the plot areas, for drag-to-reorder.
+  CardListState _plotCards;
   CardListState _stopCards;
   // Card id of the stop condition whose box the transform gizmo moves (0 = none).
   uint64_t _selectedStopCard = 0;
@@ -221,6 +236,7 @@ class TunerEditor : public AssetEditor {
     double time = 0.0;
   };
   std::optional<StopEvent> _stopEvent;
+  bool _autoFitPlots = true;
 };
 
 } // namespace superdex::studio
