@@ -278,7 +278,7 @@ static GridSdfLayout ComputeGridSdfLayout(
   // DenseGrid3D stores this voxel size and its reciprocal, so both must be finite and positive. A
   // zero or tiny grid extent, e.g. a flat mesh without padding, makes one of them zero or infinite.
   auto const voxelSize = StaticCast<Double3>(gridSize) / cellDimsDouble;
-  Real3 const storedVoxelSize = StaticCast<Real3>(voxelSize);
+  auto const storedVoxelSize = StaticCast<Real3>(voxelSize);
   MOCHI_ERROR_IF_NOT(
       IsFinite(storedVoxelSize) && (Min(storedVoxelSize) > 0_r) &&
           IsFinite(StaticCast<Real3>(1.0 / voxelSize)),
