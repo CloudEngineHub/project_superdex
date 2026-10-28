@@ -23,6 +23,7 @@
 #include <mochi_core/test/linear_algebra_test_helpers.h>
 #include <mochi_core/test/mochi_test_helpers.h>
 #include <mochi_core/utils/dynamic_array.h>
+#include <mochi_core/utils/task_scheduler.h>
 
 #include <algorithm>
 #include <type_traits>
@@ -366,6 +367,18 @@ TEST(ActorPreconditionerTest, MissingInteractionEntryPolicies) {
   };
   checkInteractionFormat(sparseInteraction);
   checkInteractionFormat(blockSparseInteraction);
+}
+
+TEST(ActorPreconditionerTest, RefreshBlockSparseCopyAcrossWorkers) {
+  // More values than one task copies, so the refresh splits the copy.
+  auto const actor = MakeBlockSparseMatrix<real, 3>(7, 7, 7);
+  ActorPseudoMatrix<real> const pseudoMatrix{
+      .offset = 0, .actorMatrix = AsConstView(actor), .interactionMatrices = {}};
+  auto copy = ToBlockSparseMatrix<3, MissingSparsityPolicy::Discard>(pseudoMatrix);
+  copy.SetZero();
+  TaskScheduler scheduler(2);
+  details::RefreshBlockSparseCopy<MissingSparsityPolicy::Discard>(pseudoMatrix, copy);
+  EXPECT_SPAN_EQ(actor.Values(), copy.Values());
 }
 
 template <typename ActorPrec>

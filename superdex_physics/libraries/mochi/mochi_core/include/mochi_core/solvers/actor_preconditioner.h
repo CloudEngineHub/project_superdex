@@ -26,8 +26,10 @@
 #include <mochi_core/linear_algebra/utils/matrix_conversions.h>
 #include <mochi_core/solvers/interaction_matrix_info.h>
 #include <mochi_core/solvers/linear_solver_params.h>
+#include <mochi_core/utils/task_scheduler.h>
 
 #include <algorithm>
+#include <climits>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -376,8 +378,19 @@ void RefreshBlockSparseCopy(
           actorBlockSparse.Indices() == blockSparseCopy.Indices(),
       "Sparsity pattern mismatch.");
 
+  constexpr int kMinBytesPerTask = 400000; // 20 μs @ 20 GB/s.
+  constexpr int kBytesPerValue = 2 * static_cast<int>(sizeof(T)); // Load and store.
   auto const values = actorBlockSparse.Values();
-  std::copy(values.begin(), values.end(), blockSparseCopy.Values().begin());
+  auto const copyValues = blockSparseCopy.Values();
+  ParallelForRange(
+      "RefreshBlockSparseCopy",
+      0,
+      isize(values),
+      kMinBytesPerTask / kBytesPerValue,
+      INT_MAX,
+      [&](int begin, int end) {
+        std::copy(values.begin() + begin, values.begin() + end, copyValues.begin() + begin);
+      });
   AddInteractionToBlockSparseMatrix<kMissingSparsityPolicy>(
       actorMatrix.interactionMatrices, blockSparseCopy, actorMatrix.offset);
 }
