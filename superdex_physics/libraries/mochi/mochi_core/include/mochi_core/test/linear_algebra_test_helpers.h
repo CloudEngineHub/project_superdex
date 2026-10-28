@@ -248,7 +248,7 @@ void BlockSparseDataTargetNnz(
 
 /**
  * @brief Create a square block sparse matrix (with block size kBlockSize)
- * and nx * ny * nz block rows.
+ * and (nx + 1) * (ny + 1) * (nz + 1) block rows.
  *
  * @param[in] nx Number of elements in the x-direction
  * @param[in] ny Number of elements in the y-direction
