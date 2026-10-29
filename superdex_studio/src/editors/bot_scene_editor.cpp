@@ -53,6 +53,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 
 namespace superdex::studio {
 
@@ -61,6 +62,28 @@ namespace superdex::studio {
 //--------------------------------------------------------------------------------------------------
 
 namespace {
+
+// Sets @p spawn's PoseRandomization class, adding the randomization when it has none; an empty
+// class removes it. The entry's other randomization is left as it is.
+void SetPoseRandomizationClass(superdex::robotics::SpawnEntry& spawn, std::string_view drClass) {
+  auto& randomization = spawn.randomization;
+  auto const pose = std::find_if(randomization.begin(), randomization.end(), [](auto const& r) {
+    return std::holds_alternative<superdex::robotics::PoseRandomization>(r);
+  });
+  if (drClass.empty()) {
+    if (pose != randomization.end()) {
+      randomization.erase(pose);
+    }
+    return;
+  }
+  if (pose == randomization.end()) {
+    superdex::robotics::PoseRandomization added;
+    added.domainRandomizationClass = drClass;
+    randomization.emplace_back(std::move(added));
+    return;
+  }
+  std::get<superdex::robotics::PoseRandomization>(*pose).domainRandomizationClass = drClass;
+}
 
 // Returns a name of the form "<stem><N>" (N starting at 1) that is not in @p existing. Trailing
 // digits of @p base are stripped to form the stem so numbering continues from it. Mirrors
@@ -1717,7 +1740,11 @@ void BotSceneEditor::ShowTaskEditor() {
         }
         changed = true;
       }
-      changed |= ImGui::InputText("Randomization Class", &spawn.domainRandomizationClass);
+      mochi::DynamicString poseClass = superdex::robotics::GetPoseRandomizationClass(spawn);
+      if (ImGui::InputText("Pose Randomization Class", &poseClass)) {
+        SetPoseRandomizationClass(spawn, poseClass);
+        changed = true;
+      }
       changed |= ImGui::DragTransformRT("Spawn Transform", spawn.parentFromSpawn);
     }
     ImGui::PopID();
