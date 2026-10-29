@@ -467,19 +467,21 @@ TEST(TransmissionActuator, McKibbenActuator_NegativeDisplacement) {
       deflatedStiffness,
       deflatedEquilibriumLength);
 
-  real const displacement = -0.01_r; // Compression
   real const prevDisplacement = 0_r;
   real const timeStep = 0.01_r;
 
-  // In compression, energy and force should be zero
-  real energy{}, force{}, stiffness{};
-  actuator.EnergyGradientHessian(
-      displacement, prevDisplacement, timeStep, &energy, &force, &stiffness);
-  EXPECT_NEAR(energy, 0_r, 1e-10_r);
-  EXPECT_NEAR(force, 0_r, 1e-10_r);
-  EXPECT_NEAR(stiffness, 0_r, 1e-10_r);
+  // In compression, energy and force should be zero, including past the tension's negative root
+  // (-4.29 with these parameters), where the muscle length is negative.
+  for (real const displacement : {-0.01_r, -5_r}) {
+    real energy{}, force{}, stiffness{};
+    actuator.EnergyGradientHessian(
+        displacement, prevDisplacement, timeStep, &energy, &force, &stiffness);
+    EXPECT_NEAR(energy, 0_r, 1e-10_r);
+    EXPECT_NEAR(force, 0_r, 1e-10_r);
+    EXPECT_NEAR(stiffness, 0_r, 1e-10_r);
 
-  VerifyDerivatives(&actuator, displacement, prevDisplacement, timeStep);
+    VerifyDerivatives(&actuator, displacement, prevDisplacement, timeStep);
+  }
 }
 
 TEST(TransmissionActuator, McKibbenActuator_MultipleDisplacements) {

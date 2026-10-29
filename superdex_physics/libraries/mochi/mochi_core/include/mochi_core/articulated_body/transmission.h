@@ -258,7 +258,9 @@ class McKibbenActuator : public TransmissionActuator {
         (0.25_r * _threadLengthSquared / (_numberOfWrapsSquared * kPI));
     real const unclampedTension = pressureCoefficient * (3_r * L * L / _threadLengthSquared - 1_r) +
         _deflatedStiffness * displacement;
-    if (unclampedTension < 0_r) {
+    // Below its negative root, the quadratic tension turns positive again, but a muscle can't pull
+    // at negative length.
+    if (unclampedTension < 0_r || L < 0_r) {
       if (outEnergy) {
         *outEnergy = 0_r;
       }
