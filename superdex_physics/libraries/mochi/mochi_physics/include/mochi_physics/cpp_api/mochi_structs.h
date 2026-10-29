@@ -361,6 +361,18 @@ struct RodElementRotationToRigidConstraintParams : public ConstraintParams {
 #endif
 };
 
+struct RodElementRotationConstraintParams : public ConstraintParams {
+  Real3 refFrameRotVec{};
+
+  ActorHandle actor{};
+
+  int elementIndex = 0;
+
+#if MOCHI_LANGUAGE_CPP20
+  bool operator==(RodElementRotationConstraintParams const&) const = default;
+#endif
+};
+
 struct DeformableNodeToRigidConstraintParams : public ConstraintParams {
   Real3 rigidLocalPos{};
 

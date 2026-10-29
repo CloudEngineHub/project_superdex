@@ -1601,12 +1601,13 @@ static void AddToSceneImpl(
   // count. This guards against a new constraint type being silently dropped by a forgotten dispatch
   // call; the per-type ApplyPrefabTransformToConstraint / if-constexpr static_asserts only fire
   // once a type is actually dispatched, so they cannot catch an omitted call on their own.
-  // TODO(T280114669): RodElementRotationToRigid is the only real ConstraintType without prefab
-  // support. Add a RodElementRotationToRigidConstraintPrefab, a ConstraintLists entry,
-  // actor-name resolution, transform handling for refFrameRotVec, and dispatch here if
-  // rod-to-rigid rotation constraints need to be authorable from prefab JSON.
+  // TODO(T280114669): RodElementRotationToRigid and RodElementRotation are the only real
+  // ConstraintTypes without prefab support, since prefabs do not support rod actors yet. Add a
+  // constraint prefab, a ConstraintLists entry, actor-name resolution, transform handling for
+  // refFrameRotVec, and dispatch here if rod rotation constraints need to be authorable from
+  // prefab JSON.
   static_assert(
-      static_cast<int>(ConstraintType::Count) == 16,
+      static_cast<int>(ConstraintType::Count) == 17,
       "ConstraintType changed: review the prefab constraint dispatch below.");
   // clang-format off
   auto const& con = prefab.constraints;

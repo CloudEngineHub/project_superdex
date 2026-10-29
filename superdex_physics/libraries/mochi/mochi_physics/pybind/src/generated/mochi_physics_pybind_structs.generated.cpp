@@ -53,6 +53,7 @@ void mochi::DeclareMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_
   registry.StoreClass(nb::class_<mochi::RigidPrismaticJointConstraintParams, mochi::ConstraintParams>(m, "RigidPrismaticJointConstraintParams", "Parameters for creating a prismatic joint between two rigid actors.\n\nNote:\n    Constrains translation perpendicular to the free axis (and optionally limits\n    translation along it). Does not constrain rotation.\n\nNote:\n    It must be complemented with\n    :class:`~superdex.physics.JointRotationTrackingConstraintParams` to\n    constrain the rotation and implement a full prismatic joint.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_rigid_prismatic_joint_constraint`,\n    :class:`RIGID_PRISMATIC_JOINT <superdex.physics.ConstraintType>`,\n    :class:`~superdex.physics.JointRotationTrackingConstraintParams`"));
   registry.StoreClass(nb::class_<mochi::DeformableNodeToDeformableNodeConstraintParams, mochi::ConstraintParams>(m, "DeformableNodeToDeformableNodeConstraintParams", "Parameters for creating a constraint coupling a node in a deformable actor to a\nnode in another deformable actor.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_deformable_node_to_deformable_node_constraint`,\n    :class:`DEFORMABLE_NODE_TO_DEFORMABLE_NODE\n    <superdex.physics.ConstraintType>`"));
   registry.StoreClass(nb::class_<mochi::RodElementRotationToRigidConstraintParams, mochi::ConstraintParams>(m, "RodElementRotationToRigidConstraintParams", "Parameters for creating a tracking constraint on the relative rotation between a\nrigid actor and a rod element.\n\nForces the relative rotation between the rigid actor and a specified rod element\nto track a target rotation. The target rotation is initialized to the relative\nrotation observed at constraint creation time, and can be updated at runtime via\n:meth:`~superdex.physics.Constraint.set_target_rotation`.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_rod_element_rotation_to_rigid_constraint`,\n    :class:`ROD_ELEMENT_ROTATION_TO_RIGID <superdex.physics.ConstraintType>`,\n    :meth:`~superdex.physics.Constraint.set_target_rotation`"));
+  registry.StoreClass(nb::class_<mochi::RodElementRotationConstraintParams, mochi::ConstraintParams>(m, "RodElementRotationConstraintParams", "Parameters for creating a tracking constraint on the world rotation of a rod\nelement.\n\nForces the world rotation of a specified rod element's material frame to track a\ntarget rotation. The target rotation is initialized to the rotation observed at\nconstraint creation time, and can be updated at runtime via\n:meth:`~superdex.physics.Constraint.set_target_rotation`.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_rod_element_rotation_constraint`,\n    :class:`ROD_ELEMENT_ROTATION <superdex.physics.ConstraintType>`,\n    :meth:`~superdex.physics.Constraint.set_target_rotation`"));
   registry.StoreClass(nb::class_<mochi::DeformableNodeToRigidConstraintParams, mochi::ConstraintParams>(m, "DeformableNodeToRigidConstraintParams", "Parameters for creating a constraint coupling a deformable node to a rigid\nactor.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_deformable_node_to_rigid_constraint`,\n    :class:`DEFORMABLE_NODE_TO_RIGID <superdex.physics.ConstraintType>`"));
   registry.StoreClass(nb::class_<mochi::JointRotationRangeConstraintParams, mochi::ConstraintParams>(m, "JointRotationRangeConstraintParams", "Parameters for creating a joint rotation range constraint between two rigid\nactors.\n\nConstrains the relative rotation between two rigid actors to remain within\nspecified bounds. The relative rotation is expressed in a joint reference frame\n(captured at constraint creation time and rigidly attached to actor A\nthereafter), and each component of its rotation-vector (axis-angle)\nrepresentation is independently constrained to its [min, max] range.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_joint_rotation_range_constraint`,\n    :class:`JOINT_ROTATION_RANGE <superdex.physics.ConstraintType>`"));
   registry.StoreClass(nb::class_<mochi::RigidPivotPositionConstraintParams, mochi::ConstraintParams>(m, "RigidPivotPositionConstraintParams", "Parameters for creating a position constraint on a rigid actor's pivot point.\n\nCouples a point on a rigid actor (expressed in the actor's local coordinates and\nreferred to as \"pivot\") to a specific target position in world coordinates.\n\nSee Also:\n    :meth:`~superdex.physics.Scene.create_rigid_pivot_position_constraint`,\n    :class:`RIGID_PIVOT_POSITION <superdex.physics.ConstraintType>`"));
@@ -735,6 +736,35 @@ void mochi::DefineMochiPhysics_MochiPhysicsStructs([[maybe_unused]] nb::module_&
     .def_rw("rigid_actor", &mochi::RodElementRotationToRigidConstraintParams::rigidActor, "Actor handle identifying rigid actor.")
     .def_rw("rod_actor", &mochi::RodElementRotationToRigidConstraintParams::rodActor, "Actor handle identifying rod actor.")
     .def_rw("element_index", &mochi::RodElementRotationToRigidConstraintParams::elementIndex, "Index of the element in the rod actor.")
+  ;
+
+  registry.GetClass<mochi::RodElementRotationConstraintParams, mochi::ConstraintParams>()
+    .def("__init__", [](mochi::RodElementRotationConstraintParams* self, nb::object stiffness, nb::object damping, nb::object saturation, nb::object ref_frame_rot_vec, nb::object actor, nb::object element_index) {
+      mochi::RodElementRotationConstraintParams result{};
+      result.stiffness = nb::cast<mochi::real>(stiffness);
+      result.damping = nb::cast<mochi::real>(damping);
+      result.saturation = nb::cast<mochi::real>(saturation);
+      result.refFrameRotVec = nb::cast<mochi::Real3>(ref_frame_rot_vec);
+      result.actor = nb::cast<mochi::ActorHandle>(actor);
+      result.elementIndex = nb::cast<int>(element_index);
+      new (self) mochi::RodElementRotationConstraintParams(std::move(result));
+    }
+      , nb::kw_only()
+      , nb::arg("stiffness") = mochi::RodElementRotationConstraintParams{}.stiffness
+      , nb::arg("damping") = mochi::RodElementRotationConstraintParams{}.damping
+      , nb::arg("saturation") = mochi::RodElementRotationConstraintParams{}.saturation
+      , nb::arg("ref_frame_rot_vec").sig("...") = mochi::RodElementRotationConstraintParams{}.refFrameRotVec
+      , nb::arg("actor").sig("...") = mochi::RodElementRotationConstraintParams{}.actor
+      , nb::arg("element_index") = mochi::RodElementRotationConstraintParams{}.elementIndex
+    )
+    .def(nb::init<>())
+    .def(nb::self == nb::self)
+    .def(nb::self != nb::self)
+    .def("__copy__", [](mochi::RodElementRotationConstraintParams const& self) { return mochi::RodElementRotationConstraintParams(self); })
+    .def("__deepcopy__", [](mochi::RodElementRotationConstraintParams const& self, nb::dict) { return mochi::RodElementRotationConstraintParams(self); })
+    .def_prop_rw("ref_frame_rot_vec", [](mochi::RodElementRotationConstraintParams& self) -> mochi::Real3& { return self.refFrameRotVec; }, [](mochi::RodElementRotationConstraintParams& self, nb::object val) { self.refFrameRotVec = nb::cast<mochi::Real3>(val); }, "Reference-frame orientation in world coordinates, expressed as a rotation vector\n[rad]. The constraint deviation is expressed in this frame.")
+    .def_rw("actor", &mochi::RodElementRotationConstraintParams::actor, "Actor handle identifying the rod actor.")
+    .def_rw("element_index", &mochi::RodElementRotationConstraintParams::elementIndex, "Index of the element in the rod actor.")
   ;
 
   registry.GetClass<mochi::DeformableNodeToRigidConstraintParams, mochi::ConstraintParams>()

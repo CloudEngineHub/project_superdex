@@ -600,6 +600,47 @@ void mochi::InitConstraint_RodElementRotationToRigid(
   EmplaceConstraintTargets(reg, e, Normalize(rotRigid.GetConjugate() * rotRod));
 }
 
+void mochi::InitConstraint_RodElementRotation(
+    entt::registry& reg,
+    entt::entity e,
+    RodElementRotationConstraintParams const& params,
+    Error& error) {
+  MOCHI_ERROR_IF_NOT(
+      IsFinite(params.refFrameRotVec), error, "Reference frame rotation vector must be finite.");
+  MOCHI_VALIDATE_COMMON_CONSTRAINT_PARAMS(params, error);
+  MOCHI_PROFILE_SCOPE();
+
+  // Get actor entity
+  entt::entity rodActor = GetEntity(reg, ActorHandle(params.actor), error);
+  MOCHI_ERROR_RETURN(error);
+  MOCHI_ERROR_IF(!reg.all_of<TagRodActor>(rodActor), error, "Invalid rod actor type");
+  MOCHI_ERROR_RETURN(error);
+
+  auto const rodDofs = GetRodElementDofs(reg, rodActor, params.elementIndex, error);
+  MOCHI_ERROR_RETURN(error);
+
+  // Create constraint info
+  std::vector<entt::entity> actors = {rodActor};
+  std::vector<std::vector<int>> actorDofs = {std::vector<int>(rodDofs.begin(), rodDofs.end())};
+  auto& info = reg.emplace<CConstraintInfo>(
+      e,
+      reg,
+      ConstraintType::RodElementRotation,
+      std::move(actors),
+      std::move(actorDofs),
+      std::vector<std::vector<int>>(1),
+      params);
+  info.name = "RodElementRotationConstraint";
+
+  // Create specific constraint data
+  auto& data = reg.emplace<CConstraintData<ConstraintType::RodElementRotation>>(e);
+  data.elementIndex = params.elementIndex;
+  data.q0 = Quaternion::FromRotationVector(params.refFrameRotVec);
+
+  // Create targets. Initialize the target rotation as the current rotation
+  EmplaceConstraintTargets(reg, e, GetRodElementRotation(reg, rodActor, params.elementIndex));
+}
+
 void mochi::InitConstraint_RigidPivotPosition(
     entt::registry& reg,
     entt::entity e,
@@ -1054,6 +1095,13 @@ using RodAndRigidConstraintReg = ecs::PartialRegistry<
     CRootTransform const,
     CTimeIntegratorState const>;
 
+using RodConstraintReg = ecs::PartialRegistry<
+    CRodPose<TimeStep::Current> const,
+    CRodPose<TimeStep::StageStart> const,
+    CPolylineMesh const,
+    CRootTransform const,
+    CTimeIntegratorState const>;
+
 // Partial registry for global assembly that requires link actor lookups
 using LinkActorAssemblyReg = ecs::
     PartialRegistry<CArticulatedEntity const, CArticulatedRigidJacobian const, CDofOffset const>;
@@ -1096,6 +1144,7 @@ MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(DeformableNodePosition, DeformableConstraintR
 MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(JointRotationRange, RigidConstraintReg, NoTarget);
 MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(JointRotationTracking, RigidConstraintReg, Quaternion);
 MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(RodElementRotationToRigid, RodAndRigidConstraintReg, Quaternion);
+MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(RodElementRotation, RodConstraintReg, Quaternion);
 MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(RigidPivotPosition, PivotConstraintReg, Real3);
 MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(RigidPivotToRigidTarget, PivotConstraintReg, TransformRT);
 MOCHI_SPECIALIZE_CONSTRAINT_TRAITS(RigidPivotRotation, RigidConstraintReg, Quaternion);
@@ -1243,6 +1292,31 @@ static void EvalConstraintImpl(
   auto const rod = GetRodElementRotationInputs<kTimeStep>(reg, info.actors[1], data.elementIndex);
   EvalRodElementRotationToRigidConstraint(
       rotRigid,
+      rod.worldFromLocal,
+      rod.X0,
+      rod.X1,
+      rod.frameAxis,
+      MakeConstSpan(rod.dofs),
+      data.q0,
+      target.value,
+      outC,
+      outJac,
+      outJacTarget);
+  outActive = true;
+}
+
+template <TimeStep kTimeStep>
+static void EvalConstraintImpl(
+    RodConstraintReg reg,
+    CConstraintInfo const& info,
+    CConstraintData<ConstraintType::RodElementRotation> const& data,
+    CConstraintTarget<Quaternion, kTimeStep> const& target,
+    ColumnVector<real, 3>* outC,
+    RowMatrix<real, 3, 8>* outJac,
+    RowMatrix<real, 3, 3>* outJacTarget,
+    bool& outActive) {
+  auto const rod = GetRodElementRotationInputs<kTimeStep>(reg, info.actors[0], data.elementIndex);
+  EvalRodElementRotationConstraint(
       rod.worldFromLocal,
       rod.X0,
       rod.X1,
@@ -1475,7 +1549,7 @@ void mochi::EvalConstraint(
   auto const& type = reg.get<CConstraintInfo const>(e).type;
 
   static_assert(
-      static_cast<int>(ConstraintType::Count) == 16,
+      static_cast<int>(ConstraintType::Count) == 17,
       "Please update the switch statement below if ConstraintType enum changes");
 
 #define MOCHI_TRY_CALL_EVAL_CONSTRAINT(kType)                                         \
@@ -1494,6 +1568,7 @@ void mochi::EvalConstraint(
       MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::JointRotationRange);
       MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::JointRotationTracking);
       MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::RodElementRotationToRigid);
+      MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::RodElementRotation);
       MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::RigidPivotPosition);
       MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::RigidPivotToRigidTarget);
       MOCHI_TRY_CALL_EVAL_CONSTRAINT(ConstraintType::RigidPivotRotation);
@@ -1992,7 +2067,7 @@ void mochi::AssembleConstraint(
   }
 
   static_assert(
-      static_cast<int>(ConstraintType::Count) == 16,
+      static_cast<int>(ConstraintType::Count) == 17,
       "Please update the switch statements below if ConstraintType enum changes");
 
 // Macro for the assembly of each constraint type.
@@ -2033,6 +2108,7 @@ void mochi::AssembleConstraint(
       MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::JointRotationRange);
       MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::JointRotationTracking);
       MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::RodElementRotationToRigid);
+      MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::RodElementRotation);
       MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::RigidPivotPosition);
       MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::RigidPivotToRigidTarget);
       MOCHI_TRY_INVOKE_ASSEMBLE_CONSTRAINT(ConstraintType::RigidPivotRotation);
@@ -2083,6 +2159,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CConstraintData<ConstraintType::JointRotationRange>>(reg);
   ecs::RegisterComponent<CConstraintData<ConstraintType::JointRotationTracking>>(reg);
   ecs::RegisterComponent<CConstraintData<ConstraintType::RodElementRotationToRigid>>(reg);
+  ecs::RegisterComponent<CConstraintData<ConstraintType::RodElementRotation>>(reg);
   ecs::RegisterComponent<CConstraintData<ConstraintType::RigidPivotPosition>>(reg);
   ecs::RegisterComponent<CConstraintData<ConstraintType::RigidPivotToRigidTarget>>(reg);
   ecs::RegisterComponent<CConstraintData<ConstraintType::RigidPivotRotation>>(reg);

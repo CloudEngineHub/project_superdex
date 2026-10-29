@@ -107,6 +107,9 @@ class SceneImpl final : public Scene {
   Constraint* CreateRodElementRotationToRigidConstraint(
       RodElementRotationToRigidConstraintParams const& params,
       Error& error) override;
+  Constraint* CreateRodElementRotationConstraint(
+      RodElementRotationConstraintParams const& params,
+      Error& error) override;
   Constraint* CreateJointRotationRangeConstraint(
       JointRotationRangeConstraintParams const& params,
       Error& error) override;

@@ -473,6 +473,15 @@ class Scene [no_init, no_destruct] {
   // DestroyConstraint
   fn CreateRodElementRotationToRigidConstraint(RodElementRotationToRigidConstraintParams const& params) -> Constraint* [pure, virtual, mochi_error, expand_struct_params, nullable];
 
+  // @brief Create a rotation constraint on a rod element.
+  //
+  // @param[in] params Parameters defining the rod element rotation constraint.
+  //
+  // @return Pointer to the created @ref Constraint, or nullptr on error.
+  //
+  // @see ConstraintType::RodElementRotation, RodElementRotationConstraintParams, DestroyConstraint
+  fn CreateRodElementRotationConstraint(RodElementRotationConstraintParams const& params) -> Constraint* [pure, virtual, mochi_error, expand_struct_params, nullable];
+
   // @brief Create a position constraint on a rigid actor's pivot point.
   //
   // @param[in] params Parameters defining the rigid pivot position constraint.

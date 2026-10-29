@@ -353,6 +353,48 @@ void EvalRodElementRotationToRigidConstraint(
   }
 }
 
+void EvalRodElementRotationConstraint(
+    TransformRT const& worldFromLocalRod,
+    Vec4r const& X0Rod,
+    Vec4r const& X1Rod,
+    Vec4r const& frameAxisRod,
+    Span<real const> rodElementDofs,
+    Quaternion const& refFrame,
+    Quaternion const& targetRot,
+    ColumnVector<real, 3>* outVal,
+    RowMatrix<real, 3, 8>* outJac,
+    RowMatrix<real, 3, 3>* outJacTarget) {
+  VMatrix3x3r rotRodLocalMat MOCHI_NO_INIT;
+  NdArray<real, 3, 8> jacRotRodLocal MOCHI_NO_INIT;
+  fem::ComputeRodElementRotationLocal(
+      X0Rod,
+      X1Rod,
+      frameAxisRod,
+      rodElementDofs,
+      rotRodLocalMat,
+      outJac ? &jacRotRodLocal : nullptr);
+  Quaternion const rotWflRod = worldFromLocalRod.GetRotation();
+  Quaternion const rotRod = rotWflRod * Normalize(QuaternionFromMatrix(rotRodLocalMat));
+
+  // Special case of a relative rotation constraint where the first rotation is the identity
+  RowMatrix<real, 3, 6> jacRot MOCHI_NO_INIT;
+  EvalJointRotationTargetConstraint(
+      Quaternion::Identity(),
+      rotRod,
+      refFrame,
+      targetRot,
+      outVal,
+      outJac ? &jacRot : nullptr,
+      outJacTarget);
+
+  if (outJac) {
+    // The world rotation increment is rotWflRod times the local one; fold that 3x3 product first.
+    VMatrix3x3r const rotWflRodMat = ToVMatrix3x3(rotWflRod);
+    RowMatrix<real, 3, 3> const jacRotLocal = jacRot.RightCols<3>(3) * AsMatrixView(rotWflRodMat);
+    *outJac = jacRotLocal * AsConstView<real, 3, 8>(jacRotRodLocal);
+  }
+}
+
 void EvalJointRotationRangeConstraint(
     Quaternion const& rotA,
     Quaternion const& rotB,

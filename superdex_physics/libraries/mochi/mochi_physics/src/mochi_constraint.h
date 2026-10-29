@@ -54,7 +54,8 @@ inline int constexpr kNumConstrainedActors[] = {
     /* ConstraintType::DeformableNodePosition         */ 1,
     /* ConstraintType::DeformableNodeToRigid          */ 2,
     /* ConstraintType::DeformableNodeToDeformableNode */ 2,
-    /* ConstraintType::RodElementRotationToRigid      */ 2};
+    /* ConstraintType::RodElementRotationToRigid      */ 2,
+    /* ConstraintType::RodElementRotation             */ 1};
 static_assert(
     std::size(kNumConstrainedActors) == static_cast<size_t>(ConstraintType::Count),
     "Please update this code if the ConstraintType enum changes");
@@ -84,7 +85,8 @@ inline int constexpr kConstraintSize[] = {
     /* ConstraintType::DeformableNodePosition         */ 3,
     /* ConstraintType::DeformableNodeToRigid          */ 3,
     /* ConstraintType::DeformableNodeToDeformableNode */ 3,
-    /* ConstraintType::RodElementRotationToRigid      */ 3};
+    /* ConstraintType::RodElementRotationToRigid      */ 3,
+    /* ConstraintType::RodElementRotation             */ 3};
 static_assert(
     std::size(kConstraintSize) == static_cast<size_t>(ConstraintType::Count),
     "Please update this code if the ConstraintType enum changes");
@@ -109,7 +111,8 @@ inline int constexpr kNumConstrainedDofs[] = {
     /* ConstraintType::DeformableNodePosition         */ 3,
     /* ConstraintType::DeformableNodeToRigid          */ 9,
     /* ConstraintType::DeformableNodeToDeformableNode */ 6,
-    /* ConstraintType::RodElementRotationToRigid      */ 11};
+    /* ConstraintType::RodElementRotationToRigid      */ 11,
+    /* ConstraintType::RodElementRotation             */ 8};
 static_assert(
     std::size(kNumConstrainedDofs) == static_cast<size_t>(ConstraintType::Count),
     "Please update this code if the ConstraintType enum changes");
@@ -134,7 +137,8 @@ inline int constexpr kNumConstrainedTargets[] = {
     /* ConstraintType::DeformableNodePosition         */ 3,
     /* ConstraintType::DeformableNodeToRigid          */ 0,
     /* ConstraintType::DeformableNodeToDeformableNode */ 0,
-    /* ConstraintType::RodElementRotationToRigid.     */ 3};
+    /* ConstraintType::RodElementRotationToRigid      */ 3,
+    /* ConstraintType::RodElementRotation             */ 3};
 static_assert(
     std::size(kNumConstrainedTargets) == static_cast<size_t>(ConstraintType::Count),
     "Please update this code if the ConstraintType enum changes");
@@ -329,6 +333,11 @@ struct CConstraintData<ConstraintType::RodElementRotationToRigid> : public NoCop
   Quaternion q0; // Joint frame in rest configuration, local to rigid actor
 };
 template <>
+struct CConstraintData<ConstraintType::RodElementRotation> : public NoCopy {
+  int elementIndex = kSentinelIndex; // Index of the rod element
+  Quaternion q0; // Reference frame, in world coordinates
+};
+template <>
 struct CConstraintData<ConstraintType::RigidPivotPosition> : public NoCopy {
   Real3 posLocal = {}; // Position of the constrained point of the rigid actor in local coords (wrt
                        // root transform)
@@ -446,6 +455,13 @@ void InitConstraint_RodElementRotationToRigid(
     entt::registry& reg,
     entt::entity e,
     RodElementRotationToRigidConstraintParams const& params,
+    Error& error);
+
+// Initialize entity as a constraint of type RodElementRotationConstraint
+void InitConstraint_RodElementRotation(
+    entt::registry& reg,
+    entt::entity e,
+    RodElementRotationConstraintParams const& params,
     Error& error);
 
 // Initialize entity as a constraint of type RigidPivotPositionConstraint

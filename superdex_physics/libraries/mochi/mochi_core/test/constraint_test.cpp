@@ -2591,3 +2591,92 @@ TEST(Constraints, RodElementRotationToRigidJacobianTarget) {
     }
   }
 }
+
+/// EvalRodElementRotationConstraint ---------------------------------------------
+TEST(Constraints, RodElementRotationValue) {
+  Vec4r const X0 = ToSimd(Real3{0_r, 0_r, 0_r});
+  Vec4r const X1 = ToSimd(Real3{1_r, 0_r, 0_r});
+  Vec4r const frameAxis = ToSimd(Real3{0_r, 1_r, 0_r});
+
+  DynamicArray<DynamicArray<real>> const rodDofsConfigs = {
+      {0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r},
+      {0_r, 0_r, 0_r, 0.2_r, 0_r, 0_r, 0_r, 0.3_r},
+      {0_r, 0.05_r, 0_r, -0.1_r, 0_r, 0_r, 0.05_r, -0.2_r}};
+  DynamicArray<Quaternion> const q0s = {
+      kqI, Quaternion::FromAxisAngle(Normalize(kv123), ToRads(-20_r))};
+  DynamicArray<Quaternion> const targets = {
+      kqI, quatx(ToRads(30_r)), Quaternion::FromAxisAngle(Normalize(kv123), ToRads(-105_r))};
+  DynamicArray<TransformRT> const transforms = {
+      TransformRT(kqI, kv0), TransformRT(quatx(ToRads(30_r)), kvx)};
+
+  for (auto const& rodDofs : rodDofsConfigs) {
+    for (auto const& wflRod : transforms) {
+      VMatrix3x3r rotLocalMat MOCHI_NO_INIT;
+      fem::ComputeRodElementRotationLocal(X0, X1, frameAxis, rodDofs, rotLocalMat, nullptr);
+      Quaternion const qRod = Normalize(wflRod.GetRotation() * QuaternionFromMatrix(rotLocalMat));
+      for (auto const& q0 : q0s) {
+        for (auto const& qt : targets) {
+          Real3 const expected = Normalize((qt * q0).GetConjugate() * qRod * q0).ToRotationVector();
+          ColumnVector<real, 3> val;
+          EvalRodElementRotationConstraint(
+              wflRod, X0, X1, frameAxis, rodDofs, q0, qt, &val, nullptr, nullptr);
+          for (int i = 0; i < 3; ++i) {
+            EXPECT_NEAR(expected[i], val[i], 1e-5_r);
+          }
+        }
+      }
+    }
+  }
+}
+
+// The constraint should be the special case of RodElementRotationToRigid with an identity rigid
+// rotation, including its Jacobians
+TEST(Constraints, RodElementRotationMatchesRodToRigidWithIdentityRigid) {
+  Vec4r const X0 = ToSimd(Real3{0_r, 0_r, 0_r});
+  Vec4r const X1 = ToSimd(Real3{1_r, 0_r, 0_r});
+  Vec4r const frameAxis = ToSimd(Real3{0_r, 1_r, 0_r});
+
+  DynamicArray<DynamicArray<real>> const dofConfigs = {
+      {0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r, 0_r},
+      {0_r, 0.1_r, 0_r, 0.2_r, 0_r, 0_r, 0.1_r, 0.1_r},
+      {0.05_r, 0.05_r, 0.05_r, 0.1_r, 0.05_r, 0.05_r, 0.05_r, 0.2_r}};
+  DynamicArray<TransformRT> const transforms = {
+      TransformRT(kqI, kv0),
+      TransformRT(Quaternion::FromAxisAngle(Normalize(kv123), ToRads(15_r)), kvy)};
+  Quaternion const refFrame = quatx(ToRads(10_r));
+  Quaternion const targetRot = quaty(ToRads(15_r));
+
+  DynamicArray<real> const zeroDofs(8, 0_r);
+  for (auto const& rodDofs : dofConfigs) {
+    Vec4r const consistentAxis = test::ComputePerturbedFrameAxis(
+        X0, X1, MakeConstSpan(zeroDofs), MakeConstSpan(rodDofs), frameAxis);
+    for (auto const& wflRod : transforms) {
+      ColumnVector<real, 3> val;
+      RowMatrix<real, 3, 8> jac;
+      RowMatrix<real, 3, 3> jacTarget;
+      EvalRodElementRotationConstraint(
+          wflRod, X0, X1, consistentAxis, rodDofs, refFrame, targetRot, &val, &jac, &jacTarget);
+
+      ColumnVector<real, 3> valRigid;
+      RowMatrix<real, 3, 11> jacRigid;
+      RowMatrix<real, 3, 3> jacTargetRigid;
+      EvalRodElementRotationToRigidConstraint(
+          kqI,
+          wflRod,
+          X0,
+          X1,
+          consistentAxis,
+          rodDofs,
+          refFrame,
+          targetRot,
+          &valRigid,
+          &jacRigid,
+          &jacTargetRigid);
+
+      real constexpr kTol = 1e-6_r;
+      EXPECT_LE((ColumnVector<real, 3>(val - valRigid)).Norm(), kTol);
+      EXPECT_LE((RowMatrix<real, 3, 8>(jac - jacRigid.RightCols<8>(8))).Norm(), kTol);
+      EXPECT_LE((RowMatrix<real, 3, 3>(jacTarget - jacTargetRigid)).Norm(), kTol);
+    }
+  }
+}

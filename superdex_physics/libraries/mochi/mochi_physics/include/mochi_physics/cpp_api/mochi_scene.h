@@ -150,6 +150,10 @@ class Scene {
       RodElementRotationToRigidConstraintParams const& params,
       Error& error) = 0;
 
+  virtual Constraint* CreateRodElementRotationConstraint(
+      RodElementRotationConstraintParams const& params,
+      Error& error) = 0;
+
   virtual Constraint* CreateRigidPivotPositionConstraint(
       RigidPivotPositionConstraintParams const& params,
       Error& error) = 0;

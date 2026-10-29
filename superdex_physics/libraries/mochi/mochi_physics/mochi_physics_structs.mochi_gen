@@ -1061,6 +1061,27 @@ struct RodElementRotationToRigidConstraintParams(ConstraintParams) [equality(def
   int elementIndex = 0;
 }
 
+// @brief Parameters for creating a tracking constraint on the world rotation of a rod element.
+//
+// @details Forces the world rotation of a specified rod element's material frame to track a target
+// rotation. The target rotation is initialized to the rotation observed at constraint creation
+// time, and can be updated at runtime via @ref Constraint::SetTargetRotation.
+//
+// @see Scene::CreateRodElementRotationConstraint, ConstraintType::RodElementRotation,
+// Constraint::SetTargetRotation
+struct RodElementRotationConstraintParams(ConstraintParams) [equality(default)] {
+
+  // @brief Reference-frame orientation in world coordinates, expressed as a rotation vector [rad].
+  // The constraint deviation is expressed in this frame.
+  Real3 refFrameRotVec [units("rad")] = {};
+
+  // @brief Actor handle identifying the rod actor.
+  ActorHandle actor = {};
+
+  // @brief Index of the element in the rod actor.
+  int elementIndex = 0;
+}
+
 // @brief Parameters for creating a constraint coupling a deformable node to a rigid actor.
 //
 // @see Scene::CreateDeformableNodeToRigidConstraint, ConstraintType::DeformableNodeToRigid

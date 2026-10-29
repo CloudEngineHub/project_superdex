@@ -229,6 +229,11 @@ enum ConstraintType {
   // RodElementRotationToRigidConstraintParams
   RodElementRotationToRigid,
 
+  // @brief Rotation constraint on a rod element. Tracks a world-space orientation.
+  //
+  // @see Scene::CreateRodElementRotationConstraint, RodElementRotationConstraintParams
+  RodElementRotation,
+
   // @brief Number of constraint type enum values.
   Count,
 }

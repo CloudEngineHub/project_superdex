@@ -3023,6 +3023,16 @@ Constraint* SceneImpl::CreateRodElementRotationToRigidConstraint(
       error);
 }
 
+Constraint* SceneImpl::CreateRodElementRotationConstraint(
+    RodElementRotationConstraintParams const& params,
+    Error& error) {
+  return CreateConstraintImpl(
+      [&](entt::registry& reg, entt::entity e, Error& error) {
+        InitConstraint_RodElementRotation(reg, e, params, error);
+      },
+      error);
+}
+
 Constraint* SceneImpl::CreateRigidPivotPositionConstraint(
     RigidPivotPositionConstraintParams const& params,
     Error& error) {

@@ -4706,6 +4706,13 @@ class ConstraintType:
         :meth:`~superdex.physics.Scene.create_rod_element_rotation_to_rigid_constraint`,
         :class:`~superdex.physics.RodElementRotationToRigidConstraintParams`
     """
+    ROD_ELEMENT_ROTATION: ConstraintType
+    """Rotation constraint on a rod element. Tracks a world-space orientation.
+
+    See Also:
+        :meth:`~superdex.physics.Scene.create_rod_element_rotation_constraint`,
+        :class:`~superdex.physics.RodElementRotationConstraintParams`
+    """
     COUNT: ConstraintType
     """Number of constraint type enum values."""
     def __init__(self, value: int) -> None: ...
@@ -6802,6 +6809,47 @@ class RodElementRotationToRigidConstraintParams(ConstraintParams):
         ref_frame_rot_vec: Real3Like = ...,
         rigid_actor: ActorHandle = ...,
         rod_actor: ActorHandle = ...,
+        element_index: int = ...,
+    ) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+
+class RodElementRotationConstraintParams(ConstraintParams):
+    """Parameters for creating a tracking constraint on the world rotation of a rod
+    element.
+
+    Forces the world rotation of a specified rod element's material frame to track a
+    target rotation. The target rotation is initialized to the rotation observed at
+    constraint creation time, and can be updated at runtime via
+    :meth:`~superdex.physics.Constraint.set_target_rotation`.
+
+    See Also:
+        :meth:`~superdex.physics.Scene.create_rod_element_rotation_constraint`,
+        :class:`ROD_ELEMENT_ROTATION <superdex.physics.ConstraintType>`,
+        :meth:`~superdex.physics.Constraint.set_target_rotation`
+    """
+    @property
+    def ref_frame_rot_vec(self) -> Real3:
+        """Reference-frame orientation in world coordinates, expressed as a rotation
+        vector
+        [rad]. The constraint deviation is expressed in this frame.
+        """
+    @ref_frame_rot_vec.setter
+    def ref_frame_rot_vec(self, value: Real3Like) -> None: ...
+    actor: ActorHandle
+    """Actor handle identifying the rod actor."""
+    element_index: int
+    """Index of the element in the rod actor."""
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(
+        self,
+        stiffness: float = ...,
+        damping: float = ...,
+        saturation: float = ...,
+        ref_frame_rot_vec: Real3Like = ...,
+        actor: ActorHandle = ...,
         element_index: int = ...,
     ) -> None: ...
     def __eq__(self, other: object) -> bool: ...
@@ -12689,6 +12737,8 @@ class Constraint:
         to :attr:`~superdex.physics.JointRotationTrackingConstraintParams.actor_a`. For
         :class:`ROD_ELEMENT_ROTATION_TO_RIGID <superdex.physics.ConstraintType>`, it is
         the target rotation of the constrained rod element relative to the rigid actor.
+        For :class:`ROD_ELEMENT_ROTATION <superdex.physics.ConstraintType>`, it is the
+        target rotation of the constrained rod element in world coordinates.
 
         Args:
             rotation (QuaternionLike): Target rotation quaternion [x, y, z, w]. Must be
@@ -13771,6 +13821,39 @@ class Scene:
         ref_frame_rot_vec: Real3Like = ...,
         rigid_actor: ActorHandle = ...,
         rod_actor: ActorHandle = ...,
+        element_index: int = ...,
+    ) -> Optional[Constraint]: ...
+    @overload
+    def create_rod_element_rotation_constraint(
+        self,
+        params: RodElementRotationConstraintParams,
+    ) -> Optional[Constraint]:
+        """Create a rotation constraint on a rod element.
+
+        Args:
+            params (RodElementRotationConstraintParams): Parameters defining the rod
+                element rotation constraint.
+
+        Returns:
+            Pointer to the created :class:`~superdex.physics.Constraint`, or None on
+            error.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        See Also:
+            :class:`ROD_ELEMENT_ROTATION <superdex.physics.ConstraintType>`,
+            :class:`~superdex.physics.RodElementRotationConstraintParams`,
+            :meth:`~superdex.physics.Scene.destroy_constraint`
+        """
+    @overload
+    def create_rod_element_rotation_constraint(
+        self,
+        stiffness: float = ...,
+        damping: float = ...,
+        saturation: float = ...,
+        ref_frame_rot_vec: Real3Like = ...,
+        actor: ActorHandle = ...,
         element_index: int = ...,
     ) -> Optional[Constraint]: ...
     @overload

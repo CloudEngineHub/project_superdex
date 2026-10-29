@@ -430,7 +430,7 @@
  * @ingroup constraints_rigid
  */
 
-/* ---- Constraints / Deformable Constraints (4) ---- */
+/* ---- Constraints / Deformable Constraints (5) ---- */
 /**
  * @struct superdex::DeformableNodePositionConstraintParams
  * @ingroup constraints_deformable
@@ -445,6 +445,10 @@
  */
 /**
  * @struct superdex::RodElementRotationToRigidConstraintParams
+ * @ingroup constraints_deformable
+ */
+/**
+ * @struct superdex::RodElementRotationConstraintParams
  * @ingroup constraints_deformable
  */
 

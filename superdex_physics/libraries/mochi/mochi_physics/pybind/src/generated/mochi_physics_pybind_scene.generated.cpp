@@ -612,6 +612,41 @@ void mochi::DefineMochiPhysics_MochiPhysicsScene([[maybe_unused]] nb::module_& m
       , nb::arg("rod_actor").sig("...") = mochi::RodElementRotationToRigidConstraintParams{}.rodActor
       , nb::arg("element_index") = mochi::RodElementRotationToRigidConstraintParams{}.elementIndex
       , "Create a rotation constraint between a rigid actor and a rod element.\n\nArgs:\n    params (RodElementRotationToRigidConstraintParams): Parameters defining the\n        rod element rotation constraint.\n\nReturns:\n    Pointer to the created :class:`~superdex.physics.Constraint`, or None on\n    error.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :class:`ROD_ELEMENT_ROTATION_TO_RIGID <superdex.physics.ConstraintType>`,\n    :class:`~superdex.physics.RodElementRotationToRigidConstraintParams`,\n    :meth:`~superdex.physics.Scene.destroy_constraint`", nb::rv_policy::reference)
+    .def("create_rod_element_rotation_constraint", [](mochi::Scene& self, mochi::RodElementRotationConstraintParams const& params) {
+      mochi::Error error;
+      auto result = self.CreateRodElementRotationConstraint(params, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+      return result;
+    }
+      , nb::arg("params")
+      , "Create a rotation constraint on a rod element.\n\nArgs:\n    params (RodElementRotationConstraintParams): Parameters defining the rod\n        element rotation constraint.\n\nReturns:\n    Pointer to the created :class:`~superdex.physics.Constraint`, or None on\n    error.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :class:`ROD_ELEMENT_ROTATION <superdex.physics.ConstraintType>`,\n    :class:`~superdex.physics.RodElementRotationConstraintParams`,\n    :meth:`~superdex.physics.Scene.destroy_constraint`"
+      , nb::rv_policy::reference
+    )
+    .def("create_rod_element_rotation_constraint", [](mochi::Scene& self, nb::object stiffness, nb::object damping, nb::object saturation, nb::object ref_frame_rot_vec, nb::object actor, nb::object element_index) {
+      mochi::RodElementRotationConstraintParams params{};
+      params.stiffness = nb::cast<mochi::real>(stiffness);
+      params.damping = nb::cast<mochi::real>(damping);
+      params.saturation = nb::cast<mochi::real>(saturation);
+      params.refFrameRotVec = nb::cast<mochi::Real3>(ref_frame_rot_vec);
+      params.actor = nb::cast<mochi::ActorHandle>(actor);
+      params.elementIndex = nb::cast<int>(element_index);
+      mochi::Error error;
+      auto result = self.CreateRodElementRotationConstraint(params, error);
+      if (!error.IsOK()) {
+        throw MochiErrorException(error);
+      }
+      return result;
+    }
+      , nb::kw_only()
+      , nb::arg("stiffness") = mochi::RodElementRotationConstraintParams{}.stiffness
+      , nb::arg("damping") = mochi::RodElementRotationConstraintParams{}.damping
+      , nb::arg("saturation") = mochi::RodElementRotationConstraintParams{}.saturation
+      , nb::arg("ref_frame_rot_vec").sig("...") = mochi::RodElementRotationConstraintParams{}.refFrameRotVec
+      , nb::arg("actor").sig("...") = mochi::RodElementRotationConstraintParams{}.actor
+      , nb::arg("element_index") = mochi::RodElementRotationConstraintParams{}.elementIndex
+      , "Create a rotation constraint on a rod element.\n\nArgs:\n    params (RodElementRotationConstraintParams): Parameters defining the rod\n        element rotation constraint.\n\nReturns:\n    Pointer to the created :class:`~superdex.physics.Constraint`, or None on\n    error.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nSee Also:\n    :class:`ROD_ELEMENT_ROTATION <superdex.physics.ConstraintType>`,\n    :class:`~superdex.physics.RodElementRotationConstraintParams`,\n    :meth:`~superdex.physics.Scene.destroy_constraint`", nb::rv_policy::reference)
     .def("create_rigid_pivot_position_constraint", [](mochi::Scene& self, mochi::RigidPivotPositionConstraintParams const& params) {
       mochi::Error error;
       auto result = self.CreateRigidPivotPositionConstraint(params, error);

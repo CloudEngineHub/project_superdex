@@ -109,6 +109,8 @@ enum class ConstraintType {
 
   RodElementRotationToRigid,
 
+  RodElementRotation,
+
   Count
 };
 

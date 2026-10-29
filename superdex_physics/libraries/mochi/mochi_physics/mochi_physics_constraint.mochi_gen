@@ -191,7 +191,9 @@ class Constraint [no_init, no_destruct, use_scene] {
   // JointRotationTrackingConstraintParams::actorB relative to @ref
   // JointRotationTrackingConstraintParams::actorA. For @ref
   // ConstraintType::RodElementRotationToRigid, it is the target rotation of the
-  // constrained rod element relative to the rigid actor.
+  // constrained rod element relative to the rigid actor. For @ref
+  // ConstraintType::RodElementRotation, it is the target rotation of the constrained rod element
+  // in world coordinates.
   //
   // @param[in] rotation Target rotation quaternion [x, y, z, w]. Must be finite and non-zero.
   // Normalized before use.

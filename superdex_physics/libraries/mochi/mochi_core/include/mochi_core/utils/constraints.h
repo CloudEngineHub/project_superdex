@@ -302,6 +302,38 @@ void EvalRodElementRotationToRigidConstraint(
     RowMatrix<real, 3, 3>* outJacTarget);
 
 /**
+ * @brief Evaluates a constraint between the world rotation of a rod element and a target rotation.
+ *
+ * The rod Jacobian includes frame-axis transport with the DoFs at zero incremental twist,
+ * as in @ref fem::ComputeRodElementRotationLocal.
+ *
+ * @param worldFromLocalRod Transform of the rod actor
+ * @param X0Rod Reference position of the first node of the rod element in the rod's local frame
+ * @param X1Rod Reference position of the second node
+ * @param frameAxisRod First cross-section axis of the rod element, which should be consistent with
+ * the rod element DOFs.
+ * @param rodElementDofs Current DOFs of the rod element (size must be 8)
+ * @param refFrame Reference frame for expressing the rotation difference, in world coordinates
+ * @param targetRot Target world rotation of the rod element
+ * @param[out] outVal Output constraint value (3D rotation vector); skipped if null
+ * @param[out] outJac Output Jacobian matrix wrt the rod element DoFs (3x8), ordered as: first rod
+ * node DoFs (4), second rod node DoFs (4). If nullptr, Jacobian computation is skipped
+ * @param[out] outJacTarget Output Jacobian matrix wrt the target rotation (3x3). If nullptr,
+ * Jacobian computation is skipped
+ */
+void EvalRodElementRotationConstraint(
+    TransformRT const& worldFromLocalRod,
+    Vec4r const& X0Rod,
+    Vec4r const& X1Rod,
+    Vec4r const& frameAxisRod,
+    Span<real const> rodElementDofs,
+    Quaternion const& refFrame,
+    Quaternion const& targetRot,
+    ColumnVector<real, 3>* outVal,
+    RowMatrix<real, 3, 8>* outJac,
+    RowMatrix<real, 3, 3>* outJacTarget);
+
+/**
  * @brief Evaluates a constraint on the range of relative rotation between two rotations A and B. It
  * models a constraint on the range of motion of a rotation joint.
  *

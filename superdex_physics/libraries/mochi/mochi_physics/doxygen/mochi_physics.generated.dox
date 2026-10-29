@@ -1959,6 +1959,13 @@
 /// @see @ref mochi::Scene::CreateRodElementRotationToRigidConstraint "Scene::CreateRodElementRotationToRigidConstraint", @ref mochi::RodElementRotationToRigidConstraintParams "RodElementRotationToRigidConstraintParams"
 ///
 
+/// @var mochi::ConstraintType::RodElementRotation
+///
+/// @brief Rotation constraint on a rod element. Tracks a world-space orientation.
+///
+/// @see @ref mochi::Scene::CreateRodElementRotationConstraint "Scene::CreateRodElementRotationConstraint", @ref mochi::RodElementRotationConstraintParams "RodElementRotationConstraintParams"
+///
+
 /// @var mochi::ConstraintType::Count
 ///
 /// @brief Number of constraint type enum values.
@@ -3272,6 +3279,30 @@
 ///
 
 /// @var mochi::RodElementRotationToRigidConstraintParams::elementIndex
+///
+/// @brief Index of the element in the rod actor.
+///
+
+/// @struct mochi::RodElementRotationConstraintParams
+///
+/// @brief Parameters for creating a tracking constraint on the world rotation of a rod element.
+///
+/// @details Forces the world rotation of a specified rod element's material frame to track a target rotation. The target rotation is initialized to the rotation observed at constraint creation time, and can be updated at runtime via @ref mochi::Constraint::SetTargetRotation "Constraint::SetTargetRotation".
+///
+/// @see @ref mochi::Scene::CreateRodElementRotationConstraint "Scene::CreateRodElementRotationConstraint", @ref mochi::ConstraintType::RodElementRotation "ConstraintType::RodElementRotation", @ref mochi::Constraint::SetTargetRotation "Constraint::SetTargetRotation"
+///
+
+/// @var mochi::RodElementRotationConstraintParams::refFrameRotVec
+///
+/// @brief Reference-frame orientation in world coordinates, expressed as a rotation vector [rad]. The constraint deviation is expressed in this frame.
+///
+
+/// @var mochi::RodElementRotationConstraintParams::actor
+///
+/// @brief Actor handle identifying the rod actor.
+///
+
+/// @var mochi::RodElementRotationConstraintParams::elementIndex
 ///
 /// @brief Index of the element in the rod actor.
 ///
@@ -6675,7 +6706,7 @@
 ///
 /// @brief Set the constraint's target rotation.
 ///
-/// @details The target is interpreted according to the constraint type. For @ref mochi::ConstraintType::RigidPivotRotation "ConstraintType::RigidPivotRotation", it is the target pivot-frame rotation in world coordinates. For @ref mochi::ConstraintType::RigidPivotToRigidTarget "ConstraintType::RigidPivotToRigidTarget", it is the rotation of the target center-of-mass transform in world coordinates. For @ref mochi::ConstraintType::Articulated3dRotationTarget "ConstraintType::Articulated3dRotationTarget", it is the target joint-local rotation. For @ref mochi::ConstraintType::JointRotationTracking "ConstraintType::JointRotationTracking", it is the target rotation of @ref mochi::JointRotationTrackingConstraintParams::actorB "JointRotationTrackingConstraintParams::actorB" relative to @ref mochi::JointRotationTrackingConstraintParams::actorA "JointRotationTrackingConstraintParams::actorA". For @ref mochi::ConstraintType::RodElementRotationToRigid "ConstraintType::RodElementRotationToRigid", it is the target rotation of the constrained rod element relative to the rigid actor.
+/// @details The target is interpreted according to the constraint type. For @ref mochi::ConstraintType::RigidPivotRotation "ConstraintType::RigidPivotRotation", it is the target pivot-frame rotation in world coordinates. For @ref mochi::ConstraintType::RigidPivotToRigidTarget "ConstraintType::RigidPivotToRigidTarget", it is the rotation of the target center-of-mass transform in world coordinates. For @ref mochi::ConstraintType::Articulated3dRotationTarget "ConstraintType::Articulated3dRotationTarget", it is the target joint-local rotation. For @ref mochi::ConstraintType::JointRotationTracking "ConstraintType::JointRotationTracking", it is the target rotation of @ref mochi::JointRotationTrackingConstraintParams::actorB "JointRotationTrackingConstraintParams::actorB" relative to @ref mochi::JointRotationTrackingConstraintParams::actorA "JointRotationTrackingConstraintParams::actorA". For @ref mochi::ConstraintType::RodElementRotationToRigid "ConstraintType::RodElementRotationToRigid", it is the target rotation of the constrained rod element relative to the rigid actor. For @ref mochi::ConstraintType::RodElementRotation "ConstraintType::RodElementRotation", it is the target rotation of the constrained rod element in world coordinates.
 ///
 /// @param[in] rotation Target rotation quaternion [x, y, z, w]. Must be finite and non-zero. Normalized before use.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
@@ -7277,6 +7308,17 @@
 /// @return Pointer to the created @ref mochi::Constraint "Constraint", or nullptr on error.
 ///
 /// @see @ref mochi::ConstraintType::RodElementRotationToRigid "ConstraintType::RodElementRotationToRigid", @ref mochi::RodElementRotationToRigidConstraintParams "RodElementRotationToRigidConstraintParams", @ref mochi::Scene::DestroyConstraint "DestroyConstraint"
+///
+
+/// @fn Constraint* mochi::Scene::CreateRodElementRotationConstraint(RodElementRotationConstraintParams const& params, Error& error)
+///
+/// @brief Create a rotation constraint on a rod element.
+///
+/// @param[in] params Parameters defining the rod element rotation constraint.
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+/// @return Pointer to the created @ref mochi::Constraint "Constraint", or nullptr on error.
+///
+/// @see @ref mochi::ConstraintType::RodElementRotation "ConstraintType::RodElementRotation", @ref mochi::RodElementRotationConstraintParams "RodElementRotationConstraintParams", @ref mochi::Scene::DestroyConstraint "DestroyConstraint"
 ///
 
 /// @fn Constraint* mochi::Scene::CreateRigidPivotPositionConstraint(RigidPivotPositionConstraintParams const& params, Error& error)
