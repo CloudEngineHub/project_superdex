@@ -508,6 +508,24 @@ class RigidModesAMGUnderTest : public krylov::RigidBodyModesAMGPrec<real> {
   }
 };
 
+// X is an accurate inverse of A: |A X - I| <= tol |A| |X| entrywise, as for a backward stable
+// inverse.
+template <typename MatA, typename MatX>
+static void ExpectAccurateInverse(MatA const& A, MatX const& X, double tol) {
+  int const n = A.Rows();
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      double residual = (i == j) ? -1.0 : 0.0;
+      double scale = 0.0;
+      for (int k = 0; k < n; ++k) {
+        residual += double(A(i, k)) * double(X(k, j));
+        scale += Abs(double(A(i, k)) * double(X(k, j)));
+      }
+      EXPECT_LE(Abs(residual), tol * scale);
+    }
+  }
+}
+
 // PCG iterations to a relative residual of 1e-5 for A x = A v from zero, or kMaxPCGIterations
 // without convergence.
 constexpr int kMaxPCGIterations = 200;
@@ -587,15 +605,9 @@ static int ExpectAMGProperties(AMGProblem<MatrixType> const& problem) {
     auto const coarsest = prec.LevelMatrix(prec.NumCoarseLevels());
     int const m = coarsest.Rows();
     auto const inverse = MakeDense(m, m, [&](auto const& u, auto& v) { prec.SolveCoarsest(u, v); });
+    ExpectAccurateInverse(coarsest, inverse, tol);
     for (int i = 0; i < m; ++i) {
       for (int j = 0; j < m; ++j) {
-        double residual = (i == j) ? -1.0 : 0.0;
-        double scale = 0.0;
-        for (int k = 0; k < m; ++k) {
-          residual += coarsest(i, k) * inverse(k, j);
-          scale += Abs(coarsest(i, k) * inverse(k, j));
-        }
-        EXPECT_LE(Abs(residual), tol * scale);
         symmetryTol =
             Max(symmetryTol,
                 m * std::numeric_limits<real>::epsilon() * Abs(inverse(i, j)) *
@@ -1398,7 +1410,8 @@ TEST(AMG, RigidModeMargin) {
 }
 
 // The positive-definiteness checks of RigidBodyModesAMGPrec accept a pivot only above n epsilon
-// times its row's diagonal entry, and the inverse from the 6x6 factors is accurate.
+// times its row's diagonal entry, and the inverses from the 6x6 factors and from the coarsest
+// matrix's check are accurate.
 TEST(AMG, RigidModesFactorChecks) {
   real const eps = std::numeric_limits<real>::epsilon();
   real const nan = std::numeric_limits<real>::quiet_NaN();
@@ -1416,6 +1429,8 @@ TEST(AMG, RigidModesFactorChecks) {
     A(1, 1) = 1_r + delta;
     real factors[4] = {A(0, 0), A(0, 1), A(1, 0), A(1, 1)};
     EXPECT_EQ(krylov::details::IsPositiveDefinite(A), accepted);
+    Matrix<real> inverse;
+    EXPECT_EQ(krylov::details::InvertIfPositiveDefinite(A, inverse), accepted);
     EXPECT_EQ(krylov::details::FactorLDLt(factors, 2), accepted);
     // The same pivot, scaled like the margin, last in a 6x6 smoother block, which fails even when
     // the inverse computed from its factors would pass.
@@ -1448,6 +1463,17 @@ TEST(AMG, RigidModesFactorChecks) {
       EXPECT_NEAR(product, i == j ? 1.0 : 0.0, 10 * eps);
     }
   }
+  // From kSmallLDLtInverseSizeThreshold rows, the inverse comes from LDLt's factors.
+  int const n = kSmallLDLtInverseSizeThreshold;
+  Matrix<real> M(n, n);
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      M(i, j) = (i == j) ? real(n) : 1_r / real(1 + Abs(i - j));
+    }
+  }
+  Matrix<real> coarsestInverse;
+  ASSERT_TRUE(krylov::details::InvertIfPositiveDefinite(M, coarsestInverse));
+  ExpectAccurateInverse(M, coarsestInverse, n * eps);
 }
 
 TEST(AMG, Partition1D) {

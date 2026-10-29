@@ -312,6 +312,30 @@ TEST(LDLt, SolveInPlace) {
     };
     TestSolveInPlace<kColMajor>(makeSmallLDLt, /*isSymmetricSolver*/ true);
     TestSolveInPlace<kRowMajor>(makeSmallLDLt, /*isSymmetricSolver*/ true);
+    if constexpr (Equilibration::value == LDLtEquilibration::None) {
+      // With a custom singularity check that accepts every pivot.
+      auto makeCheckedSmallLDLt = [](auto&& A) {
+        using MatType = decltype(A);
+        int info = {};
+        auto smallLdlt = SmallLDLt<
+            real,
+            krylov::details::MatTraits<MatType>::kNumRows,
+            krylov::details::MatTraits<MatType>::kNumCols>(
+            A, info, [](int, auto, auto const&) { return false; });
+        EXPECT_EQ(0, info);
+        return smallLdlt;
+      };
+      TestSolveInPlace<kColMajor>(makeCheckedSmallLDLt, /*isSymmetricSolver*/ true);
+      TestSolveInPlace<kRowMajor>(makeCheckedSmallLDLt, /*isSymmetricSolver*/ true);
+      // A check that flags every third pivot: the factorization goes on and counts each one, in the
+      // blocked panels (rows 2 and 5) and in the tail (row 8).
+      Matrix<real> identity(9, 9);
+      identity.SetIdentity();
+      int flagged = 0;
+      SmallLDLt<real> const flaggedLdlt(
+          identity, flagged, [](int row, auto, auto const&) { return row % 3 == 2; });
+      EXPECT_EQ(3, flagged);
+    }
   };
 
   static_assert(

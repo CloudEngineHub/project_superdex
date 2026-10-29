@@ -154,10 +154,33 @@ class LDLt {
       Matrix<ScalarA, kRowsAtCT, kColsAtCT, kMajorDirection, kOwnership, kLeadDim> const& A,
       int& info);
 
+  /// @brief Constructor for the factorization with a custom singularity check, without
+  /// equilibration.
+  ///
+  /// @param[in] A Symmetric matrix to factorize.
+  /// @param[out] info Number of pivots the check flagged: 0 on success. The factorization goes on
+  /// past a flagged pivot, but the later pivots are no longer A's, so only whether info is positive
+  /// is reliable.
+  /// @param[in] singularityCheck Called as singularityCheck(row, pivot, trailingBlock) for each
+  /// pivot, with the pivot's row in A and its value before inversion; returns whether the pivot is
+  /// singular (see @ref LDLtFactorize).
+  ///
+  /// @note Factors the whole matrix without logging.
+  template <
+      typename ScalarA,
+      Direction kMajorDirection,
+      Ownership kOwnership,
+      int kLeadDim,
+      typename SingularityCheckFn>
+  LDLt(
+      Matrix<ScalarA, kRowsAtCT, kColsAtCT, kMajorDirection, kOwnership, kLeadDim> const& A,
+      int& info,
+      SingularityCheckFn&& singularityCheck);
+
   /// @brief Constructor for use in CTAD expressions.
   ///
   /// @param[in] A     Symmetric matrix to factorize.
-  /// @param[out] info Information status flag (see other constructor).
+  /// @param[out] info Information status flag (see the first constructor).
   template <
       typename ScalarA,
       int kR,
@@ -381,6 +404,34 @@ int LDLtFactorize(MatrixType& L, bool failOnSingularity, SingularityCheckFn&& si
     }
   }
   return singularities;
+}
+
+template <
+    typename InputScalar,
+    int kRowsAtCT,
+    int kColsAtCT,
+    LDLtEquilibration kEquilibration,
+    int kBlockSize,
+    int kTrSize>
+template <
+    typename ScalarA,
+    Direction kMajorDirection,
+    Ownership kOwnership,
+    int kLeadDim,
+    typename SingularityCheckFn>
+LDLt<InputScalar, kRowsAtCT, kColsAtCT, kEquilibration, kBlockSize, kTrSize>::LDLt(
+    Matrix<ScalarA, kRowsAtCT, kColsAtCT, kMajorDirection, kOwnership, kLeadDim> const& A,
+    int& info,
+    SingularityCheckFn&& singularityCheck)
+    : _size(A.Rows()), _L(AsColMajor(A)) {
+  static_assert(std::is_same_v<InputScalar const, ScalarA const>, "Incompatible scalar types");
+  static_assert(
+      kEquilibration == LDLtEquilibration::None,
+      "A custom singularity check requires LDLtEquilibration::None.");
+  MOCHI_ASSERT_VERBOSE(A.Rows() == A.Cols(), "Input matrix must be square.");
+  _singularities =
+      LDLtFactorize<kBlockSize, kTrSize>(_L, /*failOnSingularity*/ false, singularityCheck);
+  info = _singularities;
 }
 
 template <
