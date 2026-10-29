@@ -193,6 +193,22 @@ void JointConstraint::AddForce(
       outForce.data(), forceSpan.data(), articulatedDofs.data(), isize(forceSpan));
 }
 
+void controller::SetCurrentTarget(
+    Span<real const> pose,
+    Span<TransformRT const> linkTransformsCom,
+    bool& outChanged,
+    CControllerTarget<TimeStep::Current>& outTarget,
+    CControllerTarget<TimeStep::Previous>& outTargetOld,
+    CControllerPrescribedMotion& outMotion) {
+  if (!outMotion.newTargetApplied) {
+    outTargetOld.CopyFrom(outTarget);
+    outMotion.newTargetApplied = true;
+  }
+  outChanged = pose != MakeConstSpan(outTarget.JointPose()) ||
+      linkTransformsCom != outTarget.LinkTransformsCom();
+  outTarget.Set(AsConstView(pose), linkTransformsCom);
+}
+
 template <PoseConstraintT C>
 void controller::SetTargets(
     Span<real const> pose,
@@ -239,7 +255,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CControllerTarget<TimeStep::Current>>(reg);
   ecs::RegisterComponent<CControllerTarget<TimeStep::Previous>>(reg);
   ecs::RegisterComponent<CControllerConstraints>(reg);
-  ecs::RegisterComponent<CControllerTargetVelocity>(reg);
+  ecs::RegisterComponent<CControllerPrescribedMotion>(reg);
   ecs::RegisterComponent<CTargetOwners>(reg);
 }
 } // namespace mochi::controller

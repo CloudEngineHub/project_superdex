@@ -1608,21 +1608,12 @@ TEST_P(MochiContextTest, CreateIKSolver_DisablesArticulatedRateDependentTerms) {
   scene->ForEachConstraint(
       [](Constraint* existingConstraint) { EXPECT_GT(existingConstraint->GetDamping(), 0_r); });
 
-  DynamicArray<real> targetVelocity(actor->GetNumDofs(), 1_r);
-  actor->SetArticulatedTargetVelocity(targetVelocity, ExpectOK{});
-
-  auto& reg = assert_cast<SceneImpl*>(scene)->GetRegistry();
-  auto const actorEntity = GetEntity(reg, actor->GetHandle(), ExpectOK{});
-  EXPECT_TRUE(reg.get<CControllerTargetVelocity const>(actorEntity).use);
-
   auto* solver = experimental::CreateIKSolver(scene, _mochiContext, ExpectOK{});
   ASSERT_NE(nullptr, solver);
   MOCHI_DEFER(experimental::DestroyIKSolver(solver, _mochiContext, ExpectOK{}));
 
   scene->ForEachConstraint(
       [](Constraint* existingConstraint) { EXPECT_EQ(0_r, existingConstraint->GetDamping()); });
-
-  EXPECT_FALSE(reg.get<CControllerTargetVelocity const>(actorEntity).use);
 
   auto const frictionParams = actor->GetArticulatedJointFrictionParams(ExpectOK{});
   ASSERT_EQ(2, frictionParams.size());

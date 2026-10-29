@@ -1210,10 +1210,8 @@ void SceneImpl::RestoreStatePair(StateHandle curr, StateHandle prev, Error& err)
   _registry.ctx<CSceneTime>().Advance(timeStepSec);
   PreStepEcs(_registry);
 
-  // Set the current state, excluding adjoints and old targets.
-  SReflect::TypeId excludeAdjointsAndOldTargets[] = {
-      attribute::HasAdjoint::GetTypeId(), attribute::HasOldTarget::GetTypeId()};
-  RestorePartialState(curr, /*releaseImmediately*/ false, excludeAdjointsAndOldTargets, err);
+  // Set the current state (including start and end targets), excluding adjoints.
+  RestorePartialState(curr, /*releaseImmediately*/ false, excludeAdjoints, err);
 }
 
 bool SceneImpl::IsActorContactEnabled(ActorHandle colliding, ActorHandle collider, Error& error)

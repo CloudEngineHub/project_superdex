@@ -245,9 +245,19 @@ void mochi::PreStepEcs(entt::registry& reg) {
   ecs::InvokeForEachGlobal(&WaitForPendingSdfCollider, reg);
   reg.clear<CSdfColliderPending>();
 
-  // Set old targets of pose controllers if velocity was imposed externally
+  // Set the old targets of pose controllers from their prescribed motion. A target velocity also
+  // determines the old targets of the controller constraints, so it must come before the constraint
+  // shifts below.
   ecs::InvokeForEachGlobal<ecs::policy::AllowFullRegistryAccess>(
-      &articulated::compound::SetOldControllerTargets, reg);
+      &articulated::compound::ApplyControllerStepStart, reg);
+
+  // Start the step at the end targets of the last step, unless a new target was applied since then.
+  // Between steps, old and current targets hold the targets at the start and at the end of the last
+  // step.
+  ecs::InvokeForEachGlobal(&ApplyConstraintTargetStepStart<real>, reg);
+  ecs::InvokeForEachGlobal(&ApplyConstraintTargetStepStart<Real3>, reg);
+  ecs::InvokeForEachGlobal(&ApplyConstraintTargetStepStart<Quaternion>, reg);
+  ecs::InvokeForEachGlobal(&ApplyConstraintTargetStepStart<TransformRT>, reg);
 
   // Create compounds automatically for any newly added constraints.
   // Split automatically created compounds if constraints were removed.
@@ -491,15 +501,6 @@ void mochi::PostStepEcs(entt::registry& reg) {
 
   // Swap active elements, if necessary.
   reg.view<TagRomActor>().each([&](entt::entity e) { rom::SwapActiveElements(reg, e); });
-
-  // Update constraints that receive external targets
-  ecs::InvokeForEachGlobal(&UpdateConstraintOldTarget<real>, reg);
-  ecs::InvokeForEachGlobal(&UpdateConstraintOldTarget<Real3>, reg);
-  ecs::InvokeForEachGlobal(&UpdateConstraintOldTarget<Quaternion>, reg);
-  ecs::InvokeForEachGlobal(&UpdateConstraintOldTarget<TransformRT>, reg);
-
-  // Update the external targets of pose controllers
-  ecs::InvokeForEachGlobal(&controller::UpdateOldTargets, reg);
 }
 
 namespace mochi::step {

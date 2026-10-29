@@ -367,7 +367,8 @@ struct CConstraintData<ConstraintType::Articulated3dRotationRange> : public NoCo
 
 /*
   Component for constraint target data. Templatized for type and time step.
-  Targets are captured as part of the state.
+  Targets are captured as part of the state. Between steps, the StageStart and Current targets hold
+  the targets at the start and at the end of the last step.
 */
 template <typename T, TimeStep kTimeStep>
 struct CConstraintTarget : public NoCopy {
@@ -375,9 +376,27 @@ struct CConstraintTarget : public NoCopy {
 
   MOCHI_TEMPLATE_BEGIN(mochi::CConstraintTarget, T, kTimeStep);
   MOCHI_ATTRIBUTE(CaptureState);
-  MOCHI_ATTRIBUTE_IF(kTimeStep == TimeStep::StageStart, HasOldTarget);
   MOCHI_FIELD(value);
   MOCHI_TEMPLATE_END();
+};
+
+/*
+  Motion prescribed for the target of a constraint over the next step.
+
+  Between steps, the StageStart and Current targets hold the targets at the start and at the end of
+  the last step. newTargetApplied is set once the old target of the next step is determined, either
+  by the first target set since the last step, even if unchanged (the old target becomes the end
+  target of the last step), or by an explicit update of the old target. Otherwise, the next step
+  starts at the end target of the last step. There is no pending velocity, because UpdateOldTarget,
+  the only input on the old target, is applied immediately.
+*/
+struct CConstraintPrescribedMotion : public NoCopy {
+  bool newTargetApplied = false;
+
+  MOCHI_STRUCT_BEGIN(mochi::CConstraintPrescribedMotion);
+  MOCHI_ATTRIBUTE(CaptureState);
+  MOCHI_FIELD(newTargetApplied);
+  MOCHI_STRUCT_END();
 };
 
 // Initialize entity as a constraint of type RigidSphericalJointConstraint
@@ -485,46 +504,45 @@ void InitConstraint_Articulated3dRotationRange(
     Articulated3dRotationRangeConstraintParams const& params,
     Error& error);
 
-// Systems for managing constraint targets
+// System to set the current target of a constraint, and report in outChanged whether it changed.
+// The first set since the last step, even if unchanged, starts the next step at the end target of
+// the last step.
 template <typename T>
-void SetConstraintTargetPosition(
-    Real3 const& pos,
-    CConstraintTarget<T, TimeStep::Current>& outTarget);
-template <>
-inline void SetConstraintTargetPosition<Real3>(
-    Real3 const& pos,
-    CConstraintTarget<Real3, TimeStep::Current>& outTarget) {
-  outTarget.value = pos;
-}
-template <>
-inline void SetConstraintTargetPosition<TransformRT>(
-    Real3 const& pos,
-    CConstraintTarget<TransformRT, TimeStep::Current>& outTarget) {
-  outTarget.value.SetTranslation(pos);
+void SetConstraintTarget(
+    T const& value,
+    bool& outChanged,
+    CConstraintTarget<T, TimeStep::Current>& outTarget,
+    CConstraintTarget<T, TimeStep::StageStart>& outTargetOld,
+    CConstraintPrescribedMotion& outMotion) {
+  if (!outMotion.newTargetApplied) {
+    outTargetOld.value = outTarget.value;
+    outMotion.newTargetApplied = true;
+  }
+  outChanged = outTarget.value != value;
+  outTarget.value = value;
 }
 
-template <typename T>
-void SetConstraintTargetRotation(
-    Quaternion const& rot,
-    CConstraintTarget<T, TimeStep::Current>& outTarget);
-template <>
-inline void SetConstraintTargetRotation<Quaternion>(
-    Quaternion const& rot,
-    CConstraintTarget<Quaternion, TimeStep::Current>& outTarget) {
-  outTarget.value = rot;
-}
-template <>
-inline void SetConstraintTargetRotation<TransformRT>(
-    Quaternion const& rot,
-    CConstraintTarget<TransformRT, TimeStep::Current>& outTarget) {
-  outTarget.value.SetRotation(rot);
-}
-
+// System to start the next step at the current target.
 template <typename T>
 void UpdateConstraintOldTarget(
     CConstraintTarget<T, TimeStep::Current> const& target,
-    CConstraintTarget<T, TimeStep::StageStart>& outTargetOld) {
+    CConstraintTarget<T, TimeStep::StageStart>& outTargetOld,
+    CConstraintPrescribedMotion& outMotion) {
   outTargetOld.value = target.value;
+  outMotion.newTargetApplied = true;
+}
+
+// System to set the old target at the beginning of a step. Without a new target, the target stays
+// at the end target of the last step.
+template <typename T>
+void ApplyConstraintTargetStepStart(
+    CConstraintTarget<T, TimeStep::Current> const& target,
+    CConstraintTarget<T, TimeStep::StageStart>& outTargetOld,
+    CConstraintPrescribedMotion& outMotion) {
+  if (!outMotion.newTargetApplied) {
+    outTargetOld.value = target.value;
+  }
+  outMotion.newTargetApplied = false;
 }
 
 // Function for the evaluation of constraint value, constraint Jacobian wrt dofs, and/or constraint

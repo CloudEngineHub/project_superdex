@@ -28,6 +28,7 @@
 #include <mochi_core/utils/dynamic_array.h>
 #include <mochi_physics/src/mochi_articulated_body.h>
 #include <mochi_physics/src/mochi_blended.h>
+#include <mochi_physics/src/mochi_constraint.h>
 #include <mochi_physics/src/mochi_contact_partition.h>
 #include <mochi_physics/src/mochi_context.h>
 #include <mochi_physics/src/mochi_discretization_components.h>
@@ -1104,6 +1105,65 @@ TEST_F(ArticulatedBodyDynamicsTest, SetRevoluteJointVelocityHasZeroVSym) {
           .get<CArticulatedJointVels<TimeStep::Current> const>(GetEntity(actor->GetHandle()))
           .value;
   ExpectRevoluteJointVelocity(jointVels[1], Real3{1_r, 0_r, 0_r}, kRevoluteRate);
+
+  _scene->DestroyActor(actor->GetHandle());
+}
+
+// Between steps, the old and current targets of a pose controller, and those of its constraints,
+// hold the targets at the start and at the end of the last step. A target velocity starts the step
+// at the current target moved back by the velocity.
+TEST_F(ArticulatedBodyDynamicsTest, PoseControllerTargetMotionOfLastStepIsKept) {
+  real constexpr kDt = 1e-2_r;
+  std::array const joints{ArticulatedJointType::Revolute};
+  Actor* actor = CreateActor(joints, 0_r, 0_r, 0_r);
+  PoseControllerParams params;
+  params.jointTracking = {PoseTrackingParams{.stiffness = 1e3_r, .damping = 1e2_r}};
+  actor->AddArticulatedPoseController(params, test::ExpectOK{});
+
+  auto const& reg = GetRegistry();
+  entt::entity const e = GetEntity(actor->GetHandle());
+  auto const getOld = [&] {
+    return reg.get<CControllerTarget<TimeStep::Previous>>(e).JointPose()[0];
+  };
+  auto const getCurrent = [&] {
+    return reg.get<CControllerTarget<TimeStep::Current>>(e).JointPose()[0];
+  };
+  entt::entity jointConstraint = entt::null;
+  for (auto const& c : reg.get<CControllerConstraints>(e).impl) {
+    entt::entity const ce = GetEntity(c.constraint->GetHandle());
+    if (reg.all_of<CConstraintTarget<real, TimeStep::Current>>(ce)) {
+      jointConstraint = ce;
+    }
+  }
+  ASSERT_TRUE(jointConstraint != entt::null);
+  auto const getConstraintOld = [&] {
+    return reg.get<CConstraintTarget<real, TimeStep::StageStart>>(jointConstraint).value;
+  };
+  auto const getConstraintCurrent = [&] {
+    return reg.get<CConstraintTarget<real, TimeStep::Current>>(jointConstraint).value;
+  };
+
+  real const target0 = getCurrent();
+  _scene->Step(kDt);
+  EXPECT_EQ(target0, getOld());
+  EXPECT_EQ(target0, getCurrent());
+
+  std::array const target1{target0 + 0.3_r};
+  actor->SetArticulatedTargetPose(target1, test::ExpectOK{});
+  _scene->Step(kDt);
+  EXPECT_EQ(target0, getOld());
+  EXPECT_EQ(target1[0], getCurrent());
+  EXPECT_EQ(target0, getConstraintOld());
+  EXPECT_EQ(target1[0], getConstraintCurrent());
+
+  std::array const velocity{2_r};
+  actor->SetArticulatedTargetVelocity(velocity, test::ExpectOK{});
+  _scene->Step(kDt);
+  real const expectedOld = target1[0] - kDt * velocity[0];
+  EXPECT_NEAR(expectedOld, getOld(), 1e-6_r);
+  EXPECT_EQ(target1[0], getCurrent());
+  EXPECT_NEAR(expectedOld, getConstraintOld(), 1e-6_r);
+  EXPECT_EQ(target1[0], getConstraintCurrent());
 
   _scene->DestroyActor(actor->GetHandle());
 }

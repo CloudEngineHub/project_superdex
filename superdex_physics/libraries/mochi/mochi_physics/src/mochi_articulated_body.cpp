@@ -755,8 +755,8 @@ void articulated::compound::AddPoseController(
       reg.emplace<CControllerTarget<TimeStep::Previous>>(e, props.reducedPoseDim, props.numLinks);
   targetOld.Set(pose, linkTransformsCom);
 
-  // Emplace component to store velocity target
-  reg.emplace<CControllerTargetVelocity>(e, props.reducedPoseDim);
+  // Emplace component to store the prescribed motion of the targets
+  reg.emplace<CControllerPrescribedMotion>(e, props.reducedPoseDim);
 
   // If the scene is differentiable, add other components
   if (reg.try_ctx<TagDifferentiableScene>()) {
@@ -841,10 +841,9 @@ static bool SetTargetPoseImpl(
   SetControllerTargets(reg, e, pose, linkTransformsCom);
 
   // Update the local target pose and link transforms
-  auto& target = reg.get<CControllerTarget<TimeStep::Current>>(e);
-  bool const changed =
-      pose != MakeConstSpan(target.JointPose()) || linkTransformsCom != target.LinkTransformsCom();
-  target.Set(AsConstView(pose), linkTransformsCom);
+  bool changed = false;
+  ecs::InvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+      controller::SetCurrentTarget, reg, e, pose, linkTransformsCom, std::ref(changed));
   return changed;
 }
 
@@ -1029,29 +1028,27 @@ void articulated::compound::SetTargetJointVelocities(
   MOCHI_ERROR_RETURN(error);
 
   // Store the target velocity for a deferred update once the time step size is known
-  auto& target = reg.get<CControllerTargetVelocity>(e);
-  target.value.Reset(AsConstView(vel));
-  target.use = true;
+  auto& motion = reg.get<CControllerPrescribedMotion>(e);
+  motion.targetVelocity.Reset(AsConstView(vel));
+  motion.hasVelocity = true;
 }
 
-void articulated::compound::SetOldControllerTargets(
+// Set the old targets of a pose controller, and those of its constraints, to the current targets
+// moved back by the target velocity over the time step.
+static void SetOldTargetsFromVelocity(
     entt::registry& reg,
     entt::entity e,
-    ecs::CtxGlobal<CSceneTime const> time,
+    double dt,
     CControllerTarget<TimeStep::Current> const& target,
-    CControllerTargetVelocity& vel,
+    ColumnVector<real> const& targetVelocity,
     CControllerTarget<TimeStep::Previous>& outTargetOld) {
-  if (!vel.use) {
-    return; // Nothing to do
-  }
-
   auto const* joints = reg.get<CArticulatedBodyShape const>(e).shape->GetJointsData();
   auto const& poseInfo = reg.get<CArticulatedJointPoseInfo const>(e);
 
   // Reserve stack memory for the delta and the result pose
   MOCHI_FILO_STACK_ALLOCATOR(allocator, 2 * 256 * sizeof(real) + 2 * 50 * sizeof(TransformRT));
-  ColumnVector<real> deltaJointsLie(vel.value.size(), &allocator);
-  ColumnVector<real> jointPoseOld(target.JointPose().size(), &allocator);
+  ColumnVector<real> deltaJointsLie(targetVelocity.Rows(), &allocator);
+  ColumnVector<real> jointPoseOld(target.JointPose().Rows(), &allocator);
   DynamicArray<TransformRT> linkTransforms(&allocator);
   linkTransforms.resize_noinit(target.LinkTransformsCom().size());
   DynamicArray<TransformRT> linkTransformsOld(&allocator);
@@ -1059,7 +1056,7 @@ void articulated::compound::SetOldControllerTargets(
 
   // Recompute old target as current target - timestep * velocity.
   // For links, apply the FK-derived delta (old / current) to the stored target link transforms.
-  deltaJointsLie = (-time->DeltaTime()) * vel.value;
+  deltaJointsLie = (-dt) * targetVelocity;
   AddLieDeltaToReducedPose(
       joints->jointTypes,
       joints->dofInfo,
@@ -1067,8 +1064,8 @@ void articulated::compound::SetOldControllerTargets(
       target.JointPose(),
       deltaJointsLie,
       jointPoseOld);
-  GetLinkTransformsComFromPose(reg, e, target.JointPose(), linkTransforms);
-  GetLinkTransformsComFromPose(reg, e, jointPoseOld, linkTransformsOld);
+  articulated::compound::GetLinkTransformsComFromPose(reg, e, target.JointPose(), linkTransforms);
+  articulated::compound::GetLinkTransformsComFromPose(reg, e, jointPoseOld, linkTransformsOld);
   for (int i = 0; i < linkTransforms.size(); ++i) {
     linkTransformsOld[i] =
         linkTransformsOld[i] * Invert(linkTransforms[i]) * target.LinkTransformsCom()[i];
@@ -1080,9 +1077,24 @@ void articulated::compound::SetOldControllerTargets(
 
   // Update the target pose on the constraints
   SetControllerTargets(reg, e, target.JointPose(), target.LinkTransformsCom());
+}
 
-  // Clear velocity target
-  vel.use = false;
+void articulated::compound::ApplyControllerStepStart(
+    entt::registry& reg,
+    entt::entity e,
+    ecs::CtxGlobal<CSceneTime const> time,
+    CControllerTarget<TimeStep::Current> const& target,
+    CControllerTarget<TimeStep::Previous>& outTargetOld,
+    CControllerPrescribedMotion& outMotion) {
+  auto const dt = time->DeltaTime();
+  if (outMotion.hasVelocity && IsFinite(static_cast<real>(dt))) {
+    SetOldTargetsFromVelocity(reg, e, dt, target, outMotion.targetVelocity, outTargetOld);
+  } else if (!outMotion.newTargetApplied) {
+    // Without a new target, the targets stay at the end targets of the last step.
+    outTargetOld.CopyFrom(target);
+  }
+  outMotion.newTargetApplied = false;
+  outMotion.hasVelocity = false;
 }
 
 void articulated::compound::GetPoseControllerParams(

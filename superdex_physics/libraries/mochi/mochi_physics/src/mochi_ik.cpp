@@ -69,10 +69,6 @@ IKSolverImpl::IKSolverImpl(Scene* scene, Error& error) {
   _scene->ForEachConstraint(
       [](Constraint* constraint) { constraint->SetDamping(0_r, ErrorAssert{}); });
 
-  // Ignore pending pose-controller target velocities, whose extrapolation is rate-dependent.
-  reg.view<CControllerTargetVelocity>().each(
-      [](CControllerTargetVelocity& targetVelocity) { targetVelocity.use = false; });
-
   // Disable joint friction forces and inertia via the setters.
   // Fixed FILO stack budget (a generous joint-count bound). The macro needs a compile-time
   // size, so it can't be numJoints; the DynamicArrays spill to heap if an actor exceeds it.

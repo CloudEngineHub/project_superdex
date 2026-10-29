@@ -146,57 +146,56 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
   void SetTargetPosition(Real3 const& position, Error& error) override {
     MOCHI_ERROR_IF_NOT(IsFinite(position), error, "Target position must be finite.");
     MOCHI_ERROR_RETURN(error);
-    if (auto* target = reg.try_get<CConstraintTarget<Real3, TimeStep::Current>>(e)) {
-      if (target->value == position) {
-        return; // No change
-      }
-      SetConstraintTargetPosition(position, *target);
-    } else if (
-        auto* transformTarget = reg.try_get<CConstraintTarget<TransformRT, TimeStep::Current>>(e)) {
-      if (transformTarget->value.GetTranslation() == position) {
-        return; // No change
-      }
-      SetConstraintTargetPosition(position, *transformTarget);
-    } else {
-      MOCHI_ERROR_SET(error, "Constraint type has no position target");
-      return;
+    bool changed = false;
+    if (!ecs::TryInvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+            SetConstraintTarget<Real3>, reg, e, std::cref(position), std::ref(changed))) {
+      auto const* transformTarget =
+          reg.try_get<CConstraintTarget<TransformRT, TimeStep::Current> const>(e);
+      MOCHI_ERROR_IF_NOT(transformTarget, error, "Constraint type has no position target");
+      MOCHI_ERROR_RETURN(error);
+      TransformRT value = transformTarget->value;
+      value.SetTranslation(position);
+      ecs::InvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+          SetConstraintTarget<TransformRT>, reg, e, std::cref(value), std::ref(changed));
     }
-    sleep::WakeUp(reg, e);
+    if (changed) {
+      sleep::WakeUp(reg, e);
+    }
   }
 
   void SetTargetRotation(Quaternion const& rotation, Error& error) override {
     MOCHI_ERROR_IF_NOT(IsFinite(rotation), error, "Target quaternion must be finite.");
     MOCHI_ERROR_IF(NearEqual(Norm(rotation), 0_r), error, "Target quaternion must be non-zero.");
     MOCHI_ERROR_RETURN(error);
-    auto rot = Normalize(rotation);
-    if (auto* target = reg.try_get<CConstraintTarget<Quaternion, TimeStep::Current>>(e)) {
-      if (target->value == rot) {
-        return; // No change
-      }
-      SetConstraintTargetRotation(rot, *target);
-    } else if (
-        auto* transformTarget = reg.try_get<CConstraintTarget<TransformRT, TimeStep::Current>>(e)) {
-      if (transformTarget->value.GetRotation() == rot) {
-        return; // No change
-      }
-      SetConstraintTargetRotation(rot, *transformTarget);
-    } else {
-      MOCHI_ERROR_SET(error, "Constraint type has no rotation target");
-      return;
+    auto const rot = Normalize(rotation);
+    bool changed = false;
+    if (!ecs::TryInvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+            SetConstraintTarget<Quaternion>, reg, e, std::cref(rot), std::ref(changed))) {
+      auto const* transformTarget =
+          reg.try_get<CConstraintTarget<TransformRT, TimeStep::Current> const>(e);
+      MOCHI_ERROR_IF_NOT(transformTarget, error, "Constraint type has no rotation target");
+      MOCHI_ERROR_RETURN(error);
+      TransformRT value = transformTarget->value;
+      value.SetRotation(rot);
+      ecs::InvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+          SetConstraintTarget<TransformRT>, reg, e, std::cref(value), std::ref(changed));
     }
-    sleep::WakeUp(reg, e);
+    if (changed) {
+      sleep::WakeUp(reg, e);
+    }
   }
 
   void SetTargetDof(real val, Error& error) override {
     MOCHI_ERROR_IF_NOT(IsFinite(val), error, "Target DoF value must be finite.");
-    using Component = CConstraintTarget<real, TimeStep::Current>;
-    auto* target = MOCHI_TRY_GET(Component, reg, e, error);
     MOCHI_ERROR_RETURN(error);
-    if (target->value == val) {
-      return; // No change
+    bool changed = false;
+    bool const invoked = ecs::TryInvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+        SetConstraintTarget<real>, reg, e, std::cref(val), std::ref(changed));
+    MOCHI_ERROR_IF_NOT(invoked, error, "Constraint type has no DoF target");
+    MOCHI_ERROR_RETURN(error);
+    if (changed) {
+      sleep::WakeUp(reg, e);
     }
-    target->value = val;
-    sleep::WakeUp(reg, e);
   }
 
   void UpdateOldTarget(Error& error) override {
@@ -222,9 +221,13 @@ class ConstraintInterfaceImpl final : public ConstraintInterface {
         CConstraintData<ConstraintType::RodElementRotationToRigid>>(e);
     MOCHI_ERROR_IF(!hasRotationTarget, error, "Constraint must have a relative rotation target");
     MOCHI_ERROR_RETURN(error);
-    auto& target = reg.get<CConstraintTarget<Quaternion, TimeStep::Current>>(e).value;
-    target = Normalize(Normalize(qA).GetConjugate() * Normalize(qB));
-    sleep::WakeUp(reg, e);
+    auto const rot = Normalize(Normalize(qA).GetConjugate() * Normalize(qB));
+    bool changed = false;
+    ecs::InvokeOnEntity<ecs::policy::AllowMutableExternalParams>(
+        SetConstraintTarget<Quaternion>, reg, e, std::cref(rot), std::ref(changed));
+    if (changed) {
+      sleep::WakeUp(reg, e);
+    }
   }
 
   Span<real const> GetLimitMinValues(Error& error) const override {

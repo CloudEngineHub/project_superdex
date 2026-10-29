@@ -82,6 +82,14 @@ entt::entity mochi::TryGetParentArticulatedActor(
   return entt::null;
 }
 
+// Emplace the target components of a constraint, with equal current and old targets.
+template <typename T>
+static void EmplaceConstraintTargets(entt::registry& reg, entt::entity e, T const& value) {
+  reg.emplace<CConstraintTarget<T, TimeStep::Current>>(e).value = value;
+  reg.emplace<CConstraintTarget<T, TimeStep::StageStart>>(e).value = value;
+  reg.emplace<CConstraintPrescribedMotion>(e);
+}
+
 void mochi::InitConstraint_RigidSphericalJoint(
     entt::registry& reg,
     entt::entity e,
@@ -472,10 +480,7 @@ void mochi::InitConstraint_JointRotationTracking(
   data.q0 = Normalize(rotA.GetConjugate() * qR);
 
   // Create targets. Initialize the target rotation as the current relative rotation
-  auto& target = reg.emplace<CConstraintTarget<Quaternion, TimeStep::Current>>(e);
-  target.value = Normalize(rotA.GetConjugate() * rotB);
-  auto& targetOld = reg.emplace<CConstraintTarget<Quaternion, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, Normalize(rotA.GetConjugate() * rotB));
 }
 
 void mochi::InitConstraint_RodElementRotationToRigid(
@@ -569,10 +574,7 @@ void mochi::InitConstraint_RodElementRotationToRigid(
   auto rotRod = worldFromLocalRod.GetRotation() * rotRodLocal;
 
   // Create targets. Initialize the target rotation as the current relative rotation
-  auto& target = reg.emplace<CConstraintTarget<Quaternion, TimeStep::Current>>(e);
-  target.value = Normalize(rotRigid.GetConjugate() * rotRod);
-  auto& targetOld = reg.emplace<CConstraintTarget<Quaternion, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, Normalize(rotRigid.GetConjugate() * rotRod));
 }
 
 void mochi::InitConstraint_RigidPivotPosition(
@@ -612,10 +614,7 @@ void mochi::InitConstraint_RigidPivotPosition(
   data.posLocal = params.localPosition;
 
   // Create targets
-  auto& target = reg.emplace<CConstraintTarget<Real3, TimeStep::Current>>(e);
-  target.value = params.targetPosition;
-  auto& targetOld = reg.emplace<CConstraintTarget<Real3, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, params.targetPosition);
 }
 
 void mochi::InitConstraint_RigidPivotToRigidTarget(
@@ -655,10 +654,7 @@ void mochi::InitConstraint_RigidPivotToRigidTarget(
   data.posLocal = params.localPosition;
 
   // Create targets
-  auto& target = reg.emplace<CConstraintTarget<TransformRT, TimeStep::Current>>(e);
-  target.value = params.targetTransform;
-  auto& targetOld = reg.emplace<CConstraintTarget<TransformRT, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, params.targetTransform);
 }
 
 void mochi::InitConstraint_RigidPivotRotation(
@@ -699,10 +695,7 @@ void mochi::InitConstraint_RigidPivotRotation(
   data.rotLocal = Quaternion::FromRotationVector(params.localRotation);
 
   // Create targets
-  auto& target = reg.emplace<CConstraintTarget<Quaternion, TimeStep::Current>>(e);
-  target.value = Quaternion::FromRotationVector(params.targetRotation);
-  auto& targetOld = reg.emplace<CConstraintTarget<Quaternion, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, Quaternion::FromRotationVector(params.targetRotation));
 }
 
 void mochi::InitConstraint_DeformableNodePosition(
@@ -746,10 +739,7 @@ void mochi::InitConstraint_DeformableNodePosition(
   data.rest = rest;
 
   // Create targets
-  auto& target = reg.emplace<CConstraintTarget<Real3, TimeStep::Current>>(e);
-  target.value = params.position;
-  auto& targetOld = reg.emplace<CConstraintTarget<Real3, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, params.position);
 }
 
 void mochi::InitConstraint_ArticulatedSingleDofTarget(
@@ -813,10 +803,7 @@ void mochi::InitConstraint_ArticulatedSingleDofTarget(
   data.dofIdx = params.dofIndex;
 
   // Create targets
-  auto& target = reg.emplace<CConstraintTarget<real, TimeStep::Current>>(e);
-  target.value = params.targetValue;
-  auto& targetOld = reg.emplace<CConstraintTarget<real, TimeStep::StageStart>>(e);
-  targetOld.value = target.value;
+  EmplaceConstraintTargets(reg, e, params.targetValue);
 }
 
 void mochi::InitConstraint_Articulated3dRotationTarget(
@@ -874,11 +861,7 @@ void mochi::InitConstraint_Articulated3dRotationTarget(
   data.jointIdx = params.jointIndex;
 
   // Create targets
-  auto targetRot = Normalize(params.target);
-  auto& target = reg.emplace<CConstraintTarget<Quaternion, TimeStep::Current>>(e);
-  target.value = targetRot;
-  auto& targetOld = reg.emplace<CConstraintTarget<Quaternion, TimeStep::StageStart>>(e);
-  targetOld.value = targetRot;
+  EmplaceConstraintTargets(reg, e, Normalize(params.target));
 }
 
 void mochi::InitConstraint_ArticulatedSingleDofRange(
@@ -2112,5 +2095,6 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CConstraintTarget<Quaternion, TimeStep::StageStart>>(reg);
   ecs::RegisterComponent<CConstraintTarget<TransformRT, TimeStep::Current>>(reg);
   ecs::RegisterComponent<CConstraintTarget<TransformRT, TimeStep::StageStart>>(reg);
+  ecs::RegisterComponent<CConstraintPrescribedMotion>(reg);
 }
 } // namespace mochi::constraint

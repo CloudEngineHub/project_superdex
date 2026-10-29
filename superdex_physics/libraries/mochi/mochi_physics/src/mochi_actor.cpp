@@ -1783,7 +1783,7 @@ class ActorInterfaceImpl : public ActorInterface {
         CControllerConstraints,
         CControllerTarget<TimeStep::Current>,
         CControllerTarget<TimeStep::Previous>,
-        CControllerTargetVelocity>(e);
+        CControllerPrescribedMotion>(e);
 
     // Remove controller components for differentiability
     articulated::compound::RemoveDifferentiablePoseController(reg, e);

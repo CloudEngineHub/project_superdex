@@ -304,7 +304,6 @@ class CControllerTarget : public ControllerTarget, public NoCopy {
 
   MOCHI_TEMPLATE_BEGIN(mochi::CControllerTarget, kStep);
   MOCHI_ATTRIBUTE(CaptureState);
-  MOCHI_ATTRIBUTE_IF(kStep == TimeStep::Previous, HasOldTarget);
   MOCHI_BASE_CLASS(ControllerTarget);
   MOCHI_TEMPLATE_END();
 };
@@ -323,24 +322,32 @@ struct CControllerConstraints : public NoCopy {
 };
 
 /***************************************************************************************************
-  Component to store the target velocity for a pose controller. If 'use' = true, the velocity is
-  used at the beginning of a step to set the old targets. Then, 'use' is cleared. 'use' is set upon
-  calling articulated::compound::SetTargetJointVelocities().
+  Motion prescribed for the targets of a pose controller over the next step.
+
+  Between steps, the Previous and Current targets hold the targets at the start and at the end of
+  the last step. Setting the targets prescribes the end targets of the next step, even if they are
+  unchanged: the first set since the last step sets the Previous targets to the end targets of the
+  last step, and sets newTargetApplied. A target velocity
+  (articulated::compound::SetTargetJointVelocities) prescribes the start targets of the next step.
+  It is applied at the beginning of the step, once the time step is known: the start targets are the
+  end targets moved back by the velocity over the time step.
 */
 
-struct CControllerTargetVelocity : NoCopy {
-  CControllerTargetVelocity() = default;
-  explicit CControllerTargetVelocity(int numDofs) {
-    value.Reset(numDofs);
+struct CControllerPrescribedMotion : NoCopy {
+  CControllerPrescribedMotion() = default;
+  explicit CControllerPrescribedMotion(int numDofs) {
+    targetVelocity.Reset(numDofs);
   }
 
-  bool use = false;
-  ColumnVector<real> value;
+  ColumnVector<real> targetVelocity;
+  bool newTargetApplied = false; // The targets were set since the last step
+  bool hasVelocity = false; // A target velocity was set since the last step
 
-  MOCHI_STRUCT_BEGIN(mochi::CControllerTargetVelocity);
-  MOCHI_ATTRIBUTE(CaptureState)
-  MOCHI_FIELD(use);
-  MOCHI_FIELD(value);
+  MOCHI_STRUCT_BEGIN(mochi::CControllerPrescribedMotion);
+  MOCHI_ATTRIBUTE(CaptureState);
+  MOCHI_FIELD(targetVelocity);
+  MOCHI_FIELD(newTargetApplied);
+  MOCHI_FIELD(hasVelocity);
   MOCHI_STRUCT_END();
 };
 
@@ -417,12 +424,16 @@ struct CTargetOwners {
 
 namespace controller {
 
-// System to update the old targets of a pose controller. Called in PostStepEcs().
-inline void UpdateOldTargets(
-    CControllerTarget<TimeStep::Current> const& target,
-    CControllerTarget<TimeStep::Previous>& outTargetOld) {
-  outTargetOld.CopyFrom(target);
-}
+// System to set the current targets of a pose controller, and report in outChanged whether they
+// changed. The first set since the last step, even if unchanged, starts the next step at the end
+// targets of the last step.
+void SetCurrentTarget(
+    Span<real const> pose,
+    Span<TransformRT const> linkTransformsCom,
+    bool& outChanged,
+    CControllerTarget<TimeStep::Current>& outTarget,
+    CControllerTarget<TimeStep::Previous>& outTargetOld,
+    CControllerPrescribedMotion& outMotion);
 
 // System to set the targets of a pose controller slice.
 template <PoseConstraintT C>

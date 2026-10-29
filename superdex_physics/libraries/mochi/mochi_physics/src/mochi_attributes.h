@@ -62,14 +62,4 @@ struct CaptureStateCtx : Attribute {
 struct HasAdjoint : Attribute {
   MOCHI_STRUCT_WITH_BASE(mochi::attribute::HasAdjoint, mochi::Attribute);
 };
-
-/**
- * @brief [Struct Attribute] Marks a component as carrying old constraint targets.
- *
- * @details This is a discriminator that is consulted by internal restore paths inside @ref
- * RestoreStatePair to skip restoring old constraint targets.
- */
-struct HasOldTarget : Attribute {
-  MOCHI_STRUCT_WITH_BASE(mochi::attribute::HasOldTarget, mochi::Attribute);
-};
 } // namespace mochi::attribute

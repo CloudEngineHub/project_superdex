@@ -466,14 +466,18 @@ void SetTargetJointVelocities(
     Span<real const> vel,
     Error& error);
 
-// System to set the targets of the controller if the target velocity was imposed externally
-void SetOldControllerTargets(
+// System to set the old targets of a pose controller at the beginning of a step, from its
+// prescribed motion. A target velocity sets the old targets, and those of the controller
+// constraints, to the current targets moved back by the velocity over the time step. Quasistatic
+// steps ignore it. Otherwise, without a new target, the targets stay at the end targets of the last
+// step.
+void ApplyControllerStepStart(
     entt::registry& reg,
     entt::entity e,
     ecs::CtxGlobal<CSceneTime const> time,
     CControllerTarget<TimeStep::Current> const& target,
-    CControllerTargetVelocity& vel,
-    CControllerTarget<TimeStep::Previous>& outTargetOld);
+    CControllerTarget<TimeStep::Previous>& outTargetOld,
+    CControllerPrescribedMotion& outMotion);
 
 // Get the parameters of the pose-controller constraints.
 // All three arrays are link-indexed and must be pre-sized to numLinks (the arrays are not resized,

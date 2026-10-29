@@ -22,6 +22,7 @@
 #include <mochi_core/utils/reflection.h>
 
 #include <mochi_physics/mochi_physics_experimental.h>
+#include <mochi_physics/src/mochi_constraint.h>
 #include <mochi_physics/src/mochi_simulation.h>
 #include <mochi_physics/src/mochi_soft_rom_components.h>
 
@@ -1774,6 +1775,110 @@ TEST_F(ConstraintQueryTest, QueryConstraintForce) {
 
   // Cancel the query
   constraint->CancelQuery(query);
+}
+
+namespace {
+// A rigid cube with a pivot position constraint, whose target starts at the cube's root.
+struct CubeWithTarget {
+  Actor* cube = nullptr;
+  Constraint* constraint = nullptr;
+  Real3 initialTarget;
+};
+
+CubeWithTarget CreateCubeWithTarget(Scene* scene) {
+  CubeWithTarget result;
+  result.cube = CreateRigidCube(scene, 1_r, Real3{});
+  RigidPivotPositionConstraintParams params;
+  params.stiffness = 1_r;
+  params.damping = 1e-2_r;
+  params.targetPosition = result.cube->GetRootTransform().GetTranslation();
+  params.actor = result.cube->GetHandle();
+  result.constraint = scene->CreateRigidPivotPositionConstraint(params, test::ExpectOK{});
+  result.initialTarget = params.targetPosition;
+  return result;
+}
+} // namespace
+
+// Between steps, the old and current targets hold the targets at the start and at the end of the
+// last step. Each step starts at the end target of the last step, unless the target was set.
+TEST_F(ConstraintQueryTest, TargetMotionOfLastStepIsKept) {
+  real constexpr kDt = 1e-2_r;
+  auto [cube, constraint, target0] = CreateCubeWithTarget(_scene);
+  auto const& reg = GetRegistry();
+  entt::entity const e = GetEntity(constraint->GetHandle());
+  auto const getOld = [&] {
+    return reg.get<CConstraintTarget<Real3, TimeStep::StageStart>>(e).value;
+  };
+  auto const getCurrent = [&] {
+    return reg.get<CConstraintTarget<Real3, TimeStep::Current>>(e).value;
+  };
+
+  _scene->Step(kDt);
+  EXPECT_EQ(target0, getOld());
+  EXPECT_EQ(target0, getCurrent());
+
+  // Setting the target twice: the step starts at the end target of the last step.
+  Real3 const target1{1_r, 0_r, 0_r};
+  Real3 const target2{2_r, 0_r, 0_r};
+  constraint->SetTargetPosition(target1, test::ExpectOK{});
+  constraint->SetTargetPosition(target2, test::ExpectOK{});
+  _scene->Step(kDt);
+  EXPECT_EQ(target0, getOld());
+  EXPECT_EQ(target2, getCurrent());
+
+  // Without a new target, the target stays at the end target of the last step.
+  _scene->Step(kDt);
+  EXPECT_EQ(target2, getOld());
+  EXPECT_EQ(target2, getCurrent());
+}
+
+// UpdateOldTarget after a target change removes the change from damping; a change after
+// UpdateOldTarget contributes to damping.
+TEST_F(ConstraintQueryTest, UpdateOldTargetDeterminesOldTarget) {
+  real constexpr kDt = 1e-2_r;
+  auto [cube, constraint, target0] = CreateCubeWithTarget(_scene);
+  auto const& reg = GetRegistry();
+  entt::entity const e = GetEntity(constraint->GetHandle());
+  auto const getOld = [&] {
+    return reg.get<CConstraintTarget<Real3, TimeStep::StageStart>>(e).value;
+  };
+  _scene->Step(kDt);
+
+  Real3 const target1{1_r, 0_r, 0_r};
+  constraint->SetTargetPosition(target1, test::ExpectOK{});
+  constraint->UpdateOldTarget(test::ExpectOK{});
+  _scene->Step(kDt);
+  EXPECT_EQ(target1, getOld());
+
+  Real3 const target2{2_r, 0_r, 0_r};
+  constraint->UpdateOldTarget(test::ExpectOK{});
+  constraint->SetTargetPosition(target2, test::ExpectOK{});
+  _scene->Step(kDt);
+  EXPECT_EQ(target1, getOld());
+}
+
+// A state captured after a step in which the target moved keeps the target motion of that step, and
+// resumes exactly after a restore.
+TEST_F(ConstraintQueryTest, MovingTargetResumesAfterRestore) {
+  real constexpr kDt = 1e-2_r;
+  auto [cube, constraint, target0] = CreateCubeWithTarget(_scene);
+  auto const& reg = GetRegistry();
+  entt::entity const e = GetEntity(constraint->GetHandle());
+  auto const getOld = [&] {
+    return reg.get<CConstraintTarget<Real3, TimeStep::StageStart>>(e).value;
+  };
+  _scene->Step(kDt);
+  constraint->SetTargetPosition(Real3{1_r, 0_r, 0_r}, test::ExpectOK{});
+  _scene->Step(kDt);
+  StateHandle const state = _scene->CaptureState(test::ExpectOK{});
+
+  _scene->Step(kDt);
+  TransformRT const expected = cube->GetRootTransform();
+  _scene->RestoreState(state, /*releaseImmediately*/ true, test::ExpectOK{});
+  EXPECT_EQ(target0, getOld());
+  _scene->Step(kDt);
+  EXPECT_EQ(expected.GetTranslation(), cube->GetRootTransform().GetTranslation());
+  EXPECT_EQ(expected.GetRotation(), cube->GetRootTransform().GetRotation());
 }
 
 TEST_F(ActorQueryTest, GetPointsDistanceToSurface) {
