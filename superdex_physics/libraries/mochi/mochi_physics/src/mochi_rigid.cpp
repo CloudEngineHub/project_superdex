@@ -86,6 +86,15 @@ void rigid::SetRootTransform(
   outCurrState.value.SetRotation(worldFromLocal.GetRotation());
 }
 
+void rigid::SetVelocity(
+    Real3 const& linearVelocityWorld,
+    Real3 const& angularVelocityWorld,
+    ecs::Excluded<TagArticulatedLinkActor>,
+    CRigidVel<TimeStep::Current>& outCurrVel) {
+  outCurrVel.value.SetVCom(ToSimd(linearVelocityWorld));
+  outCurrVel.value.SetOmega(ToSimd(angularVelocityWorld));
+}
+
 template <GradTarget kGradTarget>
 static void AssembleRigidBodyAsyncContactResponse(
     ContactAssemblyReg reg,
@@ -1325,7 +1334,7 @@ void mochi::InitRigidActor(
 
   if (params.isStatic) {
     reg.emplace<TagStaticActor>(e);
-    reg.emplace<CPrevRigidVelocity>(e).centerOfMassLocal = GetBoundingSphere(bv).VGetCenter();
+    reg.emplace<CStaticPrescribedMotion>(e).pivotLocal = GetBoundingSphere(bv).GetCenter();
   } else {
     reg.emplace<TagRigidActor>(e); // currently implies dynamic
     InitRigidActor_Dynamic(reg, e, params, useContact, shapePtr.get(), error);
@@ -1436,6 +1445,54 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CRigidVel<TimeStep::StageStart>>(reg);
   ecs::RegisterComponent<CIntegrationRigidVels>(reg);
   ecs::RegisterComponent<CRigidExportParams>(reg);
+  ecs::RegisterComponent<CStaticPrescribedMotion>(reg);
+}
+
+void SetStaticRootTransform(
+    TransformRT const& worldFromLocal,
+    CRootTransform& outRootTransform,
+    CStaticPrescribedMotion& outMotion) {
+  // The first new pose applied since the last step starts at the end pose of the last step.
+  if (!outMotion.newPoseApplied) {
+    outRootTransform.worldFromLocalPrev = outRootTransform.worldFromLocal;
+    outMotion.newPoseApplied = true;
+  }
+  outRootTransform.worldFromLocal = worldFromLocal;
+}
+
+void SetStaticVelocity(
+    Real3 const& linearVelocityWorld,
+    Real3 const& angularVelocityWorld,
+    CStaticPrescribedMotion& outMotion) {
+  outMotion.linearVelocityWorld = linearVelocityWorld;
+  outMotion.angularVelocityWorld = angularVelocityWorld;
+  outMotion.hasVelocity = true;
+}
+
+void ApplyStaticStepStart(
+    ecs::CtxGlobal<CSceneTime const> time,
+    CRootTransform& outRootTransform,
+    CStaticPrescribedMotion& outMotion) {
+  auto const dt = static_cast<real>(time->DeltaTime());
+  if (outMotion.hasVelocity && IsFinite(dt)) {
+    if (outMotion.linearVelocityWorld == Real3{} && outMotion.angularVelocityWorld == Real3{}) {
+      // Exact, since integrating a zero velocity does not round-trip the pose bit for bit.
+      outRootTransform.worldFromLocalPrev = outRootTransform.worldFromLocal;
+    } else {
+      // Static actors have no inertia, so their velocity is in Lie coordinates.
+      outRootTransform.worldFromLocalPrev = IntegrateRigidTransformLie(
+          -dt,
+          outRootTransform.worldFromLocal,
+          ToSimd(outMotion.pivotLocal, 1_r),
+          ToSimd(outMotion.linearVelocityWorld),
+          ToSimd(outMotion.angularVelocityWorld));
+    }
+  } else if (!outMotion.newPoseApplied) {
+    // Without a new pose, the actor stays at the end pose of the last step.
+    outRootTransform.worldFromLocalPrev = outRootTransform.worldFromLocal;
+  }
+  outMotion.newPoseApplied = false;
+  outMotion.hasVelocity = false;
 }
 
 real GetActorMass(entt::registry const& reg, entt::entity actor) {
@@ -1447,6 +1504,7 @@ real GetActorMass(entt::registry const& reg, entt::entity actor) {
 }
 
 std::optional<RigidVelocity> TryGetRigidVelocity(entt::registry const& reg, entt::entity actor) {
+  // Soft actors
   if (auto const* prev = reg.try_get<CPrevRigidVelocity const>(actor)) {
     return RigidVelocity{
         .linearVelocityWorld = ToReal3(prev->linearVelocityWorld),
@@ -1454,6 +1512,31 @@ std::optional<RigidVelocity> TryGetRigidVelocity(entt::registry const& reg, entt
         .referencePointLocal = ToReal3(prev->centerOfMassLocal),
     };
   }
+  // Standalone static rigid actors
+  if (auto const* motion = reg.try_get<CStaticPrescribedMotion const>(actor)) {
+    RigidVelocity velocity{.referencePointLocal = motion->pivotLocal};
+    auto const dt = static_cast<real>(reg.ctx<CSceneTime const>().DeltaTime());
+    if (motion->hasVelocity) {
+      velocity.linearVelocityWorld = motion->linearVelocityWorld;
+      velocity.angularVelocityWorld = motion->angularVelocityWorld;
+    } else if (IsFinite(dt)) {
+      // After SetRootTransform, the size of the next step is unknown, so the last one is used.
+      auto const& root = reg.get<CRootTransform const>(actor);
+      Vec4r linearVelocityWorld;
+      Vec4r angularVelocityWorld;
+      FiniteDifferenceRigidTransformLie(
+          dt,
+          root.worldFromLocal,
+          root.worldFromLocalPrev,
+          ToSimd(motion->pivotLocal, 1_r),
+          linearVelocityWorld,
+          angularVelocityWorld);
+      velocity.linearVelocityWorld = ToReal3(linearVelocityWorld);
+      velocity.angularVelocityWorld = ToReal3(angularVelocityWorld);
+    }
+    return velocity;
+  }
+  // Dynamic rigid actors and links
   if (auto const* vel = reg.try_get<CRigidVel<TimeStep::Current> const>(actor)) {
     return RigidVelocity{
         .linearVelocityWorld = ToReal3(vel->value.GetVCom()),

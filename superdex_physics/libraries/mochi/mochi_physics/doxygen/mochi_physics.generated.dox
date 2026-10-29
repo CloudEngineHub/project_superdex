@@ -5026,7 +5026,7 @@
 ///
 /// @note Not allowed on nested link actors (@ref mochi::Actor::GetNestedLinkActors "GetNestedLinkActors") or nested soft actors (@ref mochi::Actor::GetNestedSoftActors "GetNestedSoftActors").
 /// @note For a top-level articulated actor, the local frame is the articulation root frame, not the root link's frame.
-/// @note For dynamic actors, it does not change velocity. For static actors, however, it changes velocity, because it is implicitly defined by the root transform in consecutive time steps. To cancel the velocity of a static actor, use @ref mochi::Actor::SetVelocity "SetVelocity".
+/// @note For dynamic actors, it does not change velocity. For static actors, it prescribes the root transform at the end of the next time step, and the actor moves there during the step. Its velocity is implied by the change of root transform over the time step. To move a static actor without velocity, also call @ref mochi::Actor::SetVelocity "SetVelocity" with zero velocity before the next step.
 /// @note Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler in the first time step after this method is called.
 ///
 
@@ -5089,14 +5089,14 @@
 
 /// @fn void mochi::Actor::SetVelocity(Real3 const& linearVel, Real3 const& angularVel, Error& error)
 ///
-/// @brief Set the world-frame linear and angular velocity of the actor at the center of mass.
+/// @brief Set the world-frame linear and angular velocity of the actor.
 ///
-/// @param[in] linearVel Linear velocity [m/s] of the center of mass in world frame.
-/// @param[in] angularVel Angular velocity [rad/s] at the center of mass in world frame.
+/// @param[in] linearVel Linear velocity [m/s] in world frame, of the center of mass for dynamic actors, of the center of @ref mochi::Actor::GetAabbLocal "GetAabbLocal" for static rigid actors (for infinite planes, the point on the plane closest to the local origin).
+/// @param[in] angularVel Angular velocity [rad/s] in world frame.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
 /// @note Only supported for standalone rigid actors and standalone soft actors (except ROMs).
-/// @note For static actors, it only supports setting zero velocity.
+/// @note For static actors, the velocity is applied at the beginning of the next time step: the actor moves at constant velocity during the step, ending at its root transform (@ref mochi::Actor::SetRootTransform "SetRootTransform"). It is ignored in quasistatic steps.
 /// @note For standalone soft actors, the angular velocity must be zero.
 /// @note Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler in the first time step after this method is called.
 ///
@@ -5109,7 +5109,8 @@
 /// @return Linear velocity in world frame [m/s].
 ///
 /// @note Only supported for rigid and soft actors.
-/// @note For rigid actors, it returns the velocity of the center of mass.
+/// @note For dynamic rigid actors, it returns the velocity of the center of mass.
+/// @note For static actors, it returns the velocity of the point described in @ref mochi::Actor::SetVelocity "SetVelocity" over the last time step. If @ref mochi::Actor::SetVelocity "SetVelocity" was called since the last step, it returns that velocity. Otherwise, if @ref mochi::Actor::SetRootTransform "SetRootTransform" was called, it estimates the velocity to the new root transform using the last time step (@ref mochi::Scene::GetLastTimeStep "Scene::GetLastTimeStep").
 /// @note For soft actors, it returns an estimate of the linear velocity of the rest mesh's center of mass, assuming it moves rigidly with the recentering pivot. Soft actors created with `experimental::ExperimentalSoftActorParams::useRecentering` set to false have no pivot and return zero.
 /// @note Not supported for ROM actors.
 ///
@@ -5122,7 +5123,8 @@
 /// @return Angular velocity in world frame [rad/s].
 ///
 /// @note Only supported for rigid and soft actors.
-/// @note For rigid actors, it returns the actual angular velocity.
+/// @note For dynamic rigid actors, it returns the actual angular velocity.
+/// @note For static actors, it returns the angular velocity over the last time step. If @ref mochi::Actor::SetVelocity "SetVelocity" was called since the last step, it returns that velocity. Otherwise, if @ref mochi::Actor::SetRootTransform "SetRootTransform" was called, it estimates the velocity to the new root transform using the last time step (@ref mochi::Scene::GetLastTimeStep "Scene::GetLastTimeStep").
 /// @note For soft actors, it returns an estimate of the angular velocity of the recentering pivot. Soft actors created with `experimental::ExperimentalSoftActorParams::useRecentering` set to false have no pivot and return zero.
 /// @note Not supported for ROM actors.
 ///

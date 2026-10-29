@@ -204,10 +204,6 @@ void mochi::PreStepEcs(entt::registry& reg) {
   // for finite time steps.
   UpdateConservativeStepBounds(reg);
 
-  // Compute linear and angular velocity about the center-of-mass (static rigid actors only)
-  // Must come BEFORE CRootTransform.worldFromLocalPrev is updated for this step.
-  ecs::InvokeForEachGlobal(&rigid::UpdateRigidVelocity_Static, reg);
-
   // RomFomSwitchingPipeline emplaces and removes several components/tags. It must be invoked BEFORE
   // any other systems that rely on such components/tags.
   reg.view<CRomFomSwitchingParams>().each(
@@ -226,13 +222,24 @@ void mochi::PreStepEcs(entt::registry& reg) {
     rom::PreStepPipeline(reg);
     ecs::InvokeForEachGlobal(&skinned::EntityIncrementStep, reg);
 
-    // Set CRootTransform.worldFromLocalPrev equal to the current state, except for static actors.
+    // Set CRootTransform.worldFromLocalPrev equal to the current state. Standalone static actors
+    // instead set the start and end poses of the step from their prescribed motion.
     ecs::InvokeForEachGlobal(
-        +[](ecs::Excluded<TagStaticActor>, CRootTransform& root) {
+        +[](ecs::Excluded<CStaticPrescribedMotion>, CRootTransform& root) {
           root.worldFromLocalPrev = root.worldFromLocal;
         },
         reg);
+    ecs::InvokeForEachGlobal(&rigid::ApplyStaticStepStart, reg);
   }
+
+  // Wake islands swept by moving static actors. Must come BEFORE island::PreStep, which applies
+  // wake requests.
+  reg.view<CStaticPrescribedMotion const, CRootTransform const>().each(
+      [&](entt::entity e, auto const&, CRootTransform const& root) {
+        if (root.worldFromLocalPrev != root.worldFromLocal) {
+          sleep::WakeUp(reg, e);
+        }
+      });
 
   // Wait for any pending colliders to finish initialization
   ecs::InvokeForEachGlobal(&WaitForPendingSdfCollider, reg);
@@ -478,13 +485,6 @@ void mochi::StepEcs(entt::registry& reg) {
 
 void mochi::PostStepEcs(entt::registry& reg) {
   MOCHI_PROFILE_SCOPE();
-
-  // Set CRootTransform.worldFromLocalPrev equal to the current state for static actors.
-  ecs::InvokeForEachGlobal(
-      +[](ecs::RequiredTag<TagStaticActor>, CRootTransform& root) {
-        root.worldFromLocalPrev = root.worldFromLocal;
-      },
-      reg);
 
   // Update CPrevRigidVelocity of soft actors
   ecs::InvokeForEachGlobal(&soft::UpdateRigidVelocity, reg);

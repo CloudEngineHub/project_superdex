@@ -9490,10 +9490,12 @@ class Actor:
             frame, not the root link's frame.
 
         Note:
-            For dynamic actors, it does not change velocity. For static actors, however,
-            it changes velocity, because it is implicitly defined by the root transform
-            in consecutive time steps. To cancel the velocity of a static actor, use
-            :meth:`~superdex.physics.Actor.set_velocity`.
+            For dynamic actors, it does not change velocity. For static actors, it
+            prescribes the root transform at the end of the next time step, and the
+            actor moves there during the step. Its velocity is implied by the change of
+            root transform over the time step. To move a static actor without velocity,
+            also call :meth:`~superdex.physics.Actor.set_velocity` with zero velocity
+            before the next step.
 
         Note:
             Resets multi-step time integrators, e.g. BDF2 falls back to backward Euler
@@ -9587,14 +9589,15 @@ class Actor:
             Only supported for dynamic rigid actors.
         """
     def set_velocity(self, linear_vel: Real3Like, angular_vel: Real3Like) -> None:
-        """Set the world-frame linear and angular velocity of the actor at the center of
-        mass.
+        """Set the world-frame linear and angular velocity of the actor.
 
         Args:
-            linear_vel (Real3Like): Linear velocity [m/s] of the center of mass in world
-                frame.
-            angular_vel (Real3Like): Angular velocity [rad/s] at the center of mass in
-                world frame.
+            linear_vel (Real3Like): Linear velocity [m/s] in world frame, of the center
+                of mass for dynamic actors, of the center of
+                :meth:`~superdex.physics.Actor.get_aabb_local` for static rigid actors
+                (for infinite planes, the point on the plane closest to the local
+                origin).
+            angular_vel (Real3Like): Angular velocity [rad/s] in world frame.
 
         Raises:
             :class:`~superdex.physics.Error`: If an error occurs.
@@ -9604,7 +9607,10 @@ class Actor:
             (except ROMs).
 
         Note:
-            For static actors, it only supports setting zero velocity.
+            For static actors, the velocity is applied at the beginning of the next time
+            step: the actor moves at constant velocity during the step, ending at its
+            root transform (:meth:`~superdex.physics.Actor.set_root_transform`). It is
+            ignored in quasistatic steps.
 
         Note:
             For standalone soft actors, the angular velocity must be zero.
@@ -9626,7 +9632,16 @@ class Actor:
             Only supported for rigid and soft actors.
 
         Note:
-            For rigid actors, it returns the velocity of the center of mass.
+            For dynamic rigid actors, it returns the velocity of the center of mass.
+
+        Note:
+            For static actors, it returns the velocity of the point described in
+            :meth:`~superdex.physics.Actor.set_velocity` over the last time step. If
+            :meth:`~superdex.physics.Actor.set_velocity` was called since the last step,
+            it returns that velocity. Otherwise, if
+            :meth:`~superdex.physics.Actor.set_root_transform` was called, it estimates
+            the velocity to the new root transform using the last time step
+            (:meth:`~superdex.physics.Scene.get_last_time_step`).
 
         Note:
             For soft actors, it returns an estimate of the linear velocity of the rest
@@ -9651,7 +9666,15 @@ class Actor:
             Only supported for rigid and soft actors.
 
         Note:
-            For rigid actors, it returns the actual angular velocity.
+            For dynamic rigid actors, it returns the actual angular velocity.
+
+        Note:
+            For static actors, it returns the angular velocity over the last time step.
+            If :meth:`~superdex.physics.Actor.set_velocity` was called since the last
+            step, it returns that velocity. Otherwise, if
+            :meth:`~superdex.physics.Actor.set_root_transform` was called, it estimates
+            the velocity to the new root transform using the last time step
+            (:meth:`~superdex.physics.Scene.get_last_time_step`).
 
         Note:
             For soft actors, it returns an estimate of the angular velocity of the

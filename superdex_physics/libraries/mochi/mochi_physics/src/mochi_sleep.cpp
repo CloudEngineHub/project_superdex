@@ -87,9 +87,9 @@ static void AddWakeUpRegionForStaticCollider(entt::registry& reg, entt::entity e
       !contactParams) {
     return; // Cannot touch anything
   }
-  // Same expanded bounds as the broadphase uses for static colliders.
-  reg.ctx<CWakeUpRequests>().regions.push_back(ExpandColliderBoundsForContact(
-      GetAabb(TransformShape(root->worldFromLocal, bounds->localShape)), *contactParams));
+  // Same swept bounds as the broadphase uses for static colliders.
+  reg.ctx<CWakeUpRequests>().regions.push_back(
+      GetStaticColliderStepBounds(*root, *bounds, *contactParams));
 }
 
 static void AddWakeUpRegionsForStaticDescendants(entt::registry& reg, entt::entity e) {

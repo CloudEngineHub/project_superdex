@@ -1098,6 +1098,19 @@ auto ExpandColliderBoundsForContact(
   return ExpandShape(colliderBounds, GetColliderPadding(colliderContactParams));
 }
 
+// World-space bounds of a static collider over a step, swept from its previous to its current root
+// transform and expanded to include contact penalty falloff.
+[[nodiscard]] inline Aabb GetStaticColliderStepBounds(
+    CRootTransform const& root,
+    CBoundingVolume const& bounds,
+    ContactParams const& contactParams) {
+  return ExpandColliderBoundsForContact(
+      EncloseShapes(
+          GetAabb(TransformShape(root.worldFromLocalPrev, bounds.localShape)),
+          GetAabb(TransformShape(root.worldFromLocal, bounds.localShape))),
+      contactParams);
+}
+
 // Warn if an entity has moved outside of its own CConservativeStepBounds.
 // If so, collision detection may be incorrect because CPotentialColliders may be incomplete.
 void CheckConservativeStepBounds(entt::registry const& reg, entt::entity e);

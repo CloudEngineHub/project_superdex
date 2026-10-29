@@ -138,9 +138,9 @@ struct CRootTransform : public NoCopy {
       : worldFromLocal(x), worldFromLocalPrev(x), worldFromLocalStageStart(x) {}
   // For all actors, it stores the current root transform.
   TransformRT worldFromLocal;
-  // For all actors, it stores the root transform at the beginning of the step, i.e., the end of the
-  // previous step. Recentering moves it along with the previous-step state, so for deformable
-  // actors it is always the frame in which that state is expressed.
+  // For all actors, it stores the root transform at the beginning of the step. Recentering moves it
+  // along with the previous-step state, so for deformable actors it is always the frame in which
+  // that state is expressed.
   TransformRT worldFromLocalPrev;
   // Used only by dynamic rigid actors (because their root transform represents state), it stores
   // the root transform at the beginning of the stage.
@@ -202,11 +202,10 @@ struct CRigidBodyInertia : public NoCopy, RigidBodyInertia {
 };
 
 /**
- * @brief World-space velocity of the center-of-mass at the end of the previous step, for soft and
- * standalone static actors. Rigid actors (including links) use CRigidVel<TimeStep::Current>.
+ * @brief For soft actors, world-space velocity of the center-of-mass at the end of the previous
+ * step.
  *
- * @note For soft actors, this value is approximated based on the center-of-bounding-volume.
- * @note For static actors, this value is computed based on change in root transform.
+ * @note This value is approximated based on the center-of-bounding-volume.
  */
 struct CPrevRigidVelocity : NoCopy {
   Vec4r linearVelocityWorld = {}; // World-space

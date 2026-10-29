@@ -69,6 +69,32 @@ struct CRigidExportParams : NoCopy {
   std::optional<BoundarySubsamplingParams> boundarySubsampling;
 };
 
+/*
+  Motion prescribed for a standalone static rigid actor over the next step. Velocity is applied at
+  the beginning of the step, once the time step size is known.
+
+  Between steps, CRootTransform::worldFromLocalPrev and worldFromLocal hold the start and end poses
+  of the last step. SetRootTransform prescribes the end pose of the next step, moving worldFromLocal
+  and setting worldFromLocalPrev to the end pose of the last step. SetVelocity prescribes the start
+  pose of the next step: the end pose moved back by the velocity over the time step.
+*/
+struct CStaticPrescribedMotion : NoCopy {
+  Real3 pivotLocal{}; // Velocity reference point: the bounding-sphere center
+  Real3 linearVelocityWorld{}; // Velocity of the pivot
+  Real3 angularVelocityWorld{};
+  bool newPoseApplied = false; // SetRootTransform was called since the last step
+  bool hasVelocity = false; // SetVelocity was called since the last step
+
+  MOCHI_STRUCT_BEGIN(mochi::CStaticPrescribedMotion);
+  MOCHI_ATTRIBUTE(CaptureState);
+  MOCHI_FIELD(pivotLocal);
+  MOCHI_FIELD(linearVelocityWorld);
+  MOCHI_FIELD(angularVelocityWorld);
+  MOCHI_FIELD(newPoseApplied);
+  MOCHI_FIELD(hasVelocity);
+  MOCHI_STRUCT_END();
+};
+
 /**************************************************************************
   ECS Rigid-body Actor Utils
 */
@@ -95,6 +121,14 @@ void SetRootTransform(
     CRigidBodyInertia const& rbInertia,
     CRootTransform& outRootTransform,
     CRigidState<TimeStep::Current>& outCurrState);
+
+// Set the velocity of the center of mass and the angular velocity of a standalone dynamic rigid
+// actor.
+void SetVelocity(
+    Real3 const& linearVelocityWorld,
+    Real3 const& angularVelocityWorld,
+    ecs::Excluded<TagArticulatedLinkActor>,
+    CRigidVel<TimeStep::Current>& outCurrVel);
 
 // Update CRootTransform from rigid body state
 void RigidStateToRootTransform(
@@ -128,20 +162,24 @@ void ComputeVelocityAtTimeStepEnd(
     CIntegrationRigidVels& intVels,
     CRigidVel<TimeStep::Current>& currVel);
 
-// Call UpdateRigidVelocity for static rigid actors
-inline void UpdateRigidVelocity_Static(
-    ecs::RequiredTag<TagStaticActor>,
+// Prescribe the end pose of the next step for a standalone static actor.
+void SetStaticRootTransform(
+    TransformRT const& worldFromLocal,
+    CRootTransform& outRootTransform,
+    CStaticPrescribedMotion& outMotion);
+
+// Prescribe the velocity over the next step for a standalone static actor.
+void SetStaticVelocity(
+    Real3 const& linearVelocityWorld,
+    Real3 const& angularVelocityWorld,
+    CStaticPrescribedMotion& outMotion);
+
+// Set the start and end poses of the step for a standalone static actor from its prescribed motion,
+// and clear the prescription. A prescribed velocity is ignored in quasistatic steps.
+void ApplyStaticStepStart(
     ecs::CtxGlobal<CSceneTime const> time,
-    CRootTransform const& root,
-    CPrevRigidVelocity& outRigidVelocity) {
-  FiniteDifferenceRigidTransformLie(
-      static_cast<real>(time->DeltaTime()),
-      root.worldFromLocal,
-      root.worldFromLocalPrev,
-      outRigidVelocity.centerOfMassLocal,
-      outRigidVelocity.linearVelocityWorld,
-      outRigidVelocity.angularVelocityWorld);
-}
+    CRootTransform& outRootTransform,
+    CStaticPrescribedMotion& outMotion);
 
 // System to initialize state (position and velocity) for a new step
 void EntityIncrementStep(
@@ -450,9 +488,10 @@ struct RigidVelocity {
 };
 
 // Get the rigid velocity of an actor. Rigid actors (including links) report their velocity state,
-// with reference point at the center of mass. Standalone static and soft actors report
-// CPrevRigidVelocity, with reference point at its approximate center of mass. Returns
-// std::nullopt if the actor has no rigid velocity.
+// with reference point at the center of mass. Standalone static actors report their prescribed
+// velocity if pending, or the finite difference of their root transforms otherwise, with reference
+// point at the bounding-sphere center. Soft actors report CPrevRigidVelocity, with reference point
+// at its approximate center of mass. Returns std::nullopt if the actor has no rigid velocity.
 [[nodiscard]] std::optional<RigidVelocity> TryGetRigidVelocity(
     entt::registry const& reg,
     entt::entity actor);

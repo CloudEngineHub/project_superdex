@@ -5077,8 +5077,7 @@ void mochi::contact::UpdateConservativePotentialColliders(entt::registry& reg) {
                                                                    .each()) {
     if (colliderInfo.type != ColliderType::None) {
       staticColliders.push_back(e);
-      staticBounds.push_back(ExpandColliderBoundsForContact(
-          GetAabb(TransformShape(root.worldFromLocalPrev, bounds.localShape)), contactParams));
+      staticBounds.push_back(GetStaticColliderStepBounds(root, bounds, contactParams));
     }
   }
 

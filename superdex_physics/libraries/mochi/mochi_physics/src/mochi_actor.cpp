@@ -301,9 +301,12 @@ class ActorInterfaceImpl : public ActorInterface {
       return;
     }
 
-    // If this is a rigid dynamic actor, ensure the rigid state is also set
-    if (ecs::TryInvokeOnEntity(&rigid::SetRootTransform, reg, e, std::cref(worldFromLocal))) {
-    } else {
+    // Dynamic rigid actors also set their rigid state. Standalone static actors move to the new
+    // transform over the next step.
+    bool const invoked =
+        ecs::TryInvokeOnEntity(&rigid::SetRootTransform, reg, e, std::cref(worldFromLocal)) ||
+        ecs::TryInvokeOnEntity(&rigid::SetStaticRootTransform, reg, e, std::cref(worldFromLocal));
+    if (!invoked) {
       // Otherwise, just set the root transform
       MOCHI_ASSERT_VERBOSE(reg.all_of<CRootTransform>(e), "Expected a root transform");
       reg.get<CRootTransform>(e).worldFromLocal = worldFromLocal;
@@ -368,15 +371,6 @@ class ActorInterfaceImpl : public ActorInterface {
   }
 
   void SetVelocity(Real3 const& linearVel, Real3 const& angularVel, Error& error) override {
-    bool const isStatic = reg.all_of<TagStaticActor>(e);
-    MOCHI_ERROR_IF(
-        isStatic && linearVel != Real3{},
-        error,
-        "Cannot set the velocity of a static actor to any value other than zero.");
-    MOCHI_ERROR_IF(
-        isStatic && angularVel != Real3{},
-        error,
-        "Cannot set the velocity of a static actor to any value other than zero.");
     MOCHI_ERROR_IF(
         (!reg.any_of<TagStaticActor, TagRigidActor, TagSoftActor>(e) ||
          reg.any_of<TagArticulatedLinkActor, TagRomActor, TagNestedSoftActor>(e)),
@@ -386,20 +380,14 @@ class ActorInterfaceImpl : public ActorInterface {
     MOCHI_ERROR_IF_NOT(IsFinite(angularVel), error, "Angular velocity must be finite.");
     MOCHI_ERROR_RETURN(error);
 
-    if (isStatic) {
-      // Make previous and current transforms match.
-      auto& rootTransform = reg.get<CRootTransform>(e);
-      rootTransform.worldFromLocalPrev = rootTransform.worldFromLocal;
-    } else if (reg.all_of<TagRigidActor>(e)) {
-      auto& rigidVel = reg.get<CRigidVel<TimeStep::Current>>(e).value;
-
-      // Set the velocity of the center of mass
-      rigidVel.SetVCom(ToSimd(linearVel));
-
-      // Set the angular velocity
-      rigidVel.SetOmega(ToSimd(angularVel));
-
-    } else {
+    // Dynamic rigid actors set their velocity state. Standalone static actors apply the velocity at
+    // the beginning of the next step.
+    bool const invoked =
+        ecs::TryInvokeOnEntity(
+            &rigid::SetVelocity, reg, e, std::cref(linearVel), std::cref(angularVel)) ||
+        ecs::TryInvokeOnEntity(
+            &rigid::SetStaticVelocity, reg, e, std::cref(linearVel), std::cref(angularVel));
+    if (!invoked) {
       // TODO[Nate] - It would be great if there was a way to give a soft actor an "angular"
       //              velocity about some pivot point.
       MOCHI_ASSERT_VERBOSE(reg.all_of<TagSoftActor>(e), "Unexpected actor type.");
@@ -424,12 +412,11 @@ class ActorInterfaceImpl : public ActorInterface {
           currVel.value[3 * i + k] = localLinearVel[k];
         }
       }
-    }
 
-    // Static and soft actors report their velocity from CPrevRigidVelocity.
-    if (auto* prevRigidVelocity = reg.try_get<CPrevRigidVelocity>(e)) {
-      prevRigidVelocity->linearVelocityWorld = ToSimd(linearVel);
-      prevRigidVelocity->angularVelocityWorld = ToSimd(angularVel);
+      // Soft actors report their velocity from CPrevRigidVelocity.
+      auto& prevRigidVelocity = reg.get<CPrevRigidVelocity>(e);
+      prevRigidVelocity.linearVelocityWorld = ToSimd(linearVel);
+      prevRigidVelocity.angularVelocityWorld = ToSimd(angularVel);
     }
 
     // External state changes invalidate step history.
