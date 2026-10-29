@@ -104,8 +104,9 @@ TEST_F(FemRodTest, IntegratedCurvatureBinormal_Straight) {
 
 // ===== ComputeRodElementRotationLocal Tests =====
 
-// Test that outDRotation is the derivative of outRotation w.r.t. elementDofs
-TEST_F(FemRodTest, ComputeRodElementRotationLocal_DRotationConsistency) {
+// Test that outJacobian is the derivative of the rotation increment of outRotation w.r.t.
+// elementDofs
+TEST_F(FemRodTest, ComputeRodElementRotationLocal_JacobianConsistency) {
   // Set up element DoFs (8 values: displacement + twist for 2 nodes)
   NdArray<real, 2 * kNumRodFields> baseElementDofs;
   for (int i = 0; i < 2 * kNumRodFields; i++) {
@@ -120,14 +121,15 @@ TEST_F(FemRodTest, ComputeRodElementRotationLocal_DRotationConsistency) {
   // Make sure axis is orthogonal to the deformed edge
   frameAxis = Normalize<3>(frameAxis - Dot<3>(frameAxis, deformedEdge) * deformedEdge);
 
-  // Compute rotation and its derivative
+  // Compute rotation and the Jacobian of its increment
   VMatrix3x3r rotation;
-  NdArray<real, 3, 3, 8> dRotation;
+  NdArray<real, 3, 2 * kNumRodFields> jacobian;
   ComputeRodElementRotationLocal(
-      _testX[0], _testX[1], frameAxis, MakeConstSpan(baseElementDofs), rotation, &dRotation);
+      _testX[0], _testX[1], frameAxis, MakeConstSpan(baseElementDofs), rotation, &jacobian);
+  VMatrix3x3r const rotationT = Transpose3x3(rotation);
 
-  // Compute finite differences of rotation to verify dRotation
-  NdArray<real, 3, 3, 2 * kNumRodFields> dRotationFD{};
+  // Compute finite differences of the rotation increment to verify the Jacobian
+  NdArray<real, 3, 2 * kNumRodFields> jacobianFD{};
   // Perturbation to apply to DoFs
   NdArray<real, 2 * kNumRodFields> perturbation{};
   for (int dofIndex = 0; dofIndex < 2 * kNumRodFields; dofIndex++) {
@@ -152,25 +154,22 @@ TEST_F(FemRodTest, ComputeRodElementRotationLocal_DRotationConsistency) {
         rotationPerturbed,
         nullptr);
 
-    // Compute finite difference derivative for this DoF
+    // Finite difference rotation increment for this DoF: skew(omega) = dR R^T
+    Vec4r const omegaFD = InvSkew3(Dot3x3(rotationPerturbed - rotation, rotationT)) / kEps;
     for (int i = 0; i < 3; i++) {
-      for (int j = 0; j < 3; j++) {
-        dRotationFD[i][j][dofIndex] = (rotationPerturbed[i][j] - rotation[i][j]) / kEps;
-      }
+      jacobianFD[i][dofIndex] = omegaFD[i];
     }
 
     // Restore perturbation to zero
     perturbation[dofIndex] = 0_r;
   }
 
-  // Compare finite differences to computed dRotation
+  // Compare finite differences to the computed Jacobian
   for (int i = 0; i < 3; i++) {
-    for (int j = 0; j < 3; j++) {
-      for (int dofIndex = 0; dofIndex < 2 * kNumRodFields; dofIndex++) {
-        real const dRotAnalytic = dRotation[i][j][dofIndex];
-        real const dRotFD = dRotationFD[i][j][dofIndex];
-        EXPECT_NEAR_TOL(dRotFD, dRotAnalytic, std::max(kTol, kTol * Abs(dRotAnalytic)));
-      }
+    for (int dofIndex = 0; dofIndex < 2 * kNumRodFields; dofIndex++) {
+      real const jacAnalytic = jacobian[i][dofIndex];
+      real const jacFD = jacobianFD[i][dofIndex];
+      EXPECT_NEAR_TOL(jacFD, jacAnalytic, std::max(kTol, kTol * Abs(jacAnalytic)));
     }
   }
 }

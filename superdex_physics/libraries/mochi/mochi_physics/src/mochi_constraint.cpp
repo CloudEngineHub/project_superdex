@@ -318,6 +318,72 @@ static Real3 GetDeformableDisplacement(RegT const& reg, entt::entity actor, Span
   return Real3{d[dofs[0]], d[dofs[1]], d[dofs[2]]};
 }
 
+// Returns the DoFs of both nodes of a rod element (displacements and twist), after validating the
+// element index
+static std::array<int, 2 * fem::kNumRodFields> GetRodElementDofs(
+    entt::registry const& reg,
+    entt::entity rodActor,
+    int elementIndex,
+    Error& error) {
+  auto const& polylineMesh = reg.get<CPolylineMesh const>(rodActor);
+  MOCHI_ERROR_IF(
+      elementIndex < 0 || elementIndex >= polylineMesh.NumElements(),
+      error,
+      "Element index out of bounds");
+  MOCHI_ERROR_RETURN(error, {});
+  Int2 const en = polylineMesh.ElementNodes(elementIndex);
+  std::array<int, 2 * fem::kNumRodFields> dofs MOCHI_NO_INIT;
+  for (int i = 0; i < fem::kNumRodFields; ++i) {
+    dofs[i] = fem::kNumRodFields * en[0] + i;
+    dofs[fem::kNumRodFields + i] = fem::kNumRodFields * en[1] + i;
+  }
+  return dofs;
+}
+
+namespace {
+// Inputs to evaluate the world rotation of a rod element
+struct RodElementRotationInputs {
+  TransformRT worldFromLocal;
+  Vec4r X0;
+  Vec4r X1;
+  Vec4r frameAxis;
+  NdArray<real, 2 * fem::kNumRodFields> dofs;
+};
+
+using RodElementRotationReg = ecs::PartialRegistry<
+    CRodPose<TimeStep::Current> const,
+    CRodPose<TimeStep::StageStart> const,
+    CPolylineMesh const,
+    CRootTransform const>;
+} // namespace
+
+template <TimeStep kTimeStep>
+static RodElementRotationInputs
+GetRodElementRotationInputs(RodElementRotationReg reg, entt::entity rodActor, int elementIndex) {
+  auto const& polylineMesh = reg.get<CPolylineMesh const>(rodActor);
+  auto const& pose = reg.get<CRodPose<kTimeStep> const>(rodActor).value;
+  Int2 const en = polylineMesh.ElementNodes(elementIndex);
+  RodElementRotationInputs inputs MOCHI_NO_INIT;
+  inputs.worldFromLocal = reg.get<CRootTransform const>(rodActor).worldFromLocal;
+  inputs.X0 = ToSimd(polylineMesh.nodes[en[0]]);
+  inputs.X1 = ToSimd(polylineMesh.nodes[en[1]]);
+  inputs.frameAxis = Normalize<3>(ToSimd(pose.frameAxes[elementIndex]));
+  Store(&(inputs.dofs[0]), Load<Vec4r>(&(pose.displacements[fem::kNumRodFields * en[0]])));
+  Store(
+      &(inputs.dofs[fem::kNumRodFields]),
+      Load<Vec4r>(&(pose.displacements[fem::kNumRodFields * en[1]])));
+  return inputs;
+}
+
+static Quaternion
+GetRodElementRotation(entt::registry const& reg, entt::entity rodActor, int elementIndex) {
+  auto const inputs = GetRodElementRotationInputs<TimeStep::Current>(reg, rodActor, elementIndex);
+  VMatrix3x3r rotLocalMat MOCHI_NO_INIT;
+  fem::ComputeRodElementRotationLocal(
+      inputs.X0, inputs.X1, inputs.frameAxis, MakeConstSpan(inputs.dofs), rotLocalMat, nullptr);
+  return inputs.worldFromLocal.GetRotation() * Normalize(QuaternionFromMatrix(rotLocalMat));
+}
+
 void mochi::InitConstraint_DeformableNodeToRigid(
     entt::registry& reg,
     entt::entity e,
@@ -503,35 +569,13 @@ void mochi::InitConstraint_RodElementRotationToRigid(
   MOCHI_ERROR_IF(!reg.all_of<TagRodActor>(rodActor), error, "Invalid rod actor type");
   MOCHI_ERROR_RETURN(error);
 
-  // Validate element index
-  auto const& polylineMesh = reg.get<CPolylineMesh const>(rodActor);
-  int const numElements = polylineMesh.NumElements();
-  MOCHI_ERROR_IF(
-      params.elementIndex < 0 || params.elementIndex >= numElements,
-      error,
-      "Element index out of bounds");
+  auto const rodDofs = GetRodElementDofs(reg, rodActor, params.elementIndex, error);
   MOCHI_ERROR_RETURN(error);
 
-  // Get the two nodes of the element
-  Int2 const en = polylineMesh.ElementNodes(params.elementIndex);
-  int const node0 = en[0];
-  int const node1 = en[1];
-
   // Create constraint info
-  // Rigid: rotation DoFs (3, 4, 5)
-  // Rod: DoFs for both nodes of the element (8 DoFs total: 4 per node)
   std::vector<entt::entity> actors = {rigidActor, rodActor};
   std::vector<std::vector<int>> actorDofs = {
-      {3, 4, 5}, // Rigid body rotation DoFs
-      {node0 * 4 + 0,
-       node0 * 4 + 1,
-       node0 * 4 + 2,
-       node0 * 4 + 3, // Node 0: x, y, z, twist
-       node1 * 4 + 0,
-       node1 * 4 + 1,
-       node1 * 4 + 2,
-       node1 * 4 + 3} // Node 1: x, y, z, twist
-  };
+      {3, 4, 5}, std::vector<int>(rodDofs.begin(), rodDofs.end())};
   auto& info = reg.emplace<CConstraintInfo>(
       e,
       reg,
@@ -551,29 +595,8 @@ void mochi::InitConstraint_RodElementRotationToRigid(
   Quaternion qR = Quaternion::FromRotationVector(params.refFrameRotVec);
   data.q0 = Normalize(rotRigid.GetConjugate() * qR);
 
-  // Get the rotation of the rod element in the rest configuration
-  VMatrix3x3r rotRodMat{};
-  Int2 const initEn = polylineMesh.ElementNodes(params.elementIndex);
-  Vec4r const X0 = ToSimd(polylineMesh.nodes[initEn[0]]);
-  Vec4r const X1 = ToSimd(polylineMesh.nodes[initEn[1]]);
-  auto const& currPose = reg.get<CRodPose<TimeStep::Current> const>(rodActor);
-  Vec4r const frameAxis = Normalize<3>(ToSimd(currPose.value.frameAxes[params.elementIndex]));
-  NdArray<real, 2 * fem::kNumRodFields> initDofsRod MOCHI_NO_INIT;
-  Store(
-      &(initDofsRod[0]),
-      Load<Vec4r>(&(currPose.value.displacements[fem::kNumRodFields * initEn[0]])));
-  Store(
-      &(initDofsRod[fem::kNumRodFields]),
-      Load<Vec4r>(&(currPose.value.displacements[fem::kNumRodFields * initEn[1]])));
-  fem::ComputeRodElementRotationLocal(
-      X0, X1, frameAxis, MakeConstSpan(initDofsRod), rotRodMat, nullptr);
-
-  // Apply the world-from-local rotation to the rod element rotation
-  auto const& worldFromLocalRod = reg.get<CRootTransform const>(rodActor).worldFromLocal;
-  auto rotRodLocal = Normalize(QuaternionFromMatrix(rotRodMat));
-  auto rotRod = worldFromLocalRod.GetRotation() * rotRodLocal;
-
   // Create targets. Initialize the target rotation as the current relative rotation
+  Quaternion const rotRod = GetRodElementRotation(reg, rodActor, params.elementIndex);
   EmplaceConstraintTargets(reg, e, Normalize(rotRigid.GetConjugate() * rotRod));
 }
 
@@ -1216,35 +1239,15 @@ static void EvalConstraintImpl(
     RowMatrix<real, 3, 11>* outJac,
     RowMatrix<real, 3, 3>* outJacTarget,
     bool& outActive) {
-  // Get rigid rotation
   auto const& rotRigid = reg.get<CRigidState<kTimeStep> const>(info.actors[0]).value.GetRotation();
-
-  // Get rod local DoFs (8 DoFs: two nodes with 4 DoFs each)
-  auto const& rodActor = info.actors[1];
-  auto const& rodDisp = reg.get<CRodPose<kTimeStep> const>(rodActor).value.displacements;
-  NdArray<real, 8> localDofsRod MOCHI_NO_INIT;
-  Store(&(localDofsRod[0]), Load<Vec4r>(&(rodDisp[info.actorDofs[1][0]])));
-  Store(&(localDofsRod[4]), Load<Vec4r>(&(rodDisp[info.actorDofs[1][4]])));
-
-  // Reference quantities and element frame axes from rod element:
-  int const elementIndex = data.elementIndex;
-  auto const& polylineMesh = reg.get<CPolylineMesh const>(rodActor);
-  Int2 const evalEn = polylineMesh.ElementNodes(elementIndex);
-  Vec4r const X0 = ToSimd(polylineMesh.nodes[evalEn[0]]);
-  Vec4r const X1 = ToSimd(polylineMesh.nodes[evalEn[1]]);
-  auto const& rodPose = reg.get<CRodPose<kTimeStep> const>(rodActor);
-  Vec4r const frameAxis = Normalize<3>(ToSimd(rodPose.value.frameAxes[elementIndex]));
-
-  // Get rod world-from-local transform
-  auto const& worldFromLocalRod = reg.get<CRootTransform const>(rodActor).worldFromLocal;
-
+  auto const rod = GetRodElementRotationInputs<kTimeStep>(reg, info.actors[1], data.elementIndex);
   EvalRodElementRotationToRigidConstraint(
       rotRigid,
-      worldFromLocalRod,
-      X0,
-      X1,
-      frameAxis,
-      localDofsRod,
+      rod.worldFromLocal,
+      rod.X0,
+      rod.X1,
+      rod.frameAxis,
+      MakeConstSpan(rod.dofs),
       data.q0,
       target.value,
       outC,

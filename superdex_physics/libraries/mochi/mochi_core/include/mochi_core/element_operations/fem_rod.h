@@ -17,6 +17,7 @@
 #pragma once
 
 #include <mochi_core/element_operations/batched_element_utils.h>
+#include <mochi_core/linear_algebra/krylov_interop.h>
 #include <mochi_core/utils/batch_types.h>
 #include <mochi_core/utils/local_to_global_map.h>
 #include <mochi_core/utils/math_utils.h>
@@ -103,55 +104,45 @@ MOCHI_FORCE_INLINE Vec4r TransportFrameAxis(
   return DotVecMat3x3(parallelAxis, RotationAboutAxis(newTangent, -twist));
 }
 
-// Computes the rotation matrix for a rod element between nodes X0 and X1 in the reference
-// configuration, in the actor-local coordiantes. The span elementDofs is assumed to be the
-// displacement/twist DoFs for these two nodes in order, i.e., [ux_0, uy_0, uz_0, theta_0, ux_1,
-// uy_1, uz_1, theta_1]. The frameAxis must be orthogonal to the deformed element tangent. The
-// derivative of this rotation matrix w.r.t. these DoFs can be optionally computed if a non-null
-// pointer is passed for outDRotation.
+// Computes the actor-local material-frame rotation of a rod element with reference nodes X0
+// and X1. elementDofs is [ux_0, uy_0, uz_0, theta_0, ux_1, uy_1, uz_1, theta_1]. frameAxis must
+// be unit length and orthogonal to the nonzero deformed element tangent, with the current twist
+// already incorporated.
+// If outJacobian is non-null, it receives the 3x8 Jacobian of the actor-local spatial rotation
+// increment omega, with dR = skew(omega) R. This is evaluated at zero incremental twist and
+// includes motion of frameAxis with the DoFs, as in TransportFrameAxis: parallel transport for
+// translations and rotation about the tangent for theta_0. frameAxis is not held fixed, and
+// theta_1 does not affect this element's frame.
 MOCHI_FORCE_INLINE void ComputeRodElementRotationLocal(
     Vec4r const& X0,
     Vec4r const& X1,
     Vec4r const& frameAxis,
     Span<real const> elementDofs,
     VMatrix3x3r& outRotation,
-    NdArray<real, 3, 3, 8>* outDRotation) {
+    NdArray<real, 3, 2 * kNumRodFields>* outJacobian) {
   MOCHI_ASSERT_VERBOSE(
-      elementDofs.size() == 8,
+      elementDofs.size() == 2 * kNumRodFields,
       "Expected the displacement/twist DoFs for these two nodes in order, i.e., "
       "[ux_0, uy_0, uz_0, theta_0, ux_1, uy_1, uz_1, theta_1]");
 
   Vec4r const x0 = X0 + Load<Vec4r>(&(elementDofs[0]));
   Vec4r const x1 = X1 + Load<Vec4r>(&(elementDofs[kNumRodFields]));
   Vec4r const e = x1 - x0;
-  Vec4r const eHat = Normalize<3>(e);
+  // Match Normalize<3>'s divide-by-zero guard for collapsed elements.
+  real const invLength = 1_r / (Sqrt(Dot<3>(e, e)) + std::numeric_limits<real>::min());
+  Vec4r const eHat = invLength * e;
   Vec4r const b = Cross3(eHat, frameAxis);
   outRotation = Transpose3x3(VMatrix3x3r{eHat, frameAxis, b});
-  if (outDRotation) {
-    // Simplified using orthogonality of frameAxis and eHat.
-    VMatrix3x3r const dframeAxis_deHat = Outer3(frameAxis, eHat) - Outer3(eHat, frameAxis);
-    VMatrix3x3r const deHat_de = DNormalize3(e);
-    VMatrix3x3r const dframeAxis_de = Dot3x3(dframeAxis_deHat, deHat_de);
-    VMatrix3x3r const dCross_de = Dot3x3(Outer3(b, eHat) - Skew3(frameAxis), deHat_de);
-    for (int i = 0; i < 3; i++) { // i = row of rotation being differentiated
-      // Columns of rotation specified one-by-one, based on rotation's construction
-      Store(&((*outDRotation)[i][0][0]), -deHat_de[i]);
-      Store(&((*outDRotation)[i][1][0]), -dframeAxis_de[i]);
-      Store(&((*outDRotation)[i][2][0]), -dCross_de[i]);
-      Store(&((*outDRotation)[i][0][kNumRodFields]), deHat_de[i]);
-      Store(&((*outDRotation)[i][1][kNumRodFields]), dframeAxis_de[i]);
-      Store(&((*outDRotation)[i][2][kNumRodFields]), dCross_de[i]);
-      // Derivatives w.r.t. angular DoFs (overwrites padding written by SIMD Store operations above)
-      int const angleDof0 = kRodThetaDofOffset;
-      (*outDRotation)[i][0][angleDof0] = 0_r;
-      (*outDRotation)[i][1][angleDof0] = b[i];
-      (*outDRotation)[i][2][angleDof0] = -frameAxis[i];
-      int const angleDof1 = angleDof0 + kNumRodFields;
-      for (int j = 0; j < 3; j++) {
-        (*outDRotation)[i][j][angleDof1] = 0_r;
-      }
-    } // i
-  } // if computing derivative
+  if (outJacobian) {
+    // Translations rotate the frame by parallel transport, omega = eHat x deHat = skew(eHat)
+    // de/|e|; theta_0 rotates it about eHat; theta_1 does not affect it.
+    VMatrix3x3r const jacTranslation = invLength * Skew3(eHat);
+    auto jac = AsView<real, 3, 2 * kNumRodFields>(*outJacobian);
+    jac.LeftCols<3>(3) = AsMatrixView(-jacTranslation);
+    jac.Col(kRodThetaDofOffset) = AsColumnVectorView<3>(eHat);
+    jac.MiddleCols<3>(kNumRodFields, 3) = AsMatrixView(jacTranslation);
+    jac.Col(kNumRodFields + kRodThetaDofOffset).SetZero();
+  }
 }
 
 // Differential geometry of a deformed rod element frame with respect to its edge vector.

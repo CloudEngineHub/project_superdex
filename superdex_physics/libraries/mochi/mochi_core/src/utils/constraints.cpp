@@ -327,69 +327,30 @@ void EvalRodElementRotationToRigidConstraint(
     ColumnVector<real, 3>* outVal,
     RowMatrix<real, 3, 11>* outJac,
     RowMatrix<real, 3, 3>* outJacTarget) {
-  VMatrix3x3r rotRodMatLocal MOCHI_NO_INIT;
-  NdArray<real, 3, 3, 8> drotRodMatLocal_dDofs MOCHI_NO_INIT;
+  VMatrix3x3r rotRodLocalMat MOCHI_NO_INIT;
+  NdArray<real, 3, 8> jacRotRodLocal MOCHI_NO_INIT;
   fem::ComputeRodElementRotationLocal(
       X0Rod,
       X1Rod,
       frameAxisRod,
       rodElementDofs,
-      rotRodMatLocal,
-      outJac ? &drotRodMatLocal_dDofs : nullptr);
-
-  // Apply the world-from-local rotation to the rod element rotation
-  Quaternion const rotRodLocal = Normalize(QuaternionFromMatrix(rotRodMatLocal));
+      rotRodLocalMat,
+      outJac ? &jacRotRodLocal : nullptr);
   Quaternion const rotWflRod = worldFromLocalRod.GetRotation();
-  Quaternion const rotRod = rotWflRod * rotRodLocal;
+  Quaternion const rotRod = rotWflRod * Normalize(QuaternionFromMatrix(rotRodLocalMat));
 
-  // See EvalJointRotationTargetConstraint for comments on analogous computation.
-  Quaternion const qRigid0Conj = (rotRigid * targetRot * refFrame).GetConjugate();
-  Quaternion const qd = qRigid0Conj * rotRod * refFrame;
-  Vec4r const rd = qd.VToRotationVector();
+  RowMatrix<real, 3, 6> jacRot MOCHI_NO_INIT;
+  EvalJointRotationTargetConstraint(
+      rotRigid, rotRod, refFrame, targetRot, outVal, outJac ? &jacRot : nullptr, outJacTarget);
 
-  if (outVal) {
-    Store<3>(outVal->data(), rd);
+  if (outJac) {
+    // Chain the derivative w.r.t. the rod element rotation through the rod element DoFs. The world
+    // rotation increment is rotWflRod times the local one; fold that 3x3 product first.
+    outJac->LeftCols<3>(3) = jacRot.LeftCols<3>(3);
+    VMatrix3x3r const rotWflRodMat = ToVMatrix3x3(rotWflRod);
+    RowMatrix<real, 3, 3> const jacRotLocal = jacRot.RightCols<3>(3) * AsMatrixView(rotWflRodMat);
+    outJac->RightCols<8>(8) = jacRotLocal * AsConstView<real, 3, 8>(jacRotRodLocal);
   }
-  if (outJac || outJacTarget) {
-    VMatrix3x3r const DrdDRd = DRotVectorDRotIncrement(rd, qd);
-    if (outJac) {
-      // Derivative w.r.t. rigid rotation (cf. EvalJointRotationTargetConstraint)
-      VMatrix3x3r const DrdDRRod =
-          Dot3x3(DrdDRd, lie::DMultRotaRotRotbDRot(ToVMatrix3x3(qRigid0Conj)));
-      outJac->LeftCols<3>(3) = AsMatrixView(-DrdDRRod);
-
-      // Derivative w.r.t. rod element DoFs.
-      VMatrix3x3r const preMat = ToVMatrix3x3(qRigid0Conj * rotWflRod);
-      VMatrix3x3r const DrdDOmega = Dot3x3(DrdDRd, lie::DMultRotaRotRotbDRot(preMat));
-      VMatrix3x3r const rotRodMatLocalT = Transpose3x3(rotRodMatLocal);
-
-      for (int rodDofIndex = 0; rodDofIndex < 8; rodDofIndex++) {
-        // dR/d(dof) for this DoF
-        VMatrix3x3r DrDdof MOCHI_NO_INIT;
-        for (int j = 0; j < 3; j++) {
-          DrDdof[j] = Vec4r{
-              drotRodMatLocal_dDofs[j][0][rodDofIndex],
-              drotRodMatLocal_dDofs[j][1][rodDofIndex],
-              drotRodMatLocal_dDofs[j][2][rodDofIndex]};
-        }
-
-        // Extract angular velocity: skew(ω) = dR/d(dof) · R^T
-        Vec4r const omega = InvSkew3(Dot3x3(DrDdof, rotRodMatLocalT));
-
-        // d(rd)/d(dof) = DrdDOmega · ω
-        for (int i = 0; i < 3; i++) {
-          (*outJac)(i, rodDofIndex + 3) = Dot<3>(DrdDOmega[i], omega);
-        }
-      }
-    } // If outJac is requested
-
-    if (outJacTarget) {
-      VMatrix3x3r const DRdDRr =
-          lie::DMultRotaRotTRotbDRot(ToVMatrix3x3((targetRot * refFrame).GetConjugate()));
-      VMatrix3x3r const DrdDRr = Dot3x3(DrdDRd, DRdDRr);
-      *outJacTarget = AsMatrixView(DrdDRr);
-    }
-  } // If either Jacobian is requested
 }
 
 void EvalJointRotationRangeConstraint(
