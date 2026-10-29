@@ -560,6 +560,14 @@ void VerifyBatchedPsdStrategyDoesNotAffectEnergyOrPk1() {
 }
 
 #if MOCHI_USE_EIGEN
+// Expects a tangent to be positive semidefinite up to rounding.
+inline void ExpectPsdTangent(Tensor3x3x3x3r tangent) {
+  using EMatType = Eigen::Matrix<real, 9, 9, Eigen::RowMajor | Eigen::DontAlign>;
+  auto eigenMat = Eigen::Map<EMatType>(&tangent[0][0][0][0]);
+  auto eigenvals = Eigen::SelfAdjointEigenSolver<EMatType>(eigenMat).eigenvalues();
+  EXPECT_GE(eigenvals.minCoeff(), -GetPsdProjectionEigenvalueTol(eigenMat));
+}
+
 template <typename Spec, int kBS, BatchedParamLayout kLayout>
 void VerifyBatchedPsdProjectionProducesPsdTangent() {
   auto const indices = MakePermutedElementIndices<kBS>();
@@ -579,14 +587,29 @@ void VerifyBatchedPsdProjectionProducesPsdTangent() {
         if (ShouldSkipPsdTangentCheck<Spec, kBS>(params, indices, lane, kLayout, psdStrategy)) {
           continue;
         }
-        auto tangent = GetTangentLane(out.tangent, lane);
-        using EMatType = Eigen::Matrix<real, 9, 9, Eigen::RowMajor | Eigen::DontAlign>;
-        auto eigenMat = Eigen::Map<EMatType>(&tangent[0][0][0][0]);
-        auto eigenvals = Eigen::SelfAdjointEigenSolver<EMatType>(eigenMat).eigenvalues();
-        real const tol = GetPsdProjectionEigenvalueTol(eigenMat);
-        EXPECT_GE(eigenvals.minCoeff(), -tol);
+        ExpectPsdTangent(GetTangentLane(out.tangent, lane));
       }
     }
+  }
+}
+
+// Expects each lane of projected to be positive semidefinite and to match the Eigen projection of
+// that lane of unprojected.
+template <int kBS>
+void ExpectAnalyticPsdProjection(
+    NdArray<BatchReal3x3<kBS>, 3, 3> const& unprojected,
+    NdArray<BatchReal3x3<kBS>, 3, 3> const& projected,
+    MaterialPsdStrategy psdStrategy,
+    real relTol) {
+  for (int lane = 0; lane < kBS; ++lane) {
+    auto ref = GetTangentLane(unprojected, lane);
+    real const tolScale = GetTangentTolScale(ref);
+    EigenProjectPsd(ref, psdStrategy);
+    auto const actual = GetTangentLane(projected, lane);
+    auto const& refFlat = reinterpret_cast<NdArray<real, 81> const&>(ref);
+    auto const& actualFlat = reinterpret_cast<NdArray<real, 81> const&>(actual);
+    EXPECT_LE(Norm(refFlat - actualFlat), relTol * tolScale);
+    ExpectPsdTangent(actual);
   }
 }
 
@@ -607,15 +630,7 @@ void VerifyBatchedAnalyticPsdProjection(real relTol) {
       }
       auto const unprojected = EvalBatchedFull<Spec, kBS>(params, indices, Fs, kLayout, false);
       auto const projected = EvalBatchedFull<Spec, kBS>(params, indices, Fs, kLayout, true);
-      for (int lane = 0; lane < kBS; ++lane) {
-        auto ref = GetTangentLane(unprojected.tangent, lane);
-        real const tolScale = GetTangentTolScale(ref);
-        EigenProjectPsd(ref, psdStrategy);
-        auto const actual = GetTangentLane(projected.tangent, lane);
-        auto const& refFlat = reinterpret_cast<NdArray<real, 81> const&>(ref);
-        auto const& actualFlat = reinterpret_cast<NdArray<real, 81> const&>(actual);
-        EXPECT_LE(Norm(refFlat - actualFlat), relTol * tolScale);
-      }
+      ExpectAnalyticPsdProjection<kBS>(unprojected.tangent, projected.tangent, psdStrategy, relTol);
     }
   }
 }

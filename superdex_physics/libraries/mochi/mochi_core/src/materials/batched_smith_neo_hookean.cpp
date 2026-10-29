@@ -23,28 +23,30 @@
 #include <mochi_core/utils/matrix_utils.h>
 #include <mochi_core/utils/simd.h>
 
+#include <array>
 #include <limits>
 
 namespace mochi::materials {
 
-// Lanes where shift·I − weight·G has a negative eigenvalue, for G = FᵀF, i.e. weight·max σᵢ² >
-// shift, decided to rounding accuracy. A symmetric matrix M is positive semidefinite iff its
-// largest diagonal entry d is positive and the Schur complement of d is positive semidefinite, or
-// M = 0, which counts as indefinite here. Eliminating the largest diagonal entry first, as pivoted
-// Cholesky does, keeps the decision accurate when M has two eigenvalues near zero, as when the two
-// largest singular values of F are close, where det(M) cancels to rounding noise.
+// Lanes where shift·I − weight·S has a negative eigenvalue, for a symmetric S, decided to rounding
+// accuracy; for S = FᵀF and weight >= 0, i.e. weight·max σᵢ² > shift. A symmetric matrix M is
+// positive semidefinite iff its largest diagonal entry d is positive and the Schur complement of d
+// is positive semidefinite, or M = 0, which counts as indefinite here. Eliminating the largest
+// diagonal entry first, as pivoted Cholesky does, keeps the decision accurate when M has two
+// eigenvalues near zero, as for S = FᵀF when the two largest singular values of F are close, where
+// det(M) cancels to rounding noise.
 template <int kBatchSize>
-[[nodiscard]] static MOCHI_FORCE_INLINE BatchReal<kBatchSize> IsShiftedGramIndefinite(
+[[nodiscard]] static MOCHI_FORCE_INLINE BatchReal<kBatchSize> IsShiftedIndefinite(
     BatchReal<kBatchSize> const& shift,
     BatchReal<kBatchSize> const& weight,
-    BatchSymMatrix3x3<kBatchSize> const& G) {
+    BatchSymMatrix3x3<kBatchSize> const& S) {
   using V = BatchReal<kBatchSize>;
-  V const m00 = shift - weight * G[0];
-  V const m11 = shift - weight * G[1];
-  V const m22 = shift - weight * G[2];
-  V const m01 = -weight * G[3];
-  V const m02 = -weight * G[4];
-  V const m12 = -weight * G[5];
+  V const m00 = shift - weight * S[0];
+  V const m11 = shift - weight * S[1];
+  V const m22 = shift - weight * S[2];
+  V const m01 = -weight * S[3];
+  V const m02 = -weight * S[4];
+  V const m12 = -weight * S[5];
 
   // Order the indices as (p, i, j) = (0, 1, 2), (1, 0, 2) or (2, 0, 1), with d = m_pp the largest.
   auto const p1 = m11 > m00;
@@ -119,6 +121,52 @@ template <int kBatchSize>
   V const det = e3 + kappa * e2 + c3 * (a * a * Jsq * Ic + a * c * q + c * c * p2) +
       kappa * c3 * (a * u + V{2_r} * c * r);
   return ~(det > V{0_r});
+}
+
+// Upper triangle of c₃·F⊗F + λ̂·cof(F)⊗cof(F) + c₂·I + Σₙ wₙ·Mₙ⊗Mₙ: the direct tangent plus the
+// corrections, without the λ̂(J−α)·d²J/dF² term, which the caller adds. Contraction strategy: hoist
+// the temporary products, the fastest for rank-2 contractions on x86-64 (AVX2) and ARM (NEON), and
+// write all terms in one pass, since each extra pass over the triangle costs a load and a store per
+// entry.
+template <int kBatchSize, int kModes>
+static MOCHI_FORCE_INLINE void AssembleDirectTangentUpperTriangle(
+    BatchReal<kBatchSize> const& c2,
+    BatchReal<kBatchSize> const& c3,
+    BatchReal<kBatchSize> const& lambdaHat,
+    BatchReal3x3<kBatchSize> const& F,
+    BatchReal3x3<kBatchSize> const& cofF,
+    std::array<BatchReal<kBatchSize>, kModes> const& w,
+    std::array<BatchReal3x3<kBatchSize>, kModes> const& M,
+    NdArray<BatchReal3x3<kBatchSize>, 3, 3>& C) {
+  using V = BatchReal<kBatchSize>;
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      int const ij = i * 3 + j;
+      V const c3Fij = c3 * F[i][j];
+      V const lambdaHatCofFij = lambdaHat * cofF[i][j];
+      std::array<V, kModes> wMij MOCHI_NO_INIT;
+      for (int n = 0; n < kModes; ++n) {
+        wMij[n] = w[n] * M[n][i][j];
+      }
+
+      for (int k = 0; k < 3; ++k) {
+        for (int l = 0; l < 3; ++l) {
+          if (k * 3 + l >= ij) {
+            V entry = c3Fij * F[k][l] + lambdaHatCofFij * cofF[k][l];
+            // Without the guard, some compilers (e.g. MSVC) keep the k and l loops rolled for
+            // kModes = 0.
+            if constexpr (kModes > 0) {
+              for (int n = 0; n < kModes; ++n) {
+                entry += wMij[n] * M[n][k][l];
+              }
+            }
+            C[i][j][k][l] = entry;
+          }
+        }
+      }
+      C[i][j][i][j] += c2;
+    }
+  }
 }
 
 template <int kBatchSize>
@@ -248,8 +296,7 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
           (psdStrategy == MaterialPsdStrategy::Fast || !AnyTrue<kBatchSize>(provenIndefinite))) {
         isIndefiniteMask = provenIndefinite;
         if (AnyTrue<kBatchSize>(twistFlipUndecided)) {
-          isIndefiniteMask |=
-              twistFlipUndecided & IsShiftedGramIndefinite<kBatchSize>(rhs, lhsBase, G);
+          isIndefiniteMask |= twistFlipUndecided & IsShiftedIndefinite<kBatchSize>(rhs, lhsBase, G);
         }
 
         if (AnyTrue<kBatchSize>(scalingUndecided)) {
@@ -277,14 +324,9 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
     projectingPsd = AnyTrue<kBatchSize>(isIndefiniteMask);
   }
 
-  bool const useEigensystemPath = outTangent && projectingPsd &&
-      (psdStrategy == MaterialPsdStrategy::Projection ||
-       psdStrategy == MaterialPsdStrategy::AbsEigenProjection);
-  bool const needCofF = outPK1 || (outTangent && !useEigensystemPath);
-
   // The cofactor of the deformation gradient.
   V3x3 cofF MOCHI_NO_INIT;
-  if (needCofF) {
+  if (outPK1 || outTangent) {
     cofF = Cofactor(F);
   }
 
@@ -303,130 +345,117 @@ void BatchedSmithNeoHookeanConstitutiveResponse(
   if (outTangent) {
     auto& C = *outTangent;
 
-    if (useEigensystemPath) {
-      // Eigensystem decomposition path (Smith et al. 2018).
+    // Direct tangent: C[ij][kl] = c₃·F[ij]·F[kl] + λ̂·cofF[ij]·cofF[kl]
+    //                            + λ̂(J−α)·d²J/dF[ij]dF[kl] + c₂·δᵢₖδⱼₗ
+    //
+    // Coefficients:
+    //   c₂ = μ̂(1 − 1/(Ic+1))   (identity term)
+    //   c₃ = 2μ̂ / (Ic+1)²      (Ic² second derivative)
+    V const c2 = muHat * (one - IcPlus1Inv);
+    V const c3 = V{2_r} * muHat * IcPlus1Inv * IcPlus1Inv;
+    V const d2JCoeff = lambdaHat * Jma;
+
+    bool const projectingAnalytically = projectingPsd &&
+        (psdStrategy == MaterialPsdStrategy::Projection ||
+         psdStrategy == MaterialPsdStrategy::AbsEigenProjection);
+    if (projectingAnalytically) {
+      // Projection with the analytic eigensystem (Smith et al. 2018).
       // Note: BatchedRotationVariantSvd3x3 returns U, V^T and sigma such that det(U) >= 0, det(V^T)
-      // >= 0, and sigma[2] < 0 iff det(F) < 0.
+      // >= 0, and sigma[2] < 0 iff det(F) < 0. On nearly flat elements sigma[2] is accurate only to
+      // about ε·(σ₀/σ₂)², so the check below that skips the scaling block's projection can accept a
+      // slightly indefinite block there, leaving a negative eigenvalue of up to about 3e-5·‖H‖ in
+      // float and 2e-9·‖H‖ in double. See D124644721 for an accurate sigma[2] and its cost.
       V3x3 U MOCHI_NO_INIT, VT MOCHI_NO_INIT;
       V3 sigma MOCHI_NO_INIT;
       BatchedRotationVariantSvd3x3<kBatchSize>(F, U, sigma, VT);
 
-      V const coeff0 = muHat - muHat * IcPlus1Inv;
-      V const coeff1 = lambdaHat * Jma;
-
-      // 9 eigenvalues of the Hessian in layout [scaling_0..2, twist_0..2, flip_0..2].
-      V9 eigLambda MOCHI_NO_INIT;
-
-      // Twist: coeff1·σₙ + coeff0.
-      eigLambda[3] = coeff1 * sigma[0] + coeff0;
-      eigLambda[4] = coeff1 * sigma[1] + coeff0;
-      eigLambda[5] = coeff1 * sigma[2] + coeff0;
-
-      // Flip: −coeff1·σₙ + coeff0.
-      eigLambda[6] = -coeff1 * sigma[0] + coeff0;
-      eigLambda[7] = -coeff1 * sigma[1] + coeff0;
-      eigLambda[8] = -coeff1 * sigma[2] + coeff0;
-
       // Scaling mode matrix A (3×3 symmetric).
-      V const IcPlus1SqrInv = IcPlus1Inv * IcPlus1Inv;
-      V const mu2 = V{2_r} * muHat;
       V const J2alphaLambda = (V{2_r} * J - alpha) * lambdaHat;
-
       V3 const sigmaSqr = Sqr(sigma);
-      // clang-format off
       BatchSymMatrix3x3<kBatchSize> const Asym = {
-          (mu2 * sigmaSqr[0] - muHat * IcPlus1) * IcPlus1SqrInv + lambdaHat * sigmaSqr[1] * sigmaSqr[2] + muHat,
-          (mu2 * sigmaSqr[1] - muHat * IcPlus1) * IcPlus1SqrInv + lambdaHat * sigmaSqr[0] * sigmaSqr[2] + muHat,
-          (mu2 * sigmaSqr[2] - muHat * IcPlus1) * IcPlus1SqrInv + lambdaHat * sigmaSqr[0] * sigmaSqr[1] + muHat,
-          J2alphaLambda * sigma[2] + mu2 * sigma[0] * sigma[1] * IcPlus1SqrInv,
-          J2alphaLambda * sigma[1] + mu2 * sigma[0] * sigma[2] * IcPlus1SqrInv,
-          J2alphaLambda * sigma[0] + mu2 * sigma[1] * sigma[2] * IcPlus1SqrInv};
-      // clang-format on
-
-      V3 scalingEigvals MOCHI_NO_INIT;
-      V3x3 AqT MOCHI_NO_INIT;
-      BatchedAnalyticalEigendecompSym3x3<kBatchSize>(Asym, scalingEigvals, &AqT);
-
-      eigLambda[0] = scalingEigvals[0];
-      eigLambda[1] = scalingEigvals[1];
-      eigLambda[2] = scalingEigvals[2];
+          c2 + c3 * sigmaSqr[0] + lambdaHat * sigmaSqr[1] * sigmaSqr[2],
+          c2 + c3 * sigmaSqr[1] + lambdaHat * sigmaSqr[0] * sigmaSqr[2],
+          c2 + c3 * sigmaSqr[2] + lambdaHat * sigmaSqr[0] * sigmaSqr[1],
+          J2alphaLambda * sigma[2] + c3 * sigma[0] * sigma[1],
+          J2alphaLambda * sigma[1] + c3 * sigma[0] * sigma[2],
+          J2alphaLambda * sigma[0] + c3 * sigma[1] * sigma[2]};
 
       V const minEig = V{kMinProjectedEigenvalue};
-      if (psdStrategy == MaterialPsdStrategy::Projection) {
-        for (int i = 0; i < 9; ++i) {
-          eigLambda[i] = Max(eigLambda[i], minEig);
+      auto const clamped = [&](V const& e) MOCHI_FORCE_INLINE_LAMBDA {
+        return psdStrategy == MaterialPsdStrategy::Projection ? Max(e, minEig)
+                                                              : Max(Abs(e), minEig);
+      };
+
+      // The corrections below cancel the clamped eigenvalues only as accurately as the SVD's
+      // singular vectors, whose error grows like ε·(σ₀/σ₁)²: they fail beyond a ratio of about 200
+      // in float and 1000 in double. 16 keeps that error near 256·ε, and the residual eigenvalues
+      // within about 50·ε·‖H‖.
+      constexpr real kMaxSigmaRatio = 16_r;
+
+      // The whole batch takes the eigensystem path if any lane has
+      // - c₂ < minEig, where both eigenvalues of a twist-flip pair can need clamping;
+      // - σ₀ > kMaxSigmaRatio·σ₁;
+      // - a scaling eigenvalue below minEig, i.e. A − minEig·I not positive semidefinite.
+      if (AnyTrue<kBatchSize>(
+              (c2 < minEig) | (sigma[0] > V{kMaxSigmaRatio} * sigma[1]) |
+              IsShiftedIndefinite<kBatchSize>(-minEig, V{-1_r}, Asym))) {
+        // 9 eigenvalues of the Hessian in layout [scaling_0..2, twist_0..2, flip_0..2], with twist
+        // eigenvalues c₂ + λ̂(J−α)·σₙ and flip eigenvalues c₂ − λ̂(J−α)·σₙ.
+        V9 eigLambda MOCHI_NO_INIT;
+        V3 scalingEigvals MOCHI_NO_INIT;
+        V3x3 AqT MOCHI_NO_INIT;
+        BatchedAnalyticalEigendecompSym3x3<kBatchSize>(Asym, scalingEigvals, &AqT);
+
+        for (int n = 0; n < 3; ++n) {
+          eigLambda[n] = clamped(scalingEigvals[n]);
+          eigLambda[3 + n] = clamped(c2 + d2JCoeff * sigma[n]);
+          eigLambda[6 + n] = clamped(c2 - d2JCoeff * sigma[n]);
         }
-      } else {
-        for (int i = 0; i < 9; ++i) {
-          eigLambda[i] = Max(Abs(eigLambda[i]), minEig);
+
+        utils::BatchedAssembleTangentFromEigensystem<kBatchSize>(eigLambda, U, VT, AqT, C);
+        return;
+      }
+
+      // The scaling eigenvalues are at least minEig in every lane, and so is the larger of each
+      // twist-flip pair c₂ ± λ̂(J−α)·σₙ, as c₂ ≥ minEig. So projecting adds (clamped(e) − e)·m⊗m
+      // to the direct tangent for the smaller one, e = c₂ − |λ̂(J−α)·σₙ|, along its mode
+      // m = (u_p·v_qᵀ + sign(λ̂(J−α)·σₙ)·u_q·v_pᵀ)/√2: twist where λ̂(J−α)·σₙ < 0, else flip, as in
+      // BatchedAssembleTangentFromEigensystem. The modes omit the 1/√2, so the weights are halved.
+      // Unlike that assembly, which is PSD by construction, the result is PSD only as accurately as
+      // U and V match F.
+      constexpr int kPairs[3][2] = {{1, 2}, {0, 2}, {0, 1}};
+      std::array<V, 3> weights MOCHI_NO_INIT;
+      std::array<V3x3, 3> modes MOCHI_NO_INIT;
+      for (int n = 0; n < 3; ++n) {
+        V const dJSigma = d2JCoeff * sigma[n];
+        V const e = c2 - Abs(dJSigma);
+        weights[n] = V{0.5_r} * (clamped(e) - e);
+        int const p = kPairs[n][0];
+        int const q = kPairs[n][1];
+        V const sign = Sign(dJSigma);
+        for (int r = 0; r < 3; ++r) {
+          V const signUrq = sign * U[r][q];
+          for (int c = 0; c < 3; ++c) {
+            modes[n][r][c] = U[r][p] * VT[q][c] + signUrq * VT[p][c];
+          }
         }
       }
 
-      utils::BatchedAssembleTangentFromEigensystem<kBatchSize>(eigLambda, U, VT, AqT, C);
-
+      AssembleDirectTangentUpperTriangle<kBatchSize, 3>(
+          c2, c3, lambdaHat, F, cofF, weights, modes, C);
     } else {
-      // Direct tangent: C[ij][kl] = c₃·F[ij]·F[kl] + λ̂·cofF[ij]·cofF[kl]
-      //                            + λ̂(J−α)·d²J/dF[ij]dF[kl] + c₂·δᵢₖδⱼₗ
-      //
-      // Coefficients:
-      //   c₂ = μ̂(1 − 1/(Ic+1))   (identity term)
-      //   c₃ = 2μ̂ / (Ic+1)²      (Ic² second derivative)
-      V const c2 = muHat * (one - IcPlus1Inv);
-      V const c3 = V{2_r} * muHat * IcPlus1Inv * IcPlus1Inv;
-      bool const projectingFast = projectingPsd && (psdStrategy == MaterialPsdStrategy::Fast);
-
-      if (projectingFast && AllTrue<kBatchSize>(isIndefiniteMask)) {
-        // Fast PSD path - Drop offending second derivatives in the volume preservation term
-        // altogether to prevent negative eigenvalues.
-        // C[ij][kl] = c₃·F[ij]·F[kl] + λ̂·cofF[ij]·cofF[kl] + c₂·δᵢₖδⱼₗ
-        // Note the omitted λ̂(J−α)·d²J/dF² term.
-        // Contraction strategy: hoist both temporary products, mirror in a separate pass. Fastest
-        // for 2-rank contractions on x86-64 (AVX2) and ARM (NEON).
-        for (int i = 0; i < 3; ++i) {
-          for (int j = 0; j < 3; ++j) {
-            int const ij = i * 3 + j;
-            V const c3Fij = c3 * F[i][j];
-            V const lambdaHatCofFij = lambdaHat * cofF[i][j];
-            for (int k = 0; k < 3; ++k) {
-              for (int l = 0; l < 3; ++l) {
-                int const kl = k * 3 + l;
-                if (kl >= ij) {
-                  C[i][j][k][l] = c3Fij * F[k][l] + lambdaHatCofFij * cofF[k][l];
-                }
-              }
-            }
-            C[i][j][i][j] += c2;
-          }
-        }
-
-      } else {
-        V d2JCoeff = lambdaHat * Jma;
-        if (projectingFast) {
-          d2JCoeff = Select(isIndefiniteMask, V{0_r}, d2JCoeff);
-        }
-
-        // Contraction strategy for separable terms: hoist temporary products, mirror in a separate
-        // pass.
-        for (int i = 0; i < 3; ++i) {
-          for (int j = 0; j < 3; ++j) {
-            int const ij = i * 3 + j;
-            V const c3Fij = c3 * F[i][j];
-            V const lambdaHatCofFij = lambdaHat * cofF[i][j];
-            for (int k = 0; k < 3; ++k) {
-              for (int l = 0; l < 3; ++l) {
-                int const kl = k * 3 + l;
-                if (kl >= ij) {
-                  C[i][j][k][l] = c3Fij * F[k][l] + lambdaHatCofFij * cofF[k][l];
-                }
-              }
-            }
-            C[i][j][i][j] += c2;
-          }
-        }
-        utils::BatchAddD2JdF2UpperTriangle<kBatchSize>(d2JCoeff, F, C);
-      }
-      utils::BatchMirrorTangentUpperToLower<kBatchSize>(C);
+      AssembleDirectTangentUpperTriangle<kBatchSize, 0>(c2, c3, lambdaHat, F, cofF, {}, {}, C);
     }
+
+    // Add the λ̂(J−α)·d²J/dF² term, except under the Fast PSD strategy in the lanes where it makes
+    // the tangent indefinite, and altogether when that is every lane.
+    bool const projectingFast = projectingPsd && (psdStrategy == MaterialPsdStrategy::Fast);
+    if (!projectingFast || !AllTrue<kBatchSize>(isIndefiniteMask)) {
+      utils::BatchAddD2JdF2UpperTriangle<kBatchSize>(
+          projectingFast ? Select(isIndefiniteMask, V{0_r}, d2JCoeff) : d2JCoeff, F, C);
+    }
+
+    utils::BatchMirrorTangentUpperToLower<kBatchSize>(C);
   }
 }
 

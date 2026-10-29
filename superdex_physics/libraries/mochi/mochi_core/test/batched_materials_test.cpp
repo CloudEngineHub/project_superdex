@@ -29,6 +29,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 using namespace mochi;
 using namespace mochi::materials;
@@ -303,6 +304,27 @@ static void VerifySmithNeoHookeanGoldenData(MaterialPsdOracle oracle) {
   }
 }
 
+// U * diag(sigma) * V^T for random rotations U and V, formed in double.
+template <typename Generator>
+[[nodiscard]] static Matrix3x3r MakeRotatedDeformation(
+    Generator& generator,
+    std::array<double, 3> const& sigma) {
+  auto const U = GetRandomRotationMatrix(generator);
+  auto const V = GetRandomRotationMatrix(generator);
+
+  Matrix3x3r F{};
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      double entry = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        entry += static_cast<double>(U(i, k)) * sigma[k] * static_cast<double>(V(j, k));
+      }
+      F[i][j] = static_cast<real>(entry);
+    }
+  }
+  return F;
+}
+
 // Lanes F = U * diag(sigma) * V^T on either side of a PSD threshold, at relative margins of 512 eps
 // to sqrt(eps), scaled like rounding errors, which grow with jmaCondition:
 //   - twist and flip, for poissonRatio > -0.9: lambdaHat^2 * (J - alpha)^2 * max_i(sigma_i^2)
@@ -433,17 +455,7 @@ static void VerifySmithNeoHookeanCorrectOracleNearPsdBoundary(
         ASSERT_TRUE(found);
       }
 
-      auto const U = GetRandomRotationMatrix(generator);
-      auto const V = GetRandomRotationMatrix(generator);
-      for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-          double entry = 0.0;
-          for (int k = 0; k < 3; ++k) {
-            entry += static_cast<double>(U(i, k)) * sigma[k] * static_cast<double>(V(j, k));
-          }
-          Fs[lane][i][j] = static_cast<real>(entry);
-        }
-      }
+      Fs[lane] = MakeRotatedDeformation(generator, sigma);
     }
     auto const batchedF = mochi::test::LoadBatchMatrix3x3<kBS>(Fs);
     NdArray<BatchReal3x3<kBS>, 3, 3> correct MOCHI_NO_INIT;
@@ -467,6 +479,117 @@ static void VerifySmithNeoHookeanCorrectOracleNearPsdBoundary(
     }
   }
 }
+
+// At the largest Poisson's ratio below 0.5, F = nextafter(1, 0) * I compresses enough to make the
+// twist eigenvalues a few times mu below zero: the oracle must count every lane as indefinite, so
+// Fast drops the d^2J term.
+template <int kBS>
+static void VerifySmithNeoHookeanCorrectOracleNearIncompressible() {
+  SmithNeoHookeanMaterialParams params;
+  params.youngsModulus = 1_r;
+  params.poissonRatio = std::nextafter(0.5_r, 0_r);
+  params.psdStrategy = MaterialPsdStrategy::Fast;
+  auto const batchedParams = BuildBatchParams<kBS>(params);
+  std::array<Matrix3x3r, kBS> Fs{};
+  Fs.fill(std::nextafter(1_r, 0_r) * Eye<3, real>());
+  auto const batchedF = mochi::test::LoadBatchMatrix3x3<kBS>(Fs);
+  NdArray<BatchReal3x3<kBS>, 3, 3> correct MOCHI_NO_INIT;
+  NdArray<BatchReal3x3<kBS>, 3, 3> dropped MOCHI_NO_INIT;
+  BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+      batchedParams, batchedF, nullptr, nullptr, &correct, true, MaterialPsdOracle::Correct);
+  BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+      batchedParams, batchedF, nullptr, nullptr, &dropped, true, MaterialPsdOracle::None);
+  for (int lane = 0; lane < kBS; ++lane) {
+    EXPECT_EQ(GetTangentLane(dropped, lane), GetTangentLane(correct, lane));
+  }
+}
+
+#if MOCHI_USE_EIGEN
+// Batches whose lanes all have a positive definite scaling block, so that the projection corrects
+// the unprojected tangent along the twist and flip modes: a compression with negative twist
+// eigenvalues, alternating lane by lane with stretches where one or two flip eigenvalues are
+// negative and with 15:1 needles, just inside the bound, where the corrections need the SVD to be
+// accurate and to pair U and V consistently. Every fourth lane, from lane 3, replaces the
+// compression with a 15:1 needle with J = alpha, where the d^2J term vanishes and nothing needs
+// clamping: the corrections leave it unprojected, to 16 eps, while the eigensystem path, from
+// singular vectors only accurate to about (sigma0 / sigma1)^2 eps, is up to about 44 eps off, so
+// these checks catch a gate that always falls back, if not every batch that falls back. The
+// projection must match Eigen's to rounding: 128 eps of the unprojected tangent's norm. The random
+// test deformations, with singular values up to 1, never reach a positive definite scaling block
+// with a negative flip.
+template <int kBS>
+static void VerifySmithNeoHookeanTwistAndFlipProjection() {
+  constexpr std::array<double, 3> kCompression = {0.95, 0.95, 0.9};
+  constexpr std::pair<real, std::array<double, 3>> kCases[] = {
+      {-0.1_r, {3.175, 2.25, 0.5}}, // Two negative flips, the lowest at -2.6% of the norm.
+      {0.3_r, {2.3, 1.525, 0.5}}, // One negative flip, at -1.6%.
+      {0.4_r, {7.5, 0.5, 0.25}}, // Needle with distinct small singular values.
+      {0.4_r, {6.0, 0.4, 0.4}}}; // Needle with equal small singular values.
+
+  auto generator = RandomGenerator(7);
+  for (auto const& [poissonRatio, sigma] : kCases) {
+    // The kernel's 1 + 3/4 * muHat / lambdaHat.
+    double const alpha = 1.0 + 6.0 * (1.0 - 2.0 * poissonRatio) / (5.0 + 2.0 * poissonRatio);
+    double const t = std::cbrt(alpha / 15.0);
+    std::array<double, 3> const unclampedNeedle = {15.0 * t, t, t};
+    std::array<Matrix3x3r, kBS> Fs{};
+    for (int lane = 0; lane < kBS; ++lane) {
+      Fs[lane] = MakeRotatedDeformation(
+          generator, lane % 2 == 0 ? sigma : (lane % 4 == 1 ? kCompression : unclampedNeedle));
+    }
+    auto const batchedF = mochi::test::LoadBatchMatrix3x3<kBS>(Fs);
+
+    for (auto psdStrategy : kAnalyticPsdProjectionStrategies) {
+      auto const batchedParams = BuildBatchParams<kBS>(SmithNeoHookeanMaterialParams{
+          .youngsModulus = 1e5_r, .poissonRatio = poissonRatio, .psdStrategy = psdStrategy});
+      NdArray<BatchReal3x3<kBS>, 3, 3> unprojected MOCHI_NO_INIT;
+      NdArray<BatchReal3x3<kBS>, 3, 3> projected MOCHI_NO_INIT;
+      BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+          batchedParams, batchedF, nullptr, nullptr, &unprojected, false);
+      BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+          batchedParams, batchedF, nullptr, nullptr, &projected, true, MaterialPsdOracle::None);
+      ExpectAnalyticPsdProjection<kBS>(
+          unprojected, projected, psdStrategy, 128 * std::numeric_limits<real>::epsilon());
+      for (int lane = 3; lane < kBS; lane += 4) {
+        auto const unprojectedLane = GetTangentLane(unprojected, lane);
+        auto const projectedLane = GetTangentLane(projected, lane);
+        auto const& unprojectedFlat = reinterpret_cast<NdArray<real, 81> const&>(unprojectedLane);
+        EXPECT_LE(
+            Norm(reinterpret_cast<NdArray<real, 81> const&>(projectedLane) - unprojectedFlat),
+            16 * std::numeric_limits<real>::epsilon() * Norm(unprojectedFlat));
+      }
+    }
+  }
+
+  // Needles beyond the bound, with J near 0.8 * alpha, where the corrections fail first: every lane
+  // falls back, and the projection stays positive semidefinite. Without the bound, U is too
+  // inaccurate for the corrections, which fail on the first shape in float and on the second in
+  // double.
+  for (auto const& sigma : {std::array{175.0, 0.105, 0.0525}, std::array{8000.0, 0.0155, 0.0078}}) {
+    for (int repeat = 0; repeat < 2; ++repeat) {
+      for (auto psdStrategy : kAnalyticPsdProjectionStrategies) {
+        std::array<Matrix3x3r, kBS> Fs{};
+        for (auto& F : Fs) {
+          F = MakeRotatedDeformation(generator, sigma);
+        }
+        NdArray<BatchReal3x3<kBS>, 3, 3> projected MOCHI_NO_INIT;
+        BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
+            BuildBatchParams<kBS>(SmithNeoHookeanMaterialParams{
+                .youngsModulus = 1e5_r, .poissonRatio = 0.4_r, .psdStrategy = psdStrategy}),
+            mochi::test::LoadBatchMatrix3x3<kBS>(Fs),
+            nullptr,
+            nullptr,
+            &projected,
+            true,
+            MaterialPsdOracle::None);
+        for (int lane = 0; lane < kBS; ++lane) {
+          ExpectPsdTangent(GetTangentLane(projected, lane));
+        }
+      }
+    }
+  }
+}
+#endif // MOCHI_USE_EIGEN
 
 template <int kBS>
 static void VerifyActiveNeoHookeanComposite() {
@@ -533,36 +656,18 @@ TEST(BatchedMaterials, StVenantKirchhoff) {
   RunMaterialTests<StVenantKirchhoffSpec>();
 }
 
-// Runs generic Smith neo-Hookean checks for the default oracle and each explicit oracle.
+// Runs generic Smith neo-Hookean checks for the default oracle and each explicit oracle, and checks
+// the projection where only twist and flip eigenvalues need clamping.
 TEST(BatchedMaterials, SmithNeoHookean) {
   RunMaterialTests<SmithNeoHookeanSpec>();
   for (int i = 0; i < static_cast<int>(MaterialPsdOracle::Count); ++i) {
     RunSmithNeoHookeanOracleMaterialTests(static_cast<MaterialPsdOracle>(i));
   }
-}
-
-// At the largest Poisson's ratio below 0.5, F = nextafter(1, 0) * I compresses enough to make the
-// twist eigenvalues a few times mu below zero: the oracle must count every lane as indefinite, so
-// Fast drops the d^2J term.
-template <int kBS>
-static void VerifySmithNeoHookeanCorrectOracleNearIncompressible() {
-  SmithNeoHookeanMaterialParams params;
-  params.youngsModulus = 1_r;
-  params.poissonRatio = std::nextafter(0.5_r, 0_r);
-  params.psdStrategy = MaterialPsdStrategy::Fast;
-  auto const batchedParams = BuildBatchParams<kBS>(params);
-  std::array<Matrix3x3r, kBS> Fs{};
-  Fs.fill(std::nextafter(1_r, 0_r) * Eye<3, real>());
-  auto const batchedF = mochi::test::LoadBatchMatrix3x3<kBS>(Fs);
-  NdArray<BatchReal3x3<kBS>, 3, 3> correct MOCHI_NO_INIT;
-  NdArray<BatchReal3x3<kBS>, 3, 3> dropped MOCHI_NO_INIT;
-  BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
-      batchedParams, batchedF, nullptr, nullptr, &correct, true, MaterialPsdOracle::Correct);
-  BatchedSmithNeoHookeanConstitutiveResponse<kBS>(
-      batchedParams, batchedF, nullptr, nullptr, &dropped, true, MaterialPsdOracle::None);
-  for (int lane = 0; lane < kBS; ++lane) {
-    EXPECT_EQ(GetTangentLane(dropped, lane), GetTangentLane(correct, lane));
-  }
+#if MOCHI_USE_EIGEN
+  VerifySmithNeoHookeanTwistAndFlipProjection<1>();
+  VerifySmithNeoHookeanTwistAndFlipProjection<4>();
+  VerifySmithNeoHookeanTwistAndFlipProjection<8>();
+#endif
 }
 
 // Checks the Smith neo-Hookean Correct oracle's decisions at rest and near the PSD boundary, for
