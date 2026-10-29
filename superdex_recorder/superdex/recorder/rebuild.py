@@ -172,7 +172,7 @@ def _spawn_bot_task(
         str(entry.name): str(entry.path)
         for entry in bot_scene.get_bot_scene_prefab().scene.spawnable_prefabs
     }
-    spawns = {str(spawn.name): spawn for spawn in task.spawns}
+    spawns = {str(spawn.name): spawn for spawn in task.reset_state}
     world_from_spawns: dict[str, sdp.TransformRT] = {}
 
     # The loader rejects parent cycles and unknown parents.

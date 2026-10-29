@@ -325,17 +325,17 @@ bool ResolveTaskSpawns(
   }
 
   std::unordered_map<std::string, int> spawnIndices;
-  for (int i = 0; i < mochi::isize(task.spawns); ++i) {
-    if (!spawnIndices.emplace(std::string(task.spawns[i].name), i).second) {
-      error =
-          "Bot task declares more than one spawn named '" + std::string(task.spawns[i].name) + "'";
+  for (int i = 0; i < mochi::isize(task.resetState); ++i) {
+    if (!spawnIndices.emplace(std::string(task.resetState[i].name), i).second) {
+      error = "Bot task declares more than one spawn named '" +
+          std::string(task.resetState[i].name) + "'";
       return false;
     }
   }
 
   out.clear();
-  out.resize(task.spawns.size());
-  std::vector<int> resolveState(task.spawns.size());
+  out.resize(task.resetState.size());
+  std::vector<int> resolveState(task.resetState.size());
   std::function<bool(int)> resolve = [&](int index) {
     if (resolveState[index] == 2) {
       return true;
@@ -346,7 +346,7 @@ bool ResolveTaskSpawns(
     }
     resolveState[index] = 1;
 
-    auto const& spawn = task.spawns[index];
+    auto const& spawn = task.resetState[index];
     auto const prefab = prefabPaths.find(std::string(spawn.prefabName));
     if (prefab == prefabPaths.end()) {
       error = "Task spawn '" + std::string(spawn.name) + "' references '" +
@@ -379,7 +379,7 @@ bool ResolveTaskSpawns(
     return true;
   };
 
-  for (int i = 0; i < mochi::isize(task.spawns); ++i) {
+  for (int i = 0; i < mochi::isize(task.resetState); ++i) {
     if (!resolve(i)) {
       out.clear();
       return false;
@@ -1620,7 +1620,7 @@ void BotSceneEditor::ShowTaskEditor() {
     return;
   }
   auto& task = *_taskPrefab;
-  auto& spawns = task.spawns;
+  auto& spawns = task.resetState;
   bool changed = false;
   bool structural = false;
   ImGui::BeginDisabled(_sceneAsset->IsReadOnly());

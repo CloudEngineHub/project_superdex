@@ -50,16 +50,16 @@ TEST_F(BotTaskUtilsTest, CreateWritesAnEmptyNamedTask) {
   ASSERT_TRUE(CreateBotTaskFile(_path, "Task", error)) << error;
   auto const task = ReadTask();
   EXPECT_EQ(std::string(task.metadata.name), "Task");
-  EXPECT_TRUE(task.spawns.empty());
+  EXPECT_TRUE(task.resetState.empty());
 }
 
 TEST_F(BotTaskUtilsTest, SetNameKeepsTheRestOfTheTask) {
   BotTaskPrefab task;
   task.metadata.name = "Old";
   task.metadata.author = "Someone";
-  task.spawns.resize(1);
-  task.spawns[0].name = "board";
-  task.spawns[0].prefabName = "nist_board";
+  task.resetState.resize(1);
+  task.resetState[0].name = "board";
+  task.resetState[0].prefabName = "nist_board";
   superdex::robotics::SaveParamsToFile(task, _path, ExpectOK{});
 
   std::string error;

@@ -42,9 +42,9 @@ class BotTaskCacheTest : public testing::Test {
 
   static BotTaskPrefab TaskWithSpawn(std::string const& name) {
     BotTaskPrefab task;
-    task.spawns.resize(1);
-    task.spawns[0].name = name;
-    task.spawns[0].prefabName = "board";
+    task.resetState.resize(1);
+    task.resetState[0].name = name;
+    task.resetState[0].prefabName = "board";
     return task;
   }
 
@@ -84,7 +84,7 @@ TEST_F(BotTaskCacheTest, SaveWritesEditsAndClearsModified) {
   entry->json = SReflect::ToJsonString(TaskWithSpawn("b"), true);
   ASSERT_TRUE(cache.Save(_path, error)) << error;
   EXPECT_FALSE(BotTaskCache::IsModified(*entry));
-  EXPECT_EQ(std::string(ReadTask().spawns[0].name), "b");
+  EXPECT_EQ(std::string(ReadTask().resetState[0].name), "b");
 }
 
 TEST_F(BotTaskCacheTest, SaveRefusesInvalidTask) {
@@ -94,11 +94,11 @@ TEST_F(BotTaskCacheTest, SaveRefusesInvalidTask) {
   auto* entry = cache.GetOrLoad(_path, error);
   ASSERT_NE(entry, nullptr) << error;
   BotTaskPrefab duplicate = TaskWithSpawn("a");
-  duplicate.spawns.push_back(TaskWithSpawn("a").spawns[0]);
+  duplicate.resetState.push_back(TaskWithSpawn("a").resetState[0]);
   entry->json = SReflect::ToJsonString(duplicate, true);
   EXPECT_FALSE(cache.SaveModified(error));
   EXPECT_TRUE(BotTaskCache::IsModified(*entry));
-  EXPECT_EQ(ReadTask().spawns.size(), 1);
+  EXPECT_EQ(ReadTask().resetState.size(), 1);
 }
 
 TEST_F(BotTaskCacheTest, RestoreRevertsEntriesMissingFromSnapshot) {
@@ -141,13 +141,13 @@ TEST_F(BotTaskCacheTest, SaveAsMovesEditsToTheCopy) {
   ASSERT_TRUE(cache.SaveAs(_path, copyPath, error)) << error;
 
   EXPECT_FALSE(BotTaskCache::IsModified(*original));
-  EXPECT_EQ(std::string(ReadTask().spawns[0].name), "a");
+  EXPECT_EQ(std::string(ReadTask().resetState[0].name), "a");
   auto const* copy = cache.Find(copyPath);
   ASSERT_NE(copy, nullptr);
   EXPECT_FALSE(BotTaskCache::IsModified(*copy));
   EXPECT_EQ(
       std::string(
-          superdex::robotics::LoadBotTaskPrefabFromFile(copyPath, ExpectOK{}).spawns[0].name),
+          superdex::robotics::LoadBotTaskPrefabFromFile(copyPath, ExpectOK{}).resetState[0].name),
       "b");
 }
 

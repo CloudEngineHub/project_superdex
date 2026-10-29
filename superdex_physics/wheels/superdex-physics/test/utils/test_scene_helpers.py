@@ -151,7 +151,7 @@ class LoadBotTaskPrefabTest(unittest.TestCase):
             "two_spawns.mochi_bot_task",
             {
                 "metadata": {"name": "Tiny Task", "version": "1.0"},
-                "spawns": [
+                "resetState": [
                     {
                         "name": "Foam",
                         "prefabName": "Foam",
@@ -172,32 +172,32 @@ class LoadBotTaskPrefabTest(unittest.TestCase):
         params = load_bot_task_prefab(path)
 
         self.assertEqual(str(params.metadata.name), "Tiny Task")
-        self.assertEqual(len(params.spawns), 2)
+        self.assertEqual(len(params.reset_state), 2)
 
-        self.assertEqual(str(params.spawns[0].name), "Foam")
-        self.assertEqual(str(params.spawns[0].prefab_name), "Foam")
-        self.assertTrue(str(params.spawns[0].parent) in ("", "task_root"))
+        self.assertEqual(str(params.reset_state[0].name), "Foam")
+        self.assertEqual(str(params.reset_state[0].prefab_name), "Foam")
+        self.assertTrue(str(params.reset_state[0].parent) in ("", "task_root"))
         self.assertAlmostEqual(
-            params.spawns[0].parent_from_spawn.translation[2], 0.05, places=5
+            params.reset_state[0].parent_from_spawn.translation[2], 0.05, places=5
         )
 
-        self.assertEqual(str(params.spawns[1].name), "m8_knob")
-        self.assertEqual(str(params.spawns[1].prefab_name), "M8_Knob")
-        self.assertEqual(str(params.spawns[1].parent), "Foam")
+        self.assertEqual(str(params.reset_state[1].name), "m8_knob")
+        self.assertEqual(str(params.reset_state[1].prefab_name), "M8_Knob")
+        self.assertEqual(str(params.reset_state[1].parent), "Foam")
         self.assertAlmostEqual(
-            params.spawns[1].parent_from_spawn.translation[0], 0.1, places=5
+            params.reset_state[1].parent_from_spawn.translation[0], 0.1, places=5
         )
         self.assertAlmostEqual(
-            params.spawns[1].parent_from_spawn.rotation[0], 0.7071068, places=5
+            params.reset_state[1].parent_from_spawn.rotation[0], 0.7071068, places=5
         )
         self.assertAlmostEqual(
-            params.spawns[1].parent_from_spawn.rotation[3], 0.7071068, places=5
+            params.reset_state[1].parent_from_spawn.rotation[3], 0.7071068, places=5
         )
 
     def test_empty_name_raises(self) -> None:
         path = self._write(
             "empty_name.mochi_bot_task",
-            {"spawns": [{"name": "", "prefabName": "Foam"}]},
+            {"resetState": [{"name": "", "prefabName": "Foam"}]},
         )
         with self.assertRaises(sdp.Error):  # pyre-ignore[16]
             load_bot_task_prefab(path)
@@ -205,7 +205,7 @@ class LoadBotTaskPrefabTest(unittest.TestCase):
     def test_task_root_name_raises(self) -> None:
         path = self._write(
             "task_root_name.mochi_bot_task",
-            {"spawns": [{"name": "task_root", "prefabName": "Foam"}]},
+            {"resetState": [{"name": "task_root", "prefabName": "Foam"}]},
         )
         with self.assertRaises(sdp.Error):  # pyre-ignore[16]
             load_bot_task_prefab(path)
@@ -214,7 +214,7 @@ class LoadBotTaskPrefabTest(unittest.TestCase):
         path = self._write(
             "duplicate_name.mochi_bot_task",
             {
-                "spawns": [
+                "resetState": [
                     {"name": "obj", "prefabName": "Foam"},
                     {"name": "obj", "prefabName": "M8_Knob"},
                 ]

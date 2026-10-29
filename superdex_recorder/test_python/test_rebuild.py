@@ -117,7 +117,7 @@ class RebuildSceneTest(unittest.TestCase):
             json.dumps(
                 {
                     "metadata": {"name": "shape_filter"},
-                    "spawns": [
+                    "resetState": [
                         {
                             "name": SPAWN_NAME,
                             "prefabName": SPAWN_NAME,
@@ -321,7 +321,7 @@ class RebuildSceneTest(unittest.TestCase):
             json.dumps(
                 {
                     "metadata": {"name": "knob"},
-                    "spawns": [
+                    "resetState": [
                         {
                             "name": KNOB_SPAWN_NAME,
                             "prefabName": "knob",
