@@ -20,6 +20,7 @@
 #include <mochi_core/utils/spmat_utils.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <numeric>
 #include <variant>
 #include <vector>
@@ -81,6 +82,33 @@ static void CheckRowsColsConsistency(
 }
 #endif // MOCHI_ASSERT_VERBOSE_ENABLED
 
+// Stores in offsets[j] the position of block column cols[j].dst / kBlockSize in the sorted block
+// column indices of a block row (a sparse matrix row is a block row with kBlockSize = 1). The
+// groups are sorted too, so each search starts where the previous one stopped, and a forward scan
+// finds them all in one pass over the row.
+template <int kBlockSize>
+static MOCHI_FORCE_INLINE void
+FindColGroupOffsets(Span<int const> indices, Span<IndexGroup const> cols, Span<int> offsets) {
+  // Rows with more indices per group use binary searches. Sequential scan compares cost far less
+  // than dependent binary-search probes, so this sits far above log2(row length).
+  constexpr int64_t kMaxScanIndicesPerGroup = 32;
+  bool const scan = isize(indices) <= kMaxScanIndicesPerGroup * isize(cols);
+  int const* searchBegin = indices.begin();
+  for (int j = 0; j < cols.size(); ++j) {
+    int const blockCol = cols[j].dst / kBlockSize;
+    int const* found = scan
+        ? std::find_if(searchBegin, indices.end(), [blockCol](int c) { return c >= blockCol; })
+        : std::lower_bound(searchBegin, indices.end(), blockCol);
+    MOCHI_ASSERT_VERBOSE(
+        (found != indices.end()) && (*found == blockCol),
+        "Position [row][col] is not in the sparsity pattern.");
+    offsets[j] = static_cast<int>(found - indices.begin());
+    // Do NOT start the next search at (found + 1): IndexGroups may repeat the same destination
+    // block column, i.e. cols[j + 1].dst / kBlockSize == cols[j].dst / kBlockSize is possible.
+    searchBegin = found;
+  }
+}
+
 void mochi::MatAddSubBlocks(
     SparseMatrixView<real> dstMatrix,
     Span<IndexGroup const> rows,
@@ -100,19 +128,7 @@ void mochi::MatAddSubBlocks(
   // Update the cache for a specific row
   auto UpdateCache = [&](int globalRow) {
     Span<int const> dstIndices = dstMatrix.Indices(globalRow);
-    int const* searchBegin = dstIndices.begin();
-    for (int j = 0; j < cols.size(); ++j) {
-      // Find column index cols[j].dst in the sorted half open range [searchBegin, dstIndices.end())
-      int const* dstIdxFound = std::lower_bound(searchBegin, dstIndices.end(), cols[j].dst);
-      MOCHI_ASSERT_VERBOSE(
-          (dstIdxFound != dstIndices.end()) && (*dstIdxFound == cols[j].dst),
-          "Position [globalRow][globalCol] is not in the sparse matrix non-zero structure!");
-      dstColOffsets[j] = static_cast<int>(dstIdxFound - dstIndices.begin());
-      // Advance searchBegin because we know the dstIndices are in ascending order.
-      // Do NOT advance to (dstIdxFound + 1) because it is possible for IndexGroups to repeat the
-      // same destination index. In other words, it is possible that (cols[j+1].dst == cols[j].dst).
-      searchBegin = dstIdxFound;
-    }
+    FindColGroupOffsets<1>(dstIndices, cols, MakeSpan(dstColOffsets));
     dstNumColsInRow = isize(dstIndices);
   };
 
@@ -163,21 +179,7 @@ void MatAddSubBlocksImpl(
   // Update the cache for a specific block row
   auto UpdateCache = [&](int globalBr) {
     Span<int const> dstIndices = dstMatrix.Indices(globalBr);
-    int const* searchBegin = dstIndices.begin();
-    for (int j = 0; j < cols.size(); ++j) {
-      // Find column index cols[j].dst / kBlockSize in the sorted range [searchBegin,
-      // dstIndices.end())
-      int const* dstIdxFound =
-          std::lower_bound(searchBegin, dstIndices.end(), cols[j].dst / kBlockSize);
-      MOCHI_ASSERT_VERBOSE(
-          (dstIdxFound != dstIndices.end()) && (*dstIdxFound == cols[j].dst / kBlockSize),
-          "Position [globalBr][globalBc] is not in the block sparsity pattern.");
-      dstBlockColOffsets[j] = static_cast<int>(dstIdxFound - dstIndices.begin());
-      // Advance searchBegin because we know the dstIndices are in ascending order.
-      // Do NOT advance to (dstIdxFound + 1) because it is possible for IndexGroups to repeat the
-      // same destination index. In other words, it is possible that (cols[j+1].dst == cols[j].dst).
-      searchBegin = dstIdxFound;
-    }
+    FindColGroupOffsets<kBlockSize>(dstIndices, cols, MakeSpan(dstBlockColOffsets));
     dstNumBlockColsInRow = isize(dstIndices);
   };
 

@@ -341,6 +341,99 @@ TEST(SparsityUtils, MatAddSubBlocks_BlockSparseMatrix_MultipleGroups_BlockSize4)
   EXPECT_TRUE(test::NearEqualMatrices(expected, bSp));
 }
 
+// One row (kBlockSize = 1) or block row stores 128 entries, at the even columns 0, 2, ..., 254.
+// Each call hits from one to all of them, spread evenly from the first entry to the last, and
+// splits the last entry hit into two one-column groups, at its local columns 0 and 2 (repeating
+// column 0 when kBlockSize = 1). Up to 3 groups take the binary search, 4 groups sit exactly at 32
+// entries per group, and more groups take the forward scan.
+template <class SparseMatrixT>
+static void TestMatAddSubBlocksLongRow() {
+  constexpr int kBlockSize = SparseMatrixT::kBlockSize;
+  constexpr int kNumEntries = 128;
+  DynamicArray<int> pointers = {0, kNumEntries};
+  DynamicArray<int> indices(kNumEntries);
+  for (int i = 0; i < kNumEntries; ++i) {
+    indices[i] = 2 * i;
+  }
+  DynamicArray<real> values(kNumEntries * kBlockSize * kBlockSize); // Zeros.
+  SparseMatrixT sp(2 * kNumEntries, pointers, indices, values);
+  Matrix<real> expected = Matrix<real>::Zero(sp.Rows(), sp.Cols());
+  DynamicArray<IndexGroup> const rows = {IndexGroup{.src = 0, .dst = 0, .count = kBlockSize}};
+
+  for (int numEntriesHit = 1; numEntriesHit <= kNumEntries; ++numEntriesHit) {
+    DynamicArray<IndexGroup> cols;
+    int src = 0;
+    for (int i = 0; i < numEntriesHit; ++i) {
+      int const col = numEntriesHit == 1 ? 0 : 2 * (i * (kNumEntries - 1) / (numEntriesHit - 1));
+      int const dst = kBlockSize * col;
+      if (i + 1 < numEntriesHit) {
+        cols.push_back(IndexGroup{.src = src, .dst = dst, .count = kBlockSize});
+        src += kBlockSize;
+      } else {
+        cols.push_back(IndexGroup{.src = src, .dst = dst, .count = 1});
+        cols.push_back(IndexGroup{.src = src + 1, .dst = dst + Min(2, kBlockSize - 1), .count = 1});
+        src += 2;
+      }
+    }
+    RowMatrix<real> valuesToAdd(kBlockSize, src);
+    for (int i = 0; i < kBlockSize; ++i) {
+      for (int j = 0; j < src; ++j) {
+        valuesToAdd(i, j) = static_cast<real>(1000 * i + j + 1);
+      }
+    }
+    MatAddSubBlocks(AsView(sp), MakeSpan(rows), MakeSpan(cols), valuesToAdd);
+    MatAddSubBlocks(AsView(expected), MakeSpan(rows), MakeSpan(cols), valuesToAdd);
+    EXPECT_TRUE(test::NearEqualMatrices(expected, sp))
+        << "kBlockSize = " << kBlockSize << ", numEntriesHit = " << numEntriesHit;
+  }
+}
+
+TEST(SparsityUtils, MatAddSubBlocks_LongRow) {
+  TestMatAddSubBlocksLongRow<SparseMatrix<real>>();
+  TestMatAddSubBlocksLongRow<BlockSparseMatrix<real, 3>>();
+  TestMatAddSubBlocksLongRow<BlockSparseMatrix<real, 4>>();
+}
+
+// One call adds to five rows (kBlockSize = 1) or block rows, with column groups at columns 0 and 6.
+// Each row either reuses the offsets found for the previous one or finds them again: row 1 reuses
+// them (only an entry no group hits differs), row 2 has the same length but column 6 one position
+// earlier, row 3 reuses row 2's, and row 4 stores 65 entries at the even columns 0, 2, ..., 128,
+// enough for the binary search.
+template <class SparseMatrixT>
+static void TestMatAddSubBlocksCacheRefresh() {
+  constexpr int kBlockSize = SparseMatrixT::kBlockSize;
+  DynamicArray<int> pointers = {0, 4, 8, 12, 16, 16 + 65};
+  DynamicArray<int> indices = {0, 2, 6, 8, 0, 4, 6, 8, 0, 6, 8, 9, 0, 6, 8, 9};
+  for (int i = 0; i < 65; ++i) {
+    indices.push_back(2 * i);
+  }
+  DynamicArray<real> values(isize(indices) * kBlockSize * kBlockSize); // Zeros.
+  SparseMatrixT sp(129, pointers, indices, values);
+
+  int constexpr kNumRows = 5 * kBlockSize;
+  DynamicArray<IndexGroup> const rows = {IndexGroup{.src = 0, .dst = 0, .count = kNumRows}};
+  DynamicArray<IndexGroup> const cols = {
+      IndexGroup{.src = 0, .dst = 0, .count = kBlockSize},
+      IndexGroup{.src = kBlockSize, .dst = kBlockSize * 6, .count = kBlockSize}};
+  RowMatrix<real> valuesToAdd(kNumRows, 2 * kBlockSize);
+  for (int i = 0; i < kNumRows; ++i) {
+    for (int j = 0; j < 2 * kBlockSize; ++j) {
+      valuesToAdd(i, j) = static_cast<real>(i * 10 + j + 1);
+    }
+  }
+  MatAddSubBlocks(AsView(sp), MakeSpan(rows), MakeSpan(cols), valuesToAdd);
+
+  Matrix<real> expected = Matrix<real>::Zero(sp.Rows(), sp.Cols());
+  MatAddSubBlocks(AsView(expected), MakeSpan(rows), MakeSpan(cols), valuesToAdd);
+  EXPECT_TRUE(test::NearEqualMatrices(expected, sp)) << "kBlockSize = " << kBlockSize;
+}
+
+TEST(SparsityUtils, MatAddSubBlocks_CacheRefresh) {
+  TestMatAddSubBlocksCacheRefresh<SparseMatrix<real>>();
+  TestMatAddSubBlocksCacheRefresh<BlockSparseMatrix<real, 3>>();
+  TestMatAddSubBlocksCacheRefresh<BlockSparseMatrix<real, 4>>();
+}
+
 TEST(SparsityUtils, SetZeroOnRowsCols_SparseMatrix) {
   // |11 |
   // |111|
