@@ -4837,9 +4837,9 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_contact_points_world`.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires contact detection and force evaluation, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
 
     Note:
         Not supported for actors without contact sample points or with far SDF
@@ -4857,9 +4857,9 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_node_contact_forces_world`.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires force evaluation, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
 
     Note:
         Not supported for rod actors, actors without contact sample points or actors
@@ -4873,9 +4873,9 @@ class QueryType:
         Only applicable to :class:`~superdex.physics.Constraint` objects.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires force evaluation, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
     """
     ARTICULATED_CONTROLLER_FORCE: QueryType
     """Generalized forces applied by an articulated pose controller. Available via
@@ -4885,18 +4885,18 @@ class QueryType:
         Only applicable to articulated actors with a pose controller.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires force evaluation, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
     """
     SDF_DISTANCES: QueryType
     """Signed distance field values for contact samples. Available via
     :meth:`~superdex.physics.Actor.get_sdf_distances`.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires contact detection, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
     """
     TOTAL_CONTACT_FORCE: QueryType
     """Total contact force and torque acting on an actor. Available via
@@ -4904,9 +4904,9 @@ class QueryType:
     :meth:`~superdex.physics.Actor.get_contact_torque_world`.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires force evaluation, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
 
     Note:
         Not supported for actors without contact sample points or with far SDF
@@ -4921,9 +4921,9 @@ class QueryType:
         Only supported for articulated actors with at least one degree of freedom.
 
     Note:
-        Immediate computation, i.e.
-        :meth:`~superdex.physics.Actor.register_query_and_compute`, is not
-        supported.
+        Requires force evaluation, so immediate computation
+        (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
     """
     COUNT: QueryType
     """Number of query type enum values."""

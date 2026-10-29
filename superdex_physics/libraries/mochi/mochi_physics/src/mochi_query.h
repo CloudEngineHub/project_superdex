@@ -124,6 +124,10 @@ struct CQueryContactSamples : RefCounted {
 // CQueryActorContactForces
 struct TagQueryActiveContacts : RefCounted {};
 
+// Indicates that some query of the entity requires contact detection or force assembly (see
+// QueryRequiresAssembly).
+struct TagQueryRequiresAssembly : RefCounted {};
+
 // Indicates that actor's current active collision points should be computed and stored.
 struct CQueryContactPoints : RefCounted {
   DynamicArray<ContactPoint> contactPoints;
@@ -301,6 +305,34 @@ inline uint32_t GetQueryId(QueryHandle handle) {
 /**********************************************************************
   Query Registration
 */
+
+// Whether computing the query requires contact detection or force assembly. Such queries are
+// computed only by a step or a solve-free assembly, never immediately. Keep in sync with the
+// QueryType docs in mochi_physics_enums.mochi_gen.
+[[nodiscard]] constexpr bool QueryRequiresAssembly(QueryType type) {
+  switch (type) {
+    case QueryType::NodePositions:
+    case QueryType::ElementsDeformationGradient:
+    case QueryType::SurfaceNodePositions:
+    case QueryType::SurfaceNodeNormals:
+    case QueryType::VisualNodePositions:
+    case QueryType::VisualNodeNormals:
+    case QueryType::ContactSkinNodePositions:
+    case QueryType::ContactSkinNodeNormals:
+    case QueryType::ElasticEnergy:
+    case QueryType::Count: // Not a query type.
+      return false;
+    case QueryType::ContactPoints:
+    case QueryType::NodeContactForces:
+    case QueryType::ConstraintForce:
+    case QueryType::ArticulatedControllerForce:
+    case QueryType::SdfDistances:
+    case QueryType::TotalContactForce:
+    case QueryType::ArticulatedJointWrenches:
+      return true;
+  }
+  return false;
+}
 
 // Sets an error if the query type is not supported for this entity.
 void SetErrorIfQueryNotSupported(

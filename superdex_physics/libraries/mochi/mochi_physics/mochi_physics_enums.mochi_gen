@@ -328,7 +328,8 @@ enum QueryType {
 
   // @brief Contact points between actors. Available via @ref Actor::GetContactPointsWorld.
   //
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires contact detection and force evaluation, so immediate computation (@ref
+  // Actor::RegisterQueryAndCompute) is not supported. Data is computed by @ref Scene::Step.
   // @note Not supported for actors without contact sample points or with far SDF evaluation
   // enabled.
   ContactPoints,
@@ -340,7 +341,8 @@ enum QueryType {
 
   // @brief Contact forces per node. Available via @ref Actor::GetNodeContactForcesWorld.
   //
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires force evaluation, so immediate computation (@ref Actor::RegisterQueryAndCompute)
+  // is not supported. Data is computed by @ref Scene::Step.
   // @note Not supported for rod actors, actors without contact sample points or actors with
   // far SDF evaluation enabled.
   NodeContactForces,
@@ -348,26 +350,30 @@ enum QueryType {
   // @brief Force/torque applied by a constraint. Available via @ref Constraint::GetForce.
   //
   // @note Only applicable to @ref Constraint objects.
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires force evaluation, so immediate computation (@ref Actor::RegisterQueryAndCompute)
+  // is not supported. Data is computed by @ref Scene::Step.
   ConstraintForce,
 
   // @brief Generalized forces applied by an articulated pose controller. Available via @ref
   // Actor::GetArticulatedControllerForce.
   //
   // @note Only applicable to articulated actors with a pose controller.
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires force evaluation, so immediate computation (@ref Actor::RegisterQueryAndCompute)
+  // is not supported. Data is computed by @ref Scene::Step.
   ArticulatedControllerForce,
 
   // @brief Signed distance field values for contact samples. Available via @ref
   // Actor::GetSdfDistances.
   //
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires contact detection, so immediate computation (@ref Actor::RegisterQueryAndCompute)
+  // is not supported. Data is computed by @ref Scene::Step.
   SdfDistances,
 
   // @brief Total contact force and torque acting on an actor. Available via @ref
   // Actor::GetContactForceWorld and @ref Actor::GetContactTorqueWorld.
   //
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires force evaluation, so immediate computation (@ref Actor::RegisterQueryAndCompute)
+  // is not supported. Data is computed by @ref Scene::Step.
   // @note Not supported for actors without contact sample points or with far SDF evaluation
   // enabled.
   TotalContactForce,
@@ -376,7 +382,8 @@ enum QueryType {
   // Available via @ref Actor::GetArticulatedJointWrenches.
   //
   // @note Only supported for articulated actors with at least one degree of freedom.
-  // @note Immediate computation, i.e. @ref Actor::RegisterQueryAndCompute, is not supported.
+  // @note Requires force evaluation, so immediate computation (@ref Actor::RegisterQueryAndCompute)
+  // is not supported. Data is computed by @ref Scene::Step.
   ArticulatedJointWrenches,
 
   // @brief Number of query type enum values.

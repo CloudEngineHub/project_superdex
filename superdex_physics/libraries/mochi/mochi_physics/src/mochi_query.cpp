@@ -68,6 +68,16 @@ void mochi::AddRemoveOrRefComponentsForQuery(
     QueryType type,
     bool add,
     bool computeImmediately) {
+  if (QueryRequiresAssembly(type)) {
+    AddRemoveOrRefComponent<TagQueryRequiresAssembly>(reg, e, add);
+    if (computeImmediately) {
+      MOCHI_LOG_WARNING(
+          "QueryType %d does not support the 'computeImmediately' option. Ignoring.",
+          static_cast<int>(type));
+      computeImmediately = false;
+    }
+  }
+
   switch (type) {
     case QueryType::NodePositions: {
       auto* component = AddRemoveOrRefComponent<CQueryNodePositions>(reg, e, add);
@@ -94,10 +104,6 @@ void mochi::AddRemoveOrRefComponentsForQuery(
 
     case QueryType::SdfDistances: {
       AddRemoveOrRefComponent<CQuerySdfDistances>(reg, e, add);
-      if (computeImmediately) {
-        MOCHI_LOG_WARNING(
-            "QueryType::SdfDistances does not support the 'computeImmediately' option. Ignoring.");
-      }
     } break;
 
     case QueryType::SurfaceNodeNormals: {
@@ -139,28 +145,16 @@ void mochi::AddRemoveOrRefComponentsForQuery(
     case QueryType::ContactPoints: {
       AddRemoveOrRefComponent<TagQueryActiveContacts>(reg, e, add);
       AddRemoveOrRefComponent<CQueryContactPoints>(reg, e, add);
-      if (computeImmediately) {
-        MOCHI_LOG_WARNING(
-            "QueryType::ContactPoints does not support the 'computeImmediately' option. Ignoring.");
-      }
     } break;
 
     case QueryType::NodeContactForces: {
       AddRemoveOrRefComponent<TagQueryActiveContacts>(reg, e, add);
       AddRemoveOrRefComponent<CQueryNodeContactForces>(reg, e, add);
-      if (computeImmediately) {
-        MOCHI_LOG_WARNING(
-            "QueryType::NodeContactForces does not support the 'computeImmediately' option. Ignoring.");
-      }
     } break;
 
     case QueryType::TotalContactForce: {
       AddRemoveOrRefComponent<TagQueryActiveContacts>(reg, e, add);
       AddRemoveOrRefComponent<CQueryActorContactForces>(reg, e, add);
-      if (computeImmediately) {
-        MOCHI_LOG_WARNING(
-            "QueryType::TotalContactForce does not support the 'computeImmediately' option. Ignoring.");
-      }
     } break;
 
     case QueryType::ElasticEnergy: {
@@ -172,19 +166,11 @@ void mochi::AddRemoveOrRefComponentsForQuery(
 
     case QueryType::ConstraintForce: {
       AddRemoveOrRefComponent<CQueryConstraintForce>(reg, e, add);
-      if (computeImmediately) {
-        MOCHI_LOG_WARNING(
-            "QueryType::ConstraintForce does not support the 'computeImmediately' option. Ignoring.");
-      }
     } break;
 
     case QueryType::ArticulatedControllerForce: {
       // Enable the equivalent of CQueryConstraintForce on each constraint
       if (auto* constraints = reg.try_get<CControllerConstraints>(e)) {
-        if (computeImmediately) {
-          MOCHI_LOG_WARNING(
-              "QueryType::ArticulatedControllerForce does not support the 'computeImmediately' option. Ignoring.");
-        }
         for (auto const& c : constraints->impl) {
           // Get the constraint entity. It must be valid if the Constraint* address is valid.
           entt::entity cEntity = GetEntity(reg, c.constraint->GetHandle(), ErrorAssert{});
@@ -197,10 +183,6 @@ void mochi::AddRemoveOrRefComponentsForQuery(
 
     case QueryType::ArticulatedJointWrenches: {
       AddRemoveOrRefComponent<CQueryArticulatedJointWrenches>(reg, e, add);
-      if (computeImmediately) {
-        MOCHI_LOG_WARNING(
-            "QueryType::ArticulatedJointWrenches does not support the 'computeImmediately' option. Ignoring.");
-      }
     } break;
 
     default: {
@@ -323,8 +305,9 @@ void mochi::RegisterQuery(
   [[maybe_unused]] auto [it, wasInserted] = querySet.handles.insert(preallocatedHandle.value);
   MOCHI_ASSERT(wasInserted, "QueryHandle not unique!");
 
-  // Static actors don't process queries during the simulation, so compute the data now.
-  if (wasInserted && reg.all_of<TagStaticActor>(e)) {
+  // Standalone static actors don't belong to islands, so the step never updates their queries.
+  // Compute them now, except those that require assembly, which can't be computed immediately.
+  if (reg.all_of<TagStaticActor>(e) && !QueryRequiresAssembly(queryType)) {
     computeImmediately = true;
   }
 
@@ -396,6 +379,7 @@ void InitializeOnce(entt::registry& reg) {
   ecs::RegisterComponent<CQueryQuadraturePointsPosition>(reg);
   ecs::RegisterComponent<CQueryElementsDeformationGradient>(reg);
   ecs::RegisterComponent<TagQueryActiveContacts>(reg);
+  ecs::RegisterComponent<TagQueryRequiresAssembly>(reg);
   ecs::RegisterComponent<CQueryConstraintForce>(reg);
 }
 } // namespace mochi::query

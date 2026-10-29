@@ -23,6 +23,7 @@
 
 #include <mochi_physics/mochi_physics_experimental.h>
 #include <mochi_physics/src/mochi_constraint.h>
+#include <mochi_physics/src/mochi_query.h>
 #include <mochi_physics/src/mochi_simulation.h>
 #include <mochi_physics/src/mochi_soft_rom_components.h>
 
@@ -2201,4 +2202,28 @@ TEST_F(ActorQueryTest, SimulationTimeRoundTripsUnlessRejected) {
   _scene->Step(0.015625);
   EXPECT_EQ(_scene->GetTotalSimulationTime(), 1.265625);
   EXPECT_EQ(_scene->GetLastTimeStep(), 0.015625);
+}
+
+// The entity keeps TagQueryRequiresAssembly while any query that requires assembly is registered.
+TEST_F(ActorQueryTest, AssemblyQueriesAreRefCounted) {
+  Actor* const actor = CreateRigidCube(_scene, 1_r, Real3{0_r, 0_r, 0_r});
+  auto const& reg = GetRegistry();
+  entt::entity const e = GetEntity(actor);
+  auto const requiresAssembly = [&]() { return reg.all_of<TagQueryRequiresAssembly>(e); };
+
+  QueryHandle const nodePositions =
+      actor->RegisterQuery(QueryType::SurfaceNodePositions, test::ExpectOK{});
+  EXPECT_FALSE(requiresAssembly());
+
+  std::array<QueryHandle, 3> const assemblyQueries = {
+      actor->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{}),
+      actor->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{}),
+      actor->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{})};
+  for (QueryHandle const handle : assemblyQueries) {
+    EXPECT_TRUE(requiresAssembly());
+    actor->CancelQuery(handle);
+  }
+  EXPECT_FALSE(requiresAssembly());
+
+  actor->CancelQuery(nodePositions);
 }
