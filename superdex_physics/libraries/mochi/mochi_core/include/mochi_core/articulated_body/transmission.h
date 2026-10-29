@@ -232,6 +232,7 @@ class McKibbenActuator : public TransmissionActuator {
     // here are only to catch potential divide-by-zeros in debug.
     MOCHI_ASSERT_VERBOSE(_numberOfWrapsSquared > 0_r, "Must have nonzero number of wraps");
     MOCHI_ASSERT_VERBOSE(_threadLengthSquared > 0_r, "Must have nonzero thread length");
+    MOCHI_ASSERT_VERBOSE(_deflatedStiffness > 0_r, "Must have positive deflated stiffness");
   }
   int GetNumStateVariables() const override {
     return 1;
@@ -270,8 +271,19 @@ class McKibbenActuator : public TransmissionActuator {
       return;
     }
     if (outEnergy) {
-      *outEnergy = pressureCoefficient * (L * L * L / _threadLengthSquared - displacement) +
-          0.5_r * _deflatedStiffness * displacement * displacement;
+      // Integral of the tension from its root, where the muscle goes slack. The tension is
+      // quadratic in L; this form of its positive root has no cancellation and stays valid when the
+      // pressure coefficient is 0. Measuring the distance to the root in displacement keeps
+      // displacements smaller than the rounding of L.
+      real const zeroLengthCompression =
+          pressureCoefficient + _deflatedStiffness * _deflatedEquilibriumLength;
+      real const discriminant = Sqr(_deflatedStiffness) +
+          12_r * pressureCoefficient * zeroLengthCompression / _threadLengthSquared;
+      real const slackLength =
+          2_r * zeroLengthCompression / (_deflatedStiffness + Sqrt(discriminant));
+      *outEnergy = Sqr(displacement - (slackLength - _deflatedEquilibriumLength)) *
+          (pressureCoefficient * (L + 2_r * slackLength) / _threadLengthSquared +
+           0.5_r * _deflatedStiffness);
     }
     if (outGradient) {
       *outGradient = unclampedTension;

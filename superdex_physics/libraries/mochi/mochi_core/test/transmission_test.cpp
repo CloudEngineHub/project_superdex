@@ -507,6 +507,19 @@ TEST(TransmissionActuator, McKibbenActuator_MultipleDisplacements) {
   for (real displacement : displacements) {
     VerifyDerivatives(&actuator, displacement, prevDisplacement, timeStep);
   }
+
+  // The energy vanishes where the muscle goes slack, at the positive root of the tension
+  // a * L^2 + k * L - c in the muscle length L.
+  real const a = 0.75_r * (pressure - minimumPressure) / (kPI * Sqr(numberOfWraps));
+  real const c = a * Sqr(threadLength) / 3_r + deflatedStiffness * deflatedEquilibriumLength;
+  real const slackDisplacement =
+      (Sqrt(Sqr(deflatedStiffness) + 4_r * a * c) - deflatedStiffness) / (2_r * a) -
+      deflatedEquilibriumLength;
+  real energy{}, tension{};
+  actuator.EnergyGradientHessian(
+      slackDisplacement + 1e-6_r, prevDisplacement, timeStep, &energy, &tension, nullptr);
+  EXPECT_NEAR(energy, 0_r, 1e-6_r);
+  EXPECT_GT(tension, 0_r);
 }
 
 TEST(TransmissionActuator, McKibbenActuator_StateVariables) {
