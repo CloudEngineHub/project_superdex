@@ -22,7 +22,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
+#include <new>
 
 namespace mochi {
 
@@ -192,7 +194,12 @@ inline void FiloAllocator::PushPage(size_t size) {
   // Allocate a new page from the heap
   auto* page = static_cast<Header*>(malloc(allocSize));
   if (page == nullptr) {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     throw std::bad_alloc();
+#else
+    MOCHI_ASSERT(false, "Failed to allocate %zu bytes", allocSize);
+    std::abort();
+#endif
   }
   MOCHI_ALLOCATOR_ASSERT(
       reinterpret_cast<size_t>(page) % kMinAlignment == 0, "Insufficient alignment");

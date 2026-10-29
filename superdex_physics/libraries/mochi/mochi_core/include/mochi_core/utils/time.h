@@ -17,6 +17,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -108,7 +109,12 @@ template <class Clock = std::chrono::high_resolution_clock>
     case TimeUnit::Nanoseconds:
       return ToNanoseconds(span);
     default:
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
       throw std::runtime_error("Unknown time unit!");
+#else
+      MOCHI_ASSERT(false, "Unknown time unit!");
+      std::abort();
+#endif
   }
 }
 

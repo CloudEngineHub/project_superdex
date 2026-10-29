@@ -760,7 +760,7 @@ void Fill(Span<T> dst, T value) {
     }
   } else {
     // Fallback for all other types
-    std::ranges::fill(dst, value);
+    std::fill(dst.begin(), dst.end(), value);
   }
 }
 
