@@ -37,6 +37,8 @@ SKINNED_HAND_PATH = resolve_asset(
     "bots/hands/wuji_hand2_beta1/left/wuji_hand2_beta1_skinned_left.superdex_bot"
 )
 SPAWN_NAME = "shape_filter"
+# Another of `BOT_SCENE_PATH`'s spawnable prefabs, as a PrefabSelection could draw.
+SELECTED_PREFAB_NAME = "clamp"
 SPAWN_TRANSLATION = [0.05, 0.0, 0.0]
 RANDOMIZED_SPAWN_TRANSLATION = [0.06, 0.01, 0.0]
 FRICTION_SCALE = 1.4
@@ -133,7 +135,10 @@ class RebuildSceneTest(unittest.TestCase):
         )
 
     def load_live_scene(
-        self, spawn_translation: list[float] = SPAWN_TRANSLATION, scale: float = 1.0
+        self,
+        spawn_translation: list[float] = SPAWN_TRANSLATION,
+        scale: float = 1.0,
+        prefab_name: str = SPAWN_NAME,
     ) -> tuple[sdr.BotScene, list[sdp.Actor]]:
         """Load the bot scene and spawn the task like Unreal does: randomized spawn poses
         apply as it spawns, and spawned bodies keep their prefab names. Return the scene
@@ -142,7 +147,7 @@ class RebuildSceneTest(unittest.TestCase):
         prefab_path = next(
             str(entry.path)
             for entry in bot_scene.get_bot_scene_prefab().scene.spawnable_prefabs
-            if str(entry.name) == SPAWN_NAME
+            if str(entry.name) == prefab_name
         )
         params = sdp.prefab.PrefabParams()
         params.translation = spawn_translation
@@ -391,6 +396,37 @@ class RebuildSceneTest(unittest.TestCase):
             bot_task_path=self.task_path,
         )
         self.assertCountEqual(rebuilt.spawned_actors, [SPAWN_NAME])
+
+    def test_rebuilds_spawn_from_its_recorded_prefab(self) -> None:
+        live, spawned = self.load_live_scene(prefab_name=SELECTED_PREFAB_NAME)
+        selected_path, _ = self.record(
+            physics_scene(live),
+            spawned,
+            1,
+            recorder.EpisodeMetadata(
+                {f"scene.prefab.{SPAWN_NAME}": SELECTED_PREFAB_NAME}
+            ),
+        )
+        rebuilt = recorder.rebuild_scene(
+            EpisodeReader(selected_path),
+            BOT_SCENE_PATH,
+            self.context,
+            bot_task_path=self.task_path,
+        )
+        self.assertCountEqual(
+            rebuilt.spawned_actors[SPAWN_NAME],
+            [f"{SPAWN_NAME}/{actor.get_name()}" for actor in spawned],
+        )
+
+        # Without the property the spawn falls back to its nominal prefab.
+        unnamed_path, _ = self.record(physics_scene(live), spawned, 1)
+        with self.assertRaisesRegex(ValueError, "missing recorded actor"):
+            recorder.rebuild_scene(
+                EpisodeReader(unnamed_path),
+                BOT_SCENE_PATH,
+                self.context,
+                bot_task_path=self.task_path,
+            )
 
     def test_rejects_bot_scene_that_differs_from_recording(self) -> None:
         live, spawned = self.load_live_scene()

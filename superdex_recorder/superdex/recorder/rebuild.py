@@ -66,7 +66,9 @@ def rebuild_scene(
     Dynamic state is left to :class:`EpisodeRestorer`.
 
     When the recording names the scene archive or task file it was recorded with, as
-    Unreal recordings do, the given files must have the same content hash.
+    Unreal recordings do, the given files must have the same content hash. A spawn whose
+    prefab the recording names, in a ``scene.prefab.<spawn>`` property, is rebuilt from
+    that prefab rather than its nominal one.
     """
     properties = _episode_properties(recording)
     _check_recorded_file(properties, "scene.archive", Path(bot_scene_path))
@@ -78,7 +80,13 @@ def rebuild_scene(
     spawned = (
         {}
         if bot_task_path is None
-        else _spawn_bot_task(bot_scene, scene, robotics_context, Path(bot_task_path))
+        else _spawn_bot_task(
+            bot_scene,
+            scene,
+            robotics_context,
+            Path(bot_task_path),
+            _recorded_prefabs(properties),
+        )
     )
     _place_static_actors(recording, scene)
     apply_recorded_physics(recording, scene)
@@ -159,11 +167,21 @@ def _check_recorded_file(properties: dict[str, str], prefix: str, path: Path) ->
         )
 
 
+def _recorded_prefabs(properties: dict[str, str]) -> dict[str, str]:
+    prefix = "scene.prefab."
+    return {
+        key.removeprefix(prefix): value
+        for key, value in properties.items()
+        if key.startswith(prefix)
+    }
+
+
 def _spawn_bot_task(
     bot_scene: sdr.BotScene,
     scene: sdp.Scene,
     robotics_context: sdr.RoboticsContext,
     task_path: Path,
+    recorded_prefabs: dict[str, str],
 ) -> dict[str, list[str]]:
     import superdex.robotics as sdr  # @manual
 
@@ -189,10 +207,11 @@ def _spawn_bot_task(
 
     spawned = {}
     for name, spawn in spawns.items():
-        prefab_path = prefab_paths.get(str(spawn.prefab_name))
+        prefab_name = recorded_prefabs.get(name, str(spawn.prefab_name))
+        prefab_path = prefab_paths.get(prefab_name)
         if prefab_path is None:
             raise ValueError(
-                f"Spawn {name!r} uses prefab {str(spawn.prefab_name)!r}, which the bot "
+                f"Spawn {name!r} uses prefab {prefab_name!r}, which the bot "
                 f"scene does not declare. Available: {sorted(prefab_paths)}."
             )
         pose = world_from_spawn(name)
