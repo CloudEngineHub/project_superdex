@@ -1550,6 +1550,11 @@ Actor* SceneImpl::CreateSoftActorImpl(
               experimental::RomProjectionStrategy::ElementLevelProjection,
       error,
       "Nested soft ROM actors require actor-level projection.");
+  // TODO: Nested soft colliders ignore the skeleton's posing.
+  MOCHI_ERROR_IF(
+      isNestedSoft && experimentalParams.colliderType != ColliderType::None,
+      error,
+      "Nested soft actors do not support colliders. ColliderType must be ColliderType::None.");
   MOCHI_ERROR_RETURN(error, {});
   ScopedSchedulerBinding schedulerBinding(this);
 

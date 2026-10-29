@@ -60,12 +60,17 @@ class CreateSoftSkinnedActorNameTest : public test::MochiSceneTestBase {
   }
 };
 
-TEST_F(CreateSoftSkinnedActorNameTest, RejectsInvalidNestedSoftLocalNamesBeforeMutation) {
-  auto const expectRejected = [&](SoftSkinnedActorParams params) {
-    int const numActorsBefore = _scene->GetNumActors();
-    EXPECT_EQ(nullptr, _scene->CreateSoftSkinnedActor(params, test::ExpectNotOK{}));
-    EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
-  };
+TEST_F(CreateSoftSkinnedActorNameTest, RejectsInvalidNestedSoftParamsWithoutMutation) {
+  auto const expectRejected =
+      [&](SoftSkinnedActorParams params,
+          experimental::ExperimentalSoftSkinnedActorParams const& experimentalParams = {}) {
+        int const numActorsBefore = _scene->GetNumActors();
+        EXPECT_EQ(
+            nullptr,
+            experimental::CreateSoftSkinnedActor(
+                _scene, params, experimentalParams, test::ExpectNotOK{}));
+        EXPECT_EQ(numActorsBefore, _scene->GetNumActors());
+      };
 
   expectRejected(MakeParams({"soft/name"}));
   expectRejected(MakeParams({"soft\\name"}));
@@ -103,6 +108,11 @@ TEST_F(CreateSoftSkinnedActorNameTest, RejectsInvalidNestedSoftLocalNamesBeforeM
   auto unknownAttachment = MakeParams({"soft"});
   unknownAttachment.softAttachLinks.push_back("missing");
   expectRejected(unknownAttachment);
+
+  experimental::ExperimentalSoftSkinnedActorParams softCollider;
+  softCollider.softParams.resize(2);
+  softCollider.softParams[1].colliderType = ColliderType::Sdf;
+  expectRejected(MakeParams({"soft", "collider"}), softCollider);
 }
 
 TEST_F(CreateSoftSkinnedActorNameTest, AcceptsAttachLinksMatchingAutocorrectedLinkNames) {

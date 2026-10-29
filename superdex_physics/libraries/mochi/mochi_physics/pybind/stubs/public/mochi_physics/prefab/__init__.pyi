@@ -933,6 +933,10 @@ class SoftActorPrefab(mochi_physics.SoftActorParams):
         Determines how OTHER actors detect contact with this actor. It does not
         affect how this actor detects contact with other actors.
 
+    Note:
+        Only :class:`NONE <superdex.physics.ColliderType>` is supported when used in
+        :attr:`~superdex.physics.prefab.SoftSkinnedActorPrefab.soft_params`.
+
     Warning:
         This is an experimental feature. It may be changed or removed in the future.
         Use at your own risk.

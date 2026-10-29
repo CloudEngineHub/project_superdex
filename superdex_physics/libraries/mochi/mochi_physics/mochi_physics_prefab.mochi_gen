@@ -139,6 +139,8 @@ struct prefab::SoftActorPrefab(SoftActorParams) [equality(default), remove_refle
   //
   // @note Determines how OTHER actors detect contact with this actor. It does not affect how this
   // actor detects contact with other actors.
+  // @note Only @ref ColliderType::None is supported when used in
+  // @ref SoftSkinnedActorPrefab::softParams.
   ColliderType colliderType = ColliderType::None;
 
   // @brief [Experimental] Parameters used to construct a grid-based Signed Distance Field (SDF)

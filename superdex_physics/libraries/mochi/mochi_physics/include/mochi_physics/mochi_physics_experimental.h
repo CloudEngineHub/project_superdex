@@ -849,6 +849,8 @@ struct ExperimentalSoftActorParams {
    *
    * @note Determines how OTHER actors detect contact with this actor. It does not affect how this
    * actor detects contact with other actors.
+   * @note Nested soft actors only support @ref ColliderType::None. See
+   * @ref ExperimentalSoftSkinnedActorParams::softParams.
    *
    * @see ColliderType
    */

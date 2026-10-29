@@ -160,6 +160,7 @@
 /// @brief [Experimental] Collision detection geometry.
 ///
 /// @note Determines how OTHER actors detect contact with this actor. It does not affect how this actor detects contact with other actors.
+/// @note Only @ref mochi::ColliderType::None "ColliderType::None" is supported when used in @ref mochi::prefab::SoftSkinnedActorPrefab::softParams "SoftSkinnedActorPrefab::softParams".
 ///
 /// @warning This is an experimental feature. It may be changed or removed in the future. Use at your own risk.
 ///
