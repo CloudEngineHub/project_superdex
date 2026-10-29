@@ -499,11 +499,13 @@ TEST(CActiveCollisions, PreservesSinglePartitionBehavior) {
   for (auto& collision : activeCollisions) {
     EXPECT_TRUE(collision.collisionResult.isSdfGradUnitary);
     collision.collisionResult.isSdfGradUnitary = false;
+    collision.collisionResult.isNormalCollidingUnitary = false;
   }
   activeCollisions.SetUp(MakePotentialColliders({30, 20}));
   EXPECT_EQ((DynamicArray<std::pair<int, int>>{{20, 0}, {30, 0}}), EntriesOf(activeCollisions));
   for (auto const& collision : activeCollisions) {
     EXPECT_TRUE(collision.collisionResult.isSdfGradUnitary);
+    EXPECT_TRUE(collision.collisionResult.isNormalCollidingUnitary);
   }
 }
 
@@ -520,6 +522,7 @@ TEST(CActiveCollisions, ReusesInactivePairStorage) {
       activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), /*partitionId*/ 2);
   secondResult.sampleIndices.reserve(16);
   secondResult.isSdfGradUnitary = false;
+  secondResult.isNormalCollidingUnitary = false;
   size_t const secondRetainedCapacity = secondResult.sampleIndices.capacity();
   activeCollisions.FinalizeActiveCollisions();
 
@@ -533,6 +536,7 @@ TEST(CActiveCollisions, ReusesInactivePairStorage) {
       activeCollisions.ActivatePartitionResult(static_cast<entt::entity>(20), /*partitionId*/ 2);
   EXPECT_TRUE(reusedSecond.sampleIndices.empty());
   EXPECT_TRUE(reusedSecond.isSdfGradUnitary);
+  EXPECT_TRUE(reusedSecond.isNormalCollidingUnitary);
   EXPECT_EQ(reusedSecond.sampleIndices.capacity(), secondRetainedCapacity);
 }
 

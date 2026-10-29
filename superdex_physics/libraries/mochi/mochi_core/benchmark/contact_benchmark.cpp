@@ -84,7 +84,8 @@ static void ComputeBatchCollisionForceDForce(benchmark::State& state) {
           assemEnergy,
           assemForce,
           assemDForce,
-          isSdfGradUnitary);
+          isSdfGradUnitary,
+          /*isNormalCollidingUnitary*/ true);
     });
   }
 

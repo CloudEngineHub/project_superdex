@@ -59,10 +59,10 @@ void mochi::AddMissingStageStartCollisions(
     if (currentIdx == numCurrent ||
         ColliderPartitionLess::GetKey(outCurrentCollisions[currentIdx]) != key) {
       // Preserve metadata needed when the contacts are copied later.
-      outCurrentCollisions
-          .ActivatePartitionResult(
-              stageStartCollision.colliderEntity, stageStartResult.collidingPartitionId)
-          .isSdfGradUnitary = stageStartResult.isSdfGradUnitary;
+      auto& result = outCurrentCollisions.ActivatePartitionResult(
+          stageStartCollision.colliderEntity, stageStartResult.collidingPartitionId);
+      result.isSdfGradUnitary = stageStartResult.isSdfGradUnitary;
+      result.isNormalCollidingUnitary = stageStartResult.isNormalCollidingUnitary;
     }
   }
 
@@ -225,6 +225,7 @@ static void AddPerCollisionMissingStageStartContacts(
   // If the current collision is empty, initialize shared data.
   if (current.sampleIndices.empty()) {
     current.isSdfGradUnitary = stageStart.isSdfGradUnitary;
+    current.isNormalCollidingUnitary = stageStart.isNormalCollidingUnitary;
     current.ndofs = stageStart.ndofs;
   }
 

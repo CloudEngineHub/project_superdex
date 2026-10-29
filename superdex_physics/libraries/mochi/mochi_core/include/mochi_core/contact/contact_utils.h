@@ -388,6 +388,10 @@ struct ContactDetectionResult {
    * response.
    * @note Evaluated at TimeStep::Current or TimeStep::StageStart, depending on
    * ExperimentalEvalParams.explicitNormals
+   * @note Unit if @ref isNormalCollidingUnitary; not necessarily otherwise. Don't normalize it
+   * here: at this length, its dot product with the collider-space SDF gradient equals the dot
+   * product of the world-space normal and gradient, which the alignment test and the friction fade
+   * rely on. The contact kernel normalizes it where it needs a unit vector.
    */
   DynamicArray<Real3> normalColliding = {};
 
@@ -418,6 +422,13 @@ struct ContactDetectionResult {
    * @note Applies to all contact points, since it's a property of the collider.
    */
   bool isSdfGradUnitary = true;
+
+  /**
+   * @brief True if the normals in @ref normalColliding are guaranteed to be unitary.
+   * @note False for mapped colliders: the Jacobian that transforms the normals to collider space
+   * is not a rotation.
+   */
+  bool isNormalCollidingUnitary = true;
 
   /**
    * @brief Temporary buffers used during collision culling to store filtered sample points and
@@ -492,6 +503,7 @@ struct ContactDetectionResult {
     colliderIntegrationWeights.clear();
     colliderFeatureIndices.clear();
     isSdfGradUnitary = true;
+    isNormalCollidingUnitary = true;
   }
 
   bool Empty() const {
@@ -741,7 +753,8 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
     bool assemEnergy,
     bool assemForce,
     bool assemDForce,
-    bool isSdfGradUnitary) {
+    bool isSdfGradUnitary,
+    bool isNormalCollidingUnitary) {
   static_assert(
       kCollResponseMaxBatchSize == 8,
       "Please update batched contact functions if the max batch size changes");
@@ -756,17 +769,14 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
   using V3 = BatchReal3<kBatchSize>;
 
   // Define the normal for dissipation.
-  // If the colliding normal is invalid, override any request to use the colliding normal.
+  // If the colliding normal is invalid, override any request to use the colliding normal. The
+  // colliding normal is normalized unless it's known to be unit.
   V3 normal MOCHI_NO_INIT;
+  real constexpr kNormalIsZeroThreshold = 100_r * kDefaultNearEqualEpsilon<real>;
   bool const useColliderNormal = params.frictionWithColliderNormal || !config.validCollidingNormals;
   if (useColliderNormal) {
     // Normalize the SDF gradient to get the collider normal direction.
     normal = sdfGrad;
-    real constexpr kNormalIsZeroThreshold = 100_r * kDefaultNearEqualEpsilon<real>;
-    [[maybe_unused]] real constexpr kNormalIsUnitThreshold = 10_r * kDefaultNearEqualEpsilon<real>;
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-    V isZeroNormal{};
-#endif
     if (!isSdfGradUnitary) {
       V norm = Norm(normal);
       normal *= 1_r / (norm + std::numeric_limits<real>::min());
@@ -775,28 +785,28 @@ MOCHI_FORCE_INLINE void ComputeBatchContactDissipationForceDForce(
       if (AnyTrue<kBatchSize>(isNearZero)) MOCHI_UNLIKELY {
         // TODO: Support member-wise Select with NdArray
         if (config.validCollidingNormals) {
-          normal[0] = Select(isNearZero, -nColliding[0], normal[0]);
-          normal[1] = Select(isNearZero, -nColliding[1], normal[1]);
-          normal[2] = Select(isNearZero, -nColliding[2], normal[2]);
+          V3 const collidingNormal =
+              isNormalCollidingUnitary ? -nColliding : -Normalize(nColliding);
+          normal[0] = Select(isNearZero, collidingNormal[0], normal[0]);
+          normal[1] = Select(isNearZero, collidingNormal[1], normal[1]);
+          normal[2] = Select(isNearZero, collidingNormal[2], normal[2]);
         } else {
           // No direction is available: a zero normal makes the tangent plane projection the
           // identity, so friction acts in all directions and normal viscous damping vanishes.
           normal[0] = Select(isNearZero, V{0_r}, normal[0]);
           normal[1] = Select(isNearZero, V{0_r}, normal[1]);
           normal[2] = Select(isNearZero, V{0_r}, normal[2]);
-#if MOCHI_ASSERT_VERBOSE_ENABLED
-          isZeroNormal = isNearZero;
-#endif
         }
       }
     }
-    MOCHI_ASSERT_VERBOSE(
-        AllTrue<kBatchSize>(
-            VNearEqual(Norm(normal), V{1_r}, V{kNormalIsUnitThreshold}) | isZeroNormal),
-        "Collider normal must be unitary.");
   } else {
-    normal = -nColliding;
+    normal = isNormalCollidingUnitary ? -nColliding : -Normalize(nColliding);
   }
+  MOCHI_ASSERT_VERBOSE(
+      AllTrue<kBatchSize>(
+          VNearEqual(Norm(normal), V{1_r}, V{10_r * kDefaultNearEqualEpsilon<real>}) ||
+          (Norm(normal) < kNormalIsZeroThreshold)),
+      "Friction normal must be unit or zero.");
 
   // Project the relative displacement
   V const pRelNScalar = Dot(pRel, normal);
@@ -1090,6 +1100,7 @@ struct BatchCollisionResponse {
  * @param[in] assemForce Whether to compute and output forces
  * @param[in] assemDForce Whether to compute and output force derivatives
  * @param[in] isSdfGradUnitary Whether the SDF gradient is already unit length
+ * @param[in] isNormalCollidingUnitary Whether the colliding normals are already unit length
  */
 template <int kBatchSize, GradTarget kGradTarget>
 // TODO[T247578555]: This is a workaround for a bug in VS2022, but it will hurt performance.
@@ -1114,7 +1125,8 @@ MOCHI_FORCE_INLINE
         bool assemEnergy,
         bool assemForce,
         bool assemDForce,
-        bool isSdfGradUnitary) {
+        bool isSdfGradUnitary,
+        bool isNormalCollidingUnitary) {
   static_assert(
       kCollResponseMaxBatchSize == 8,
       "Please update batched contact functions if the max batch size changes");
@@ -1279,7 +1291,8 @@ MOCHI_FORCE_INLINE
         assemEnergy,
         assemForce,
         assemDForce,
-        isSdfGradUnitary);
+        isSdfGradUnitary,
+        isNormalCollidingUnitary);
   }
 
   // NOTE: dForce is expected to be PSD. If it is not, a projection onto the PSD cone must be added
@@ -1313,7 +1326,8 @@ MOCHI_FORCE_INLINE void ComputeBatchCollisionForceDForce(
     bool assemEnergy,
     bool assemForce,
     bool assemDForce,
-    bool isSdfGradUnitary) {
+    bool isSdfGradUnitary,
+    bool isNormalCollidingUnitary) {
   MOCHI_ASSERT_VERBOSE(!assemEnergy || (outEnergy.size() == kBatchSize));
   MOCHI_ASSERT_VERBOSE(!assemForce || (outForce.size() == kBatchSize));
   MOCHI_ASSERT_VERBOSE(!assemDForce || (outDForce.size() == kBatchSize));
@@ -1334,7 +1348,8 @@ MOCHI_FORCE_INLINE void ComputeBatchCollisionForceDForce(
       assemEnergy,
       assemForce,
       assemDForce,
-      isSdfGradUnitary);
+      isSdfGradUnitary,
+      isNormalCollidingUnitary);
 
   // Store outputs to Spans
   if (assemEnergy) {

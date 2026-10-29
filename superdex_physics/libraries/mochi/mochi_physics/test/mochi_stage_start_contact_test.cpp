@@ -75,12 +75,14 @@ TEST(MochiStageStartContact, InsertsMissingPartitionBetweenExistingPartitions) {
   auto currentCollisions = MakeActiveCollisions<TimeStep::Current>({{10, 0}, {10, 2}});
   stageStartCollisions[0].collisionResult.sampleIndices.push_back(7);
   stageStartCollisions[0].collisionResult.isSdfGradUnitary = false;
+  stageStartCollisions[0].collisionResult.isNormalCollidingUnitary = false;
 
   AddMissingStageStartCollisions(stageStartCollisions, currentCollisions);
 
   DynamicArray<std::pair<int, int>> const expected{{10, 0}, {10, 1}, {10, 2}};
   ASSERT_EQ(EntriesOf(currentCollisions), expected);
   EXPECT_FALSE(currentCollisions[1].collisionResult.isSdfGradUnitary);
+  EXPECT_FALSE(currentCollisions[1].collisionResult.isNormalCollidingUnitary);
 }
 
 TEST(MochiStageStartContact, PreservesExistingCurrentPair) {
@@ -88,9 +90,11 @@ TEST(MochiStageStartContact, PreservesExistingCurrentPair) {
   auto currentCollisions = MakeActiveCollisions<TimeStep::Current>({{10, 1}});
   stageStartCollisions[0].collisionResult.sampleIndices.push_back(7);
   stageStartCollisions[0].collisionResult.isSdfGradUnitary = false;
+  stageStartCollisions[0].collisionResult.isNormalCollidingUnitary = false;
 
   AddMissingStageStartCollisions(stageStartCollisions, currentCollisions);
 
   ASSERT_EQ(currentCollisions.size(), 1);
   EXPECT_TRUE(currentCollisions[0].collisionResult.isSdfGradUnitary);
+  EXPECT_TRUE(currentCollisions[0].collisionResult.isNormalCollidingUnitary);
 }

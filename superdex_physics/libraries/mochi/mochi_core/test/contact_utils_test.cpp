@@ -170,7 +170,8 @@ void TestPlaneContactAtPointN(
       /*assemEnergy*/ false,
       /*assemForce*/ true,
       /*assemDForce*/ true,
-      /*isSdfGradUnitary*/ true);
+      /*isSdfGradUnitary*/ true,
+      /*isNormalCollidingUnitary*/ true);
 
   [[maybe_unused]] VMatrix3x3r dforceFD[N];
   Real3 forceFD[N];
@@ -203,7 +204,8 @@ void TestPlaneContactAtPointN(
           /*assemEnergy*/ true,
           /*assemForce*/ false,
           /*assemDForce*/ false,
-          /*isSdfGradUnitary*/ true);
+          /*isSdfGradUnitary*/ true,
+          /*isNormalCollidingUnitary*/ true);
       ComputeBatchCollisionForceDForce<N, GradTarget::Current>(
           {} /* outEnergy */,
           MakeSpan(force),
@@ -221,7 +223,8 @@ void TestPlaneContactAtPointN(
           /*assemEnergy*/ false,
           /*assemForce*/ true,
           /*assemDForce*/ false,
-          /*isSdfGradUnitary*/ true);
+          /*isSdfGradUnitary*/ true,
+          /*isNormalCollidingUnitary*/ true);
     };
 
     // +
@@ -464,7 +467,8 @@ TEST(ContactPenalties, Friction_DegenerateNormalsKeepFullStrength) {
   real const distance[1] = {-0.001_r};
   Real3 distanceGrad[1] = {Real3{0_r, 0_r, 1_r}};
   bool isSdfGradUnitary = true;
-  Real3 const normalColliding[1] = {Real3{0_r, 0_r, -1_r}};
+  Real3 normalColliding[1] = {Real3{0_r, 0_r, -1_r}};
+  bool isNormalCollidingUnitary = true;
   Real3 const posColliding[1] = {Real3{0_r, 0_r, 0_r}};
   Real3 posCollidingStageStart[1] = {Real3{0.001_r, 0_r, 0_r}};
 
@@ -488,7 +492,8 @@ TEST(ContactPenalties, Friction_DegenerateNormalsKeepFullStrength) {
         true /* assemEnergy */,
         true /* assemForce */,
         false /* assemDForce */,
-        isSdfGradUnitary);
+        isSdfGradUnitary,
+        isNormalCollidingUnitary);
     return std::pair{energy[0], force[0]};
   };
 
@@ -513,6 +518,15 @@ TEST(ContactPenalties, Friction_DegenerateNormalsKeepFullStrength) {
   auto const [zeroNormalEnergy, zeroNormalForce] = eval(fadedConfig);
   EXPECT_DOUBLE_EQ(unfadedEnergy, zeroNormalEnergy);
   EXPECT_NEAR_EQ((Real3{0_r, 0_r, unfadedForce[0]}), zeroNormalForce);
+
+  // Without the collider normal, friction uses the colliding normal, normalized if it isn't unit.
+  params.maxAlignmentNormals = 0_r;
+  normalColliding[0] = Real3{0_r, 0_r, -2_r};
+  isNormalCollidingUnitary = false;
+  posCollidingStageStart[0] = Real3{0.001_r, 0_r, 0.001_r};
+  auto const [collidingNormalEnergy, collidingNormalForce] = eval(unfadedConfig);
+  EXPECT_DOUBLE_EQ(unfadedEnergy, collidingNormalEnergy);
+  EXPECT_NEAR_EQ((Real3{unfadedForce[0], 0_r, 0_r}), collidingNormalForce);
 }
 
 // Expect that two vectors point in the same direction +/- some angle

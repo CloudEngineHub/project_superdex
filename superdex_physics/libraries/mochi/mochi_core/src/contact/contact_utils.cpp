@@ -118,7 +118,8 @@ void mochi::ComputeCollisionResponseRange(
           assemEnergy,                                                                             \
           assemForce,                                                                              \
           assemDForce,                                                                             \
-          contactQuery.isSdfGradUnitary);                                                          \
+          contactQuery.isSdfGradUnitary,                                                           \
+          contactQuery.isNormalCollidingUnitary);                                                  \
     }                                                                                              \
     break;
 
@@ -256,7 +257,8 @@ MOCHI_FORCE_INLINE void ComputeBatchSumsPrologue(
       assemEnergy,
       assemForce,
       assemDForce,
-      contactQuery.isSdfGradUnitary);
+      contactQuery.isSdfGradUnitary,
+      contactQuery.isNormalCollidingUnitary);
 
   if (!outForce.empty()) {
     StoreTransposed<kBatchSize>(&outForce[first][0], outResponse.force);

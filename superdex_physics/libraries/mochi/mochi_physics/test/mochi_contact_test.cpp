@@ -623,6 +623,9 @@ struct TestParams {
   real dresTol = 1e-3_r;
   bool ignoreColliderRotDres = false;
   real eps = 1e-4_r;
+  bool frictionWithColliderNormal = true;
+  // Stretch of the soft collider along its local x axis at stage start.
+  real colliderStretch = 0_r;
   real colliderShear = 0_r;
 };
 } // namespace
@@ -1249,6 +1252,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
         test::ExpectOK{});
     params.worldFromLocal = transform;
 
+    params.contact.frictionWithColliderNormal = GetParam().frictionWithColliderNormal;
     params.contact.viscousFrictionCoefficient = viscousCoefficient;
     params.contact.coulombFrictionCoefficient = coulombCoefficient;
     params.contact.normalViscousDampingCoefficient = dampingCoefficient;
@@ -1280,6 +1284,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
         test::ExpectOK{});
     params.worldFromLocal = transform;
 
+    params.contact.frictionWithColliderNormal = GetParam().frictionWithColliderNormal;
     params.contact.viscousFrictionCoefficient = viscousCoefficient;
     params.contact.coulombFrictionCoefficient = coulombCoefficient;
     params.contact.normalViscousDampingCoefficient = dampingCoefficient;
@@ -1323,6 +1328,7 @@ class MochiContactTestBase : public test::MochiSceneTestBase,
     }
     caparams.worldFromLocal = transform;
 
+    caparams.contact.frictionWithColliderNormal = GetParam().frictionWithColliderNormal;
     caparams.contact.viscousFrictionCoefficient = viscousCoefficient;
     caparams.contact.coulombFrictionCoefficient = coulombCoefficient;
     caparams.contact.normalViscousDampingCoefficient = dampingCoefficient;
@@ -3019,7 +3025,8 @@ class MochiSoftSoftContact : public MochiContactTestBase {
     }
     auto& posBold = reg.get<CDisplacementSlice<real, TimeStep::StageStart>>(_collider);
     for (int i = 0; i < _numDofsB; i++) {
-      posBold.value[i] = (i % 3 == 0) ? -0.01_r : 0.01_r;
+      posBold.value[i] =
+          (i % 3 == 0) ? GetParam().colliderStretch * coordsB[i / 3][0] - 0.01_r : 0.01_r;
     }
 
     InitSoftCubeStageStart(_colliding);
@@ -3112,7 +3119,15 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams{"NoFrictionExplicit", GradTarget::Current, 0_r, 0_r, 0_r, true, 1e-3_r, 1e-1_r},
         TestParams{"ViscousExplicit", GradTarget::Current, 0_r, 10_r, 0_r, true, 1e-3_r, 1e-1_r},
         TestParams{"CoulombExplicit", GradTarget::Current, 0.5_r, 0_r, 0_r, true, 1e-3_r, 1e-1_r},
-        TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 10_r, true, 1e-3_r, 5e-3_r}),
+        TestParams{"DampingExplicit", GradTarget::Current, 0_r, 0_r, 10_r, true, 1e-3_r, 5e-3_r},
+        // The stretched stage-start map makes the colliding normal in collider space non-unit.
+        TestParams{
+            .name = "ViscousExplicitCollidingNormal",
+            .viscousCoefficient = 10_r,
+            .explicitNormals = true,
+            .dresTol = 1e-1_r,
+            .frictionWithColliderNormal = false,
+            .colliderStretch = 0.05_r}),
     [](::testing::TestParamInfo<TestParams> const& info) { return info.param.name; });
 
 class MochiSoftSoftContactDeepFlow : public MochiSoftSoftContact {

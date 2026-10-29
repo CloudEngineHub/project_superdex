@@ -948,6 +948,7 @@ static void DistributeContactDetectionResultToPartitions(
       continue;
     }
     targetPartition->isSdfGradUnitary = sourceResult.isSdfGradUnitary;
+    targetPartition->isNormalCollidingUnitary = sourceResult.isNormalCollidingUnitary;
     targetPartition->jacColliderFromWorld.resize_noinit(1);
     targetPartition->jacColliderFromWorld[0] = sourceResult.jacColliderFromWorld[0];
     if constexpr (kTimeStep == TimeStep::Current) {
@@ -1236,6 +1237,9 @@ static void DetectCollisionsWithSingleCollider(
   // for deformable colliders.
   outResult.jacColliderFromWorld.resize_noinit(1);
   outResult.jacColliderFromWorld[0] = ToVMatrix3x3Transpose(worldFromCollider.GetRotation());
+
+  // Only mapped colliders have Jacobians that aren't rotations.
+  outResult.isNormalCollidingUnitary = !reg.all_of<CSdfMapping<kTimeStep>>(collider);
 
   // Run the collision query.
   auto queryFunc = GetQueryFuncForPointsAndSdf<kTimeStep>(reg, collider);
