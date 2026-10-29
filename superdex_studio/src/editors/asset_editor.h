@@ -56,6 +56,9 @@ class AssetEditor : public IAssetReferencer {
 
   // Called immediately after the AssetEditor is created.
   virtual void Initialize() {}
+  // Called at the start of the app frame, before drawing begins. Work that can invalidate a
+  // rendering resource belongs here.
+  virtual void OnBeginFrame() {}
   // Called once per frame to handle inputs (i.e. keyboard shortcuts) before UI is drawn.
   virtual void OnHandleInputs() {}
   // Called once per frame before UI is drawn. Passed global renderer for Viewport/Scene rendering.

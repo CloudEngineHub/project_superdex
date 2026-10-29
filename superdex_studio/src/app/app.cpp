@@ -529,11 +529,13 @@ void SuperDexStudio::MaybeRaiseLogConsole() {
 }
 
 void SuperDexStudio::OnUpdate() {
-  // Runs before anything is drawn this frame: Save As closes an editor and unloads an asset, which
-  // frees textures (viewport, thumbnail) that would otherwise already be in this frame's draw
-  // lists.
+  // Perform work that can invalidate rendering resources before drawing begins so every resource
+  // referenced by this frame's draw commands remains valid until those commands are rendered.
   if (std::exchange(_saveAsRequested, false)) {
     SaveActiveAssetEditorAs();
+  }
+  if (auto* editor = GetActiveAssetEditor()) {
+    editor->OnBeginFrame();
   }
   ImGuizmo::BeginFrame();
   // pump async resource loading

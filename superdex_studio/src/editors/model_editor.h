@@ -95,6 +95,7 @@ class ModelEditor : public AssetEditor {
   ModelEditor(SuperDexStudio* studio, RenderModelAsset* asset);
   ModelEditor(SuperDexStudio* studio, CadModelAsset* asset);
   void Initialize() override;
+  void OnBeginFrame() override;
   void OnRender(Renderer const* renderer) override;
   void Shutdown() override;
   void ShowTabContents() override;

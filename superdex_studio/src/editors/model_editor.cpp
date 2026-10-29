@@ -665,8 +665,11 @@ void ModelEditor::Initialize() {
   }
 }
 
-void ModelEditor::OnRender(Renderer const* renderer) {
+void ModelEditor::OnBeginFrame() {
   PollSlotFileChanges();
+}
+
+void ModelEditor::OnRender(Renderer const* renderer) {
   PumpReferenceCadTessellations();
   PumpHausdorffResults();
   // Keep the drop-shadow ground plane at the lowest point of all meshes. The model editor runs no
