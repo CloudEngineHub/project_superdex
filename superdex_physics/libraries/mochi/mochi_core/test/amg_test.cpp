@@ -433,8 +433,9 @@ class AMGPrecUnderTest : public krylov::AMGPrec<real, kBlockSize> {
     return ToDense(this->_coarsenings[s].PtA);
   }
 
+  // A zero coarsest inverse drops the coarse correction to the coarsest level.
   [[nodiscard]] int NumAcceptedCoarseLevels() const {
-    return NumCoarseLevels();
+    return NumCoarseLevels() - (mochi::MaxAbs(MakeConstSpan(this->_coarseInverse)) == 0 ? 1 : 0);
   }
 
   void SolveCoarsest(ColumnVector<real> const& b, ColumnVector<real>& x) const {
@@ -649,7 +650,8 @@ static int ExpectAMGProperties(AMGProblem<MatrixType> const& problem) {
   EXPECT_SPAN_EQ(z.GetConstSpan(), zScaled.GetConstSpan());
 
   // Update is equivalent to construction: with the diagonal blocks scaled by 2, 3 or 4, which no
-  // damping factor can make up for in a stale smoother, then new positions, then the same inputs.
+  // damping factor can make up for in a stale smoother, then new positions, then the same inputs,
+  // then the original ones.
   AMGProblem<MatrixType> updated = problem;
   for (int i = 0; i < updated.A.Rows() / AMG::kDofsPerNode; ++i) {
     updated.A.Values(i)[krylov::details::BlockIndex(updated.A.Indices(i), i)] *= real(2 + i % 3);
@@ -658,7 +660,8 @@ static int ExpectAMGProperties(AMGProblem<MatrixType> const& problem) {
   for (int k = 0; k < isize(moved.displacements); ++k) {
     moved.displacements[k] += 0.01_r * Sin(real(k));
   }
-  for (auto const* inputs : {&updated, &moved, &moved}) {
+  AMGProblem<MatrixType> const* const sequence[] = {&updated, &moved, &moved, &problem};
+  for (auto const* inputs : sequence) {
     prec.Update(*inputs);
     AMG const fresh(*inputs);
     ColumnVector<real> zFresh(n);
@@ -728,6 +731,7 @@ enum class AMGFixture {
   Bar,
   MovedBar,
   FloatingBar,
+  HeavierFloatingBar,
   PinnedBar,
   Strip,
   MovedStrip,
@@ -747,20 +751,23 @@ enum class AMGFixture {
 // with mass 8 epsilon at three corner nodes, so that the coarsest matrix, on which the rigid
 // motions of the whole bar have that energy, rounds to a singular one, while the springs keep the
 // first coarse level's smoother blocks, which are all that its acceptance checks, positive
-// definite; the matrix is SPD as represented. Pinned: node 0 anchored with stiffness 1 / e, so that
-// the first coarse block of its aggregate rounds to rank 3. Collinear: the strip, with its current
-// positions collapsed onto a skew line, or its reference positions onto a narrow strip along it,
-// whose aggregates' margins, 0.047 to 0.058, lie between 0 and the member-only threshold.
+// definite; the matrix is SPD as represented. Heavier floating: mass 24 epsilon there, so that
+// AMGPrec's coarsest matrix passes the positive-definiteness check but its explicit inverse fails
+// it. Pinned: node 0 anchored with stiffness 1 / e, so that the first coarse block of its aggregate
+// rounds to rank 3. Collinear: the strip, with its current positions collapsed onto a skew line, or
+// its reference positions onto a narrow strip along it, whose aggregates' margins, 0.047 to 0.058,
+// lie between 0 and the member-only threshold.
 [[nodiscard]] static AMGProblem<BlockSparseMatrix<real, 3>> MakeProblemWithPositions(
     AMGFixture fixture) {
   using enum AMGFixture;
   bool const nearlyCollinear = fixture == NearlyCollinear || fixture == CoupledNearlyCollinear;
   bool const tinyScale = fixture == TinyScale || fixture == TinyScaleChain;
   bool const roundsToSingular = fixture == RoundsToSingular || fixture == RoundsToSingularChain;
+  bool const floating = fixture == FloatingBar || fixture == HeavierFloatingBar;
   real const e = std::numeric_limits<real>::epsilon() / 128;
   DynamicArray<std::array<double, 3>> reference;
   DynamicArray<DynamicArray<int>> groups;
-  if (fixture == Bar || fixture == MovedBar || fixture == FloatingBar || fixture == PinnedBar) {
+  if (fixture == Bar || fixture == MovedBar || floating || fixture == PinnedBar) {
     auto const [coordinates, tets] =
         mochi::test::CreateMinimalTetMeshUnitGrid({5_r, 1_r, 1_r}, {10, 2, 2});
     for (auto const& x : coordinates) {
@@ -855,16 +862,18 @@ enum class AMGFixture {
     }
   }
   AMGProblem<BlockSparseMatrix<real, 3>> problem{
-      .A = MakeSpringMatrix(positions, groups, fixture == FloatingBar ? 0_r : 1e-3_r)};
+      .A = MakeSpringMatrix(positions, groups, floating ? 0_r : 1e-3_r)};
   int const n = isize(reference);
-  if (fixture == FloatingBar) {
+  if (floating) {
     constexpr std::array<double, 3> kCorners[] = {
         {0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
+    real const cornerMass =
+        (fixture == FloatingBar ? 8 : 24) * std::numeric_limits<real>::epsilon();
     for (int i = 0; i < n; ++i) {
       if (Contains(kCorners, reference[i])) {
         for (int d = 0; d < 3; ++d) {
           problem.A.Values(i)[krylov::details::BlockIndex(problem.A.Indices(i), i)](d, d) +=
-              8 * std::numeric_limits<real>::epsilon();
+              cornerMass;
         }
       }
     }
@@ -1158,20 +1167,30 @@ template <typename Row>
   return info.param.name;
 }
 
+// AMGPrec on a fixture, and whether it keeps the coarse correction to the coarsest level.
 struct AMGRow {
   char const* name;
   AMGFixture fixture;
+  bool coarsestAccepted;
 };
 
 class AMGTest : public testing::TestWithParam<AMGRow> {};
 
+template <typename AMG, typename Problem>
+static void ExpectAMGPrecProperties(Problem const& problem, bool coarsestAccepted) {
+  ExpectAMGProperties<AMG>(problem);
+  AMG const prec(problem);
+  EXPECT_EQ(prec.NumAcceptedCoarseLevels() == prec.NumCoarseLevels(), coarsestAccepted);
+}
+
 TEST_P(AMGTest, Properties) {
   using enum AMGFixture;
   AMGFixture const fixture = GetParam().fixture;
+  bool const coarsestAccepted = GetParam().coarsestAccepted;
   if (fixture == Laplacian1D) {
     using Sparse = SparseMatrix<real, int, int>;
-    ExpectAMGProperties<AMGPrecUnderTest<1, Sparse>>(
-        AMGProblem<Sparse>{.A = mochi::test::Make3ptLaplacianMatrix(15)});
+    ExpectAMGPrecProperties<AMGPrecUnderTest<1, Sparse>>(
+        AMGProblem<Sparse>{.A = mochi::test::Make3ptLaplacianMatrix(15)}, coarsestAccepted);
   } else if (fixture == TwoLaplacians1D || fixture == TwoLaplacians2D) {
     int const ny = (fixture == TwoLaplacians1D) ? 1 : 3;
     auto A = mochi::test::Create2dLaplacianMatrix<real, 2>(fixture == TwoLaplacians1D ? 15 : 7, ny);
@@ -1180,19 +1199,25 @@ TEST_P(AMGTest, Properties) {
         A(i, i) = 2_r;
       }
     }
-    ExpectAMGProperties<AMGPrecUnderTest<2>>(AMGProblem<BlockSparseMatrix<real, 2>>{
-        .A = ToBlockSparseMatrix<2>(A, /*pruneZeros*/ true)});
+    ExpectAMGPrecProperties<AMGPrecUnderTest<2>>(
+        AMGProblem<BlockSparseMatrix<real, 2>>{.A = ToBlockSparseMatrix<2>(A, /*pruneZeros*/ true)},
+        coarsestAccepted);
   } else {
-    ExpectAMGProperties<AMGPrecUnderTest<3>>(MakeProblemWithPositions(fixture));
+    ExpectAMGPrecProperties<AMGPrecUnderTest<3>>(
+        MakeProblemWithPositions(fixture), coarsestAccepted);
   }
 }
 
 constexpr AMGRow kAMGRows[] = {
-    {"Laplacian1D", AMGFixture::Laplacian1D},
-    {"TwoLaplacians1D", AMGFixture::TwoLaplacians1D},
-    {"TwoLaplacians2D", AMGFixture::TwoLaplacians2D},
-    {"Bar", AMGFixture::Bar},
-    {"Strip", AMGFixture::Strip},
+    {.name = "Laplacian1D", .fixture = AMGFixture::Laplacian1D, .coarsestAccepted = true},
+    {.name = "TwoLaplacians1D", .fixture = AMGFixture::TwoLaplacians1D, .coarsestAccepted = true},
+    {.name = "TwoLaplacians2D", .fixture = AMGFixture::TwoLaplacians2D, .coarsestAccepted = true},
+    {.name = "Bar", .fixture = AMGFixture::Bar, .coarsestAccepted = true},
+    {.name = "Strip", .fixture = AMGFixture::Strip, .coarsestAccepted = true},
+    {.name = "FloatingBar", .fixture = AMGFixture::FloatingBar, .coarsestAccepted = false},
+    {.name = "HeavierFloatingBar",
+     .fixture = AMGFixture::HeavierFloatingBar,
+     .coarsestAccepted = false},
 };
 INSTANTIATE_TEST_SUITE_P(AMG, AMGTest, testing::ValuesIn(kAMGRows), RowName<AMGRow>);
 

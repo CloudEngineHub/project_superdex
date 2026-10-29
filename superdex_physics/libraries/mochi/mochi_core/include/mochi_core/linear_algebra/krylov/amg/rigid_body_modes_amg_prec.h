@@ -17,12 +17,10 @@
 #pragma once
 
 #include <mochi_core/linear_algebra/block_sparse_matrix.h>
-#include <mochi_core/linear_algebra/factor_kernels.h>
 #include <mochi_core/linear_algebra/krylov/amg/amg_prec.h>
 #include <mochi_core/linear_algebra/krylov/amg/coarsening.h>
 #include <mochi_core/linear_algebra/krylov/block_jacobi_prec.h>
 #include <mochi_core/linear_algebra/krylov/preconditioner.h>
-#include <mochi_core/linear_algebra/ldlt.h>
 #include <mochi_core/linear_algebra/matrix.h>
 #include <mochi_core/linear_algebra/matrix_operations.h>
 #include <mochi_core/linear_algebra/utils/matrix_conversions.h>
@@ -293,56 +291,6 @@ struct RigidModeTransfer {
   DynamicArray<double> centroids;
   DynamicArray<double> radii;
 };
-
-/// @brief The pivot test of @ref IsPositiveDefinite, as the singularity check of @ref
-/// kernel::Factor and @ref LDLt: whether a pivot fails to exceed n epsilon times its row's diagonal
-/// entry of A.
-template <typename MatrixType>
-[[nodiscard]] auto PositiveDefinitePivotCheck(MatrixType const& A) {
-  using Scalar = typename MatrixType::NonConstScalar;
-  Scalar const margin = Scalar(A.Rows()) * std::numeric_limits<Scalar>::epsilon();
-  return [&A, margin](int row, Scalar pivot, auto const& /*trailing*/) {
-    return !(pivot > margin * Abs(A(row, row)));
-  };
-}
-
-/// @brief Whether a symmetric matrix is positive definite to working precision: every pivot of its
-/// LDL^T factorization exceeds n epsilon times its row's diagonal entry, since a smaller pivot is
-/// within the factorization's rounding error of zero. Reads the lower triangle. Fails for NaN.
-template <typename MatrixType>
-[[nodiscard]] bool IsPositiveDefinite(MatrixType const& A) {
-  using Scalar = typename MatrixType::NonConstScalar;
-  int const n = A.Rows();
-  Matrix<Scalar> factors = A;
-  return kernel::Factor<Scalar>(factors.Block(0, 0, n, n), PositiveDefinitePivotCheck(A)) == 0;
-}
-
-/// @brief Whether a symmetric matrix and its inverse are positive definite to working precision
-/// (@ref IsPositiveDefinite's pivot test). The matrix's test runs on the factorization @ref
-/// details::LDLtInverse uses (@ref SmallLDLt below @ref kSmallLDLtInverseSizeThreshold rows, @ref
-/// LDLt from there); if it passes, the inverse is formed from those factors and tested too, since
-/// rounding can leave the inverse indefinite even when the matrix passes. Reads the lower triangle
-/// of a column-major matrix, the upper one of a row-major one, as @ref LDLt. Fails for NaN.
-template <typename MatrixType, typename Scalar>
-[[nodiscard]] bool InvertIfPositiveDefinite(MatrixType const& A, Matrix<Scalar>& inverse) {
-  int const n = A.Rows();
-  auto const isSingular = PositiveDefinitePivotCheck(A);
-  auto const invert = [&](auto const& factors, int singularities) {
-    if (singularities > 0) {
-      return false;
-    }
-    inverse.Resize(n, n);
-    factors.Inverse(inverse);
-    return IsPositiveDefinite(inverse);
-  };
-  int singularities = 0;
-  if (n < kSmallLDLtInverseSizeThreshold) {
-    SmallLDLt<Scalar> const factors(A, singularities, isSingular);
-    return invert(factors, singularities);
-  }
-  LDLt<Scalar> const factors(A, singularities, isSingular);
-  return invert(factors, singularities);
-}
 
 // TODO: Merge FactorLDLt and kernel::Factor into a single kernel at least as fast as both, and use
 // it everywhere.
