@@ -291,8 +291,8 @@ void GetIslandNewtonParams(
 // Set Dirichlet BCs on the solution vector. The BC indices must index the solution vector.
 void SetDirichletBCs(CDirichletBC<real> const& dirichlet, ColumnVectorView<real> outSolution);
 
-// Call after externally overwriting actor state. Clears multi-step integration data and enables
-// conservative-step-bounds relaxation for the next step.
+// Call after externally overwriting actor state. Clears multi-step integration data and the
+// convergence status, and enables conservative-step-bounds relaxation for the next step.
 void InvalidateActorStepHistory(entt::registry& reg, entt::entity actor);
 
 namespace simulation {

@@ -4991,6 +4991,7 @@
 ///
 /// @note Static actors do not participate in the solver and may return @ref mochi::ConvergenceStatus::None "ConvergenceStatus::None".
 /// @note Actors in sleeping islands are not solved and return @ref mochi::ConvergenceStatus::None "ConvergenceStatus::None". See `experimental::SleepParams`.
+/// @note Methods that overwrite the actor's state, such as @ref mochi::Actor::SetRootTransform "SetRootTransform" or @ref mochi::Actor::SetVelocity "SetVelocity", reset the status to @ref mochi::ConvergenceStatus::None "ConvergenceStatus::None", since the state is no longer the output of the last solve. Restoring a captured state restores the captured status.
 /// @note Unlike @ref mochi::ConvergenceStatus::Diverged "ConvergenceStatus::Diverged", @ref mochi::ConvergenceStatus::Stopped "ConvergenceStatus::Stopped" does not indicate a failure. It means that the nonlinear solve reached a stopping criterion, such as the maximum number of iterations, before meeting its residual tolerances, which may be stricter than the actor requires.
 ///
 /// @see @ref mochi::ConvergenceStatus "ConvergenceStatus", @ref mochi::SolverStats::convergenceStatus "SolverStats::convergenceStatus"

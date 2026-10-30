@@ -228,3 +228,23 @@ TEST_F(SceneConvergenceStatus, WorstStatusAcrossStages) {
   EXPECT_EQ(ConvergenceStatus::Converged, actor->GetConvergenceStatus());
   EXPECT_EQ(ConvergenceStatus::Converged, _scene->GetSolverStats().convergenceStatus);
 }
+
+// Externally overwriting an actor's state clears its convergence status, since the state is no
+// longer the output of the last solve.
+TEST_F(SceneConvergenceStatus, StateOverwriteClearsActorStatus) {
+  test::ExpectLoggingInScope expectWarning(_mochiContext, LogChannel::Warning);
+
+  auto* actor = CreateDynamicRigid({0_r, 0_r, 0_r}, /*hasGravity*/ true);
+  SetSolverForDiverged();
+  _scene->Step(kDt);
+  ASSERT_EQ(ConvergenceStatus::Diverged, actor->GetConvergenceStatus());
+
+  actor->SetVelocity(Real3{}, Real3{}, test::ExpectOK{});
+  EXPECT_EQ(ConvergenceStatus::None, actor->GetConvergenceStatus());
+
+  _scene->Step(kDt);
+  ASSERT_EQ(ConvergenceStatus::Diverged, actor->GetConvergenceStatus());
+
+  actor->SetRootTransform(TransformRT{Real3{0_r, 1_r, 0_r}}, test::ExpectOK{});
+  EXPECT_EQ(ConvergenceStatus::None, actor->GetConvergenceStatus());
+}

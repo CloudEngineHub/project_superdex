@@ -9447,6 +9447,14 @@ class Actor:
             :class:`~superdex.physics.experimental.SleepParams`.
 
         Note:
+            Methods that overwrite the actor's state, such as
+            :meth:`~superdex.physics.Actor.set_root_transform` or
+            :meth:`~superdex.physics.Actor.set_velocity`, reset the status to
+            :class:`NONE <superdex.physics.ConvergenceStatus>`, since the state is no
+            longer the output of the last solve. Restoring a captured state restores the
+            captured status.
+
+        Note:
             Unlike :class:`DIVERGED <superdex.physics.ConvergenceStatus>`,
             :class:`STOPPED <superdex.physics.ConvergenceStatus>` does not indicate a
             failure. It means that the nonlinear solve reached a stopping criterion,

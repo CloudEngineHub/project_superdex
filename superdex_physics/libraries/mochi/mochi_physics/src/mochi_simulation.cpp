@@ -140,6 +140,12 @@ void mochi::InvalidateActorStepHistory(entt::registry& reg, entt::entity actor) 
   // The next conservative-step-bounds prediction cannot trust pre-reset state/history. Enable its
   // one-step relaxation.
   RelaxConservativeStepBoundsOnNextStep(reg, actor);
+
+  // The overwritten state is no longer the output of the last solve.
+  if (auto* convergence = reg.try_get<CConvergenceStatus>(actor)) {
+    convergence->stageStatus = ConvergenceStatus::None;
+    convergence->stepStatus = ConvergenceStatus::None;
+  }
 }
 
 namespace mochi::simulation {
