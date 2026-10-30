@@ -146,6 +146,8 @@ static void ComputePointCloudContactIndicesImpl(
     int collidingPointIndex;
     int colliderPointIndex;
   };
+  // The colliding points are processed in ranges: blocks of consecutive points that ParallelForN
+  // runs independently. (The contact and exclusion ranges below are distances.)
   int constexpr kCollidingPointsPerRange = 256;
   int constexpr kMaxStackAllocatedRanges = 256;
   int const numRanges =
@@ -180,9 +182,35 @@ static void ComputePointCloudContactIndicesImpl(
       dofsPerNode > 0,
       "CColliderPointCloudDiscretization::dofsPerNode was not set (zero sentinel)");
 
+  // A colliding point's candidates are the collider points the hash table returns near it, before
+  // the exclusion and distance tests. A collider point can be a candidate of many colliding points,
+  // so its current position, and for self-contact its reference (zero-displacement) position, is
+  // computed once per call.
+  int const numColliderPoints = colliderDisc.GetNumQuadPoints();
+  DynamicArray<Real3> colliderPointPositions;
+  DynamicArray<Real3> colliderPointReferencePositions; // Self-contact only.
+  colliderPointPositions.resize_noinit(numColliderPoints);
+  if constexpr (kSelfContact) {
+    colliderPointReferencePositions.resize_noinit(numColliderPoints);
+  }
+  for (int colliderPointIndex = 0; colliderPointIndex < numColliderPoints; ++colliderPointIndex) {
+    int const elementIndex = colliderPointIndex / ColliderDiscretizationT::kNumQuads;
+    int const localQuadIndex = colliderPointIndex % ColliderDiscretizationT::kNumQuads;
+    auto const& element = colliderDisc.femElements[elementIndex];
+    colliderPointPositions[colliderPointIndex] =
+        details::InterpolateColliderPointPosition<ColliderDiscretizationT>(
+            element, elementIndex, localQuadIndex, colliderDisplacements, dofsPerNode);
+    if constexpr (kSelfContact) {
+      colliderPointReferencePositions[colliderPointIndex] = element.mapEvaluated[localQuadIndex];
+    }
+  }
+
   // Each range writes to a distinct output buffer. All shared inputs are read-only.
   ParallelForN("PointCloudCollisionDetection", numRanges, 1, [&](int rangeIndex) {
-    auto& contactPairs = contactPairsPerRange[rangeIndex];
+    // Filled here and moved out once: resizing an entry of contactPairsPerRange in place would
+    // write cache lines shared with the neighboring ranges' entries.
+    DynamicArray<ContactPair> contactPairs;
+    DynamicArray<int> candidates;
     int const begin = rangeIndex * kCollidingPointsPerRange;
     int const end = Min(begin + kCollidingPointsPerRange, numCollidingPoints);
     for (int collidingPointIndex = begin; collidingPointIndex < end; ++collidingPointIndex) {
@@ -215,33 +243,35 @@ static void ComputePointCloudContactIndicesImpl(
         });
       }
 
+      candidates.clear();
       colliderHashTable.IteratePointsNearPosition(
-          collidingPointPositionColliderFrame3, [&](int colliderPointIndex) {
-            int const elementIndex = colliderPointIndex / ColliderDiscretizationT::kNumQuads;
-            int const localQuadIndex = colliderPointIndex % ColliderDiscretizationT::kNumQuads;
-            auto const& element = colliderDisc.femElements[elementIndex];
+          collidingPointPositionColliderFrame3,
+          [&](int colliderPointIndex) { candidates.push_back(colliderPointIndex); });
 
-            if constexpr (kSelfContact) {
-              Real3 const referenceDisplacement = element.mapEvaluated[localQuadIndex] -
-                  collidingPointReferencePositionColliderFrame;
-              real const referenceDistanceSquared = NormSqr(referenceDisplacement);
-              if (referenceDistanceSquared < selfContactExclusionRangeSquared) {
-                return;
-              }
-            }
-
-            Real3 const colliderPointPosition =
-                details::InterpolateColliderPointPosition<ColliderDiscretizationT>(
-                    element, elementIndex, localQuadIndex, colliderDisplacements, dofsPerNode);
-            Real3 const displacement = collidingPointPositionColliderFrame3 - colliderPointPosition;
-            real const distanceSquared = NormSqr(displacement);
-            if (distanceSquared >= contactRangeSquared) {
-              return;
-            }
-
-            contactPairs.push_back({collidingPointIndex, colliderPointIndex});
-          });
+      // About half of the candidates pass each test, so branching on the tests would often
+      // mispredict. Instead, every candidate is written to the next slot, and the count advances
+      // only if both tests pass (`&`, not `&&`, so that there is no branch).
+      int numContactPairs = isize(contactPairs);
+      contactPairs.resize_noinit(numContactPairs + isize(candidates));
+      for (int const colliderPointIndex : candidates) {
+        bool isOutsideExclusion = true;
+        if constexpr (kSelfContact) {
+          Real3 const referenceDisplacement = colliderPointReferencePositions[colliderPointIndex] -
+              collidingPointReferencePositionColliderFrame;
+          isOutsideExclusion = NormSqr(referenceDisplacement) >= selfContactExclusionRangeSquared;
+        }
+        Real3 const displacement =
+            collidingPointPositionColliderFrame3 - colliderPointPositions[colliderPointIndex];
+        bool const isInContactRange = NormSqr(displacement) < contactRangeSquared;
+        // Assign per field: with a braced pair, MSVC goes through a slow stack temporary.
+        ContactPair& contactPair = contactPairs[numContactPairs];
+        contactPair.collidingPointIndex = collidingPointIndex;
+        contactPair.colliderPointIndex = colliderPointIndex;
+        numContactPairs += static_cast<int>(isOutsideExclusion & isInContactRange);
+      }
+      contactPairs.resize_noinit(numContactPairs);
     }
+    contactPairsPerRange[rangeIndex] = std::move(contactPairs);
   });
 
   int totalContacts = 0;

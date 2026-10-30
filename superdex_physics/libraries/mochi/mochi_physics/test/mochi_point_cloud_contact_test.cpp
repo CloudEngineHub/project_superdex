@@ -26,8 +26,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <functional>
 #include <numeric>
+#include <optional>
 #include <utility>
 
 using namespace mochi;
@@ -59,6 +61,61 @@ std::pair<DynamicArray<Real3>, DynamicArray<Int3>> UnionWithTranslatedCopy(
   }
 
   return {std::move(unionCoordinates), std::move(unionConnectivity)};
+}
+
+// Returns the nodes and triangles of a flat sheet in the z = 0 plane: a grid of numNodesX by
+// numNodesY nodes, nodeSpacing apart.
+std::pair<DynamicArray<Real3>, DynamicArray<Int3>>
+CreateSheetMesh(int numNodesX, int numNodesY, real nodeSpacing) {
+  DynamicArray<Real3> coordinates;
+  DynamicArray<Int3> connectivity;
+  for (int j = 0; j < numNodesY; ++j) {
+    for (int i = 0; i < numNodesX; ++i) {
+      coordinates.push_back(Real3{nodeSpacing * i, nodeSpacing * j, 0_r});
+      if (i > 0 && j > 0) {
+        int const node = j * numNodesX + i;
+        connectivity.push_back(Int3{node - numNodesX - 1, node - numNodesX, node});
+        connectivity.push_back(Int3{node - numNodesX - 1, node, node - 1});
+      }
+    }
+  }
+  return {std::move(coordinates), std::move(connectivity)};
+}
+
+// Returns the collider points of a mesh: its nodes, with unit weights, when elementType is empty;
+// otherwise the quadrature points of its elementType elements.
+CColliderPointCloudDiscretization MakeMeshColliderDiscretization(
+    std::optional<ActorBoundaryElementType> elementType,
+    Span<Real3 const> coordinates,
+    TriangularMesh const& mesh) {
+  if (!elementType.has_value()) {
+    NodalColliderDiscretization nodalDisc;
+    for (int node = 0; node < isize(coordinates); ++node) {
+      nodalDisc.femElements.emplace_back(node, coordinates, node, 1_r);
+    }
+    return CColliderPointCloudDiscretization(std::move(nodalDisc), kSpaceDim3);
+  }
+  return CColliderPointCloudDiscretization(
+      CFemSurfaceDiscretization::Create(*elementType, mesh), kSpaceDim3);
+}
+
+// Returns the positions of the quadrature points of disc, element by element, under the given
+// node displacements.
+DynamicArray<Real3> InterpolateQuadPointPositions(
+    CFemSurfaceDiscretization const& disc,
+    ColumnVectorView<real const> displacements) {
+  DynamicArray<Real3> positions;
+  disc.Visit([&](auto const& typedDisc) {
+    using DiscretizationT = std::decay_t<decltype(typedDisc)>;
+    for (int elementIndex = 0; elementIndex < isize(typedDisc.femElements); ++elementIndex) {
+      for (int q = 0; q < DiscretizationT::kNumQuads; ++q) {
+        positions.push_back(
+            details::InterpolateColliderPointPosition<DiscretizationT>(
+                typedDisc.femElements[elementIndex], elementIndex, q, displacements, kSpaceDim3));
+      }
+    }
+  });
+  return positions;
 }
 
 // Returns the island whose descendant actors contain all of `actors`, or entt::null if none does.
@@ -293,6 +350,106 @@ TEST_P(MochiPointCloudColliderTest, SpatialHashTablePopulationAndContactIndexQue
 
   hashTable.Reset();
   EXPECT_EQ(0, hashTable.GetNumPoints());
+}
+
+// The pairs, in order, must match a per-point reference: query the hash table at each colliding
+// point and keep the candidates within the contact range (and, for self-contact, whose reference
+// positions are at least the exclusion range apart). The colliding points span three ranges of the
+// parallel query, which a worker thread and the calling thread compute.
+TEST_P(MochiPointCloudColliderTest, ContactIndicesMatchPerPointQueries) {
+  TaskScheduler taskScheduler(1);
+  // Two 8x8-node sheets. The second is built 1 m away, and its displacements move it back to 0.6
+  // radii above the first, with an x jitter so that the points of the two sheets do not line up.
+  // With self-contact, every pair across the sheets passes the exclusion test, and nearly every
+  // pair within contact range on one sheet fails it.
+  int constexpr kNumNodesPerSide = 8;
+  real constexpr kNodeSpacing = 0.02_r;
+  auto const [sheetCoordinates, sheetConnectivity] =
+      CreateSheetMesh(kNumNodesPerSide, kNumNodesPerSide, kNodeSpacing);
+  Real3 const copyOffset{1_r, 0_r, 0_r};
+  auto const sheets = UnionWithTranslatedCopy(sheetCoordinates, sheetConnectivity, copyOffset);
+  DynamicArray<Real3> const& coordinates = sheets.first;
+  DynamicArray<Int3> const& connectivity = sheets.second;
+  int const numNodes = isize(coordinates);
+  ColumnVector<real> displacements = ColumnVector<real>::Zero(kSpaceDim3 * numNodes);
+  for (int node = isize(sheetCoordinates); node < numNodes; ++node) {
+    Real3 const displacement =
+        Real3{0.3_r * kNodeSpacing * std::sin(1.7_r * node), 0_r, 0.6_r * _params.radius} -
+        copyOffset;
+    for (int d = 0; d < kSpaceDim3; ++d) {
+      displacements[kSpaceDim3 * node + d] = displacement[d];
+    }
+  }
+
+  TriangularMesh const mesh(MakeConstSpan(coordinates), MakeConstSpan(connectivity));
+  CColliderPointCloudDiscretization const colliderDisc =
+      MakeMeshColliderDiscretization(GetParam(), coordinates, mesh);
+  real const contactThreshold = ContactParams{}.GetPenaltyThresholdDist(true);
+  SpatialHashTable hashTable = CreateSpatialHashTable(_params, colliderDisc, contactThreshold);
+  CFinalDisplacementRef<TimeStep::Current> const displacementsRef(AsConstView(displacements));
+  UpdateSpatialHashTable(
+      ecs::Included<TagUsePointCloudContact>{}, colliderDisc, displacementsRef, hashTable);
+
+  // The colliding points are the quadrature points of both sheets. Their reference positions are
+  // their positions at zero displacement.
+  CFemSurfaceDiscretization const collidingDisc =
+      CFemSurfaceDiscretization::Create(ActorBoundaryElementType::P1Q3, mesh);
+  DynamicArray<Real3> const collidingPositions =
+      InterpolateQuadPointPositions(collidingDisc, AsConstView(displacements));
+  DynamicArray<Real3> const collidingReferencePositions = InterpolateQuadPointPositions(
+      collidingDisc, AsConstView(ColumnVector<real>::Zero(kSpaceDim3 * numNodes)));
+
+  real const contactRange = _params.radius + contactThreshold;
+  real const exclusionRange = _params.radius * _params.selfContactExclusionRatio + contactThreshold;
+  for (bool const selfContact : {false, true}) {
+    SCOPED_TRACE(selfContact ? "self-contact" : "no self-contact");
+    DynamicArray<int> expectedPointIndices;
+    DynamicArray<int> expectedColliderPointIndices;
+    colliderDisc.VisitCollider([&](auto const& disc) {
+      using DiscretizationT = std::decay_t<decltype(disc)>;
+      for (int collidingPoint = 0; collidingPoint < isize(collidingPositions); ++collidingPoint) {
+        hashTable.IteratePointsNearPosition(
+            collidingPositions[collidingPoint], [&](int colliderPoint) {
+              int const elementIndex = colliderPoint / DiscretizationT::kNumQuads;
+              int const q = colliderPoint % DiscretizationT::kNumQuads;
+              auto const& element = disc.femElements[elementIndex];
+              Real3 const colliderPosition =
+                  details::InterpolateColliderPointPosition<DiscretizationT>(
+                      element, elementIndex, q, AsConstView(displacements), kSpaceDim3);
+              Real3 const referenceDisplacement =
+                  element.mapEvaluated[q] - collidingReferencePositions[collidingPoint];
+              bool const isExcluded =
+                  selfContact && NormSqr(referenceDisplacement) < Sqr(exclusionRange);
+              if (!isExcluded &&
+                  NormSqr(collidingPositions[collidingPoint] - colliderPosition) <
+                      Sqr(contactRange)) {
+                expectedPointIndices.push_back(collidingPoint);
+                expectedColliderPointIndices.push_back(colliderPoint);
+              }
+            });
+      }
+    });
+
+    DynamicArray<int> pointIndices;
+    DynamicArray<int> colliderPointIndices;
+    ComputePointCloudContactIndices(
+        _params,
+        colliderDisc,
+        AsConstView(displacements),
+        TransformRT{},
+        CollidingPointCloudDiscretization{&collidingDisc},
+        selfContact,
+        collidingPositions,
+        /*collidingPointSampleIndices=*/{},
+        TransformRT{},
+        hashTable,
+        contactThreshold,
+        pointIndices,
+        colliderPointIndices);
+    EXPECT_FALSE(expectedPointIndices.empty());
+    EXPECT_SPAN_EQ(expectedPointIndices, pointIndices);
+    EXPECT_SPAN_EQ(expectedColliderPointIndices, colliderPointIndices);
+  }
 }
 
 TEST_P(MochiPointCloudColliderTest, ContactFieldsAcceptNonIdentityPointIndices) {
