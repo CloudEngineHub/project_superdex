@@ -53,8 +53,14 @@ class SpatialHashTable {
   // it is left to the callback to decide what to do with those.
   template <typename CallbackType>
   void IteratePointsNearPosition(Real3 const& position, CallbackType&& callback) const {
-    // Iterate the 3x3x3 grid-cell stencil centered at the cell containing the query position.
-    Int3 const centerCellCoordinates = GetCellCoordinates(position);
+    IteratePointsNearCell(GetCellCoordinates(position), callback);
+  }
+
+  // This iterates over the same points, in the same order, as @ref IteratePointsNearPosition does
+  // for any position in the given cell.
+  template <typename CallbackType>
+  void IteratePointsNearCell(Int3 const& centerCellCoordinates, CallbackType&& callback) const {
+    // Iterate the 3x3x3 grid-cell stencil centered at the given cell.
     int binIndicesEncountered[3 * 3 * 3];
     int numBinsEncountered = 0;
     // Lossy prefilter for the exact duplicate-bin scan. A set bit means the bin may have been seen;
@@ -75,6 +81,20 @@ class SpatialHashTable {
         }
       }
     }
+  }
+
+  // Integer coordinates of the grid cell, a cube of edge @ref GetCellSize, that contains the given
+  // position.
+  MOCHI_FORCE_INLINE Int3 GetCellCoordinates(Real3 const& point) const {
+    return StaticCast<Int3>(Floor(point / _cellSize));
+  }
+
+  // Index of the hash bin that holds the points of the given cell. Different cells can share a bin.
+  MOCHI_FORCE_INLINE int GetBinIndex(Int3 const& cellCoordinates) const {
+    return GetBinIndex(
+        HashCellCoordinate(cellCoordinates[0], kHashX),
+        HashCellCoordinate(cellCoordinates[1], kHashY),
+        HashCellCoordinate(cellCoordinates[2], kHashZ));
   }
 
   // Current number of points contained in the table.
@@ -105,10 +125,6 @@ class SpatialHashTable {
  private:
   void AddPointToBin(int pointIndex, int binIndex);
 
-  MOCHI_FORCE_INLINE Int3 GetCellCoordinates(Real3 const& point) const {
-    return StaticCast<Int3>(Floor(point / _cellSize));
-  }
-
   MOCHI_FORCE_INLINE static unsigned int HashCellCoordinate(
       int cellCoordinate,
       unsigned int multiplier) {
@@ -118,13 +134,6 @@ class SpatialHashTable {
   MOCHI_FORCE_INLINE int GetBinIndex(unsigned int xHash, unsigned int yHash, unsigned int zHash)
       const {
     return static_cast<int>((xHash ^ yHash ^ zHash) & _binIndexMask);
-  }
-
-  MOCHI_FORCE_INLINE int GetBinIndex(Int3 const& cellCoordinates) const {
-    return GetBinIndex(
-        HashCellCoordinate(cellCoordinates[0], kHashX),
-        HashCellCoordinate(cellCoordinates[1], kHashY),
-        HashCellCoordinate(cellCoordinates[2], kHashZ));
   }
 
   MOCHI_FORCE_INLINE void ExpandOccupiedPointBounds(Real3 const& point) {

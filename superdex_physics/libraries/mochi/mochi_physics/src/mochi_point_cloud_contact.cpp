@@ -20,7 +20,10 @@
 #include <mochi_core/geometry/geometry_utils.h>
 #include <mochi_core/memory/filo_allocator.h>
 
+#include <array>
 #include <limits>
+#include <numeric>
+#include <optional>
 
 namespace mochi {
 
@@ -121,6 +124,22 @@ template void UpdateSpatialHashTable<TimeStep::StageStart>(
     CFinalDisplacementRef<TimeStep::StageStart> const&,
     CSpatialHashTable&);
 
+// Stable counting sort of `items` into `sortedItems`, of the same size, by `key(item)` in
+// [0, kNumKeys).
+template <int kNumKeys, typename T, typename KeyFunction>
+static void StableCountingSort(Span<T const> items, KeyFunction const& key, Span<T> sortedItems) {
+  // Entry k + 1 counts the items of key k, so the prefix sum makes entry k the first output slot of
+  // key k.
+  std::array<int, kNumKeys + 1> keyBegins{};
+  for (T const& item : items) {
+    ++keyBegins[key(item) + 1];
+  }
+  std::partial_sum(keyBegins.begin(), keyBegins.end(), keyBegins.begin());
+  for (T const& item : items) {
+    sortedItems[keyBegins[key(item)]++] = item;
+  }
+}
+
 template <bool kSelfContact, typename ColliderDiscretizationT>
 static void ComputePointCloudContactIndicesImpl(
     experimental::PointCloudColliderParams const& pointCloudColliderParams,
@@ -194,12 +213,18 @@ static void ComputePointCloudContactIndicesImpl(
 
   // Each range writes to a distinct output buffer. All shared inputs are read-only.
   ParallelForN("PointCloudCollisionDetection", numRanges, 1, [&](int rangeIndex) {
-    // Filled here and moved out once: resizing an entry of contactPairsPerRange in place would
-    // write cache lines shared with the neighboring ranges' entries.
-    DynamicArray<ContactPair> contactPairs;
-    DynamicArray<int> candidates;
     int const begin = rangeIndex * kCollidingPointsPerRange;
     int const end = Min(begin + kCollidingPointsPerRange, numCollidingPoints);
+
+    // Query points: the range's colliding points inside the query bounds, with their position and
+    // hash cell in the collider frame.
+    struct QueryPoint {
+      Real3 position;
+      Int3 cell;
+      int collidingPointIndex;
+    };
+    std::array<QueryPoint, kCollidingPointsPerRange> queryPoints MOCHI_NO_INIT;
+    int numQueryPoints = 0;
     for (int collidingPointIndex = begin; collidingPointIndex < end; ++collidingPointIndex) {
       Vec4r const collidingPointPositionCollidingFrame =
           Load<kSpaceDim3, Vec4r>(&(collidingPointPositions[collidingPointIndex][0]));
@@ -213,8 +238,30 @@ static void ComputePointCloudContactIndicesImpl(
       if (!ContainsPoint(queryBounds, collidingPointPositionColliderFrame)) {
         continue;
       }
-      Real3 const collidingPointPositionColliderFrame3 =
-          ToReal3(collidingPointPositionColliderFrame);
+      Real3 const position = ToReal3(collidingPointPositionColliderFrame);
+      queryPoints[numQueryPoints++] = {
+          position, colliderHashTable.GetCellCoordinates(position), collidingPointIndex};
+    }
+
+    // A point's candidates are the collider points in the bins of the 3x3x3 cells around its cell,
+    // so the points of one cell share them. Grouping the points by cell lets each cell gather its
+    // candidates once. The sort key is the cell's bin index modulo kCollidingPointsPerRange (a
+    // power of two, so a mask); cells with the same key may interleave and gather again.
+    static_assert(IsPowerOfTwo(kCollidingPointsPerRange));
+    std::array<QueryPoint, kCollidingPointsPerRange> groupedQueryPoints MOCHI_NO_INIT;
+    StableCountingSort<kCollidingPointsPerRange>(
+        Span<QueryPoint const>(queryPoints.data(), numQueryPoints),
+        [&](QueryPoint const& queryPoint) {
+          return colliderHashTable.GetBinIndex(queryPoint.cell) & (kCollidingPointsPerRange - 1);
+        },
+        Span<QueryPoint>(groupedQueryPoints.data(), numQueryPoints));
+
+    DynamicArray<ContactPair> groupedContactPairs;
+    DynamicArray<int> candidates;
+    std::optional<Int3> candidatesCell;
+    for (int queryIndex = 0; queryIndex < numQueryPoints; ++queryIndex) {
+      QueryPoint const& queryPoint = groupedQueryPoints[queryIndex];
+      int const collidingPointIndex = queryPoint.collidingPointIndex;
 
       Real3 collidingPointReferencePositionColliderFrame MOCHI_NO_INIT;
       if constexpr (kSelfContact) {
@@ -230,16 +277,19 @@ static void ComputePointCloudContactIndicesImpl(
         });
       }
 
-      candidates.clear();
-      colliderHashTable.IteratePointsNearPosition(
-          collidingPointPositionColliderFrame3,
-          [&](int colliderPointIndex) { candidates.push_back(colliderPointIndex); });
+      if (candidatesCell != queryPoint.cell) {
+        candidates.clear();
+        colliderHashTable.IteratePointsNearCell(queryPoint.cell, [&](int colliderPointIndex) {
+          candidates.push_back(colliderPointIndex);
+        });
+        candidatesCell = queryPoint.cell;
+      }
 
       // About half of the candidates pass each test, so branching on the tests would often
       // mispredict. Instead, every candidate is written to the next slot, and the count advances
       // only if both tests pass (`&`, not `&&`, so that there is no branch).
-      int numContactPairs = isize(contactPairs);
-      contactPairs.resize_noinit(numContactPairs + isize(candidates));
+      int numContactPairs = isize(groupedContactPairs);
+      groupedContactPairs.resize_noinit(numContactPairs + isize(candidates));
       for (int const colliderPointIndex : candidates) {
         bool isOutsideExclusion = true;
         if constexpr (kSelfContact) {
@@ -247,18 +297,25 @@ static void ComputePointCloudContactIndicesImpl(
               collidingPointReferencePositionColliderFrame;
           isOutsideExclusion = NormSqr(referenceDisplacement) >= selfContactExclusionRangeSquared;
         }
-        Real3 const displacement =
-            collidingPointPositionColliderFrame3 - colliderPointPositions[colliderPointIndex];
+        Real3 const displacement = queryPoint.position - colliderPointPositions[colliderPointIndex];
         bool const isInContactRange = NormSqr(displacement) < contactRangeSquared;
         // Assign per field: with a braced pair, MSVC goes through a slow stack temporary.
-        ContactPair& contactPair = contactPairs[numContactPairs];
+        ContactPair& contactPair = groupedContactPairs[numContactPairs];
         contactPair.collidingPointIndex = collidingPointIndex;
         contactPair.colliderPointIndex = colliderPointIndex;
         numContactPairs += static_cast<int>(isOutsideExclusion & isInContactRange);
       }
-      contactPairs.resize_noinit(numContactPairs);
+      groupedContactPairs.resize_noinit(numContactPairs);
     }
-    contactPairsPerRange[rangeIndex] = std::move(contactPairs);
+
+    // Sort the pairs back into colliding-point order. Each point's pairs were appended together, in
+    // candidate order, which the stable sort keeps: the order of querying the points one by one.
+    DynamicArray<ContactPair>& orderedContactPairs = contactPairsPerRange[rangeIndex];
+    orderedContactPairs.resize_noinit(isize(groupedContactPairs));
+    StableCountingSort<kCollidingPointsPerRange>(
+        MakeConstSpan(groupedContactPairs),
+        [&](ContactPair const& contactPair) { return contactPair.collidingPointIndex - begin; },
+        MakeSpan(orderedContactPairs));
   });
 
   int totalContacts = 0;
