@@ -200,17 +200,17 @@ TEST_F(ActorPreconditionerTest, ChangesCachedPreconditionerAndPreservesStateOnRe
   auto* actor = CreateSoft();
   auto& reg = GetRegistry();
   auto const actorEntity = GetEntity(actor);
-  SetActorPreconditionerType(actor, PreconditionerType::Jacobi, test::ExpectOK{});
+  SetActorPreconditionerType(actor, PreconditionerType::AMG, test::ExpectOK{});
   _scene->Step(0.01_r);
 
   auto& actorSnle = reg.get<CActorSnle>(actorEntity);
   ASSERT_NE(nullptr, actorSnle.fullPreconditioner);
-  EXPECT_EQ(PreconditionerType::Jacobi, actorSnle.fullPreconditioner->GetType());
+  EXPECT_EQ(PreconditionerType::AMG, actorSnle.fullPreconditioner->GetType());
   auto const island = reg.get<CIslandMemberInfo const>(actorEntity).island;
   auto* const islandPreconditioner = reg.get<CIslandPreconditioner>(island).get();
   auto* const actorPreconditioner = actorSnle.fullPreconditioner.get();
 
-  SetActorPreconditionerType(actor, PreconditionerType::Jacobi, test::ExpectOK{});
+  SetActorPreconditionerType(actor, PreconditionerType::AMG, test::ExpectOK{});
   SetActorPreconditionerType(actor, PreconditionerType::ColoredSSOR, test::ExpectNotOK{});
   EXPECT_EQ(islandPreconditioner, reg.get<CIslandPreconditioner>(island).get());
   EXPECT_EQ(actorPreconditioner, actorSnle.fullPreconditioner.get());

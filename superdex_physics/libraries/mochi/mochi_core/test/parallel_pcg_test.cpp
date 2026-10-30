@@ -529,9 +529,11 @@ TEST_F(ParallelPcgTest, SolvesWithMixedModePerActorPreconditioner) {
   constexpr int kBlockSize = 3;
   // Wider than any of the three equal worker ranges, so the single-worker actor writes rows that
   // other workers own.
-  constexpr int kSingleWorkerActorSize = 180;
+  constexpr int kSingleWorkerActorSize = 720;
+  // Costly enough that the planner gives the synchronized actor more than one worker.
+  constexpr int kSynchronizedActorSize = 1200;
   constexpr int kActorSize = 120;
-  constexpr int kNumRows = kSingleWorkerActorSize + 2 * kActorSize;
+  constexpr int kNumRows = kSingleWorkerActorSize + kSynchronizedActorSize + kActorSize;
 
   Matrix<real> A = Matrix<real>::Zero(kNumRows, kNumRows);
   auto makeActorMatrix = [&A](int offset, int size) {
@@ -552,16 +554,24 @@ TEST_F(ParallelPcgTest, SolvesWithMixedModePerActorPreconditioner) {
   };
   // Last, so no worker boundary splits the independent-row actor off its row blocks.
   constexpr int kSynchronizedOffset = kSingleWorkerActorSize;
-  constexpr int kIndependentOffset = kSingleWorkerActorSize + kActorSize;
+  constexpr int kIndependentOffset = kSingleWorkerActorSize + kSynchronizedActorSize;
   auto const singleWorkerMatrix = makeActorMatrix(0, kSingleWorkerActorSize);
   auto const independentMatrix = makeActorMatrix(kIndependentOffset, kActorSize);
-  auto const synchronizedMatrix = makeActorMatrix(kSynchronizedOffset, kActorSize);
+  auto const synchronizedMatrix = makeActorMatrix(kSynchronizedOffset, kSynchronizedActorSize);
   ILU0ActorPrec<real, kBlockSize> singleWorkerPrec{
       {0, AnyMatrixView<real const>{AsConstView(singleWorkerMatrix)}, {}}};
   BlockJacobiActorPrec<real, kBlockSize> independentPrec{
       {kIndependentOffset, AnyMatrixView<real const>{AsConstView(independentMatrix)}, {}}};
-  AMGActorPrec<real, kBlockSize> synchronizedPrec{
-      {kSynchronizedOffset, AnyMatrixView<real const>{AsConstView(synchronizedMatrix)}, {}}};
+  // Random node positions: collinear ones would decouple the AMG's rotations.
+  ColumnVector<real> reference(kSynchronizedActorSize);
+  reference.SetRandom(25);
+  auto const displacement = ColumnVector<real>::Zero(kSynchronizedActorSize);
+  RigidBodyModesAMGActorPrec<real> synchronizedPrec{
+      {.offset = kSynchronizedOffset,
+       .actorMatrix = AnyMatrixView<real const>{AsConstView(synchronizedMatrix)},
+       .interactionMatrices = {},
+       .nodePositions = {
+           .reference = reference.GetConstSpan(), .displacement = displacement.GetConstSpan()}}};
   ASSERT_EQ(
       ActorPreconditionerParallelMode::SingleWorker,
       singleWorkerPrec.GetConcurrentSolveRequirements().mode);
@@ -574,7 +584,7 @@ TEST_F(ParallelPcgTest, SolvesWithMixedModePerActorPreconditioner) {
   ASSERT_EQ(3, krylov::parallel_pcg::GetNumParallelWorkers(A));
   PerActorPrec<real> prec({
       {0, kSingleWorkerActorSize, singleWorkerPrec},
-      {kSynchronizedOffset, kActorSize, synchronizedPrec},
+      {kSynchronizedOffset, kSynchronizedActorSize, synchronizedPrec},
       {kIndependentOffset, kActorSize, independentPrec},
   });
 

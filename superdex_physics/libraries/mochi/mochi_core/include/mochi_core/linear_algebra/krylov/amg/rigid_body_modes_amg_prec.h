@@ -1149,6 +1149,8 @@ void RigidBodyModesAMGPrec<Scalar>::UpdateNumerics() {
   }
 
   if (details::InvertIfPositiveDefinite(ToMatrix(_levels.back().A), _coarsestInverse)) {
+    // TODO: Explore regularizing the coarsest inverse when the accepted matrix still has
+    // eigenvalues below its rounding floor. See D128281511.
     _numAcceptedCoarseLevels = numLevels;
   }
 }

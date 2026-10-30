@@ -434,7 +434,8 @@ TYPED_TEST(
   EXPECT_SPAN_EQ(Px.GetConstSpan(), constructedPx.GetConstSpan());
 }
 
-TEST(ActorPreconditionerTest, RigidBodyModesAMGForwardsNodePositions) {
+// The per-actor AMG is krylov::RigidBodyModesAMGPrec on the actor's node positions.
+TEST(ActorPreconditionerTest, AMGUsesNodePositions) {
   auto const A = MakeBlockSparseMatrix<real, 3>(3, 4, 5);
   int const n = A.Rows();
   ColumnVector<real> reference(n), displacement(n), x(n), Px(n), Nx(n);
@@ -443,15 +444,15 @@ TEST(ActorPreconditionerTest, RigidBodyModesAMGForwardsNodePositions) {
   displacement.SetRandom(2);
   x.SetRandom(123);
   ActorPseudoMatrix<real> const actorPM{
-      0,
-      AsConstView(A),
-      {},
-      {.reference = reference.GetConstSpan(), .displacement = displacement.GetConstSpan()}};
-  krylov::RigidBodyModesAMGPrec<real> const P(
-      A, reference.GetConstSpan(), displacement.GetConstSpan());
-  RigidBodyModesAMGActorPrec<real> const N(actorPM);
-  EXPECT_EQ(PreconditionerType::AMG, N.GetType());
-  P.Solve(x, Px);
-  N.Solve(x, Nx);
+      .offset = 0,
+      .actorMatrix = AsConstView(A),
+      .interactionMatrices = {},
+      .nodePositions = {
+          .reference = reference.GetConstSpan(), .displacement = displacement.GetConstSpan()}};
+  krylov::RigidBodyModesAMGPrec<real>(A, reference.GetConstSpan(), displacement.GetConstSpan())
+      .Solve(x, Px);
+  auto const N = CreateActorPreconditioner(PreconditionerType::AMG, actorPM);
+  EXPECT_EQ(PreconditionerType::AMG, N->GetType());
+  N->Solve(x, Nx);
   EXPECT_TRUE(NearEqualMatrices(Px, Nx));
 }
