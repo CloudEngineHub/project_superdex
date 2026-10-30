@@ -201,45 +201,63 @@ void mochi::PreStepEcs(entt::registry& reg) {
       [&](auto const& system) { ecs::InvokeForEachGlobal(system, reg); });
 
   // Update conservative step bounds for all dynamic actors. This also updates velocity-based bounds
-  // for finite time steps.
+  // for finite time steps. Must come before current velocities are cleared.
   UpdateConservativeStepBounds(reg);
 
-  // RomFomSwitchingPipeline emplaces and removes several components/tags. It must be invoked BEFORE
-  // any other systems that rely on such components/tags.
-  reg.view<CRomFomSwitchingParams>().each(
-      [&](entt::entity e, CRomFomSwitchingParams const& params) {
-        rom::RomFomSwitchingPipeline(reg, e, params);
-      });
+  // A solve-free assembly (@ref TagAssemblyPreserveHistory) reproduces the current conditions
+  // instead of starting a new step.
+  bool const advanceStep = !reg.try_ctx<TagAssemblyPreserveHistory>();
 
-  // Initialize previous state (position and velocity)
-  {
-    MOCHI_PROFILE_SCOPE_N("Shift State");
-    ecs::InvokeForEachGlobal(&soft::EntityIncrementStep, reg);
-    ecs::InvokeForEachGlobal(&rigid::EntityIncrementStep, reg);
-    ecs::InvokeForEachGlobal(&shell::EntityIncrementStep, reg);
-    ecs::InvokeForEachGlobal(&rod::EntityIncrementStep, reg);
-    articulated::compound::PreStepPipeline(reg);
-    rom::PreStepPipeline(reg);
-    ecs::InvokeForEachGlobal(&skinned::EntityIncrementStep, reg);
+  // Set CRootTransform.worldFromLocalPrev equal to the current state. Must come before previous
+  // state reconstruction, so worldFromLocalPrev is overwritten for rigid actors. Standalone static
+  // actors instead set the start and end poses of the step from their prescribed motion.
+  ecs::InvokeForEachGlobal(
+      +[](ecs::Excluded<CStaticPrescribedMotion>, CRootTransform& root) {
+        root.worldFromLocalPrev = root.worldFromLocal;
+      },
+      reg);
+  ecs::InvokeForEachGlobal(&rigid::ApplyStaticStepStart, reg);
 
-    // Set CRootTransform.worldFromLocalPrev equal to the current state. Standalone static actors
-    // instead set the start and end poses of the step from their prescribed motion.
-    ecs::InvokeForEachGlobal(
-        +[](ecs::Excluded<CStaticPrescribedMotion>, CRootTransform& root) {
-          root.worldFromLocalPrev = root.worldFromLocal;
-        },
-        reg);
-    ecs::InvokeForEachGlobal(&rigid::ApplyStaticStepStart, reg);
+  // Update of previous state and trajectory-dependent derived state.
+  if (advanceStep) {
+    // RomFomSwitchingPipeline emplaces and removes several components/tags. Must run before the
+    // state-shift systems below, whose dispatch depends on TagRomActor.
+    reg.view<CRomFomSwitchingParams>().each(
+        [&](entt::entity e, CRomFomSwitchingParams const& params) {
+          rom::RomFomSwitchingPipeline(reg, e, params);
+        });
+
+    // Initialize previous state (position and velocity)
+    {
+      MOCHI_PROFILE_SCOPE_N("Shift State");
+      ecs::InvokeForEachGlobal(&soft::EntityIncrementStep, reg);
+      ecs::InvokeForEachGlobal(&rigid::EntityIncrementStep, reg);
+      ecs::InvokeForEachGlobal(&shell::EntityIncrementStep, reg);
+      ecs::InvokeForEachGlobal(&rod::EntityIncrementStep, reg);
+      articulated::compound::PreStepPipeline(reg);
+      rom::PreStepPipeline(reg);
+      ecs::InvokeForEachGlobal(&skinned::EntityIncrementStep, reg);
+    }
+  } else {
+    // Reconstruct previous state (position and velocity)
+    ecs::InvokeForEachGlobal(&soft::EntityReconstructPreviousStep, reg);
+    ecs::InvokeForEachGlobal(&rigid::EntityReconstructPreviousStep, reg);
+    ecs::InvokeForEachGlobal(&shell::EntityReconstructPreviousStep, reg);
+    ecs::InvokeForEachGlobal(&rod::EntityReconstructPreviousStep, reg);
+    articulated::compound::ReconstructPreviousStepPipeline(reg);
+    ecs::InvokeForEachGlobal(&skinned::EntityReconstructPreviousStep, reg);
   }
 
   // Wake islands swept by moving static actors. Must come BEFORE island::PreStep, which applies
-  // wake requests.
-  reg.view<CStaticPrescribedMotion const, CRootTransform const>().each(
-      [&](entt::entity e, auto const&, CRootTransform const& root) {
-        if (root.worldFromLocalPrev != root.worldFromLocal) {
-          sleep::WakeUp(reg, e);
-        }
-      });
+  // wake requests. A solve-free assembly does not change the sleep state.
+  if (advanceStep) {
+    reg.view<CStaticPrescribedMotion const, CRootTransform const>().each(
+        [&](entt::entity e, auto const&, CRootTransform const& root) {
+          if (root.worldFromLocalPrev != root.worldFromLocal) {
+            sleep::WakeUp(reg, e);
+          }
+        });
+  }
 
   // Wait for any pending colliders to finish initialization
   ecs::InvokeForEachGlobal(&WaitForPendingSdfCollider, reg);
@@ -270,7 +288,7 @@ void mochi::PreStepEcs(entt::registry& reg) {
   // Update all islands, merging or splitting them as necessary.
   // Must come AFTER CPotentialColliders has been updated (see above).
   // May add TagDofsOffsetChanged to actors.
-  island::PreStep(reg);
+  island::PreStep(reg, /*updateSleepState*/ advanceStep);
 
   // Handle TagGlobalDofsChanged
   ecs::InvokeForEachGlobal<ecs::policy::AllowFullRegistryAccess>(
@@ -283,13 +301,20 @@ void mochi::PreStepEcs(entt::registry& reg) {
 void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& descendants) {
   TaskSemaphore sem;
 
+  // A solve-free assembly (@ref TagAssemblyPreserveHistory) runs on state that is restored
+  // afterwards, so it must not recenter: queries computed in a recentered frame would not match the
+  // restored root transform.
+  bool const advanceStep = !reg.try_ctx<TagAssemblyPreserveHistory>();
+
   for (auto e : descendants.softActors) {
-    Schedule(sem, "PreStepDeformableActorAsync", [&reg, e]() {
+    Schedule(sem, "PreStepDeformableActorAsync", [&reg, e, advanceStep]() {
       // Recenter only in islands that are about to be solved, so that a deformable actor's root
       // transform stays fixed from here until the next step and all of its state, contact data,
       // and queries share one local frame. Must come BEFORE anything reads the root transform.
-      ecs::TryInvokeOnEntity(
-          &soft::RecenterSolutionUsingRigidTransformEval, reg, e); // Non-ROM only
+      if (advanceStep) {
+        ecs::TryInvokeOnEntity(
+            &soft::RecenterSolutionUsingRigidTransformEval, reg, e); // Non-ROM only
+      }
       PreStepDeformableActorAsync(reg, e);
     });
   }
@@ -323,8 +348,14 @@ void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& de
  * - Called by PostStepIslandAsync during simulation step. Also called by UpdateAllActorQueries.
  * - Can be called concurrently for different actors.
  * - May schedule additional work. Wait for the semaphore to ensure completion.
+ * - If @p includeAssemblyQueries is false, queries that require contact detection or force
+ *   assembly (see QueryRequiresAssembly) are left unchanged.
  */
-static void UpdateActorQueriesAsync(TaskSemaphore const& sem, entt::registry& reg, entt::entity e) {
+static void UpdateActorQueriesAsync(
+    TaskSemaphore const& sem,
+    entt::registry& reg,
+    entt::entity e,
+    bool includeAssemblyQueries) {
   bool isDeformable = reg.any_of<TagSoftActor, TagBlendedActor, TagShellActor, TagRodActor>(e);
   if (isDeformable) {
     // Update CBoundingVolume for actors that deform
@@ -402,11 +433,15 @@ static void UpdateActorQueriesAsync(TaskSemaphore const& sem, entt::registry& re
   ecs::TryScheduleInvokeOnEntity(
       sem, "UpdateQueryContactSamples", &UpdateQueryContactSamples, reg, e);
 
-  ecs::TryScheduleInvokeOnEntity(sem, "UpdateQuerySdfDistances", &UpdateQuerySdfDistances, reg, e);
-
   // For any actor with an SDF collider.
   // Write CQuerySdfSurface
   ecs::TryScheduleInvokeOnEntity(sem, "UpdateQuerySdfSurface", &UpdateQuerySdfSurface, reg, e);
+
+  if (!includeAssemblyQueries) {
+    return;
+  }
+
+  ecs::TryScheduleInvokeOnEntity(sem, "UpdateQuerySdfDistances", &UpdateQuerySdfDistances, reg, e);
 
   // All dynamic actors
   // Writes CQueryContactPoints and/or CQueryNodeContactForces. Needs
@@ -418,15 +453,15 @@ static void UpdateActorQueriesAsync(TaskSemaphore const& sem, entt::registry& re
       sem, "UpdateQueryActorContactForces", &UpdateQueryActorContactForces, reg, e);
 }
 
-void mochi::UpdateAllActorQueries(entt::registry& reg) {
+void mochi::UpdateAllActorQueries(entt::registry& reg, bool includeAssemblyQueries) {
   TaskSemaphore sem;
   reg.view<CActorInfo const, CIslandMemberInfo const>().each(
       [&](entt::entity e, auto const& /*actorInfo*/, auto const& islandMemberInfo) {
         // Queries are normally updated for actors in islands (not static actors).
         // Therefore, we will process those same actors here.
         if (islandMemberInfo.island != entt::null) {
-          Schedule(sem, "UpdateDynamicActorQueriesAsync", [&reg, sem, e]() {
-            UpdateActorQueriesAsync(sem, reg, e);
+          Schedule(sem, "UpdateDynamicActorQueriesAsync", [&reg, sem, e, includeAssemblyQueries]() {
+            UpdateActorQueriesAsync(sem, reg, e, includeAssemblyQueries);
           });
         }
       });
@@ -457,10 +492,10 @@ static void PostStepIslandAsync(entt::registry& reg, CIslandDescendants const& d
       // Query updates for these actor types may be quite expensive, so we schedule an async task
       // for each one.
       Schedule(sem, "PostStepDeformableActorAsync", [sem, &reg, e]() {
-        UpdateActorQueriesAsync(sem, reg, e);
+        UpdateActorQueriesAsync(sem, reg, e, /*includeAssemblyQueries*/ true);
       });
     } else {
-      UpdateActorQueriesAsync(sem, reg, e);
+      UpdateActorQueriesAsync(sem, reg, e, /*includeAssemblyQueries*/ true);
     }
   }
 

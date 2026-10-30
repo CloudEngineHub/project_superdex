@@ -615,6 +615,7 @@ void EntityPostNewIncrement(
 void EntityPreFirstStage(
     ecs::Included<TagSoftActor>,
     ecs::Excluded<TagRomActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
     CVelocitySlice<real, TimeStep::Previous> const& prevVel,

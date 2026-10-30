@@ -124,6 +124,7 @@ void mochi::soft::EntityReconstructPreviousStep(
 void mochi::soft::EntityPreFirstStage(
     ecs::Included<TagSoftActor>,
     ecs::Excluded<TagRomActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
     CVelocitySlice<real, TimeStep::Previous> const& prevVel,
@@ -131,8 +132,10 @@ void mochi::soft::EntityPreFirstStage(
     CIntegrationVelocitySlices<DisplacementLayer::Default>& intVels) {
   // Displacement and velocity are differential variables. Compute their values at the beginning
   // of the step using integration utilities.
-  integration::ApplyTimeIntegrationStepStart(intState, intDispls, prevDispl, intDispls.stepStart);
-  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intDispls, prevDispl, intDispls.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intVels, prevVel, intVels.stepStart);
 }
 
 void mochi::soft::EntityPreStage(

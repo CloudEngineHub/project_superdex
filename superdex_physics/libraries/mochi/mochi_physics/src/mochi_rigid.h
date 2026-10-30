@@ -175,9 +175,12 @@ void SetStaticVelocity(
     CStaticPrescribedMotion& outMotion);
 
 // Set the start and end poses of the step for a standalone static actor from its prescribed motion,
-// and clear the prescription. A prescribed velocity is ignored in quasistatic steps.
+// and clear the prescription. A prescribed velocity is ignored in quasistatic steps. Without a new
+// pose, a new step stays at the end pose of the last step, while a solve-free assembly
+// (@p preserveHistory) keeps the current motion.
 void ApplyStaticStepStart(
     ecs::CtxGlobal<CSceneTime const> time,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CRootTransform& outRootTransform,
     CStaticPrescribedMotion& outMotion);
 
@@ -213,6 +216,7 @@ void EntityReconstructPreviousStep(
 void EntityPreFirstStage(
     ecs::Included<TagRigidActor>,
     ecs::Excluded<TagArticulatedLinkActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CRigidState<TimeStep::Previous> const& prevPose,
     CRigidVel<TimeStep::Previous> const& prevVel,

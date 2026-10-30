@@ -65,6 +65,7 @@ class SceneImpl final : public Scene {
   SolverParams GetSolverParams() const override;
   void SetSolverParams(SolverParams const& params, Error& error) override;
   void Step(double timeStepSec) override;
+  void UpdateQueries(Error& error) override;
   double GetLastTimeStep() const override;
   double GetTotalSimulationTime() const override;
   SolverStats GetSolverStats() const override;
@@ -226,10 +227,13 @@ class SceneImpl final : public Scene {
       std::shared_ptr<PolylineShape const> shapePtr,
       Error& error);
   Span<uint8_t const> FindState(StateHandle handle, Error& error) const;
+  // Restore a captured state. Since sleep state is not captured, @p wakeAllIslands requests waking
+  // all islands, unless the caller knows that the sleep state has not changed since the capture.
   void RestorePartialState(
       StateHandle handle,
       bool releaseImmediately,
       Span<SReflect::TypeId const> excludedAttributes,
+      bool wakeAllIslands,
       Error& error);
   [[nodiscard]] experimental::DebugStats GetDebugStats() const;
   [[nodiscard]] experimental::SleepParams GetSleepParams() const;

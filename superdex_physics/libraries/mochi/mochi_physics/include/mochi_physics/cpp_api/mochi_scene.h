@@ -62,6 +62,8 @@ class Scene {
 
   virtual void Step(double timeStepSec) = 0;
 
+  virtual void UpdateQueries(Error& error) = 0;
+
   [[nodiscard]] virtual double GetLastTimeStep() const = 0;
 
   [[nodiscard]] virtual double GetTotalSimulationTime() const = 0;

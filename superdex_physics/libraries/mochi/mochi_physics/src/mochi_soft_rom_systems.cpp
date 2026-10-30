@@ -1207,15 +1207,17 @@ void mochi::rom::PreStepPipeline(entt::registry& reg) {
 
 void mochi::rom::EntityPreFirstStage(
     ecs::RequiredTag<TagRomActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
     CVelocitySlice<real, TimeStep::Previous> const& prevFomVel,
     CIntegrationDisplacementSlices& intDispls,
     CIntegrationVelocitySlices<DisplacementLayer::Default>& intFomVels) {
   // Use integration utilities to compute displacement and velocity at TimeTarget::StepStart.
-  integration::ApplyTimeIntegrationStepStart(intState, intDispls, prevDispl, intDispls.stepStart);
   integration::ApplyTimeIntegrationStepStart(
-      intState, intFomVels, prevFomVel, intFomVels.stepStart);
+      !preserveHistory, intState, intDispls, prevDispl, intDispls.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intFomVels, prevFomVel, intFomVels.stepStart);
 }
 
 /**************************************************************************

@@ -229,15 +229,22 @@ void EntityReconstructPreviousStep(
 
 void EntityPreFirstStage(
     ecs::Included<TagRodActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CPolylineMesh const& mesh,
     CVelocitySlice<real, TimeStep::Previous> const& prevVel,
     CIntegrationVelocitySlices<DisplacementLayer::Default>& intVels,
     CRodPose<TimeStep::Previous> const& prevPose,
     CIntegrationRodPoses& intPoses) {
-  mochi::integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
   mochi::integration::ApplyTimeIntegrationStepStart(
-      MakeConstSpan(mesh.nodes), intState, intPoses, prevPose, intPoses.stepStart);
+      !preserveHistory, intState, intVels, prevVel, intVels.stepStart);
+  mochi::integration::ApplyTimeIntegrationStepStart(
+      MakeConstSpan(mesh.nodes),
+      !preserveHistory,
+      intState,
+      intPoses,
+      prevPose,
+      intPoses.stepStart);
 }
 
 void EntityPreStage(
@@ -1514,8 +1521,9 @@ void mochi::InitRodActor(
   EmplaceRodActorContact(reg, e, params, *shapePtr, segmentDisc, numCollidingSamples, error);
   MOCHI_ERROR_RETURN(error);
 
-  // Centerline contact rods.
-  if (!params.useContactSkin) {
+  if (params.useContactSkin) {
+    ecs::InvokeOnEntity(&rod::UpdateSurfaceContactBounds<TimeStep::Current>, reg, e);
+  } else {
     // Centerline contact assembly uses rod segments as the assembly elements. The contact-skin
     // path uses the skinned-contact subsystem instead.
     //

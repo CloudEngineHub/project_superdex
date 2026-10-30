@@ -363,14 +363,17 @@ void mochi::rigid::EntityReconstructPreviousStep(
 void mochi::rigid::EntityPreFirstStage(
     ecs::Included<TagRigidActor>,
     ecs::Excluded<TagArticulatedLinkActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CRigidState<TimeStep::Previous> const& prevPose,
     CRigidVel<TimeStep::Previous> const& prevVel,
     CIntegrationRigidStates& intPoses,
     CIntegrationRigidVels& intVels) {
   MOCHI_PROFILE_SCOPE();
-  integration::ApplyTimeIntegrationStepStart(intState, intPoses, prevPose, intPoses.stepStart);
-  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intPoses, prevPose, intPoses.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intVels, prevVel, intVels.stepStart);
 }
 
 void mochi::rigid::EntityPreStage(
@@ -1471,6 +1474,7 @@ void SetStaticVelocity(
 
 void ApplyStaticStepStart(
     ecs::CtxGlobal<CSceneTime const> time,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CRootTransform& outRootTransform,
     CStaticPrescribedMotion& outMotion) {
   auto const dt = static_cast<real>(time->DeltaTime());
@@ -1487,8 +1491,9 @@ void ApplyStaticStepStart(
           ToSimd(outMotion.linearVelocityWorld),
           ToSimd(outMotion.angularVelocityWorld));
     }
-  } else if (!outMotion.newPoseApplied) {
-    // Without a new pose, the actor stays at the end pose of the last step.
+  } else if (!preserveHistory && !outMotion.newPoseApplied) {
+    // Without a new pose, a new step stays at the end pose of the last step. A solve-free assembly
+    // keeps the current motion instead: the last step, or the newly applied pose.
     outRootTransform.worldFromLocalPrev = outRootTransform.worldFromLocal;
   }
   outMotion.newPoseApplied = false;

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "mochi_articulated_body.h"
+#include "mochi_common_components.h"
 #include "mochi_ecs.h"
 #include "mochi_rom_jacobian.h"
 #include "mochi_simulation.h"
@@ -144,6 +145,7 @@ void EntityReconstructPreviousStep(
  */
 void EntityPreFirstStage(
     ecs::RequiredTag<TagNestedSoftActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CVelocitySlice<real, TimeStep::Previous, DisplacementLayer::Skinned> const& prevVel,
     CIntegrationVelocitySlices<DisplacementLayer::Skinned>& intVels);

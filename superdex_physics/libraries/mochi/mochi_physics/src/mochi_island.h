@@ -174,9 +174,11 @@ void InitDifferentiableIsland(entt::registry& reg, entt::entity island);
   Island Simulation
 */
 
-// Call this at the beginning of a simulation step to update all islands.
+// Call this at the beginning of a simulation step to update all islands. When @p updateSleepState
+// is true, apply pending wake requests and put islands at rest to sleep. Otherwise (e.g.,
+// solve-free assembly), keep the sleep state, including pending wake requests, for the next step.
 // WARNING: Must come AFTER updating CConservativeStepBounds and CPotentialColliders for all actors.
-void PreStep(entt::registry& reg);
+void PreStep(entt::registry& reg, bool updateSleepState);
 
 // Return whether this island should be stepped in single-threaded mode.
 // WARNING: Must come AFTER island::PreStep, which updates CIslandDofInfo and CIslandDescendants.
@@ -200,6 +202,20 @@ void SetTestCallback_PreIslandUpdate(entt::registry& reg, std::function<void()> 
 
 // FOR UNIT TESTS ONLY: Set a function to call at the end of island::PreStep.
 void SetTestCallback_PostIslandUpdate(entt::registry& reg, std::function<void()> fn);
+
+// Callback receiving the residual of an island's last assembly in a step, or of its solve-free
+// assembly in a zero step. It may be called concurrently for different islands.
+using AssembledResidualCallback =
+    std::function<void(entt::entity island, ColumnVectorView<real const> residual)>;
+
+// FOR UNIT TESTS ONLY: Set a function to call with each island's assembled residual.
+void SetTestCallback_AssembledResidual(entt::registry& reg, AssembledResidualCallback fn);
+
+// Call the assembled-residual test callback, if set. No-op otherwise.
+void InvokeTestCallback_AssembledResidual(
+    entt::registry const& reg,
+    entt::entity island,
+    ColumnVectorView<real const> residual);
 
 void InitializeOnce(entt::registry& reg);
 

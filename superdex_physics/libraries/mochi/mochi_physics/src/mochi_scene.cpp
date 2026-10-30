@@ -48,6 +48,7 @@
 #include "mochi_soft_rom_components.h"
 #include "mochi_soft_rom_init.h"
 #include "mochi_soft_skinned.h"
+#include "mochi_solve.h"
 #include "mochi_step.h"
 
 #include <mochi_core/geometry/geometry_utils.h>
@@ -630,8 +631,11 @@ void SceneImpl::Step(double timeStepSec) {
     return;
   }
 
+  // A zero step does not advance the simulation, so it does not count as a step.
   auto& stepCounter = _registry.ctx<CSceneStepCounter>().value;
-  stepCounter++;
+  if (timeStepSec > 0.0) {
+    ++stepCounter;
+  }
 
   // Enforce scheduler binding to this thread, for parallel work.
   ScopedSchedulerBinding schedulerBinding(this);
@@ -698,12 +702,13 @@ void SceneImpl::Step(double timeStepSec) {
 
     ComputeAggregateSolverSceneStats(_registry, _lastSolverStats, _lastDebugStats);
   } else {
-    // If the user steps the scene with zero time-step, then the simulation does not advance,
-    // but we still update the queries. This gives the user a way to force queries to refresh.
-    // For example: They might do this before the first real simulation step to gather data for
-    // rendering, or they might do it after calling Scene::RestoreState to update rendering while
-    // the scene is paused.
-    UpdateAllActorQueries(_registry);
+    // Zero time-step: the simulation does not advance. Pre-step callbacks have already run, so
+    // their changes are part of the evaluated conditions.
+    Error error;
+    UpdateQueries(error);
+    if (!error.IsOK()) {
+      MOCHI_LOG_WARNING_ONCE("Step(0.0): %s", error.ToString().c_str());
+    }
 
     // Clear the stats
     _lastSolverStats.maxNonLinearIters = 0;
@@ -755,6 +760,108 @@ void SceneImpl::Step(double timeStepSec) {
 #endif // MOCHI_DEBUG
 
   MOCHI_PROFILE_END_FRAME();
+}
+
+void SceneImpl::UpdateQueries(Error& error) {
+  MOCHI_PROFILE_SCOPE();
+  MOCHI_ERROR_RETURN(error);
+
+  // Enforce scheduler binding to this thread, for parallel work.
+  ScopedSchedulerBinding schedulerBinding(this);
+
+  // Without queries that require assembly, refresh queries from the current state.
+  if (_registry.view<TagQueryRequiresAssembly const>().empty()) {
+    UpdateAllActorQueries(_registry, /*includeAssemblyQueries*/ false);
+    return;
+  }
+
+  // The begin-of-step state is reconstructed from history if history exists and the integration
+  // method allows, otherwise it is extrapolated with a constant-velocity assumption. The assembly
+  // runs on a captured state, restored after the queries are refreshed. If the state can't be
+  // captured (e.g., with ROM actors), only queries that don't require assembly are refreshed.
+  Error captureError;
+  StateHandle const state = CaptureState(captureError);
+  if (!captureError.IsOK()) {
+    UpdateAllActorQueries(_registry, /*includeAssemblyQueries*/ false);
+    MOCHI_ERROR_SET(
+        error,
+        "Queries that require force evaluation were not refreshed, because the scene does not "
+        "support state capture.");
+    return;
+  }
+  MOCHI_DEFER(RestorePartialState(
+      state, /*releaseImmediately*/ true, {}, /*wakeAllIslands*/ false, ErrorAssert{}));
+
+  auto const intMethod = _registry.ctx<CSimulationParams const>().integrationMethod;
+  bool const isReproducible = IsReproducibleFromHistory(intMethod);
+
+  // This is a solve-free assembly that must reproduce an already-taken step's forces, so ask
+  // the per-actor begin-of-step integration to preserve (not advance) the previous-step history
+  // (see @ref ApplyTimeIntegrationStepStart).
+  _registry.set<TagAssemblyPreserveHistory>();
+  MOCHI_DEFER(_registry.unset<TagAssemblyPreserveHistory>());
+
+  // Reconstruct and assemble with the time steps of the reproduced step when usable. A
+  // quasistatic (infinite) last step is usable only if the previous state is copied from
+  // history. Otherwise, both time steps fall back to the default 10 ms. The previous time step
+  // is kept, finite or not, except before the first step, where it is zero.
+  auto& sceneTime = _registry.ctx<CSceneTime>();
+  double const start = sceneTime.StepStartTime();
+  double const dtPrev = sceneTime.DeltaTimePrev();
+  double const dt = sceneTime.DeltaTime();
+  bool const lastStepWasDynamic = IsFinite(dt) && dt > 0.0;
+  bool const lastStepWasQuasistatic = !IsFinite(dt);
+  if (lastStepWasDynamic) {
+    // PreStepEcs requires a positive previous step size, which is zero before the first step.
+    if (!(dtPrev > 0.0)) {
+      sceneTime.Reset(start, dt, dt);
+    }
+  } else if (!(lastStepWasQuasistatic && isReproducible)) {
+    sceneTime.Reset(start, CSceneTime::kDefaultTimeStep, CSceneTime::kDefaultTimeStep);
+  }
+
+  // ECS compute step-start quantities and prepare actors. Internally, it gates decisions based
+  // on TagAssemblyPreserveHistory.
+  PreStepEcs(_registry);
+
+  // Assemble each island solve-free, including sleeping islands, which are evaluated without
+  // waking them. Islands whose last step diverged are skipped: the divergence reset their actors to
+  // a safe state that is not the output of a solve, so there are no forces to evaluate, and their
+  // queries keep the values of the diverged step. AssembleIsland supports only a single stage, so
+  // temporarily switch non-reproducible integrators to Backward Euler for the assembly.
+  MOCHI_DEFER(_registry.ctx<CSimulationParams>().integrationMethod = intMethod);
+  if (!isReproducible) {
+    _registry.ctx<CSimulationParams>().integrationMethod = IntegrationMethod::BackwardEuler;
+  }
+  ecs::ParallelInvokeForEachGlobal<ecs::policy::AllowFullRegistryAccess>(
+      "AssembleIsland",
+      +[](entt::registry& reg,
+          entt::entity island,
+          CIslandDescendants const& descendants,
+          CIslandDofInfo const& dofInfo) {
+        bool const diverged = std::ranges::any_of(descendants.actors, [&reg](entt::entity e) {
+          auto const* convergence = reg.try_get<CConvergenceStatus const>(e);
+          return convergence && convergence->stepStatus == ConvergenceStatus::Diverged;
+        });
+        if (diverged) {
+          return;
+        }
+        // Keep nested island parallelism under TSAN so CI exercises synchronization paths.
+        bool const useLocalSingleThreadedMode =
+            !MOCHI_COMPILER_TSAN && island::ShouldRunSingleThreaded(reg, island, descendants);
+        if (useLocalSingleThreadedMode) {
+          TaskScheduler::PushLocalSingleThreadedMode();
+        }
+        MOCHI_DEFER(
+            if (useLocalSingleThreadedMode) { TaskScheduler::PopLocalSingleThreadedMode(); });
+        PreStepIslandAsync(reg, descendants);
+        ColumnVector<real> res(dofInfo.dofsSize);
+        solver::AssembleIsland(reg, island, descendants, res, {});
+        island::InvokeTestCallback_AssembledResidual(reg, island, AsConstView(res));
+      },
+      _registry);
+
+  UpdateAllActorQueries(_registry, /*includeAssemblyQueries*/ true);
 }
 
 double SceneImpl::GetLastTimeStep() const {
@@ -828,7 +935,7 @@ Span<uint8_t const> SceneImpl::FindState(StateHandle handle, Error& error) const
 void SceneImpl::RestoreState(StateHandle handle, bool releaseImmediately, Error& error) {
   ScopedSchedulerBinding schedulerBinding(this);
 
-  RestorePartialState(handle, releaseImmediately, {}, error);
+  RestorePartialState(handle, releaseImmediately, {}, /*wakeAllIslands*/ true, error);
 }
 
 void SceneImpl::CaptureStateToBytes(DynamicArray<uint8_t>& outData, Error& error) {
@@ -856,6 +963,7 @@ void SceneImpl::RestorePartialState(
     StateHandle handle,
     bool releaseImmediately,
     Span<SReflect::TypeId const> excludedAttributes,
+    bool wakeAllIslands,
     Error& error) {
   MOCHI_PROFILE_SCOPE();
 
@@ -873,7 +981,9 @@ void SceneImpl::RestorePartialState(
 
   // TODO[T229060237] - Restore CIslandSleepState::numConsecutiveRestSteps and TagIslandIsAwake,
   // so that forward simulation repeats the same deterministic results.
-  sleep::WakeAll(_registry);
+  if (wakeAllIslands) {
+    sleep::WakeAll(_registry);
+  }
 }
 
 void SceneImpl::ReleaseState(StateHandle handle) {
@@ -1202,7 +1312,8 @@ void SceneImpl::RestoreStatePair(StateHandle curr, StateHandle prev, Error& err)
 
   // Set the previous state, excluding adjoints.
   SReflect::TypeId excludeAdjoints[] = {attribute::HasAdjoint::GetTypeId()};
-  RestorePartialState(prev, /*releaseImmediately*/ false, excludeAdjoints, err);
+  RestorePartialState(
+      prev, /*releaseImmediately*/ false, excludeAdjoints, /*wakeAllIslands*/ true, err);
   MOCHI_ERROR_RETURN(err);
 
   // Advance time and pre-step ECS, to set TimeStep::Previous components
@@ -1211,7 +1322,8 @@ void SceneImpl::RestoreStatePair(StateHandle curr, StateHandle prev, Error& err)
   PreStepEcs(_registry);
 
   // Set the current state (including start and end targets), excluding adjoints.
-  RestorePartialState(curr, /*releaseImmediately*/ false, excludeAdjoints, err);
+  RestorePartialState(
+      curr, /*releaseImmediately*/ false, excludeAdjoints, /*wakeAllIslands*/ true, err);
 }
 
 bool SceneImpl::IsActorContactEnabled(ActorHandle colliding, ActorHandle collider, Error& error)
@@ -1440,7 +1552,8 @@ void SceneImpl::BackPropagate(Error& error) {
 
   // 2. Restore state q_{k-1} (to get the correct Jacobian for projection), but not adjoints.
   SReflect::TypeId excludeAdjoints[] = {attribute::HasAdjoint::GetTypeId()};
-  RestorePartialState(stateOld, /*releaseImmediately*/ false, excludeAdjoints, error);
+  RestorePartialState(
+      stateOld, /*releaseImmediately*/ false, excludeAdjoints, /*wakeAllIslands*/ true, error);
   MOCHI_ERROR_RETURN(error);
 
   // 3. Project and add λq_{k-1} += λΔx_k * ∂x_{k-1}/∂q_{k-1}

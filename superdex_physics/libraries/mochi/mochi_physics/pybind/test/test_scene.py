@@ -727,6 +727,39 @@ class TestScene(MochiTestBase):
 
         mochi.destroy_scene(scene)
 
+    def test_scene_update_queries(self):
+        scene = mochi.create_scene("My Scene")
+        scene.set_gravity([0, 0, 0])
+        soft = self._create_soft_box_actor(scene)
+        rigid = self._create_rigid_box_actor(scene)
+        rigid_transform = mochi.TransformRT()
+        rigid_transform.translation = [10.0, 0.0, 0.0]
+        rigid.set_root_transform(rigid_transform)
+        self.assertTrue(rigid.is_query_supported(mochi.QueryType.TOTAL_CONTACT_FORCE))
+        soft.register_query(mochi.QueryType.NODE_POSITIONS)
+        rigid.register_query(mochi.QueryType.TOTAL_CONTACT_FORCE)
+        history = []
+        scene.register_pre_step_callback("Pre", lambda info: history.append("pre"))
+        scene.register_post_step_callback("Post", lambda info: history.append("post"))
+
+        # Queries are refreshed from the current state, and the contact query, never computed
+        # before, is computed too.
+        displacements = [0.001 * i for i in range(len(small_cube_tet_mesh_coordinates))]
+        soft.set_displacements(displacements)
+        with self.assertRaises(mochi.Error):
+            rigid.get_contact_force_world()
+        scene.update_queries()
+        positions = soft.get_node_positions_local()
+        for i, x in enumerate(small_cube_tet_mesh_coordinates):
+            self.assertAlmostEqual(x + displacements[i], positions[i], places=5)
+        rigid.get_contact_force_world()
+
+        # The call doesn't advance the simulation or invoke step callbacks.
+        self.assertEqual(0.0, scene.get_total_simulation_time())
+        self.assertEqual([], history)
+
+        mochi.destroy_scene(scene)
+
     def test_scene_capture_restore_state(self):
         scene = mochi.create_scene("My Scene")
         actor_a = self._create_rigid_box_actor(scene)

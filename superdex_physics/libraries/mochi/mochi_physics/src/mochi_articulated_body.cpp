@@ -1083,14 +1083,15 @@ void articulated::compound::ApplyControllerStepStart(
     entt::registry& reg,
     entt::entity e,
     ecs::CtxGlobal<CSceneTime const> time,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CControllerTarget<TimeStep::Current> const& target,
     CControllerTarget<TimeStep::Previous>& outTargetOld,
     CControllerPrescribedMotion& outMotion) {
   auto const dt = time->DeltaTime();
   if (outMotion.hasVelocity && IsFinite(static_cast<real>(dt))) {
     SetOldTargetsFromVelocity(reg, e, dt, target, outMotion.targetVelocity, outTargetOld);
-  } else if (!outMotion.newTargetApplied) {
-    // Without a new target, the targets stay at the end targets of the last step.
+  } else if (!preserveHistory && !outMotion.newTargetApplied) {
+    // Without a new target, a new step stays at the end targets of the last step.
     outTargetOld.CopyFrom(target);
   }
   outMotion.newTargetApplied = false;
@@ -3026,6 +3027,7 @@ void articulated::compound::ProjectFullResidual(
 
 void articulated::compound::EntityPreFirstStage(
     ecs::Included<TagArticulatedActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CArticulatedBodyShape const& bodyShape,
     CArticulatedJointPoseInfo const& poseInfo,
     CTimeIntegratorState const& intState,
@@ -3041,9 +3043,9 @@ void articulated::compound::EntityPreFirstStage(
   // Joint DoFs and joint velocities are differential variables. Use integration utilities to
   // compute their values at the beginning of the step.
   integration::ApplyTimeIntegrationStepStart(
-      metadata, intState, outIntPose, prevPose, outIntPose.stepStart);
+      metadata, !preserveHistory, intState, outIntPose, prevPose, outIntPose.stepStart);
   integration::ApplyTimeIntegrationStepStart(
-      intState, outIntJointVels, prevJointVels, outIntJointVels.stepStart);
+      !preserveHistory, intState, outIntJointVels, prevJointVels, outIntJointVels.stepStart);
 }
 
 template <TimeTarget kTargetTime, TimeStep kOutTime>
@@ -3575,12 +3577,14 @@ void articulated::rigid::EntityReconstructPreviousStep(
 
 void articulated::rigid::EntityPreFirstStage(
     ecs::RequiredTag<TagArticulatedLinkActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CRigidVel<TimeStep::Previous> const& prevVel,
     CIntegrationRigidVels& intVels) {
   MOCHI_PROFILE_SCOPE();
   // Compute differential variables (i.e. velocity) at the beginning of the step.
-  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intVels, prevVel, intVels.stepStart);
 }
 
 void articulated::rigid::EntityPreStage(

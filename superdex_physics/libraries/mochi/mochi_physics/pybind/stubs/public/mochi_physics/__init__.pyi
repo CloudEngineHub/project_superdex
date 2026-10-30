@@ -4846,7 +4846,8 @@ class QueryType:
     Note:
         Requires contact detection and force evaluation, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
 
     Note:
         Not supported for actors without contact sample points or with far SDF
@@ -4866,7 +4867,8 @@ class QueryType:
     Note:
         Requires force evaluation, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
 
     Note:
         Not supported for rod actors, actors without contact sample points or actors
@@ -4882,7 +4884,8 @@ class QueryType:
     Note:
         Requires force evaluation, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
     """
     ARTICULATED_CONTROLLER_FORCE: QueryType
     """Generalized forces applied by an articulated pose controller. Available via
@@ -4894,7 +4897,8 @@ class QueryType:
     Note:
         Requires force evaluation, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
     """
     SDF_DISTANCES: QueryType
     """Signed distance field values for contact samples. Available via
@@ -4903,7 +4907,8 @@ class QueryType:
     Note:
         Requires contact detection, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
     """
     TOTAL_CONTACT_FORCE: QueryType
     """Total contact force and torque acting on an actor. Available via
@@ -4913,7 +4918,8 @@ class QueryType:
     Note:
         Requires force evaluation, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
 
     Note:
         Not supported for actors without contact sample points or with far SDF
@@ -4930,7 +4936,8 @@ class QueryType:
     Note:
         Requires force evaluation, so immediate computation
         (:meth:`~superdex.physics.Actor.register_query_and_compute`) is not
-        supported. Data is computed by :meth:`~superdex.physics.Scene.step`.
+        supported. Data is computed by :meth:`~superdex.physics.Scene.step` or
+        :meth:`~superdex.physics.Scene.update_queries`.
     """
     COUNT: QueryType
     """Number of query type enum values."""
@@ -11400,7 +11407,7 @@ class Actor:
 
         Note:
             Data is available after the next simulation step, even if its time step is
-            zero.
+            zero, or after :meth:`~superdex.physics.Scene.update_queries`.
 
         Note:
             Results correspond to the last simulation step. They may become stale after
@@ -11449,8 +11456,8 @@ class Actor:
             immediate computation.
 
         Note:
-            Stepping the scene with zero time step is another way to force queries to
-            update, without advancing the state of the simulation.
+            :meth:`~superdex.physics.Scene.update_queries` is another way to force
+            queries to update, without advancing the state of the simulation.
 
         See Also:
             :meth:`~superdex.physics.Actor.register_query`,
@@ -13045,16 +13052,86 @@ class Scene:
             It is OK to use a different time step each time.
 
         Note:
-            If the time step is zero, then the state of the simulation will not change,
-            but pre-step and post-step callbacks will still be called, and queries will
-            be updated.
+            With a zero time step, the simulation does not advance. Pre-step callbacks
+            run first, then queries are refreshed as by
+            :meth:`~superdex.physics.Scene.update_queries`, then post-step callbacks
+            run. If some queries cannot be updated, then it will log a one-time warning.
+            To update queries without invoking callbacks, call
+            :meth:`~superdex.physics.Scene.update_queries` instead.
 
         Note:
             If the time step is negative or NaN, no step is taken and an error is
             logged.
 
         See Also:
-            :class:`~superdex.physics.IntegrationMethod`
+            :class:`~superdex.physics.IntegrationMethod`,
+            :meth:`~superdex.physics.Scene.update_queries`
+        """
+    def update_queries(self) -> None:
+        """Refresh registered queries without advancing the simulation.
+
+        The scene state is unchanged, step callbacks are not invoked, the step counter
+        is not incremented, and no island is woken during the call.
+
+        If no registered query requires contact detection or force evaluation (see
+        :class:`~superdex.physics.QueryType`), queries are recomputed from the current
+        state. Otherwise, contacts and forces are first evaluated for the current state,
+        and all queries are refreshed from that evaluation. If some query requires
+        contact detection or force evaluation, but this is not supported, queries that
+        don't require it are still recomputed, those that do are left unchanged, and an
+        error is reported.
+
+        When forces are evaluated, the time discretization depends on the available
+        history:
+
+        - In initial conditions, i.e., before the first step, in a state captured before
+          it, or for actors without usable history, e.g., created or reset after the
+          last step, the previous pose is extrapolated at constant velocity. The time
+          step is that of the last step, or a default 10 ms if there was no step or it
+          was quasistatic.
+        - Otherwise, i.e., after a step or in a restored state captured after one,
+          forces are evaluated with the time step of the last step, and the result
+          depends on the active integration method:
+        - Backward Euler, BDF2 and BDF3: if the scene has not been modified since the
+          last step, its forces are reproduced exactly.
+        - Multi-stage methods: intermediate stage states are not available, so forces
+          are evaluated with a single-stage Backward Euler discretization and a
+          constant-velocity previous pose.
+
+        After a quasistatic step, Backward Euler and BDF methods evaluate forces
+        quasistatically, while multi-stage methods use the default 10 ms time step.
+
+        Raises:
+            :class:`~superdex.physics.Error`: If an error occurs.
+
+        Note:
+            When forces are evaluated, prescribed inputs set since the last step (static
+            actor poses and velocities, controller and constraint targets, boundary
+            condition targets) are applied as the next step would apply them, and remain
+            pending for it. All refreshed queries describe this evaluated configuration,
+            which differs from the scene state while boundary condition targets are
+            pending (see
+            :meth:`~superdex.physics.Actor.add_boundary_condition_dofs_world`).
+
+        Note:
+            Force evaluation costs a state capture, a solve-free assembly of all
+            islands, and a state restore. It requires state capture support, which ROM
+            actors and ROM/FOM switching currently prevent.
+
+        Note:
+            Forces are not evaluated for islands whose last step diverged (see
+            :meth:`~superdex.physics.Actor.get_convergence_status`), since the
+            divergence reset their actors instead of solving them. Their queries keep
+            the values of the diverged step.
+
+        Note:
+            Force evaluation may merge or split islands, e.g., if actors moved into
+            potential contact. The islands whose composition changes, including sleeping
+            ones, wake at the next step.
+
+        See Also:
+            :meth:`~superdex.physics.Scene.step`,
+            :meth:`~superdex.physics.Actor.register_query`
         """
     def get_last_time_step(self) -> float:
         """Returns the time step size [s] from the most recent positive call to
@@ -14598,6 +14675,11 @@ class Scene:
         Note:
             Callbacks should not modify scene structure (add/remove actors/constraints).
 
+        Note:
+            Callbacks also run on :meth:`~superdex.physics.Scene.step` with a zero time
+            step, before queries are refreshed. Their changes persist. See
+            :meth:`~superdex.physics.Scene.step`.
+
         See Also:
             :meth:`~superdex.physics.Scene.cancel_callback`,
             :meth:`~superdex.physics.Scene.register_post_step_callback`
@@ -14634,6 +14716,11 @@ class Scene:
 
         Note:
             Callbacks should not modify scene structure (add/remove actors/constraints).
+
+        Note:
+            Callbacks also run on :meth:`~superdex.physics.Scene.step` with a zero time
+            step, after queries are refreshed. Their changes persist. See
+            :meth:`~superdex.physics.Scene.step`.
 
         See Also:
             :meth:`~superdex.physics.Scene.cancel_callback`,

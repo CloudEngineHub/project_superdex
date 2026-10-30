@@ -1006,27 +1006,39 @@ TEST_P(MochiSoftRecenteringTest, WorldSpaceResultsAreIndependentOfRecentering) {
   }
 }
 
-// Query forces are results of the last solve, so, as for rigid actors, they must stay fixed in
-// world space when the actor is moved before the next step.
 class MochiSoftContactForceQueryTest : public test::MochiSceneTestBase {};
 
-TEST_F(MochiSoftContactForceQueryTest, ForcesStayFixedInWorldSpaceWhenActorIsMoved) {
-  Actor* const actor =
-      CreateSoftCubeWithContactQueries(_scene, _mochiContext, Real3{0_r, 0_r, -0.01_r});
-  CreateGroundPlaneWithoutGravity(_scene, _mochiContext);
-  _scene->Step(1e-3_r);
-  Real3 const forceBeforeMove = GetCheckedContactForceWorld(actor);
-  ASSERT_GT(Norm(forceBeforeMove), 0_r);
+// After an actor is moved, Step(0.0) re-evaluates contact forces for the moved pose. An actor moved
+// out of contact and an actor moved from a prior contact reach the same pose, velocity and time
+// step, so they must report the same forces: none of the prior contact data is reused.
+TEST_F(MochiSoftContactForceQueryTest, ZeroStepReevaluatesForcesOfMovedActor) {
+  Real3 constexpr kPenetratingTranslation{0_r, 0_r, -0.02_r};
+  auto const moveAndReevaluate = [&](Scene* scene, Real3 const& startTranslation) {
+    Actor* const actor = CreateSoftCubeWithContactQueries(scene, _mochiContext, startTranslation);
+    CreateGroundPlaneWithoutGravity(scene, _mochiContext);
+    scene->Step(1e-3_r);
+    Real3 const forceBeforeMove = GetCheckedContactForceWorld(actor);
+    actor->SetZeroDisplacementsAndVelocities(test::ExpectOK{});
+    actor->SetRootTransform(TransformRT{kPenetratingTranslation}, test::ExpectOK{});
+    scene->Step(0_r);
+    return std::tuple{actor, forceBeforeMove};
+  };
 
-  TransformRT movedRoot = actor->GetRootTransform();
-  movedRoot.SetRotation(
-      Quaternion::FromAxisAngle(Real3{1_r, 0_r, 0_r}, 0.3_r) * movedRoot.GetRotation());
-  actor->SetRootTransform(movedRoot, test::ExpectOK{});
-  _scene->Step(0_r);
-  EXPECT_NEAR_TOL(
-      GetCheckedContactForceWorld(actor),
-      forceBeforeMove,
-      kContactForceRelTol * Norm(forceBeforeMove));
+  auto const [fromContact, forceBeforeMove] = moveAndReevaluate(_scene, Real3{0_r, 0_r, -0.01_r});
+  Scene* const referenceScene = _mochiContext->CreateScene("Reference");
+  auto const [fromFree, freeForceBeforeMove] =
+      moveAndReevaluate(referenceScene, Real3{0_r, 0_r, 1_r});
+  ASSERT_GT(Norm(forceBeforeMove), 0_r);
+  ASSERT_EQ(freeForceBeforeMove, (Real3{}));
+
+  Real3 const reference = GetCheckedContactForceWorld(fromFree);
+  ASSERT_GT(Norm(reference), 0_r);
+  real const tolerance = kContactForceRelTol * Norm(reference);
+  EXPECT_NEAR_TOL(GetCheckedContactForceWorld(fromContact), reference, tolerance);
+  EXPECT_FALSE(NearEqual(reference, forceBeforeMove, tolerance))
+      << "The moved pose must change the forces, or the comparison above would be vacuous";
+
+  _mochiContext->DestroyScene(referenceScene);
 }
 
 INSTANTIATE_TEST_SUITE_P(

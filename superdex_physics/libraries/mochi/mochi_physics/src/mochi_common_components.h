@@ -69,6 +69,10 @@ struct TagCompoundActor {};
 struct TagFullyInitialized {}; // Added last when initializing an actor (for reative systems)
 struct TagHasDeepFlowCollider {};
 
+// Global (registry-context) tag for preserving previous-step quantities without advancing
+// integration history. This is used by zero-step solve-free assembly.
+struct TagAssemblyPreserveHistory {};
+
 // Indicates that an actor participates in the point-cloud contact system.
 struct TagUsePointCloudContact {};
 

@@ -21,7 +21,6 @@
 #include "mochi_island.h"
 #include "mochi_scene.h"
 #include "mochi_sleep.h"
-#include "mochi_step.h"
 
 #include <mochi_core/geometry/mesh_data.h>
 #include <mochi_core/net/message_dispatcher.h>
@@ -584,8 +583,13 @@ void SceneDebuggerImpl::OnSceneStepRequest(SceneImpl* scene, protocol::SceneStep
         // and should thus be synced to client.
         ++_stepCounter;
 
-        // Re-process queries after RestoreStateFromBytes
-        UpdateAllActorQueries(scene->GetRegistry());
+        // Re-process queries after RestoreStateFromBytes.
+        Error queryError;
+        scene->UpdateQueries(queryError);
+        if (!queryError.IsOK()) {
+          MOCHI_LOG_WARNING_ONCE(
+              "[SceneDebugger] UpdateQueries: %s", queryError.ToString().c_str());
+        }
       } else {
         reply.error =
             Format("Failed to restore initial scene state. Reason: %s", error.GetDescription());

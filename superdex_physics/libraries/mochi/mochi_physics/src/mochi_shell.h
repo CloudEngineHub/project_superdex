@@ -291,6 +291,7 @@ void EntityReconstructPreviousStep(
 
 void EntityPreFirstStage(
     ecs::Included<TagShellActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
     CVelocitySlice<real, TimeStep::Previous> const& prevVel,

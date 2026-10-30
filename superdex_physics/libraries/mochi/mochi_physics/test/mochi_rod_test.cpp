@@ -2041,11 +2041,16 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_UsesDedicatedSurface) {
       3 * actor->GetContactSkinMesh().GetNumNodes(),
       isize(actor->GetContactSkinMeshNodeNormalsLocal(test::ExpectOK{})));
 
-  _scene->Step(0_r);
   Aabb const expectedBounds = contactSkin.mesh->GetAabb();
-  Aabb const actualBounds = GetAabb(reg.get<CBoundingVolume const>(entity).localShape);
-  EXPECT_NEAR_EQ(expectedBounds.GetMin(), actualBounds.GetMin());
-  EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
+  auto expectContactSkinBounds = [&] {
+    Aabb const actualBounds = GetAabb(reg.get<CBoundingVolume const>(entity).localShape);
+    EXPECT_NEAR_EQ(expectedBounds.GetMin(), actualBounds.GetMin());
+    EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
+  };
+
+  expectContactSkinBounds();
+  _scene->Step(0_r);
+  expectContactSkinBounds();
 }
 
 TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_BoundsIncludePointCloudCollider) {
@@ -2065,13 +2070,12 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_BoundsIncludePointCloudCollider
     ASSERT_TRUE(reg.all_of<CPointCloudColliderParams>(entity));
 
     auto const& polylineMesh = reg.get<CPolylineMesh const>(entity);
+    auto& displacements = reg.get<CRodPose<TimeStep::Current>>(entity).value.displacements;
     auto expectBounds = [&] {
       auto const surfacePositions =
           Unflatten<Real3 const>(actor->GetContactSkinMeshNodePositionsLocal(test::ExpectOK{}));
       Aabb const surfaceBounds = CalcAabb(surfacePositions);
 
-      auto const& displacements =
-          reg.get<CRodPose<TimeStep::Current> const>(entity).value.displacements;
       DynamicArray<Real3> centerlinePositions(polylineMesh.nodes.size());
       for (int i = 0; i < isize(polylineMesh.nodes); ++i) {
         int const offset = i * fem::kNumRodFields;
@@ -2085,10 +2089,8 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinContact_BoundsIncludePointCloudCollider
       EXPECT_NEAR_EQ(expectedBounds.GetMax(), actualBounds.GetMax());
     };
 
-    _scene->Step(0_r);
     expectBounds();
 
-    auto& displacements = reg.get<CRodPose<TimeStep::Current>>(entity).value.displacements;
     int const lastNodeDofOffset = (isize(polylineMesh.nodes) - 1) * fem::kNumRodFields;
     displacements[lastNodeDofOffset] = 0.25_r;
     displacements[lastNodeDofOffset + 2] = 0.3_r;

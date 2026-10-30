@@ -1086,7 +1086,10 @@ TimeIntegratorParams mochi::solver::CreateIslandTimeIntegrationParams(
     }
 
     MOCHI_ASSERT_VERBOSE(numPrevSteps >= 0 && numPrevSteps <= kMaxIntegrationSteps);
-    return numPrevSteps + 1; // "Previous" is always available and not included in prevSteps yet.
+    // A normal step has already shifted Current into Previous but has not added it to prevSteps.
+    // A zero-step assembly reconstructs Previous from the existing history, so it is already
+    // included in prevSteps.
+    return numPrevSteps + (reg.try_ctx<TagAssemblyPreserveHistory>() ? 0 : 1);
   };
 
   IntegrationMethod method = targetMethod;
@@ -1278,6 +1281,8 @@ bool mochi::solver::StepIslandNewtonAsync(
   PostLastStageLocalPipeline(reg, descendants);
 
   sleep::RecordStep(reg, island, restValue);
+
+  island::InvokeTestCallback_AssembledResidual(reg, island, problem.GetResidual());
 
   return success;
 }

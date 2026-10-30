@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "mochi_common_components.h"
 #include "mochi_discretization_components.h"
 #include "mochi_ecs.h"
 #include "mochi_rom_jacobian.h"
@@ -236,6 +237,7 @@ void PreStepPipeline(entt::registry& reg);
 
 void EntityPreFirstStage(
     ecs::RequiredTag<TagRomActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CDisplacementSlice<real, TimeStep::Previous> const& prevDispl,
     CVelocitySlice<real, TimeStep::Previous> const& prevFomVel,

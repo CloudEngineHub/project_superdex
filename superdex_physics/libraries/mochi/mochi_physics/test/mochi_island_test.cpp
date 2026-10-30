@@ -593,7 +593,7 @@ TEST_F(MochiIsland, SplitPermutation) {
       }
     }
     // Uses island::PreStep not Scene::Step for speed.
-    island::PreStep(GetRegistry());
+    island::PreStep(GetRegistry(), /*updateSleepState*/ true);
     CheckAllIslands();
     CheckAllPotentialColliders();
     EXPECT_EQ(1, GetNumIslands());
@@ -640,7 +640,7 @@ TEST_F(MochiIsland, SplitPermutation) {
             }
 
             // Uses island::PreStep not Scene::Step for speed.
-            island::PreStep(GetRegistry());
+            island::PreStep(GetRegistry(), /*updateSleepState*/ true);
             EXPECT_LE(1, GetNumIslands());
             EXPECT_GE(kNumActors, GetNumIslands());
             CheckAllIslands();

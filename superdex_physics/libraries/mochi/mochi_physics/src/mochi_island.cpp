@@ -53,6 +53,7 @@ struct CTempIslandPartitioningData {
 struct CIslandTestConfig {
   std::function<void()> preIslandUpdateCallback;
   std::function<void()> postIslandUpdateCallback;
+  island::AssembledResidualCallback assembledResidualCallback;
 };
 
 // If everything is forced to simulate using a single island, then this is it.
@@ -627,7 +628,7 @@ static void UpdateIslandDescendants(
   });
 }
 
-void island::PreStep(entt::registry& reg) {
+void island::PreStep(entt::registry& reg, bool updateSleepState) {
   MOCHI_PROFILE_SCOPE();
 
   // Unit test support
@@ -681,7 +682,9 @@ void island::PreStep(entt::registry& reg) {
   reg.clear<TagIslandCompositionChanged>();
 
   // Apply wake requests, then put islands at rest to sleep.
-  sleep::PreStep(reg);
+  if (updateSleepState) {
+    sleep::PreStep(reg);
+  }
 
   // Unit test support
   if (testConfig && testConfig->postIslandUpdateCallback) {
@@ -705,4 +708,20 @@ void mochi::island::SetTestCallback_PostIslandUpdate(
     entt::registry& reg,
     std::function<void()> fn) {
   reg.ctx_or_set<CIslandTestConfig>().postIslandUpdateCallback = std::move(fn);
+}
+
+void mochi::island::SetTestCallback_AssembledResidual(
+    entt::registry& reg,
+    AssembledResidualCallback fn) {
+  reg.ctx_or_set<CIslandTestConfig>().assembledResidualCallback = std::move(fn);
+}
+
+void mochi::island::InvokeTestCallback_AssembledResidual(
+    entt::registry const& reg,
+    entt::entity island,
+    ColumnVectorView<real const> residual) {
+  auto const* testConfig = reg.try_ctx<CIslandTestConfig const>();
+  if (testConfig && testConfig->assembledResidualCallback) {
+    testConfig->assembledResidualCallback(island, residual);
+  }
 }

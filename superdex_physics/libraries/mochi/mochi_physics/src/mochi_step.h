@@ -56,8 +56,10 @@ void PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& descendan
  * step.
  *
  * @param reg ECS registry
+ * @param includeAssemblyQueries If false, queries that require contact detection or force assembly
+ * (see QueryRequiresAssembly) are left unchanged.
  */
-void UpdateAllActorQueries(entt::registry& reg);
+void UpdateAllActorQueries(entt::registry& reg, bool includeAssemblyQueries);
 
 namespace step {
 // Call once on startup, after all other modules' InitializeOnce.

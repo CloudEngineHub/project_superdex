@@ -203,7 +203,7 @@ TEST_F(MochiContactFilter, ActorVsActor) {
 
   // Force them into one island
   _scene->SetForceSingleIsland(true);
-  island::PreStep(GetRegistry());
+  island::PreStep(GetRegistry(), /*updateSleepState*/ true);
 
   // Contact enabled by default
   EXPECT_TRUE(sceneImpl->IsActorContactEnabled(actorA, actorA, test::ExpectOK{}));
@@ -347,7 +347,7 @@ TEST_F(MochiContactFilter, ActorVsActor_IncludeNestedActorsAppliesResolvedCrossP
   handlesB.insert(handlesB.end(), linksB.begin(), linksB.end());
 
   _scene->SetForceSingleIsland(true);
-  island::PreStep(GetRegistry());
+  island::PreStep(GetRegistry(), /*updateSleepState*/ true);
 
   _scene->EnableActorContactSymmetric(
       parentA->GetHandle(),
@@ -424,7 +424,7 @@ TEST_F(MochiContactFilter, ActorVsActor_IncludeNestedActorsIncludesNestedSoftAct
   ASSERT_EQ(1, isize(softActors));
 
   _scene->SetForceSingleIsland(true);
-  island::PreStep(GetRegistry());
+  island::PreStep(GetRegistry(), /*updateSleepState*/ true);
 
   _scene->EnableActorContactSymmetric(
       parent->GetHandle(),

@@ -548,14 +548,16 @@ void UpdateConstraintOldTarget(
   outMotion.newTargetApplied = true;
 }
 
-// System to set the old target at the beginning of a step. Without a new target, the target stays
-// at the end target of the last step.
+// System to set the old target at the beginning of a step, and clear the prescribed motion. Without
+// a new target, a new step stays at the end target of the last step, while a solve-free assembly
+// (@p preserveHistory) keeps the current targets.
 template <typename T>
 void ApplyConstraintTargetStepStart(
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CConstraintTarget<T, TimeStep::Current> const& target,
     CConstraintTarget<T, TimeStep::StageStart>& outTargetOld,
     CConstraintPrescribedMotion& outMotion) {
-  if (!outMotion.newTargetApplied) {
+  if (!preserveHistory && !outMotion.newTargetApplied) {
     outTargetOld.value = target.value;
   }
   outMotion.newTargetApplied = false;

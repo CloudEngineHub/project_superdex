@@ -1780,7 +1780,7 @@ class MochiSkinnedArticulatedStaticContact : public MochiContactTestBase {
     auto& pose = GetRegistry().get<CArticulatedReducedPose<TimeStep::Current>>(_colliding).value;
     UpdateFullState();
     _pose = pose.Duplicate();
-    island::PreStep(GetRegistry());
+    island::PreStep(GetRegistry(), /*updateSleepState*/ true);
   }
 
   void InitState() override {
@@ -1856,7 +1856,7 @@ class MochiSkinnedArticulatedRigidContact : public MochiContactTestBase {
     UpdateArticulatedFullPose(reg, _colliding);
     _pose = reg.get<CArticulatedReducedPose<TimeStep::Current>>(_colliding).value.Duplicate();
     _boxState = reg.get<CRigidState<TimeStep::Current>>(_collider).value;
-    island::PreStep(reg);
+    island::PreStep(reg, /*updateSleepState*/ true);
   }
 
   void InitState() override {
@@ -2009,7 +2009,7 @@ class MochiSkinnedArticulatedLinkContact : public MochiContactTestBase {
     _skinPose = reg.get<CArticulatedReducedPose<TimeStep::Current>>(_colliding).value.Duplicate();
     _colliderPose =
         reg.get<CArticulatedReducedPose<TimeStep::Current>>(_collider).value.Duplicate();
-    island::PreStep(reg);
+    island::PreStep(reg, /*updateSleepState*/ true);
   }
 
   void InitState() override {
@@ -2146,7 +2146,7 @@ class MochiSkinnedContactEquivalence : public test::MochiSceneTestBase {
     reg.ctx<CSceneTime>().Advance(0.01);
     PreStepEcs(reg);
     UpdateArticulatedFullPose(reg, articulated);
-    island::PreStep(reg);
+    island::PreStep(reg, /*updateSleepState*/ true);
 
     SkinnedScene scene;
     scene.assembly = AssembleSingleIsland(reg, GradTarget::Current);
@@ -3425,7 +3425,7 @@ class MochiArticulatedArticulatedContact : public MochiContactTestBase {
 
     // Update islands manually since this test does not step the scene.
     // This assigns DOF offsets, among other things.
-    island::PreStep(reg);
+    island::PreStep(reg, /*updateSleepState*/ true);
   }
 
   std::pair<entt::entity, int> GetEntityAndLocalDofFromGlobalDof(int globalDof) override {

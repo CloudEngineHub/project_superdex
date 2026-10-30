@@ -16,6 +16,7 @@
 
 #include "mochi_physics_test_fixture.h"
 
+#include <mochi_core/utils/defer.h>
 #include <mochi_core/utils/math_utils.h>
 #include <mochi_core/utils/reflection.h>
 #include <mochi_physics/mochi_physics_experimental.h>
@@ -26,6 +27,8 @@
 
 #include <functional>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <numeric>
 #include <string>
 
@@ -1411,4 +1414,80 @@ TEST_F(SceneSleep, DestroyingStaticArticulatedLinkWakesActor) {
   _scene->DestroyActor(articulation);
   Step();
   EXPECT_TRUE(IsAwake(actor));
+}
+
+/***************************************************************************************************
+  Zero step
+*/
+
+// Step(0.0) reproduces the forces of the last step and leaves the sleep state as it found it, so
+// the next step resumes as if Step(0.0) had not been called.
+TEST_F(SceneSleep, ZeroStepPreservesSleepState) {
+  Actor const* sleeper = CreateTestActor(ActorType::Rigid);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(sleeper));
+  // High enough to stay awake, and in its own island, for the rest of the test.
+  Actor* faller = CreateTestActor(ActorType::Rigid, /*bottomHeight=*/3_r);
+  // Step(0.0) assembles forces only if a registered query requires it.
+  ASSERT_TRUE(faller->IsQuerySupported(QueryType::TotalContactForce));
+  faller->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
+  auto& reg = GetRegistry();
+  std::map<entt::entity, ColumnVector<real>> residuals;
+  std::mutex mutex;
+  island::SetTestCallback_AssembledResidual(
+      reg, [&](entt::entity island, ColumnVectorView<real const> residual) {
+        std::lock_guard lock(mutex);
+        residuals[island] = residual;
+      });
+  MOCHI_DEFER(island::SetTestCallback_AssembledResidual(reg, {}));
+  Step();
+  ASSERT_FALSE(IsAwake(sleeper));
+  ASSERT_TRUE(IsAwake(faller));
+  ASSERT_NE(GetIsland(sleeper), GetIsland(faller));
+  ASSERT_EQ(1u, residuals.count(GetIsland(faller)));
+  EXPECT_EQ(0u, residuals.count(GetIsland(sleeper))) << "A step does not solve sleeping islands";
+
+  auto const getRestSteps = [&](Actor const* actor) {
+    return reg.get<CIslandSleepState const>(GetIsland(actor)).numConsecutiveRestSteps;
+  };
+  ColumnVector<real> const forces = residuals.at(GetIsland(faller));
+  int const sleeperRestSteps = getRestSteps(sleeper);
+  int const fallerRestSteps = getRestSteps(faller);
+  residuals.clear();
+
+  _scene->Step(0.0);
+
+  ASSERT_EQ(1u, residuals.count(GetIsland(faller)));
+  ColumnVector<real> const& zeroStepForces = residuals.at(GetIsland(faller));
+  ASSERT_EQ(isize(forces), isize(zeroStepForces));
+  for (int i = 0; i < isize(forces); ++i) {
+    EXPECT_EQ(forces[i], zeroStepForces[i]) << "DOF " << i;
+  }
+  EXPECT_EQ(1u, residuals.count(GetIsland(sleeper))) << "Step(0.0) must evaluate sleeping islands";
+  EXPECT_FALSE(IsAwake(sleeper));
+  EXPECT_TRUE(IsAwake(faller));
+  EXPECT_EQ(sleeperRestSteps, getRestSteps(sleeper));
+  EXPECT_EQ(fallerRestSteps, getRestSteps(faller));
+  EXPECT_FALSE(reg.ctx<CWakeUpRequests const>().wakeAll);
+
+  Step();
+  EXPECT_FALSE(IsAwake(sleeper)) << "Step(0.0) must not wake sleeping islands";
+}
+
+// A sleeping actor gets its query data from Step(0.0) without waking up. A wake request made before
+// Step(0.0) stays pending, and wakes the island in the next step.
+TEST_F(SceneSleep, ZeroStepKeepsPendingWakeRequests) {
+  Actor* actor = CreateTestActor(ActorType::Rigid);
+  ASSERT_NO_FATAL_FAILURE(StepUntilAsleep(actor));
+  auto const query = actor->RegisterQuery(QueryType::TotalContactForce, test::ExpectOK{});
+  ASSERT_TRUE(GetRegistry().all_of<TagWakeUp>(GetIsland(actor)));
+
+  _scene->Step(0.0);
+  EXPECT_FALSE(IsAwake(actor));
+  EXPECT_TRUE(GetRegistry().all_of<TagWakeUp>(GetIsland(actor)));
+  real const weight = actor->GetMass(test::ExpectOK{}) * Norm(_scene->GetGravity());
+  EXPECT_NEAR(weight, actor->GetContactForceWorld(test::ExpectOK{})[1], 0.01_r * weight);
+
+  Step();
+  EXPECT_TRUE(IsAwake(actor));
+  actor->CancelQuery(query);
 }

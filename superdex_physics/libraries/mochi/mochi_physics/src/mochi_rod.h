@@ -309,6 +309,7 @@ void EntityReconstructPreviousStep(
  */
 void EntityPreFirstStage(
     ecs::Included<TagRodActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CPolylineMesh const& mesh,
     CVelocitySlice<real, TimeStep::Previous> const& prevVel,

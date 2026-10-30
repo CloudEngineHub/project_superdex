@@ -469,12 +469,14 @@ void SetTargetJointVelocities(
 // System to set the old targets of a pose controller at the beginning of a step, from its
 // prescribed motion. A target velocity sets the old targets, and those of the controller
 // constraints, to the current targets moved back by the velocity over the time step. Quasistatic
-// steps ignore it. Otherwise, without a new target, the targets stay at the end targets of the last
-// step.
+// steps ignore it. Otherwise, without a new target, a new step stays at the end targets of the last
+// step, while a solve-free assembly (@p preserveHistory) keeps the current targets. Then the
+// prescribed motion is cleared.
 void ApplyControllerStepStart(
     entt::registry& reg,
     entt::entity e,
     ecs::CtxGlobal<CSceneTime const> time,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CControllerTarget<TimeStep::Current> const& target,
     CControllerTarget<TimeStep::Previous>& outTargetOld,
     CControllerPrescribedMotion& outMotion);
@@ -813,6 +815,7 @@ void ReconstructPreviousStepPipeline(entt::registry& reg);
  */
 void EntityPreFirstStage(
     ecs::Included<TagArticulatedActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CArticulatedBodyShape const& bodyShape,
     CArticulatedJointPoseInfo const& poseInfo,
     CTimeIntegratorState const& intState,
@@ -1027,6 +1030,7 @@ void EntityReconstructPreviousStep(
 
 void EntityPreFirstStage(
     ecs::RequiredTag<TagArticulatedLinkActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CRigidVel<TimeStep::Previous> const& prevVel,
     CIntegrationRigidVels& intVels);

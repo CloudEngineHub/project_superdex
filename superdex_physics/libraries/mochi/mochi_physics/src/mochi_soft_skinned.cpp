@@ -720,13 +720,15 @@ static void ResolveJacobianDSoft(
 
 void skinned::EntityPreFirstStage(
     ecs::RequiredTag<TagNestedSoftActor>,
+    ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,
     CTimeIntegratorState const& intState,
     CVelocitySlice<real, TimeStep::Previous, DisplacementLayer::Skinned> const& prevVel,
     CIntegrationVelocitySlices<DisplacementLayer::Skinned>& intVels) {
   MOCHI_PROFILE_SCOPE();
   // Skinned velocities are treated as integration variables, which is akin to computing them via
   // finite differences.
-  integration::ApplyTimeIntegrationStepStart(intState, intVels, prevVel, intVels.stepStart);
+  integration::ApplyTimeIntegrationStepStart(
+      !preserveHistory, intState, intVels, prevVel, intVels.stepStart);
 }
 
 static void ComputeVelocityAtStageStart(

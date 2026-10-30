@@ -1103,7 +1103,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // @return @ref QueryHandle for the registered query, or an invalid handle if registration fails.
   //
   // @note Queries may add substantial computational overhead. Use only when necessary.
-  // @note Data is available after the next simulation step, even if its time step is zero.
+  // @note Data is available after the next simulation step, even if its time step is zero, or after
+  // @ref Scene::UpdateQueries.
   // @note Results correspond to the last simulation step. They may become stale after API calls
   // that modify the simulation state, e.g. setters or state restoration.
   // @note Call @ref CancelQuery when the query is not needed again in the future.
@@ -1126,8 +1127,8 @@ class Actor [no_init, no_destruct, use_scene] {
   // query is still registered successfully, immediate computation is skipped, and data becomes available
   // after the next simulation step. See @ref QueryType documentation for which types support immediate
   // computation.
-  // @note Stepping the scene with zero time step is another way to force queries to update, without
-  // advancing the state of the simulation.
+  // @note @ref Scene::UpdateQueries is another way to force queries to update, without advancing the
+  // state of the simulation.
   //
   // @see RegisterQuery, CancelQuery
   fn RegisterQueryAndCompute(QueryType type) -> QueryHandle [pure, virtual, mochi_error, batchable];

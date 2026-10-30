@@ -146,7 +146,8 @@ TEST(MochiIntegration, ConstantStep) {
                           auto& current,
                           TimeTarget const& targetTime) {
     if (targetTime == TimeTarget::StepStart) {
-      ApplyTimeIntegrationStepStart(intState, integration, previous, integration.stepStart);
+      ApplyTimeIntegrationStepStart(
+          /*advanceStep*/ true, intState, integration, previous, integration.stepStart);
     } else if (targetTime == TimeTarget::StageStart) {
       ApplyTimeIntegration<TimeTarget::StageStart>(intState, integration, stageStart);
     } else if (targetTime == TimeTarget::StepEnd) {
@@ -350,7 +351,12 @@ TEST(MochiIntegration, ConstantStep) {
                                         TimeTarget const& targetTime) {
       if (targetTime == TimeTarget::StepStart) {
         ApplyTimeIntegrationStepStart(
-            metadata, intState, integration, previous, integration.stepStart);
+            metadata,
+            /*advanceStep*/ true,
+            intState,
+            integration,
+            previous,
+            integration.stepStart);
       } else if (targetTime == TimeTarget::StageStart) {
         ApplyTimeIntegration<TimeTarget::StageStart>(metadata, intState, integration, stageStart);
       } else if (targetTime == TimeTarget::StepEnd) {

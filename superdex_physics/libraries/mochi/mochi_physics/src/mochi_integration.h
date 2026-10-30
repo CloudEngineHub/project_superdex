@@ -274,13 +274,16 @@ void AddWeightedDifferences(
 
 /// @brief Compute a differential variable at the beginning of the time step ('StepStart').
 ///
-/// @details Opens the step: resizes the per-stage solution storage and advances the previous-step
-/// history. The begin-of-step value is expressed as a linear combination of differences with
-/// respect to @p previous, using the fact that HSum(alpha) must be 1 for the scheme to be
-/// consistent (asserted in TimeIntegratorParams' constructor), and written to @p out.
+/// @details Opens the step: resizes the per-stage solution storage and, if @p advanceStep is
+/// set, advances the previous-step history. The begin-of-step value is expressed as a linear
+/// combination of differences with respect to @p previous, using the fact that HSum(alpha) must be
+/// 1 for the scheme to be consistent (asserted in TimeIntegratorParams' constructor), and written
+/// to @p out. A solve-free assembly probe passes @p advanceStep = false to reproduce an
+/// already-taken step's forces from the existing history.
 template <typename MetadataT, ValueContainer T>
 void ApplyTimeIntegrationStepStart(
     MetadataT const& metadata,
+    bool advanceStep,
     CTimeIntegratorState const& intState,
     IntegrationBundle<T>& integration,
     T const& previous,
@@ -288,7 +291,9 @@ void ApplyTimeIntegrationStepStart(
   auto const& coeffs = GetCoefficients<TimeTarget::StepStart>(intState);
   MOCHI_ASSERT_VERBOSE(coeffs.size() == intState.numSteps);
   ResizeIntegrationStages(intState, previous, integration);
-  RunPreStep(intState, previous, integration);
+  if (advanceStep) {
+    RunPreStep(intState, previous, integration);
+  }
   if (intState.numSteps <= 1) {
     out.value = previous.value;
   } else {
@@ -440,24 +445,36 @@ template <typename MetadataT, ValueContainer T, typename PrevT, typename OutT>
   requires TimeIntegrationCompatible<PrevT, OutT, T>
 void ApplyTimeIntegrationStepStart(
     MetadataT const& metadata,
+    bool advanceStep,
     CTimeIntegratorState const& intState,
     IntegrationBundle<T>& integration,
     PrevT const& prev,
     OutT& out) {
   details::ApplyTimeIntegrationStepStart(
-      metadata, intState, integration, static_cast<T const&>(prev), static_cast<T&>(out));
+      metadata,
+      advanceStep,
+      intState,
+      integration,
+      static_cast<T const&>(prev),
+      static_cast<T&>(out));
 }
 
 /// @brief Entry function to compute the begin-of-step value ('StepStart') without metadata.
 template <ValueContainer T, typename PrevT, typename OutT>
   requires TimeIntegrationCompatible<PrevT, OutT, T>
 void ApplyTimeIntegrationStepStart(
+    bool advanceStep,
     CTimeIntegratorState const& intState,
     IntegrationBundle<T>& integration,
     PrevT const& prev,
     OutT& out) {
   details::ApplyTimeIntegrationStepStart(
-      std::monostate{}, intState, integration, static_cast<T const&>(prev), static_cast<T&>(out));
+      std::monostate{},
+      advanceStep,
+      intState,
+      integration,
+      static_cast<T const&>(prev),
+      static_cast<T&>(out));
 }
 
 /// @brief Entry function to compute a stage-start or step-end value with metadata.

@@ -1815,13 +1815,13 @@ TEST_F(MochiSceneTest, SceneTimeAndStepCounter) {
   EXPECT_NEAR_EQ(sceneTime.StepEndTime(), 0.3);
   EXPECT_EQ(sceneStepCounter.value, 2);
 
-  // Time step of 0.0 does not advance anything
+  // Time step of 0.0 does not advance anything, not even the counter
   _scene->Step(0.0);
   EXPECT_EQ(sceneTime.DeltaTimePrev(), 0.1); // no change
   EXPECT_NEAR_EQ(sceneTime.DeltaTime(), 0.2); // no change
   EXPECT_NEAR_EQ(sceneTime.StepStartTime(), 0.1); // no change
   EXPECT_NEAR_EQ(sceneTime.StepEndTime(), 0.3); // no change
-  EXPECT_EQ(sceneStepCounter.value, 3);
+  EXPECT_EQ(sceneStepCounter.value, 2);
 
   // Time += 0.3
   _scene->Step(0.3);
@@ -1829,7 +1829,7 @@ TEST_F(MochiSceneTest, SceneTimeAndStepCounter) {
   EXPECT_NEAR_EQ(sceneTime.DeltaTime(), 0.3);
   EXPECT_NEAR_EQ(sceneTime.StepStartTime(), 0.3);
   EXPECT_NEAR_EQ(sceneTime.StepEndTime(), 0.6);
-  EXPECT_EQ(sceneStepCounter.value, 4);
+  EXPECT_EQ(sceneStepCounter.value, 3);
 }
 
 TEST_F(MochiSceneTest, SetSolverParams_RejectsInvalidLineSearchCoefficients) {

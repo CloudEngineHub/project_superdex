@@ -2077,7 +2077,7 @@
 ///
 /// @brief Contact points between actors. Available via @ref mochi::Actor::GetContactPointsWorld "Actor::GetContactPointsWorld".
 ///
-/// @note Requires contact detection and force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires contact detection and force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 /// @note Not supported for actors without contact sample points or with far SDF evaluation enabled.
 ///
 
@@ -2092,7 +2092,7 @@
 ///
 /// @brief Contact forces per node. Available via @ref mochi::Actor::GetNodeContactForcesWorld "Actor::GetNodeContactForcesWorld".
 ///
-/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 /// @note Not supported for rod actors, actors without contact sample points or actors with far SDF evaluation enabled.
 ///
 
@@ -2101,7 +2101,7 @@
 /// @brief Force/torque applied by a constraint. Available via @ref mochi::Constraint::GetForce "Constraint::GetForce".
 ///
 /// @note Only applicable to @ref mochi::Constraint "Constraint" objects.
-/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 ///
 
 /// @var mochi::QueryType::ArticulatedControllerForce
@@ -2109,21 +2109,21 @@
 /// @brief Generalized forces applied by an articulated pose controller. Available via @ref mochi::Actor::GetArticulatedControllerForce "Actor::GetArticulatedControllerForce".
 ///
 /// @note Only applicable to articulated actors with a pose controller.
-/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 ///
 
 /// @var mochi::QueryType::SdfDistances
 ///
 /// @brief Signed distance field values for contact samples. Available via @ref mochi::Actor::GetSdfDistances "Actor::GetSdfDistances".
 ///
-/// @note Requires contact detection, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires contact detection, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 ///
 
 /// @var mochi::QueryType::TotalContactForce
 ///
 /// @brief Total contact force and torque acting on an actor. Available via @ref mochi::Actor::GetContactForceWorld "Actor::GetContactForceWorld" and @ref mochi::Actor::GetContactTorqueWorld "Actor::GetContactTorqueWorld".
 ///
-/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 /// @note Not supported for actors without contact sample points or with far SDF evaluation enabled.
 ///
 
@@ -2132,7 +2132,7 @@
 /// @brief Wrench (force and torque) transmitted by each non-cycle joint of an articulated actor. Available via @ref mochi::Actor::GetArticulatedJointWrenches "Actor::GetArticulatedJointWrenches".
 ///
 /// @note Only supported for articulated actors with at least one degree of freedom.
-/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step".
+/// @note Requires force evaluation, so immediate computation (@ref mochi::Actor::RegisterQueryAndCompute "Actor::RegisterQueryAndCompute") is not supported. Data is computed by @ref mochi::Scene::Step "Scene::Step" or @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 ///
 
 /// @var mochi::QueryType::Count
@@ -5929,7 +5929,7 @@
 /// @return @ref mochi::QueryHandle "QueryHandle" for the registered query, or an invalid handle if registration fails.
 ///
 /// @note Queries may add substantial computational overhead. Use only when necessary.
-/// @note Data is available after the next simulation step, even if its time step is zero.
+/// @note Data is available after the next simulation step, even if its time step is zero, or after @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries".
 /// @note Results correspond to the last simulation step. They may become stale after API calls that modify the simulation state, e.g. setters or state restoration.
 /// @note Call @ref mochi::Actor::CancelQuery "CancelQuery" when the query is not needed again in the future.
 /// @note Queries are reference counted internally, so they will be available as long as there is one outstanding @ref mochi::QueryHandle "QueryHandle".
@@ -5948,7 +5948,7 @@
 ///
 /// @note Same as @ref mochi::Actor::RegisterQuery "RegisterQuery", except that the data is computed immediately (blocking) rather than at the next simulation step.
 /// @note Immediate computation is not supported for all query types. For unsupported types, the query is still registered successfully, immediate computation is skipped, and data becomes available after the next simulation step. See @ref mochi::QueryType "QueryType" documentation for which types support immediate computation.
-/// @note Stepping the scene with zero time step is another way to force queries to update, without advancing the state of the simulation.
+/// @note @ref mochi::Scene::UpdateQueries "Scene::UpdateQueries" is another way to force queries to update, without advancing the state of the simulation.
 ///
 /// @see @ref mochi::Actor::RegisterQuery "RegisterQuery", @ref mochi::Actor::CancelQuery "CancelQuery"
 ///
@@ -6910,10 +6910,37 @@
 ///
 /// @note Time steps of 10–25 ms (40–100 physics steps per simulated second) run robustly in most scenes, including complex contact-rich and deformable simulations. This is a practical starting range, not a guarantee. Smaller steps may still be required to resolve fast motion, accurately capture short-duration contact dynamics without excessive numerical dissipation, resolve dynamics associated with small geometric or discretization length scales, or improve nonlinear-solver convergence.
 /// @note It is OK to use a different time step each time.
-/// @note If the time step is zero, then the state of the simulation will not change, but pre-step and post-step callbacks will still be called, and queries will be updated.
+/// @note With a zero time step, the simulation does not advance. Pre-step callbacks run first, then queries are refreshed as by @ref mochi::Scene::UpdateQueries "UpdateQueries", then post-step callbacks run. If some queries cannot be updated, then it will log a one-time warning. To update queries without invoking callbacks, call @ref mochi::Scene::UpdateQueries "UpdateQueries" instead.
 /// @note If the time step is negative or NaN, no step is taken and an error is logged.
 ///
-/// @see @ref mochi::IntegrationMethod "IntegrationMethod"
+/// @see @ref mochi::IntegrationMethod "IntegrationMethod", @ref mochi::Scene::UpdateQueries "UpdateQueries"
+///
+
+/// @fn void mochi::Scene::UpdateQueries(Error& error)
+///
+/// @brief Refresh registered queries without advancing the simulation.
+///
+/// @details The scene state is unchanged, step callbacks are not invoked, the step counter is not incremented, and no island is woken during the call.
+///
+/// If no registered query requires contact detection or force evaluation (see @ref mochi::QueryType "QueryType"), queries are recomputed from the current state. Otherwise, contacts and forces are first evaluated for the current state, and all queries are refreshed from that evaluation. If some query requires contact detection or force evaluation, but this is not supported, queries that don't require it are still recomputed, those that do are left unchanged, and an error is reported.
+///
+/// When forces are evaluated, the time discretization depends on the available history:
+///
+/// - In initial conditions, i.e., before the first step, in a state captured before it, or for actors without usable history, e.g., created or reset after the last step, the previous pose is extrapolated at constant velocity. The time step is that of the last step, or a default 10 ms if there was no step or it was quasistatic.
+/// - Otherwise, i.e., after a step or in a restored state captured after one, forces are evaluated with the time step of the last step, and the result depends on the active integration method:
+/// - Backward Euler, BDF2 and BDF3: if the scene has not been modified since the last step, its forces are reproduced exactly.
+/// - Multi-stage methods: intermediate stage states are not available, so forces are evaluated with a single-stage Backward Euler discretization and a constant-velocity previous pose.
+///
+/// After a quasistatic step, Backward Euler and BDF methods evaluate forces quasistatically, while multi-stage methods use the default 10 ms time step.
+///
+/// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
+///
+/// @note When forces are evaluated, prescribed inputs set since the last step (static actor poses and velocities, controller and constraint targets, boundary condition targets) are applied as the next step would apply them, and remain pending for it. All refreshed queries describe this evaluated configuration, which differs from the scene state while boundary condition targets are pending (see @ref mochi::Actor::AddBoundaryConditionDofsWorld "Actor::AddBoundaryConditionDofsWorld").
+/// @note Force evaluation costs a state capture, a solve-free assembly of all islands, and a state restore. It requires state capture support, which ROM actors and ROM/FOM switching currently prevent.
+/// @note Forces are not evaluated for islands whose last step diverged (see @ref mochi::Actor::GetConvergenceStatus "Actor::GetConvergenceStatus"), since the divergence reset their actors instead of solving them. Their queries keep the values of the diverged step.
+/// @note Force evaluation may merge or split islands, e.g., if actors moved into potential contact. The islands whose composition changes, including sleeping ones, wake at the next step.
+///
+/// @see @ref mochi::Scene::Step "Step", @ref mochi::Actor::RegisterQuery "Actor::RegisterQuery"
 ///
 
 /// @fn double mochi::Scene::GetLastTimeStep() const
@@ -7683,6 +7710,7 @@
 /// @note The relative order of callbacks registered with equal priority is unspecified. Assign distinct priorities when ordering matters.
 /// @note Callbacks must be thread-safe if they access shared state.
 /// @note Callbacks should not modify scene structure (add/remove actors/constraints).
+/// @note Callbacks also run on @ref mochi::Scene::Step "Step" with a zero time step, before queries are refreshed. Their changes persist. See @ref mochi::Scene::Step "Step".
 ///
 /// @see @ref mochi::Scene::CancelCallback "CancelCallback", @ref mochi::Scene::RegisterPostStepCallback "RegisterPostStepCallback"
 ///
@@ -7700,6 +7728,7 @@
 /// @note The relative order of callbacks registered with equal priority is unspecified. Assign distinct priorities when ordering matters.
 /// @note Callbacks must be thread-safe if they access shared state.
 /// @note Callbacks should not modify scene structure (add/remove actors/constraints).
+/// @note Callbacks also run on @ref mochi::Scene::Step "Step" with a zero time step, after queries are refreshed. Their changes persist. See @ref mochi::Scene::Step "Step".
 ///
 /// @see @ref mochi::Scene::CancelCallback "CancelCallback", @ref mochi::Scene::RegisterPreStepCallback "RegisterPreStepCallback"
 ///
