@@ -83,7 +83,8 @@ struct diffsim::BackPropagationSceneStats [no_reflection] {
 // function @ref BackPropagate. It also calls @ref experimental::ApplyImprovedConvergenceSettings,
 // and it logs warnings when overriding non-default scene or actor settings selected by the user.
 // Consider changing those settings to retain the same simulation behavior if the scene is used
-// elsewhere.
+// elsewhere. For more accurate gradients, use @ref ContactParams::frictionWithColliderNormal true
+// (the default); @ref BackPropagate warns otherwise.
 //
 // @param[in] scene The scene to make differentiable.
 fn diffsim::MakeSceneDifferentiable(Scene* scene) -> void [mochi_error];

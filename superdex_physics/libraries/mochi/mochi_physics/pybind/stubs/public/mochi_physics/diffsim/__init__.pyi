@@ -109,7 +109,9 @@ def make_scene_differentiable(scene: mochi_physics.Scene) -> None:
     :func:`~superdex.physics.experimental.apply_improved_convergence_settings`, and
     it logs warnings when overriding non-default scene or actor settings selected by
     the user. Consider changing those settings to retain the same simulation
-    behavior if the scene is used elsewhere.
+    behavior if the scene is used elsewhere. For more accurate gradients, use
+    :attr:`~superdex.physics.ContactParams.friction_with_collider_normal` true (the
+    default); :func:`~superdex.physics.diffsim.back_propagate` warns otherwise.
 
     Args:
         scene (Scene): The scene to make differentiable.

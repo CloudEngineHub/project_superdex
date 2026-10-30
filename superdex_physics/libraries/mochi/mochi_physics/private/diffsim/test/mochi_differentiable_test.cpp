@@ -735,6 +735,33 @@ TEST_IF_P(
 }
 
 /***************************************************************************************************
+  Differentiability Settings Test
+*/
+
+// Not parameterized: BackPropagate logs each settings warning once per process.
+using MochiDifferentiableSettings = MochiSceneTestBase;
+
+// MakeSceneDifferentiable keeps ContactParams.frictionWithColliderNormal = false, and BackPropagate
+// warns about it.
+TEST_F(MochiDifferentiableSettings, KeepsFrictionWithCollidingNormalAndWarns) {
+  test::SetSceneIntegrationMethod(_scene, IntegrationMethod::BackwardEuler);
+  RigidActorParams params;
+  params.shape = test::CreateUnitCubeTetMeshShape(_mochiContext);
+  params.contact.frictionWithColliderNormal = false;
+  Actor* actor = _scene->CreateRigidActor(params, test::ExpectOK{});
+  MakeSceneDifferentiable(_scene, test::ExpectOK{});
+  EXPECT_FALSE(actor->GetContactParams(test::ExpectOK{}).frictionWithColliderNormal);
+
+  StateHandle const stateOld = _scene->CaptureState(test::ExpectOK{});
+  _scene->Step(kDt);
+  StateHandle const stateNew = _scene->CaptureState(test::ExpectOK{});
+  ResetBackPropagation(_scene, test::ExpectOK{});
+  PrepareBackPropagate(_scene, stateNew, stateOld, test::ExpectOK{});
+  test::ExpectLoggingInScope expectWarning(_mochiContext, LogChannel::Warning);
+  BackPropagate(_scene, test::ExpectOK{});
+}
+
+/***************************************************************************************************
   BackPropagationSceneStats Tests
 */
 

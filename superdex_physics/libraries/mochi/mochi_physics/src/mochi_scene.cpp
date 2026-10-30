@@ -1341,21 +1341,6 @@ experimental::DebugStats SceneImpl::GetDebugStats() const {
 }
 
 void SceneImpl::ApplyImprovedConvergenceSettings(bool logWarnings) {
-  // Set ContactParams.frictionWithColliderNormal = true.
-  // Possibly log warnings if values were non-default.
-  ForEachActor([&](Actor* actor) {
-    Error error;
-    ContactParams contactParams = actor->GetContactParams(error);
-    if (error.IsOK() && !contactParams.frictionWithColliderNormal) {
-      if (logWarnings) {
-        MOCHI_LOG_WARNING_ONCE(
-            "\nOverriding ContactParams.frictionWithColliderNormal = false. Setting to true.");
-      }
-      contactParams.frictionWithColliderNormal = true;
-      actor->SetContactParams(contactParams, ErrorAssert{});
-    }
-  });
-
   // Set EnableNewtonEulerInertia(false).
   // Possibly log warning if value was non-default.
   ForEachActor([&](Actor* actor) {
@@ -1393,9 +1378,9 @@ void SceneImpl::ApplyImprovedConvergenceSettings(bool logWarnings) {
   SetSolverParams(solverParams, ErrorAssert{});
 }
 
-void SceneImpl::WarnIfNotImprovedConvergenceSettings() const {
+static void WarnIfNotDifferentiabilitySettings(SceneImpl const& scene) {
   // Validate ContactParams.frictionWithColliderNormal = true.
-  ForEachActor([&](Actor const* actor) {
+  scene.ForEachActor([&](Actor const* actor) {
     Error error;
     ContactParams contactParams = actor->GetContactParams(error);
     if (error.IsOK() && !contactParams.frictionWithColliderNormal) {
@@ -1404,7 +1389,7 @@ void SceneImpl::WarnIfNotImprovedConvergenceSettings() const {
   });
 
   // Validate EnableNewtonEulerInertia(false).
-  ForEachActor([&](Actor const* actor) {
+  scene.ForEachActor([&](Actor const* actor) {
     Error error;
     bool const hasNewtonEulerInertia = IsNewtonEulerInertiaEnabled(actor, error);
     if (error.IsOK() && hasNewtonEulerInertia) {
@@ -1413,7 +1398,7 @@ void SceneImpl::WarnIfNotImprovedConvergenceSettings() const {
   });
 
   // Validate SolverParams.experimentalEval.implicitNormalForceForDissipation = false.
-  auto solverParams = GetSolverParams();
+  auto solverParams = scene.GetSolverParams();
   if (solverParams.experimentalEval.implicitNormalForceForDissipation) {
     MOCHI_LOG_WARNING_ONCE(
         "\nExpected SolverParams.experimentalEval.implicitNormalForceForDissipation = false.");
@@ -1500,7 +1485,7 @@ void SceneImpl::BackPropagate(Error& error) {
   ScopedSchedulerBinding schedulerBinding(this);
 
   // Validate necessary solver settings for accurate differentiability
-  WarnIfNotImprovedConvergenceSettings();
+  WarnIfNotDifferentiabilitySettings(*this);
 
   // Process the rigid current and previous contact force adjoints.
   AccumulateContactForceAdjoints(_registry);
