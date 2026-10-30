@@ -117,7 +117,7 @@ GridSdfShape::~GridSdfShape() {
 }
 
 std::shared_ptr<GridSdf const> GridSdfShape::GetGridSdf() const {
-  std::lock_guard lock(_gridSdfMutex);
+  std::scoped_lock lock(_gridSdfMutex);
   return _gridSdf;
 }
 
@@ -130,7 +130,7 @@ GridSdfShape::RequestGridSdf(GridSdfParams const& params, bool* outIsPending, Er
 
   // Synchronize
   {
-    std::lock_guard lock(_gridSdfMutex);
+    std::scoped_lock lock(_gridSdfMutex);
     if (_gridSdf) {
       // GridSdf was already computed or loaded from file
       return _gridSdf;
@@ -169,7 +169,7 @@ GridSdfShape::RequestGridSdf(GridSdfParams const& params, bool* outIsPending, Er
           // do not survive, hence surfaceMesh is captured by value above.
           auto newGridSdf = std::make_shared<GridSdf>(surfaceMesh, params, ErrorAssert{});
           {
-            std::lock_guard lock(_gridSdfMutex);
+            std::scoped_lock lock(_gridSdfMutex);
             _gridSdf = std::move(newGridSdf);
           }
           sem.Done();

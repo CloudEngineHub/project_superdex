@@ -89,7 +89,7 @@ ContextImpl::ContextImpl() : _numWorkerThreadsRequested(GetDefaultNumWorkerThrea
 ContextImpl::~ContextImpl() = default;
 
 void ContextImpl::SetNumWorkerThreads(int numThreads) {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   if (_scheduler == nullptr) {
     _numWorkerThreadsRequested =
         Clamp(numThreads, 0, TaskScheduler::GetNumSupportedLogicalProcessors());
@@ -100,7 +100,7 @@ void ContextImpl::SetNumWorkerThreads(int numThreads) {
 }
 
 void ContextImpl::Initialize() {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
 
   if (!ProfilerIsInitialized()) {
     ProfilerInitialize();
@@ -120,7 +120,7 @@ void ContextImpl::PreShutDown() {
   // Invalidate _weakRefToThis to ShapeHandle automatic cleanup after this point.
   {
     MOCHI_ASSERT(_weakRefToThis != nullptr);
-    std::lock_guard lock(_weakRefToThis->mutex);
+    std::scoped_lock lock(_weakRefToThis->mutex);
     _weakRefToThis->context = nullptr;
   }
 
@@ -130,7 +130,7 @@ void ContextImpl::PreShutDown() {
   // That call will happen on the simulation loop thread, and it will also need to lock our mutex.
   std::vector<std::unique_ptr<AsyncSceneImpl>> asyncScenesToDestroy;
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     if (_hasPreShutDown) {
       return;
     }
@@ -141,7 +141,7 @@ void ContextImpl::PreShutDown() {
 
   // Now we can destroy the rest of the user-created objects.
   // This must happen before we can start shutting down shared services like TaskScheduler.
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
 #if MOCHI_USE_OSC
   _OSCs.clear();
 #endif
@@ -160,7 +160,7 @@ void ContextImpl::ShutDown() {
 
   // Check _hasShutDown while holding the mutex lock
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     if (_hasShutDown) {
       return;
     }
@@ -172,7 +172,7 @@ void ContextImpl::ShutDown() {
   _scheduler.reset();
 
   // Finalize Petsc if we were the ones to initialize it
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
 
   if (_shouldShutdownProfiler) {
     ProfilerShutdown();
@@ -219,7 +219,7 @@ ShapeHandle ContextImpl::LoadShapeWithFileCache(
   bool isNewCacheEntry = false;
   if (_isFileCacheEnabled) {
     {
-      std::lock_guard lock(_mutex);
+      std::scoped_lock lock(_mutex);
       if (_isFileCacheEnabled) {
         auto insertPair =
             _fileCache.insert(std::make_pair(std::move(fileCacheKey), FileCacheEntryPtr{}));
@@ -529,7 +529,7 @@ ShapeHandle ContextImpl::CreatePlaneShape(Real3 const& normal, real distance, Er
 }
 
 void ContextImpl::ReleaseShape(ShapeHandle shape) {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = _shapes.find(shape.value);
   if (it != _shapes.end()) {
     _shapes.erase(it);
@@ -542,12 +542,12 @@ void ContextImpl::ReleaseShape(ShapeHandle shape) {
 }
 
 int ContextImpl::GetNumShapes() const {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   return isize(_shapes);
 }
 
 void ContextImpl::EnableFileCache(bool enable) {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   if (_isFileCacheEnabled && !enable) {
     ClearFileCache();
   }
@@ -555,17 +555,17 @@ void ContextImpl::EnableFileCache(bool enable) {
 }
 
 bool ContextImpl::IsFileCacheEnabled() const {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   return _isFileCacheEnabled;
 }
 
 void ContextImpl::ClearFileCache() {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   _fileCache.clear();
 }
 
 void ContextImpl::ClearFileFromCache(std::string_view filePath) {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   // Keys are "<normalized path>:<scale>:<rotation>:<translation>" (see GetFileCacheKey), so every
   // bake variant of this file is matched by the normalized path plus the separator.
   std::string keyPrefix = NormalizeFileCachePath(filePath);
@@ -578,7 +578,7 @@ Scene* ContextImpl::CreateScene(std::string_view name) {
   auto newScene = std::make_unique<SceneImpl>(this, name, GenerateNewHandle());
   Scene* sceneRawPtr = newScene.get();
 
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
 
   // Add it to the collection
   _scenes.push_back(std::move(newScene));
@@ -592,7 +592,7 @@ Scene* ContextImpl::CreateScene(std::string_view name) {
 void ContextImpl::DestroyScene(Scene* scene) {
   std::unique_ptr<SceneImpl> sceneToDestroy;
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     auto it = std::find_if(
         _scenes.begin(), _scenes.end(), [scene](auto& ptr) { return ptr.get() == scene; });
     if (it == _scenes.end()) {
@@ -627,7 +627,7 @@ experimental::IKSolver* ContextImpl::CreateIKSolver(Scene* scene, Error& error) 
   experimental::IKSolver* IKSolverRawPtr = newIKSolver.get();
 
   // Add it to the collection
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   _ikSolvers.push_back(std::move(newIKSolver));
 
   return IKSolverRawPtr;
@@ -636,7 +636,7 @@ experimental::IKSolver* ContextImpl::CreateIKSolver(Scene* scene, Error& error) 
 void ContextImpl::DestroyIKSolver(experimental::IKSolver* solver) {
   std::unique_ptr<IKSolverImpl> IKSolverToDestroy;
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     auto it = std::find_if(
         _ikSolvers.begin(), _ikSolvers.end(), [solver](auto& ptr) { return ptr.get() == solver; });
     if (it == _ikSolvers.end()) {
@@ -655,7 +655,7 @@ bool ContextImpl::IsValidIKSolver(experimental::IKSolver const* solver) const {
   if (!solver) {
     return false;
   }
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = std::find_if(
       _ikSolvers.begin(), _ikSolvers.end(), [solver](auto& ptr) { return ptr.get() == solver; });
   return (it != _ikSolvers.end());
@@ -672,7 +672,7 @@ ContextImpl::CreateOperationalSpaceController(Actor* robot, int linkId, Error& e
   OperationalSpaceController* OSCRawPtr = newOSC.get();
 
   // Add it to the collection
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   _OSCs.push_back(std::move(newOSC));
 
   return OSCRawPtr;
@@ -681,7 +681,7 @@ ContextImpl::CreateOperationalSpaceController(Actor* robot, int linkId, Error& e
 void ContextImpl::DestroyOperationalSpaceController(OperationalSpaceController* controller) {
   std::unique_ptr<OperationalSpaceControllerImpl> OSCToDestroy;
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     auto it = std::find_if(
         _OSCs.begin(), _OSCs.end(), [controller](auto& ptr) { return ptr.get() == controller; });
     if (it == _OSCs.end()) {
@@ -701,7 +701,7 @@ bool ContextImpl::IsValidOperationalSpaceController(
   if (!controller) {
     return false;
   }
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = std::find_if(
       _OSCs.begin(), _OSCs.end(), [controller](auto& ptr) { return ptr.get() == controller; });
   return (it != _OSCs.end());
@@ -715,7 +715,7 @@ NewtonEulerTerms* ContextImpl::CreateNewtonEulerTerms(Actor* robot, Error& error
   MOCHI_ERROR_RETURN(error, {})
   NewtonEulerTerms* rawPtr = newObj.get();
 
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   _newtonEulerTerms.push_back(std::move(newObj));
 
   return rawPtr;
@@ -724,7 +724,7 @@ NewtonEulerTerms* ContextImpl::CreateNewtonEulerTerms(Actor* robot, Error& error
 void ContextImpl::DestroyNewtonEulerTerms(NewtonEulerTerms* newtonEulerTerms) {
   std::unique_ptr<NewtonEulerTermsImpl> toDestroy;
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     auto it = std::find_if(
         _newtonEulerTerms.begin(), _newtonEulerTerms.end(), [newtonEulerTerms](auto& ptr) {
           return ptr.get() == newtonEulerTerms;
@@ -745,7 +745,7 @@ bool ContextImpl::IsValidNewtonEulerTerms(NewtonEulerTerms const* newtonEulerTer
   if (!newtonEulerTerms) {
     return false;
   }
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = std::find_if(
       _newtonEulerTerms.begin(), _newtonEulerTerms.end(), [newtonEulerTerms](auto& ptr) {
         return ptr.get() == newtonEulerTerms;
@@ -770,7 +770,7 @@ ContextImpl::CreateAsyncSceneImpl(std::string_view name, bool startPaused, Error
   auto newAsyncScene = std::make_unique<AsyncSceneImpl>(this, name, startPaused);
   AsyncScene* newAsyncSceneRawPtr = newAsyncScene.get();
 
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   _asyncScenes.push_back(std::move(newAsyncScene));
 
   return newAsyncSceneRawPtr;
@@ -787,7 +787,7 @@ AsyncScene* ContextImpl::CreateAsyncScenePaused(std::string_view name, Error& er
 void ContextImpl::DestroyAsyncScene(AsyncScene* scene) {
   std::unique_ptr<AsyncSceneImpl> victim;
   {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     auto it = std::find_if(_asyncScenes.begin(), _asyncScenes.end(), [scene](auto& ptr) {
       return ptr.get() == scene;
     });
@@ -1045,7 +1045,7 @@ ShapeHandle ContextImpl::RegisterShape(ConstShapePtr newShape, Error& error) {
   ShapeHandle newHandle{GenerateNewHandle()};
 
   // Add it to the collection
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto& shapeRef = _shapes[newHandle.value];
   MOCHI_ASSERT(shapeRef == nullptr, "ShapeHandle not unique!");
   shapeRef = std::move(newShape);
@@ -1059,7 +1059,7 @@ ShapeHandle ContextImpl::RegisterShape(ConstShapePtr newShape, Error& error) {
 }
 
 ConstShapePtr ContextImpl::GetShapeSharedPtr(ShapeHandle shapeHandle) const {
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = _shapes.find(shapeHandle.value);
   return (it == _shapes.end()) ? ConstShapePtr{} : it->second;
 }
@@ -1233,7 +1233,7 @@ Scene* ContextImpl::GetScene(SceneHandle handle) {
   if (!handle.IsValid()) {
     return nullptr;
   }
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = std::find_if(
       _scenes.begin(), _scenes.end(), [handle](auto& ptr) { return ptr->GetHandle() == handle; });
   if (it != _scenes.end()) {
@@ -1251,7 +1251,7 @@ bool ContextImpl::IsValidScene(Scene const* scene) const {
   if (!scene) {
     return false;
   }
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = std::find_if(
       _scenes.begin(), _scenes.end(), [scene](auto& ptr) { return ptr.get() == scene; });
   return (it != _scenes.end());
@@ -1261,7 +1261,7 @@ bool ContextImpl::IsValidAsyncScene(AsyncScene const* scene) const {
   if (!scene) {
     return false;
   }
-  std::lock_guard lock(_mutex);
+  std::scoped_lock lock(_mutex);
   auto it = std::find_if(
       _asyncScenes.begin(), _asyncScenes.end(), [scene](auto& ptr) { return ptr.get() == scene; });
   return (it != _asyncScenes.end());

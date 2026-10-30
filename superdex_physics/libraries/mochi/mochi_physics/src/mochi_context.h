@@ -159,7 +159,7 @@ class ContextImpl final : public Context {
   // The C API needs a way to disable auto-cleanup of shape handles. Currently there is no public
   // option for this in languages that support auto-cleanup.
   void EnableAutomaticHandleCleanup(bool enable) {
-    std::lock_guard lock(_mutex);
+    std::scoped_lock lock(_mutex);
     _enableAutomaticHandleCleanup = enable;
   }
 
@@ -210,7 +210,7 @@ class ContextImpl final : public Context {
     ~ShapeHandleAutoCleanup() override {
       auto v = value.load();
       if (v && ref) {
-        std::lock_guard lock(ref->mutex);
+        std::scoped_lock lock(ref->mutex);
         if (ref->context) {
           // If we reach this point, then we know that the context has not yet been destroyed, and
           // it can't be destroyed until we release the mutex.

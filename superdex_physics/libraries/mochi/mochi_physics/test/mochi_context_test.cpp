@@ -537,7 +537,7 @@ void MochiContextTest::TestFileCacheConcurrency(std::initializer_list<std::strin
 
       // Share our results at the end
       {
-        std::lock_guard lock(mutex);
+        std::scoped_lock lock(mutex);
         allResults.insert(allResults.end(), localResults.begin(), localResults.end());
       }
 
@@ -565,7 +565,7 @@ void MochiContextTest::TestFileCacheConcurrency(std::initializer_list<std::strin
   for (int i = 0; i < kNumBatches; ++i) {
     // Signal threads to start a batch of work
     {
-      std::lock_guard lock(mutex);
+      std::scoped_lock lock(mutex);
       ++batchIdx;
     }
     cv.notify_all();
