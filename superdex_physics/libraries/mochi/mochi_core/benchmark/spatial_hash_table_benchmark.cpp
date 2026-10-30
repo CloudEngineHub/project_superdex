@@ -17,6 +17,7 @@
 #include "config.h"
 
 #include <mochi_core/geometry/spatial_hash_table.h>
+#include <mochi_core/utils/basic_utils.h>
 #include <mochi_core/utils/dynamic_array.h>
 
 #include <cstdint>
@@ -129,5 +130,41 @@ MOCHI_SPATIAL_HASH_TABLE_BENCHMARK(Full3x3x3Stencil, 4096, 8);
 MOCHI_SPATIAL_HASH_TABLE_BENCHMARK(Full3x3x3Stencil, 16, 1);
 
 #undef MOCHI_SPATIAL_HASH_TABLE_BENCHMARK
+
+// Queries every point of a sphere shell whose points are about 0.45 cells apart, like cloth
+// contact, so which stencil bins are empty changes from query to query. The cases above repeat one
+// query, so their branches always predict.
+static void SpatialHashTableIteratePointsNearSphereShell(benchmark::State& state) {
+  int constexpr kNumPoints = 4096;
+  real constexpr kShellRadius = 8_r; // [cells]
+  real constexpr kGoldenAngle = 2.4_r; // [rad], about pi * (3 - sqrt(5))
+  // 16 bins per point: the default PointCloudColliderParams::spatialHashLoadFactor is 1/16.
+  SpatialHashTable spatialHashTable(1.0_r, kNumPoints, 16 * kNumPoints);
+  // A golden-angle spiral from pole to pole: evenly spaced z gives each point the same area.
+  DynamicArray<Real3> points;
+  points.reserve(kNumPoints);
+  for (int i = 0; i < kNumPoints; ++i) {
+    real const z = 1_r - 2_r * (StaticCast<real>(i) + 0.5_r) / StaticCast<real>(kNumPoints);
+    real const ringRadius = Sqrt(1_r - z * z);
+    real const angle = kGoldenAngle * StaticCast<real>(i);
+    points.push_back(kShellRadius * Real3{ringRadius * Cos(angle), ringRadius * Sin(angle), z});
+    spatialHashTable.AddPoint(i, points.back());
+  }
+
+  std::int64_t pointIndexChecksum = 0;
+  for (auto _ : state) {
+    for (Real3 const& point : points) {
+      spatialHashTable.IteratePointsNearPosition(
+          point, [&](int nearbyPointIndex) { pointIndexChecksum += nearbyPointIndex + 1; });
+    }
+    benchmark::DoNotOptimize(pointIndexChecksum);
+  }
+
+  state.counters["Queries/second"] =
+      benchmark::Counter(state.iterations() * kNumPoints, benchmark::Counter::kIsRate);
+}
+
+BENCHMARK(SpatialHashTableIteratePointsNearSphereShell)
+    ->Name("Geometry/SpatialHashTable/IteratePointsNearPosition/SphereShell");
 
 } // namespace mochi_benchmark

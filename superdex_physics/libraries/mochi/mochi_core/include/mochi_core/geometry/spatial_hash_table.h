@@ -24,6 +24,7 @@
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/span.h>
 
+#include <bit>
 #include <cstdint>
 
 namespace mochi {
@@ -61,7 +62,7 @@ class SpatialHashTable {
   template <typename CallbackType>
   void IteratePointsNearCell(Int3 const& centerCellCoordinates, CallbackType&& callback) const {
     // Iterate the 3x3x3 grid-cell stencil centered at the given cell.
-    int binIndicesEncountered[3 * 3 * 3];
+    int binIndicesEncountered[3 * 3 * 3] MOCHI_NO_INIT;
     int numBinsEncountered = 0;
     // Lossy prefilter for the exact duplicate-bin scan. A set bit means the bin may have been seen;
     // the exact scan below resolves false positives. Empty bins are not tracked.
@@ -72,14 +73,34 @@ class SpatialHashTable {
     unsigned int const xHashes[3] = {xCenterHash - kHashX, xCenterHash, xCenterHash + kHashX};
     unsigned int const yHashes[3] = {yCenterHash - kHashY, yCenterHash, yCenterHash + kHashY};
     unsigned int const zHashes[3] = {zCenterHash - kHashZ, zCenterHash, zCenterHash + kHashZ};
+    // Read the head of each of the 27 bins (its first point, or kSentinelIndex if it is empty) and
+    // set a bit per non-empty bin, then walk only those bins, lowest bit first, i.e. in stencil
+    // order. Whether a bin is empty is hard to predict, so a branch per bin would often mispredict.
+    int stencilBinIndices[3 * 3 * 3] MOCHI_NO_INIT;
+    int stencilBinHeads[3 * 3 * 3] MOCHI_NO_INIT;
+    uint32_t nonEmptyBinMask = 0; // Bit i is set when the bin of stencil cell i holds points.
+    int stencilIndex = 0;
     for (unsigned int const xHash : xHashes) {
       for (unsigned int const yHash : yHashes) {
         for (unsigned int const zHash : zHashes) {
           int const binIndex = GetBinIndex(xHash, yHash, zHash);
-          IterateBinPointsIfNotEncountered(
-              binIndex, binIndicesEncountered, numBinsEncountered, binIndexLowBitMask, callback);
+          stencilBinIndices[stencilIndex] = binIndex;
+          stencilBinHeads[stencilIndex] = _binHeads[binIndex];
+          nonEmptyBinMask |= static_cast<uint32_t>(_binHeads[binIndex] != kSentinelIndex)
+              << stencilIndex;
+          ++stencilIndex;
         }
       }
+    }
+    for (uint32_t bits = nonEmptyBinMask; bits != 0; bits &= bits - 1) {
+      int const stencilCell = std::countr_zero(bits);
+      IterateBinPointsIfNotEncountered(
+          stencilBinIndices[stencilCell],
+          stencilBinHeads[stencilCell],
+          binIndicesEncountered,
+          numBinsEncountered,
+          binIndexLowBitMask,
+          callback);
     }
   }
 
@@ -141,17 +162,16 @@ class SpatialHashTable {
     _occupiedPointMax = Max(_occupiedPointMax, point);
   }
 
+  // Calls callback on each point of a non-empty bin, unless an earlier cell of the stencil already
+  // walked this bin. binHead is _binHeads[binIndex].
   template <typename CallbackType>
   MOCHI_FORCE_INLINE void IterateBinPointsIfNotEncountered(
       int binIndex,
+      int binHead,
       int* binIndicesEncountered,
       int& numBinsEncountered,
       uint64_t& binIndexLowBitMask,
       CallbackType& callback) const {
-    int currentPointIndex = _binHeads[binIndex];
-    if (currentPointIndex == kSentinelIndex) {
-      return;
-    }
     uint64_t const binIndexLowBit = uint64_t{1} << (static_cast<unsigned int>(binIndex) & 63u);
     if ((binIndexLowBitMask & binIndexLowBit) != 0) {
       for (int l = 0; l < numBinsEncountered; l++) {
@@ -161,6 +181,7 @@ class SpatialHashTable {
       }
     }
     binIndexLowBitMask |= binIndexLowBit;
+    int currentPointIndex = binHead;
     while (currentPointIndex != kSentinelIndex) {
       callback(currentPointIndex);
       currentPointIndex = _binLists[currentPointIndex];

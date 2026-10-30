@@ -32,6 +32,35 @@ class SpatialHashTableTest : public ::testing::Test {
     return points;
   }
 
+  // The points that IteratePointsNearCell must iterate, in order: the 3x3x3 stencil cells, x
+  // outermost and z innermost; a bin shared by several cells only at the first of them; within a
+  // bin, the last added point first.
+  static DynamicArray<int> ExpectedPointsNearCell(
+      SpatialHashTable const& spatialHashTable,
+      DynamicArray<Real3> const& points,
+      Int3 const& cell) {
+    DynamicArray<int> expectedPoints;
+    std::set<int> visitedBins;
+    for (int dx = -1; dx <= 1; ++dx) {
+      for (int dy = -1; dy <= 1; ++dy) {
+        for (int dz = -1; dz <= 1; ++dz) {
+          int const binIndex = spatialHashTable.GetBinIndex(cell + Int3{dx, dy, dz});
+          if (visitedBins.contains(binIndex)) {
+            continue;
+          }
+          visitedBins.insert(binIndex);
+          for (int pointIndex = isize(points) - 1; pointIndex >= 0; --pointIndex) {
+            Int3 const pointCell = spatialHashTable.GetCellCoordinates(points[pointIndex]);
+            if (spatialHashTable.GetBinIndex(pointCell) == binIndex) {
+              expectedPoints.push_back(pointIndex);
+            }
+          }
+        }
+      }
+    }
+    return expectedPoints;
+  }
+
   static void CompareHashingAndBruteForce(
       SpatialHashTable& spatialHashTable,
       DynamicArray<Real3> const& points) {
@@ -79,6 +108,12 @@ class SpatialHashTableTest : public ::testing::Test {
 
       // A point will always be within cell size of itself.
       EXPECT_TRUE(numPointsWithinCellSize > 0);
+
+      Int3 const cell = spatialHashTable.GetCellCoordinates(currentPoint);
+      DynamicArray<int> pointsNearCell;
+      spatialHashTable.IteratePointsNearCell(
+          cell, [&](int nearbyPointIndex) { pointsNearCell.push_back(nearbyPointIndex); });
+      EXPECT_SPAN_EQ(ExpectedPointsNearCell(spatialHashTable, points, cell), pointsNearCell);
     } // loop over points
   }
 };
