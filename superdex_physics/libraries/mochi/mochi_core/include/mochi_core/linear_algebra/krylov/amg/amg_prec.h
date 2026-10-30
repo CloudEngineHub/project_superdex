@@ -135,7 +135,7 @@ struct AMGOptions {
 /// auto-computed from the spectral radius of D^{-1} A at each smoothed level.
 /// @note The coarsest problem is inverted numerically if it and its inverse are positive definite
 /// to working precision (@ref details::InvertIfPositiveDefinite); otherwise the level above smooths
-/// without coarse correction.
+/// without coarse correction, and a warning is logged.
 template <typename Scalar, int kDofsPerNode>
 struct AMGPrec : Preconditioner<Scalar> {
   static constexpr auto kType = PreconditionerType::AMG;
@@ -1000,6 +1000,9 @@ void AMGPrec<Scalar, kDofsPerNode>::FactorCoarsest() {
   }
   // A zero inverse drops the coarse correction: the level above smooths without it.
   if (!details::InvertIfPositiveDefinite(dense, _coarseInverse)) {
+    MOCHI_LOG_WARNING(
+        "AMG: the coarsest level or its inverse is not positive definite to working precision. Its "
+        "correction is dropped, so convergence may slow.");
     _coarseInverse = RowMatrix<Scalar>::Zero(numDofs, numDofs);
   }
 }

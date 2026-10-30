@@ -1187,6 +1187,9 @@ TEST_P(AMGTest, Properties) {
   using enum AMGFixture;
   AMGFixture const fixture = GetParam().fixture;
   bool const coarsestAccepted = GetParam().coarsestAccepted;
+  // Dropping the coarsest level warns: only the rows that drop it silence warnings.
+  auto const suppressWarnings = mochi::test::SuppressLogWarning();
+  EnableLogChannel(LogChannel::Warning, coarsestAccepted);
   if (fixture == Laplacian1D) {
     using Sparse = SparseMatrix<real, int, int>;
     ExpectAMGPrecProperties<AMGPrecUnderTest<1, Sparse>>(
