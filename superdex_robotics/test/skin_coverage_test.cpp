@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 
+#include <mochi_core/geometry/model_data.h>
 #include <mochi_core/test/mochi_test_helpers.h>
+#include <superdex_robotics/core/loader.h>
 #include <superdex_robotics/utils/bot_utils.h>
+
+#include <optional>
 
 using namespace mochi;
 using namespace superdex::robotics;
@@ -37,6 +41,25 @@ MakeSkinning(int weightsPerNode, DynamicArray<int> indices, DynamicArray<real> w
   skinning.indices = std::move(indices);
   skinning.weights = std::move(weights);
   return skinning;
+}
+
+/* Serves one collision model (or a load failure when there is none) for any path, recording the
+ * paths it was asked for. */
+struct FakeModelLoader : FileBotLoader {
+  std::optional<ModelData> model;
+  mutable DynamicArray<std::string> requestedPaths;
+
+  ModelData LoadModelData(std::string_view path, superdex::Error& error) const override {
+    requestedPaths.emplace_back(path);
+    MOCHI_ERROR_IF(!model.has_value(), error, "no such model");
+    return model.value_or(ModelData{});
+  }
+};
+
+ModelData MakeSkinnedModel(SkinningData skinning) {
+  ModelData model;
+  model.mesh.emplace().skinning = std::move(skinning);
+  return model;
 }
 
 } // namespace
@@ -102,4 +125,65 @@ TEST(SkinCoverageTest, CoveredLinks_NoneWithoutSkinning) {
   DynamicArray<bool> const expected = {false, false, false};
   EXPECT_EQ(
       ComputeSkinCoveredLinks(MakeSkinnedBot(), MakeConstSpan(kLinkNames), nullptr), expected);
+}
+
+// With nonCollidingLinks set, the skin's collision mesh is not read.
+TEST(SkinCoverageTest, MapSkinOntoLinks_NonCollidingLinksNeedNoCollisionMesh) {
+  BotPrefab bot = MakeSkinnedBot();
+  bot.skin->shapeFile = "skin.mochi.h5";
+  bot.skin->nonCollidingLinks = DynamicArray<DynamicString>{"tip"};
+  FakeModelLoader const loader;
+  Error error;
+  SkinLinkMapping const mapping = MapSkinOntoLinks(bot, MakeConstSpan(kLinkNames), loader, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  DynamicArray<int> const expectedBones = {0, 1, 2};
+  DynamicArray<bool> const expectedCovered = {false, false, true};
+  EXPECT_EQ(mapping.boneLinks, expectedBones);
+  EXPECT_EQ(mapping.coveredLinks, expectedCovered);
+  EXPECT_TRUE(loader.requestedPaths.empty());
+}
+
+// Without nonCollidingLinks, coverage comes from the collision mesh the loader serves.
+TEST(SkinCoverageTest, MapSkinOntoLinks_CoverageFromCollisionMeshThroughLoader) {
+  BotPrefab bot = MakeSkinnedBot();
+  bot.skin->shapeFile = "skin.mochi.h5";
+  FakeModelLoader loader;
+  loader.model = MakeSkinnedModel(MakeSkinning(1, {1, 2}, {1_r, 1_r}));
+  Error error;
+  SkinLinkMapping const mapping = MapSkinOntoLinks(bot, MakeConstSpan(kLinkNames), loader, error);
+  ASSERT_TRUE(error.IsOK()) << error.ToString();
+  DynamicArray<bool> const expectedCovered = {false, true, true};
+  DynamicArray<std::string> const expectedPaths = {"skin.mochi.h5"};
+  EXPECT_EQ(mapping.coveredLinks, expectedCovered);
+  EXPECT_EQ(loader.requestedPaths, expectedPaths);
+}
+
+// Coverage that depends on a collision mesh that cannot be read, or that has no skinning, fails
+// rather than covering nothing.
+TEST(SkinCoverageTest, MapSkinOntoLinks_FailsWithoutReadableSkinning) {
+  BotPrefab bot = MakeSkinnedBot();
+  bot.skin->shapeFile = "skin.mochi.h5";
+
+  FakeModelLoader const missing;
+  Error missingError;
+  EXPECT_TRUE(
+      MapSkinOntoLinks(bot, MakeConstSpan(kLinkNames), missing, missingError).boneLinks.empty());
+  EXPECT_FALSE(missingError.IsOK());
+
+  FakeModelLoader unskinned;
+  unskinned.model.emplace().mesh.emplace();
+  Error unskinnedError;
+  EXPECT_TRUE(MapSkinOntoLinks(bot, MakeConstSpan(kLinkNames), unskinned, unskinnedError)
+                  .boneLinks.empty());
+  EXPECT_FALSE(unskinnedError.IsOK());
+}
+
+TEST(SkinCoverageTest, MapSkinOntoLinks_EmptyWithoutSkin) {
+  FakeModelLoader const loader;
+  Error error;
+  SkinLinkMapping const mapping =
+      MapSkinOntoLinks(BotPrefab{}, MakeConstSpan(kLinkNames), loader, error);
+  EXPECT_TRUE(error.IsOK()) << error.ToString();
+  EXPECT_TRUE(mapping.boneLinks.empty());
+  EXPECT_TRUE(mapping.coveredLinks.empty());
 }

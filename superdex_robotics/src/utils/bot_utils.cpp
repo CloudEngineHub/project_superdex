@@ -1697,6 +1697,32 @@ DynamicArray<bool> superdex::robotics::ComputeSkinCoveredLinks(
   return covered;
 }
 
+SkinLinkMapping superdex::robotics::MapSkinOntoLinks(
+    BotPrefab const& botPrefab,
+    Span<DynamicString const> linkNames,
+    IBotLoader const& loader,
+    superdex::Error& error) {
+  MOCHI_ERROR_RETURN(error, {});
+  if (!botPrefab.skin.has_value()) {
+    return {};
+  }
+  ModelData collisionModel;
+  SkinningData const* skinning = nullptr;
+  if (!botPrefab.skin->nonCollidingLinks.has_value()) {
+    collisionModel = loader.LoadModelData(botPrefab.skin->shapeFile, error);
+    MOCHI_ERROR_RETURN(error, {});
+    MOCHI_ERROR_IF(
+        !collisionModel.mesh.has_value() || !collisionModel.mesh->skinning.has_value(),
+        error,
+        "The skin's collision mesh, which decides the links the skin covers, has no skinning");
+    MOCHI_ERROR_RETURN(error, {});
+    skinning = &*collisionModel.mesh->skinning;
+  }
+  return SkinLinkMapping{
+      .boneLinks = ComputeSkinBoneLinkIndices(botPrefab, linkNames),
+      .coveredLinks = ComputeSkinCoveredLinks(botPrefab, linkNames, skinning)};
+}
+
 static void ApplyBotContactOverrides(
     BotPrefab const& botPrefab,
     Span<BotContactOverride const> contactOverrides,
