@@ -123,6 +123,88 @@ inline void SetSceneIntegrationMethod(Scene* scene, IntegrationMethod method) {
   scene->SetSolverParams(solverParams, ExpectOK{});
 }
 
+// Maps local positions relative to the actor's current, possibly recentered, root transform to
+// local positions relative to `worldFromLocalInitial`.
+inline TransformRT GetInitialFromCurrentLocal(
+    Actor const& actor,
+    TransformRT const& worldFromLocalInitial) {
+  return Invert(worldFromLocalInitial) * actor.GetRootTransform();
+}
+
+// DoF values of a shell (3 per node) or rod (4 per node: xyz then twist) actor, with the xyz
+// displacements expressed relative to `worldFromLocalInitial` rather than the actor's current,
+// possibly recentered, root transform. Other DoFs (rod twist) are returned unchanged.
+inline DynamicArray<real> GetDofValuesRelativeToInitialFrame(
+    Actor const& actor,
+    TransformRT const& worldFromLocalInitial,
+    int numFieldsPerNode) {
+  DynamicArray<real> dofs(actor.GetNumDofs());
+  actor.GetDofValues({}, dofs, ExpectOK{});
+  auto const reference = Unflatten<Real3 const>(actor.GetMesh().coordinates);
+  TransformRT const initialFromCurrent = GetInitialFromCurrentLocal(actor, worldFromLocalInitial);
+  for (int n = 0; n < isize(reference); ++n) {
+    real* u = &dofs[n * numFieldsPerNode];
+    Real3 const displacement =
+        initialFromCurrent.TransformPoint(reference[n] + Real3{u[0], u[1], u[2]}) - reference[n];
+    for (int j = 0; j < 3; ++j) {
+      u[j] = displacement[j];
+    }
+  }
+  return dofs;
+}
+
+// World-space node positions of a shell (3 DoFs per node) or rod (4 DoFs per node) actor, computed
+// from its reference mesh, DoF values, and current root transform.
+inline DynamicArray<Real3> GetWorldNodePositions(Actor const& actor, int numFieldsPerNode) {
+  DynamicArray<real> dofs(actor.GetNumDofs());
+  actor.GetDofValues({}, dofs, ExpectOK{});
+  auto const reference = Unflatten<Real3 const>(actor.GetMesh().coordinates);
+  TransformRT const worldFromLocal = actor.GetRootTransform();
+  DynamicArray<Real3> positions;
+  positions.reserve(reference.size());
+  for (int i = 0; i < isize(reference); ++i) {
+    real const* u = &dofs[i * numFieldsPerNode];
+    positions.push_back(worldFromLocal.TransformPoint(reference[i] + Real3{u[0], u[1], u[2]}));
+  }
+  return positions;
+}
+
+// Expect that a shell or rod actor recentered with `recenteringParams` moves like an identical
+// actor without recentering when both translate and spin under gravity with a multistep integrator,
+// and that the recentered actor's root transform moved by at least `minRecenteringDistance`.
+// `createActor()` creates the actor in `scene`.
+template <typename CreateActorFn>
+void ExpectRecenteringPreservesWorldMotion(
+    Scene* scene,
+    CreateActorFn const& createActor,
+    RecenteringParams const& recenteringParams,
+    int numFieldsPerNode,
+    real minRecenteringDistance) {
+  SetSceneIntegrationMethod(scene, IntegrationMethod::BDF3);
+  scene->SetGravity({1_r, -2_r, 0.5_r});
+  Actor* const recentered = createActor();
+  recentered->SetRecenteringParams(recenteringParams, ExpectOK{});
+  Actor* const reference = createActor();
+  reference->SetRecenteringParams({.useRecentering = false}, ExpectOK{});
+  TransformRT const worldFromLocalInitial = recentered->GetRootTransform();
+  for (int i = 0; i < 40; ++i) {
+    scene->Step(0.02_r);
+  }
+
+  real constexpr kTolerance = MOCHI_USE_DOUBLE_PRECISION ? 1e-6_r : 1e-3_r;
+  DynamicArray<Real3> const expectedNodes = GetWorldNodePositions(*reference, numFieldsPerNode);
+  DynamicArray<Real3> const actualNodes = GetWorldNodePositions(*recentered, numFieldsPerNode);
+  ASSERT_EQ(isize(expectedNodes), isize(actualNodes));
+  for (int i = 0; i < isize(expectedNodes); ++i) {
+    EXPECT_NEAR_TOL(expectedNodes[i], actualNodes[i], kTolerance) << "Node " << i;
+  }
+  EXPECT_EQ(reference->GetRootTransform(), worldFromLocalInitial);
+  EXPECT_GT(
+      Norm(
+          recentered->GetRootTransform().GetTranslation() - worldFromLocalInitial.GetTranslation()),
+      minRecenteringDistance);
+}
+
 // This generic test fixture simply creates a mochi::Context instance.
 class MochiContextTestBase : public ::testing::Test {
  public:

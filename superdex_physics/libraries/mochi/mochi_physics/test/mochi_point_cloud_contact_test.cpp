@@ -557,41 +557,29 @@ TEST_P(MochiShellActorContactScene, TwoShellActorsWithContact) {
   int constexpr kNumSteps = 8 * Max(kM, kN);
   real constexpr kTimeStep = kTimeInterval / (real)kNumSteps;
 
+  DynamicArray<Real3> const initialNodesTop = test::GetWorldNodePositions(*_topActor, kSpaceDim3);
   for (int i = 0; i < kNumSteps; ++i) {
     _scene->Step(kTimeStep);
   }
 
   int const numDofsBottom = _bottomActor->GetNumDofs();
-  int const numNodesBottom = numDofsBottom / 3;
-  DynamicArray<real> dofValuesBottom(numDofsBottom);
-  _bottomActor->GetDofValues({}, dofValuesBottom, ErrorAssert{});
-
   int const numDofsTop = _topActor->GetNumDofs();
-  int const numNodesTop = numDofsTop / 3;
-  DynamicArray<real> dofValuesTop(numDofsTop);
-  _topActor->GetDofValues({}, dofValuesTop, ErrorAssert{});
 
-  // Because the rotation of actor geometry is done via a world-from-local transform, the
-  // z-displacement in the local coordinates is always aligned with gravity, even when gravity is
-  // rotated to a different axis in world coordinates.
+  // Compare world-space positions, since recentering moves each actor's local frame independently.
+  // Each shell's normal, and gravity, are along the world up axis.
   real minZBottom = std::numeric_limits<real>::infinity();
-  for (int nodeIndex = 0; nodeIndex < numNodesBottom; nodeIndex++) {
-    minZBottom = Min(dofValuesBottom[3 * nodeIndex + upAxis], minZBottom);
+  for (Real3 const& node : test::GetWorldNodePositions(*_bottomActor, kSpaceDim3)) {
+    minZBottom = Min(node[upAxis], minZBottom);
   }
 
+  DynamicArray<Real3> const nodesTop = test::GetWorldNodePositions(*_topActor, kSpaceDim3);
   real minZTop = std::numeric_limits<real>::infinity();
-  real avgXTop = 0_r;
-  real avgYTop = 0_r;
-  for (int nodeIndex = 0; nodeIndex < numNodesTop; nodeIndex++) {
-    minZTop = Min(dofValuesTop[3 * nodeIndex + upAxis], minZTop);
-    avgXTop += dofValuesTop[3 * nodeIndex + 0];
-    avgYTop += dofValuesTop[3 * nodeIndex + 1];
+  Real3 avgDisplacementTop{};
+  for (int nodeIndex = 0; nodeIndex < isize(nodesTop); nodeIndex++) {
+    minZTop = Min(nodesTop[nodeIndex][upAxis], minZTop);
+    avgDisplacementTop += nodesTop[nodeIndex] - initialNodesTop[nodeIndex];
   }
-  // The top actor's minimum local z coordinate is transformed here to the bottom actor's local
-  // coordinate frame for comparison in the asserts.
-  minZTop += kSeparationDistance;
-  avgXTop /= (real)numNodesTop;
-  avgYTop /= (real)numNodesTop;
+  avgDisplacementTop = avgDisplacementTop * (1_r / (real)isize(nodesTop));
 
   EXPECT_GT(minZTop, minZBottom) << "Top shell penetrated bottom shell: minZTop = " << minZTop
                                  << ", minZBottom = " << minZBottom;
@@ -603,8 +591,13 @@ TEST_P(MochiShellActorContactScene, TwoShellActorsWithContact) {
       << "Shell separation too small: " << (minZTop - minZBottom);
 
   real constexpr kMaxDrift = kContactRadius * 0.1_r;
-  EXPECT_LT(Abs(avgXTop), kMaxDrift) << "Top shell drifted too far in x: " << avgXTop;
-  EXPECT_LT(Abs(avgYTop), kMaxDrift) << "Top shell drifted too far in y: " << avgYTop;
+  for (int axis = 0; axis < kSpaceDim3; ++axis) {
+    if (axis != upAxis) {
+      EXPECT_LT(Abs(avgDisplacementTop[axis]), kMaxDrift)
+          << "Top shell drifted too far along world axis " << axis << ": "
+          << avgDisplacementTop[axis];
+    }
+  }
 
   // Some additional testing in the final configuration:
 
@@ -1057,17 +1050,12 @@ TEST_P(MochiRodActorContactScene, ThreeRodActorsWithContact) {
   int constexpr kDofsPerNode = 4;
 
   int const numDofsBottom1 = _bottomActor1->GetNumDofs();
-  DynamicArray<real> dofValuesBottom1(numDofsBottom1);
-  _bottomActor1->GetDofValues({}, dofValuesBottom1, ErrorAssert{});
-
   int const numDofsBottom2 = _bottomActor2->GetNumDofs();
-  DynamicArray<real> dofValuesBottom2(numDofsBottom2);
-  _bottomActor2->GetDofValues({}, dofValuesBottom2, ErrorAssert{});
-
   int const numDofsTop = _topActor->GetNumDofs();
-  int const numNodesTop = numDofsTop / kDofsPerNode;
-  DynamicArray<real> dofValuesTop(numDofsTop);
-  _topActor->GetDofValues({}, dofValuesTop, ErrorAssert{});
+
+  // Use world-space positions, since recentering moves the top rod's local frame with it.
+  DynamicArray<Real3> const nodesTop = test::GetWorldNodePositions(*_topActor, kDofsPerNode);
+  int const numNodesTop = isize(nodesTop);
 
   // The top rod is along y. Its free ends
   // under gravity — this is expected. We check z-values near the two crossing points
@@ -1077,10 +1065,9 @@ TEST_P(MochiRodActorContactScene, ThreeRodActorsWithContact) {
   real avgXTop = 0_r;
   for (int i = 0; i < numNodesTop; ++i) {
     real const refY = -0.5_r * kLength + (real)i / (real)(numNodesTop - 1) * kLength;
-    real const zDisp = dofValuesTop[kDofsPerNode * i + 2];
-    avgXTop += dofValuesTop[kDofsPerNode * i + 0];
+    avgXTop += nodesTop[i][0];
     if (Abs(Abs(refY) - 0.25_r) < 2_r * kContactRadius) {
-      minZTopNearContact = Min(zDisp + kSeparationDistance, minZTopNearContact);
+      minZTopNearContact = Min(nodesTop[i][2], minZTopNearContact);
     }
   }
   avgXTop /= (real)numNodesTop;

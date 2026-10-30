@@ -289,6 +289,18 @@ void EntityReconstructPreviousStep(
     CDisplacementSlice<real, TimeStep::Previous>& outPrevDispl,
     CVelocitySlice<real, TimeStep::Previous>& outPrevVel);
 
+// Recenter the local frame on the pivot node. The pivot carries no rotation, so only translation is
+// recentered.
+void RecenterSolutionUsingPivotNode(
+    ecs::Included<TagShellActor>,
+    CRecenteringParams const& params,
+    CRecenteringPivotNode const& pivot,
+    CRootTransform& root,
+    CDisplacementSlice<real, TimeStep::Current>& currDispl,
+    CDisplacementSlice<real, TimeStep::Previous>& prevDispl,
+    CIntegrationDisplacementSlices& intDispls,
+    CBoundingVolume* bounds);
+
 void EntityPreFirstStage(
     ecs::Included<TagShellActor>,
     ecs::OptionalCtxGlobal<TagAssemblyPreserveHistory const> preserveHistory,

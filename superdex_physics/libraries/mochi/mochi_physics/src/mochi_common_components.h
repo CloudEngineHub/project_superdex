@@ -340,6 +340,11 @@ struct CTimeIntegratorState : public TimeIntegratorState, NoCopy {};
 
 using CRecenteringParams = RecenteringParams;
 
+// Index of the node whose motion drives recentering for shell and rod actors.
+struct CRecenteringPivotNode {
+  int index = 0;
+};
+
 enum class MatrixSemantics {
   // Use these transform semantics to ensure a vector is transformed relative to
   // a set of reference positions.

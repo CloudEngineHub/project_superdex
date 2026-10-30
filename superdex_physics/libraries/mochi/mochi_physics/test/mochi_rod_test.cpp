@@ -27,7 +27,10 @@
 #include "mochi_core/test/mochi_test_helpers.h"
 #include "mochi_physics_test_fixture.h"
 
+#include <array>
 #include <limits>
+#include <string>
+#include <tuple>
 
 using namespace mochi;
 using namespace mochi::experimental;
@@ -179,8 +182,8 @@ TEST_P(MochiRodActorStraightRodScene, RodActorFreefall) {
 
   int const numDofs = _actor->GetNumDofs();
   EXPECT_TRUE(numDofs % 4 == 0);
-  DynamicArray<real> dofValues(numDofs);
-  _actor->GetDofValues({}, dofValues, test::ExpectOK{});
+  DynamicArray<real> const dofValues =
+      test::GetDofValuesRelativeToInitialFrame(*_actor, _worldFromLocal, fem::kNumRodFields);
 
   real constexpr kTolerance = MOCHI_USE_DOUBLE_PRECISION ? 1e-8_r : 1e-3_r;
 
@@ -197,10 +200,13 @@ TEST_P(MochiRodActorStraightRodScene, RodActorFreefall) {
   // Visual mesh positions should translate by the same freefall displacement
   auto visPositions = _actor->GetVisualMeshNodePositionsLocal(ErrorAssert{});
   ASSERT_EQ(isize(visPositions), 3 * isize(_visNodePositions));
+  TransformRT const initialFromCurrent = test::GetInitialFromCurrentLocal(*_actor, _worldFromLocal);
+  auto const visPositionsCurrent = Unflatten<Real3 const>(visPositions);
   for (int i = 0; i < isize(_visNodePositions); ++i) {
     Real3 const expected = _visNodePositions[i] + expectedDisplacementLocal;
+    Real3 const actual = initialFromCurrent.TransformPoint(visPositionsCurrent[i]);
     for (int d = 0; d < 3; ++d) {
-      EXPECT_NEAR_RTOL(expected[d], visPositions[3 * i + d], kTolerance)
+      EXPECT_NEAR_RTOL(expected[d], actual[d], kTolerance)
           << "Visual node " << i << " component " << d;
     }
   }
@@ -330,9 +336,8 @@ TEST_P(MochiRodActorAxialStretchScene, RodActorAxialStretch) {
   }
 
   // Check the axial displacement at the end
-  int const numDofs = _actor->GetNumDofs();
-  DynamicArray<real> dofValues(numDofs);
-  _actor->GetDofValues({}, dofValues, ErrorAssert{});
+  DynamicArray<real> const dofValues =
+      test::GetDofValuesRelativeToInitialFrame(*_actor, _worldFromLocal, fem::kNumRodFields);
 
   // Get the displacement of the last node in local coordinates
   // DoF values are displacements in local coordinates
@@ -676,9 +681,8 @@ TEST_P(MochiRodActorCantileverScene, RodActorCantileverBending) {
   }
 
   // Get the DoF values to check the tip deflection
-  int const numDofs = _actor->GetNumDofs();
-  DynamicArray<real> dofValues(numDofs);
-  _actor->GetDofValues({}, dofValues, ErrorAssert{});
+  DynamicArray<real> const dofValues =
+      test::GetDofValuesRelativeToInitialFrame(*_actor, _worldFromLocal, fem::kNumRodFields);
 
   // For a cantilever beam under uniform load (self-weight), the tip deflection from linearized beam
   // theory is: delta = (w * L^4) / (8 * E * I) where w is the load per unit length, L is the
@@ -1990,6 +1994,7 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinQueries) {
   DynamicArray<real> const bcValues = {0.25_r, 0_r, 0_r, 0_r, 0.5_r, 0.1_r, 0_r, 0_r};
   actor->AddBoundaryConditionDofsWorld(
       MakeConstSpan(bcDofs), MakeConstSpan(bcValues), test::ExpectOK{});
+  TransformRT const worldFromLocalInitial = actor->GetRootTransform();
   _scene->Step(0.1_r);
 
   auto const deformedPositions =
@@ -1999,7 +2004,12 @@ TEST_F(MochiRodSurfaceMeshes, ContactSkinQueries) {
   auto const referencePositionVectors = Unflatten<Real3 const>(MakeConstSpan(referencePositions));
   ASSERT_EQ(contactSkinMesh.GetNumNodes(), isize(deformedPositions));
   ASSERT_EQ(contactSkinMesh.GetNumNodes(), isize(deformedNormals));
-  EXPECT_GT(NormSqr(deformedPositions[0] - referencePositionVectors[0]), 1e-6_r);
+  TransformRT const initialFromCurrent =
+      test::GetInitialFromCurrentLocal(*actor, worldFromLocalInitial);
+  EXPECT_GT(
+      NormSqr(
+          initialFromCurrent.TransformPoint(deformedPositions[0]) - referencePositionVectors[0]),
+      1e-6_r);
 
   Real3 const expectedNormal = Normalize(Cross(
       deformedPositions[1] - deformedPositions[0], deformedPositions[2] - deformedPositions[0]));
@@ -2716,18 +2726,21 @@ TEST_F(MochiRodSurfaceMeshes, DistinctVisualAndContactMeshesSupportMultiElementS
   actor->AddBoundaryConditionDofsWorld(
       MakeConstSpan(bcDofIndices), MakeConstSpan(bcDofValues), ErrorAssert{});
 
+  TransformRT const worldFromLocalInitial = actor->GetRootTransform();
   _scene->Step(1e6_r);
 
   positions = actor->GetVisualMeshNodePositionsLocal(ErrorAssert{});
   ASSERT_EQ(isize(positions), 9); // 3 nodes × 3 components
+  Real3 const firstVisualNode = test::GetInitialFromCurrentLocal(*actor, worldFromLocalInitial)
+                                    .TransformPoint(Unflatten<Real3 const>(positions)[0]);
 
   // The visual nodes at the junction should be the weighted average of the two element
   // reconstructions. Since node 1 moved in y, the visual nodes should also move in y,
   // with the amount depending on the local coordinate within each element's frame.
   // The key assertion is that the blending produces a reasonable result that differs
   // from the single-element case.
-  EXPECT_NEAR(0.25_r, positions[0], kTolerance) << "x-position should be preserved";
-  EXPECT_GT(positions[1], _visNodePositions[0][1])
+  EXPECT_NEAR(0.25_r, firstVisualNode[0], kTolerance) << "x-position should be preserved";
+  EXPECT_GT(firstVisualNode[1], _visNodePositions[0][1])
       << "y-position should increase due to node 1 displacement";
 }
 
@@ -2843,16 +2856,14 @@ class MochiRodContactSkinOnBox : public test::MochiSceneTestBase,
 
 TEST_P(MochiRodContactSkinOnBox, RodSettlesOnBox) {
   int constexpr kNumSteps = 250;
+  TransformRT const worldFromLocalInitial = _rodActor->GetRootTransform();
   for (int step = 0; step < kNumSteps; ++step) {
     _scene->Step(kTimeStep);
   }
 
   // Read rod DOFs and compute the minimum y-coordinate of the centerline nodes
-  int const numDofs = _rodActor->GetNumDofs();
-  DynamicArray<int> dofIndices(numDofs);
-  std::iota(dofIndices.begin(), dofIndices.end(), 0);
-  DynamicArray<real> dofs(numDofs);
-  _rodActor->GetDofValues(dofIndices, dofs, ErrorAssert{});
+  DynamicArray<real> const dofs = test::GetDofValuesRelativeToInitialFrame(
+      *_rodActor, worldFromLocalInitial, fem::kNumRodFields);
 
   real minY = std::numeric_limits<real>::max();
   for (int i = 0; i < kNumNodes; ++i) {
@@ -2861,11 +2872,13 @@ TEST_P(MochiRodContactSkinOnBox, RodSettlesOnBox) {
     minY = Min(minY, defY);
   }
 
-  // Verify the total contact force balances the rod's weight. The only source of error
-  // is solver convergence, so a tight tolerance is appropriate.
+  // Verify the total contact force balances the rod's weight. In double precision, the only source
+  // of error is solver convergence, so a tight tolerance is appropriate. In single precision,
+  // position round-off is comparable to the penetration depth under this stiff penalty, which
+  // perturbs the force by up to ~0.1%.
   Real3 const contactForce = _rodActor->GetContactForceWorld(ErrorAssert{});
   real const expectedWeight = kDensity * kPI * Sqr(kRadius) * kLength * (-kGravity);
-  real constexpr kForceRelativeTolerance = 1e-3_r;
+  real constexpr kForceRelativeTolerance = MOCHI_USE_DOUBLE_PRECISION ? 1e-3_r : 2e-3_r;
   EXPECT_NEAR(contactForce[1], expectedWeight, kForceRelativeTolerance * expectedWeight)
       << "Contact force y-component should balance the rod weight";
 
@@ -3360,10 +3373,11 @@ class MochiRodDampingTest : public test::MochiSceneTestBase {
     _scene->SetSolverParams(sp, ErrorAssert{});
   }
 
+  // Rods created by these tests start with the identity transform, so DoFs are reported relative to
+  // it to undo recentering.
   static DynamicArray<real> GetDofs(Actor* actor) {
-    DynamicArray<real> dofs(actor->GetNumDofs());
-    actor->GetDofValues({}, dofs, ErrorAssert{});
-    return dofs;
+    return test::GetDofValuesRelativeToInitialFrame(
+        *actor, TransformRT::Identity(), fem::kNumRodFields);
   }
 
   // Material with positive everything; callers override stiffness as needed.
@@ -3642,3 +3656,81 @@ TEST_F(MochiRodDampingTest, TwistStiffnessDampingDecayRatio) {
   real const undamped = runTwist(0_r);
   EXPECT_NEAR_RTOL(kRatioExpected, damped / undamped, kRatioTol);
 }
+
+// Translational recentering must not change the world-space motion of a rod. The rod translates,
+// spins, and twists under gravity with a multistep integrator, optionally with a node pinned by a
+// world-space boundary condition and with a nonzero recentering translation epsilon.
+class MochiRodRecenteringTest : public test::MochiSceneTestBase,
+                                public ::testing::WithParamInterface<std::tuple<bool, real>> {
+ protected:
+  static constexpr int kNumNodes = 9;
+  static constexpr real kLength = 2_r;
+  static constexpr Real3 kInitialVelocity{0.5_r, 0_r, 1_r};
+  static constexpr Real3 kAngularVelocity{0_r, 2_r, 1_r};
+  static constexpr real kTwistRate = 1_r;
+  static constexpr int kPinnedNode = 0;
+
+  static bool IsPinned() {
+    return std::get<0>(GetParam());
+  }
+
+  Actor* CreateRod() {
+    DynamicArray<Real3> nodes;
+    for (int i = 0; i < kNumNodes; ++i) {
+      real const t = static_cast<real>(i) / static_cast<real>(kNumNodes - 1);
+      nodes.push_back(Real3{t * kLength, 0.2_r * Sqr(t), 0_r});
+    }
+    DynamicArray<Real3> const frameAxes =
+        GenerateDiscreteBishopFrame(nodes, /*isClosedLoop=*/false);
+    RodActorParams params;
+    params.worldFromLocal =
+        TransformRT{Quaternion::FromAxisAngle(Real3{0_r, 0_r, 1_r}, 0.3_r), Real3{1_r, -2_r, 3_r}};
+    params.shape = CreatePolylineShape(
+        _scene->GetContext(), nodes, frameAxes, /*isClosedLoop=*/false, ErrorAssert{});
+    params.material.axialStiffness = 1e3_r;
+    params.material.torsionalStiffness = 1e-1_r;
+    params.material.flexuralStiffness = {1e-1_r, 1e-1_r};
+    Actor* const actor = CreateRodActor(_scene, params, ErrorAssert{});
+
+    Real3 const center{0.5_r * kLength, 0_r, 0_r};
+    DynamicArray<real> velocities(actor->GetNumDofs(), 0_r);
+    for (int n = 0; n < kNumNodes; ++n) {
+      Real3 const v = kInitialVelocity + Cross(kAngularVelocity, nodes[n] - center);
+      for (int d = 0; d < 3; ++d) {
+        velocities[fem::kNumRodFields * n + d] = v[d];
+      }
+      velocities[fem::kNumRodFields * n + fem::kRodThetaDofOffset] = kTwistRate;
+    }
+    actor->SetNodeVelocitiesLocal(MakeConstSpan(velocities), ErrorAssert{});
+
+    if (IsPinned()) {
+      Real3 const pinWorld = params.worldFromLocal.TransformPoint(nodes[kPinnedNode]);
+      std::array<int, 3> const pinDofs{
+          fem::kNumRodFields * kPinnedNode,
+          fem::kNumRodFields * kPinnedNode + 1,
+          fem::kNumRodFields * kPinnedNode + 2};
+      std::array<real, 3> const pinValues{pinWorld[0], pinWorld[1], pinWorld[2]};
+      actor->AddBoundaryConditionDofsWorldPermanent(
+          MakeConstSpan(pinDofs), MakeConstSpan(pinValues), ErrorAssert{});
+    }
+    return actor;
+  }
+};
+
+TEST_P(MochiRodRecenteringTest, WorldMotionMatchesNonRecentered) {
+  test::ExpectRecenteringPreservesWorldMotion(
+      _scene,
+      [this] { return CreateRod(); },
+      RecenteringParams{.translationEpsilon = std::get<1>(GetParam())},
+      fem::kNumRodFields,
+      /*minRecenteringDistance=*/IsPinned() ? 1e-2_r : 0.5_r);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BoundaryConditionsAndEpsilons,
+    MochiRodRecenteringTest,
+    ::testing::Combine(::testing::Bool(), ::testing::Values(0_r, 0.1_r)),
+    [](::testing::TestParamInfo<std::tuple<bool, real>> const& info) {
+      return std::string(std::get<0>(info.param) ? "Pinned" : "Free") +
+          (std::get<1>(info.param) > 0_r ? "WithTranslationEpsilon" : "");
+    });

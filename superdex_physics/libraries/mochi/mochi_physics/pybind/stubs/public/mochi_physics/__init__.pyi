@@ -5003,11 +5003,26 @@ class SolverParams:
     def __ne__(self, other: object) -> bool: ...
 
 class RecenteringParams:
-    """Parameters controlling recentering behavior for standalone soft actors.
+    """Parameters controlling recentering behavior for standalone soft, shell, and rod
+    actors.
 
-    Recentering automatically updates the root transform as the actor's "rigid
-    pivot" (typically near the center of mass) moves, with corresponding adjustments
-    to local-space coordinates.
+    Recentering transfers bulk motion from local simulation coordinates into the
+    actor's root transform. This makes the root transform approximately follow the
+    actor while keeping local displacements small, even when the actor travels far
+    from its initial position. Keeping local values near the scale of the actor
+    reduces floating-point roundoff and loss of precision.
+
+    Soft actors recenter both translation and rotation around a rigid pivot,
+    typically near the center of mass. Shell and rod actors use a pivot node near
+    the centroid of the reference mesh. Because that pivot carries no rotation, they
+    recenter translation only and :attr:`rotation_epsilon_deg` has no effect.
+
+    Note:
+        World-space boundary condition targets remain valid under recentering.
+        Targets recomputed from the current root transform (e.g. by re-adding
+        :meth:`~superdex.physics.Actor.add_boundary_condition_constrained_nodes_at_rest`
+        after the actor has moved) follow the recentered frame instead of staying
+        fixed in world space.
 
     Note:
         When recentering is disabled, local-space displacement values can become
@@ -5015,9 +5030,12 @@ class RecenteringParams:
         problematic due to finite-precision arithmetic.
 
     Note:
-        When recentering is enabled, the root transform rotates and translates to
-        follow the actor, and local-space displacements reflect only deformation,
-        not global rotation or translation.
+        When recentering is enabled, the root transform follows the actor, and
+        local-space data (displacements, DoF values, and node positions) are
+        expressed relative to it. For soft actors it rotates and translates, so
+        local-space displacements reflect only deformation. For shell and rod actors
+        it only translates, so local-space displacements still include global
+        rotation.
 
     See Also:
         :meth:`~superdex.physics.Actor.get_recentering_params`,
@@ -9899,9 +9917,10 @@ class Actor:
             Recentering parameters of the actor.
 
         Note:
-            Recentering is only supported for standalone soft actors. For other actor
-            types, returns default recentering parameters with
-            :attr:`~superdex.physics.RecenteringParams.use_recentering` set to false.
+            Recentering is only supported for standalone soft actors, shell actors, and
+            rod actors. For other actor types, returns default recentering parameters
+            with :attr:`~superdex.physics.RecenteringParams.use_recentering` set to
+            false.
 
         See Also:
             :class:`~superdex.physics.RecenteringParams`,
@@ -9920,7 +9939,7 @@ class Actor:
             :class:`~superdex.physics.Error`: If an error occurs.
 
         Note:
-            Only supported for standalone soft actors.
+            Only supported for standalone soft actors, shell actors, and rod actors.
 
         See Also:
             :class:`~superdex.physics.RecenteringParams`,

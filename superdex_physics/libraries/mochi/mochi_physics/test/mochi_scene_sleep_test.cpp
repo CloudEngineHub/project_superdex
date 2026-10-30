@@ -403,6 +403,9 @@ class SceneSleep : public test::MochiSceneTestBase {
 
 class SceneSleepPerType : public SceneSleep, public testing::WithParamInterface<ActorType> {};
 
+// Actor types that recenter by default.
+class SceneSleepRecentering : public SceneSleepPerType {};
+
 } // namespace
 
 /***************************************************************************************************
@@ -433,8 +436,8 @@ TEST_P(SceneSleepPerType, StateIsFrozenWhileAsleep) {
 
 // Queries are only refreshed for awake islands, so recentering must not move the root transform
 // when the island falls asleep, or local-space queries would be left in the old frame.
-TEST_F(SceneSleep, SoftActorDoesNotRecenterAsItFallsAsleep) {
-  Actor const* actor = CreateTestActor(ActorType::Soft);
+TEST_P(SceneSleepRecentering, DoesNotRecenterAsItFallsAsleep) {
+  Actor const* actor = CreateTestActor(GetParam());
   ASSERT_TRUE(actor->GetRecenteringParams().useRecentering);
   TransformRT const initialRoot = actor->GetRootTransform();
   TransformRT rootBeforeStep;
@@ -597,6 +600,12 @@ INSTANTIATE_TEST_SUITE_P(
     AllActorTypes,
     SceneSleepPerType,
     testing::ValuesIn(GetAllActorTypes()),
+    ActorTypeName);
+
+INSTANTIATE_TEST_SUITE_P(
+    RecenteringActorTypes,
+    SceneSleepRecentering,
+    testing::Values(ActorType::Soft, ActorType::Shell, ActorType::Rod),
     ActorTypeName);
 
 /***************************************************************************************************
@@ -936,7 +945,7 @@ static DynamicArray<WakeCase> const& GetWakeCases() {
          c.actor->SetSoftMaterialParams(params, test::ExpectOK{});
        }},
       {"SetRecenteringParams",
-       {ActorType::Soft},
+       kDeformables,
        OnRepeat::NoWake,
        [](WakeContext& c) {
          auto params = c.actor->GetRecenteringParams();

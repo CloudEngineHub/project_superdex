@@ -30,6 +30,7 @@
 #include <mochi_core/utils/task_scheduler.h>
 #include <mochi_core/utils/vmatrix.h>
 
+#include <optional>
 #include <type_traits>
 
 namespace mochi {
@@ -52,6 +53,21 @@ void UpdateMaxGeometrySpeed(
     CColliderInfo const& collider,
     CContactSkinningData const* contactSkinning,
     CConservativeStepBounds& outStepBounds);
+
+// Index of the reference node closest to the centroid of all reference nodes.
+[[nodiscard]] int FindRecenteringPivotNode(Span<Real3 const> referenceNodes);
+
+// Translate the root transform so that a pivot node with local displacement `pivotDisplacement`
+// returns to its reference position, moving the previous-step root transform and the local bounds
+// (if any) along with the local frame. Returns the translation the caller must add to all stored
+// local positions, including those of previous steps, or nullopt if recentering is disabled or the
+// pivot has not moved beyond `params.translationEpsilon`. Velocities are unaffected by a
+// translation of the local frame.
+[[nodiscard]] std::optional<Real3> TranslateRootForRecentering(
+    CRecenteringParams const& params,
+    Real3 const& pivotDisplacement,
+    CRootTransform& root,
+    CBoundingVolume* bounds);
 
 // (Actors with a deforming surface) Set up normals of all active collision points.
 template <bool kIsSync, typename DiscretizationT>

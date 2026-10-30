@@ -306,11 +306,11 @@ void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& de
   // restored root transform.
   bool const advanceStep = !reg.try_ctx<TagAssemblyPreserveHistory>();
 
+  // Recenter only in islands that are about to be solved, so that a deformable actor's root
+  // transform stays fixed from here until the next step and all of its state, contact data, and
+  // queries share one local frame. Must come BEFORE anything reads the root transform.
   for (auto e : descendants.softActors) {
     Schedule(sem, "PreStepDeformableActorAsync", [&reg, e, advanceStep]() {
-      // Recenter only in islands that are about to be solved, so that a deformable actor's root
-      // transform stays fixed from here until the next step and all of its state, contact data,
-      // and queries share one local frame. Must come BEFORE anything reads the root transform.
       if (advanceStep) {
         ecs::TryInvokeOnEntity(
             &soft::RecenterSolutionUsingRigidTransformEval, reg, e); // Non-ROM only
@@ -320,11 +320,18 @@ void mochi::PreStepIslandAsync(entt::registry& reg, CIslandDescendants const& de
   }
 
   for (auto e : descendants.shellActors) {
-    Schedule(
-        sem, "PreStepDeformableActorAsync", [&reg, e]() { PreStepDeformableActorAsync(reg, e); });
+    Schedule(sem, "PreStepDeformableActorAsync", [&reg, e, advanceStep]() {
+      if (advanceStep) {
+        ecs::TryInvokeOnEntity(&shell::RecenterSolutionUsingPivotNode, reg, e);
+      }
+      PreStepDeformableActorAsync(reg, e);
+    });
   }
 
   for (auto e : descendants.rodActors) {
+    if (advanceStep) {
+      ecs::TryInvokeOnEntity(&rod::RecenterSolutionUsingPivotNode, reg, e);
+    }
     PreStepRodActorAsync(reg, e);
   }
 

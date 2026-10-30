@@ -315,8 +315,9 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @return Recentering parameters of the actor.
   //
-  // @note Recentering is only supported for standalone soft actors. For other actor types,
-  // returns default recentering parameters with @ref RecenteringParams::useRecentering set to false.
+  // @note Recentering is only supported for standalone soft actors, shell actors, and rod actors.
+  // For other actor types, returns default recentering parameters with
+  // @ref RecenteringParams::useRecentering set to false.
   //
   // @see RecenteringParams, SetRecenteringParams
   fn GetRecenteringParams() -> RecenteringParams [pure, virtual, const, batchable, nodiscard];
@@ -327,7 +328,7 @@ class Actor [no_init, no_destruct, use_scene] {
   //
   // @param[in] params Recentering parameters to set.
   //
-  // @note Only supported for standalone soft actors.
+  // @note Only supported for standalone soft actors, shell actors, and rod actors.
   //
   // @see RecenteringParams, GetRecenteringParams
   fn SetRecenteringParams(RecenteringParams const& params) -> void [pure, virtual, mochi_error, batchable];

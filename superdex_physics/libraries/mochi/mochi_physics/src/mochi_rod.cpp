@@ -45,9 +45,11 @@
 #include <mochi_core/utils/matrix_utils.h>
 #include <mochi_core/utils/nd_array_utils.h>
 #include <mochi_core/utils/profile.h>
+#include <mochi_core/utils/simd.h>
 #include <mochi_core/utils/vmatrix.h>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 
 using namespace mochi;
@@ -225,6 +227,51 @@ void EntityReconstructPreviousStep(
   integration::ReconstructPreviousPoseFromHistoryOrExtrapolate(
       mesh.nodes, method, time.value, intPoses, currPose, currVel, outPrevPose);
   integration::ReconstructPreviousVelocityFromHistoryOrCopy(method, intVels, currVel, outPrevVel);
+}
+
+void RecenterSolutionUsingPivotNode(
+    ecs::Included<TagRodActor>,
+    CRecenteringParams const& params,
+    CRecenteringPivotNode const& pivot,
+    CRootTransform& root,
+    CRodPose<TimeStep::Current>& currPose,
+    CRodPose<TimeStep::Previous>& prevPose,
+    CIntegrationRodPoses& intPoses,
+    CBoundingVolume* bounds) {
+  MOCHI_PROFILE_SCOPE();
+  static_assert(fem::kNumRodFields == 4);
+  Real4 const u = Unflatten<Real4 const>(currPose.value.displacements.GetConstSpan())[pivot.index];
+  std::optional<Real3> const shift =
+      deformable::TranslateRootForRecentering(params, Real3{u[0], u[1], u[2]}, root, bounds);
+  if (!shift) {
+    return;
+  }
+  // Frame axes and twist DoFs are unaffected by a translation of the local frame. Add the shift to
+  // a SIMD block of whole [x, y, z, twist] nodes at a time.
+  using V = Simd<real, Max(fem::kNumRodFields, kSimdDefaultSize<real>)>;
+  std::array<real, V::kSize> shiftPattern MOCHI_NO_INIT;
+  for (int i = 0; i < V::kSize; ++i) {
+    int const field = i % fem::kNumRodFields;
+    shiftPattern[i] = field < kSpaceDim3 ? (*shift)[field] : 0_r;
+  }
+  V const shiftBlock = Load<V>(shiftPattern.data());
+  auto const translate = [&](RodPose& pose) {
+    Span<real> const displacements = pose.displacements.GetSpan();
+    real* const data = displacements.data();
+    int const size = isize(displacements);
+    int i = 0;
+    for (; i + V::kSize <= size; i += V::kSize) {
+      Store(data + i, Load<V>(data + i) + shiftBlock);
+    }
+    if (int const remaining = size - i; remaining > 0) {
+      Store(data + i, Load<V>(data + i, remaining) + shiftBlock, remaining);
+    }
+  };
+  translate(currPose.value);
+  translate(prevPose.value);
+  for (auto& prev : intPoses.prevSteps) {
+    translate(prev.value);
+  }
 }
 
 void EntityPreFirstStage(
@@ -1402,6 +1449,9 @@ void mochi::InitRodActor(
   reg.emplace<CRootTransform>(e, params.worldFromLocal);
   reg.emplace<CTimeIntegratorState>(e);
   reg.emplace<CConvergenceStatus>(e);
+  reg.emplace<CRecenteringParams>(e);
+  reg.emplace<CRecenteringPivotNode>(
+      e, deformable::FindRecenteringPivotNode(MakeConstSpan(shapePtr->GetNodes())));
 
   // Mesh geometry (const span of shape's nodes)
   bool const isClosedLoop = shapePtr->IsClosedLoop();

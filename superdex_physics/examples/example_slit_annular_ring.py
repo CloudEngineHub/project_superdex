@@ -104,11 +104,19 @@ def create_simulation() -> tuple[Scene, Actor]:
     return scene, actor
 
 
-def get_tracked_displacement(actor: Actor) -> list[float]:
-    """Return the tracked node's three displacement components."""
+def get_tracked_position_world(actor: Actor) -> np.ndarray:
+    """Return the tracked node's world-space position."""
     offset = 3 * TRACKED_NODE
+    reference = actor.get_mesh().coordinates
     displacements = actor.get_displacements()
-    return [displacements[offset + axis] for axis in range(3)]
+    position_local = [
+        reference[offset + axis] + displacements[offset + axis] for axis in range(3)
+    ]
+    # Local data is relative to the current root transform, which moves with recentering.
+    world_from_point = actor.get_root_transform() * sdp.TransformRT(
+        translation=position_local
+    )
+    return np.asarray(list(world_from_point.translation), dtype=np_real)
 
 
 def main() -> None:
@@ -117,6 +125,7 @@ def main() -> None:
     sdp.initialize(num_worker_threads=0)
     try:
         scene, actor = create_simulation()
+        initial_position = get_tracked_position_world(actor)
 
         # Launch the debugger for visualization and interactive playback control.
         if not sdp.debugger.attach():
@@ -132,7 +141,9 @@ def main() -> None:
             scene.step(TIME_STEP)
             step_count += 1
             if step_count % REPORT_INTERVAL_STEPS == 0:
-                displacement_z = get_tracked_displacement(actor)[2]
+                displacement_z = (
+                    get_tracked_position_world(actor)[2] - initial_position[2]
+                )
                 print(
                     f"t={scene.get_total_simulation_time():.1f} s: node {TRACKED_NODE} "
                     f"u_z={displacement_z:.6g} m; steady reference="
@@ -140,8 +151,8 @@ def main() -> None:
                     flush=True,
                 )
 
-        displacement = get_tracked_displacement(actor)
-        print(f"Node {TRACKED_NODE} final displacement [m]: {displacement}")
+        displacement = get_tracked_position_world(actor) - initial_position
+        print(f"Node {TRACKED_NODE} final displacement [m]: {displacement.tolist()}")
     finally:
         sdp.shutdown()
 

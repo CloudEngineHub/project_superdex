@@ -23,6 +23,7 @@
 #include "mochi_deformable.h"
 #include "mochi_integration.h"
 
+#include <optional>
 #include <type_traits>
 
 using namespace mochi;
@@ -138,6 +139,28 @@ void mochi::shell::EntityIncrementStep(
   prevDispl.CopyFrom(currDispl); // Copy previous displacement
   prevVel.CopyFrom(currVel); // Copy previous velocity
   currVel.value.SetZero(); // Reset current velocity to zero
+}
+
+void mochi::shell::RecenterSolutionUsingPivotNode(
+    ecs::Included<TagShellActor>,
+    CRecenteringParams const& params,
+    CRecenteringPivotNode const& pivot,
+    CRootTransform& root,
+    CDisplacementSlice<real, TimeStep::Current>& currDispl,
+    CDisplacementSlice<real, TimeStep::Previous>& prevDispl,
+    CIntegrationDisplacementSlices& intDispls,
+    CBoundingVolume* bounds) {
+  MOCHI_PROFILE_SCOPE();
+  std::optional<Real3> const shift = deformable::TranslateRootForRecentering(
+      params, Unflatten<Real3 const>(currDispl.value.GetConstSpan())[pivot.index], root, bounds);
+  if (!shift) {
+    return;
+  }
+  currDispl.ApplyTranslation(*shift);
+  prevDispl.ApplyTranslation(*shift);
+  for (auto& prev : intDispls.prevSteps) {
+    prev.ApplyTranslation(*shift);
+  }
 }
 
 void mochi::shell::AddExternalForces(

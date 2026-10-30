@@ -197,6 +197,9 @@ void mochi::InitShellActor(
   reg.emplace<CRootTransform>(e, params.worldFromLocal);
   reg.emplace<CTimeIntegratorState>(e);
   reg.emplace<CConvergenceStatus>(e);
+  reg.emplace<CRecenteringParams>(e);
+  reg.emplace<CRecenteringPivotNode>(
+      e, deformable::FindRecenteringPivotNode(shapePtr->GetMesh()->GetNodeCoordinates()));
 
   // Material
   MOCHI_ERROR_RETURN(error);

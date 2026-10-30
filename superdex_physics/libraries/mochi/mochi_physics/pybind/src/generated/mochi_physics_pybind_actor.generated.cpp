@@ -221,7 +221,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
       , "Get the elastic energy of the actor, measured as the difference with respect to\nthe rest state.\n\nReturns:\n    Elastic energy [J] of the actor.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Requires registering :class:`ELASTIC_ENERGY <superdex.physics.QueryType>`\n    before the simulation step. Results are available after the simulation step\n    completes.\n\nNote:\n    Requires the actor to support :class:`ELASTIC_ENERGY\n    <superdex.physics.QueryType>`.\n\nSee Also:\n    :meth:`~superdex.physics.Actor.register_query`, :class:`ELASTIC_ENERGY\n    <superdex.physics.QueryType>`"
     )
     .def("get_recentering_params", &mochi::Actor::GetRecenteringParams
-      , "Gets the recentering parameters of the actor.\n\nReturns:\n    Recentering parameters of the actor.\n\nNote:\n    Recentering is only supported for standalone soft actors. For other actor\n    types, returns default recentering parameters with\n    :attr:`~superdex.physics.RecenteringParams.use_recentering` set to false.\n\nSee Also:\n    :class:`~superdex.physics.RecenteringParams`,\n    :meth:`~superdex.physics.Actor.set_recentering_params`"
+      , "Gets the recentering parameters of the actor.\n\nReturns:\n    Recentering parameters of the actor.\n\nNote:\n    Recentering is only supported for standalone soft actors, shell actors, and\n    rod actors. For other actor types, returns default recentering parameters\n    with :attr:`~superdex.physics.RecenteringParams.use_recentering` set to\n    false.\n\nSee Also:\n    :class:`~superdex.physics.RecenteringParams`,\n    :meth:`~superdex.physics.Actor.set_recentering_params`"
     )
     .def("set_recentering_params", [](mochi::Actor& self, mochi::RecenteringParams const& params) {
       mochi::Error error;
@@ -231,7 +231,7 @@ void mochi::DefineMochiPhysics_MochiPhysicsActor([[maybe_unused]] nb::module_& m
       }
     }
       , nb::arg("params")
-      , "Set the recentering parameters of the actor.\n\nWhen enabled, the root transform automatically moves as the actor's \"rigid\npivot\" (typically near the center of mass) moves.\n\nArgs:\n    params (RecenteringParams): Recentering parameters to set.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for standalone soft actors.\n\nSee Also:\n    :class:`~superdex.physics.RecenteringParams`,\n    :meth:`~superdex.physics.Actor.get_recentering_params`"
+      , "Set the recentering parameters of the actor.\n\nWhen enabled, the root transform automatically moves as the actor's \"rigid\npivot\" (typically near the center of mass) moves.\n\nArgs:\n    params (RecenteringParams): Recentering parameters to set.\n\nRaises:\n    :class:`~superdex.physics.Error`: If an error occurs.\n\nNote:\n    Only supported for standalone soft actors, shell actors, and rod actors.\n\nSee Also:\n    :class:`~superdex.physics.RecenteringParams`,\n    :meth:`~superdex.physics.Actor.get_recentering_params`"
     )
     .def("get_displacements", [](mochi::Actor& self) {
       mochi::Error error;

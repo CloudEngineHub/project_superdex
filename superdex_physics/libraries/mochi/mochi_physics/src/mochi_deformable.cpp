@@ -126,6 +126,50 @@ void deformable::UpdateMaxGeometrySpeed(
   outStepBounds.maxGeometrySpeed = Max(physicsMaxSpeed, contactSkinMaxSpeed);
 }
 
+int deformable::FindRecenteringPivotNode(Span<Real3 const> referenceNodes) {
+  MOCHI_ASSERT(!referenceNodes.empty());
+  Real3 centroid{};
+  for (Real3 const& node : referenceNodes) {
+    centroid += node;
+  }
+  centroid = centroid * (1_r / static_cast<real>(referenceNodes.size()));
+  int closest = 0;
+  real closestDistSqr = NormSqr(referenceNodes[0] - centroid);
+  for (int i = 1; i < isize(referenceNodes); ++i) {
+    real const distSqr = NormSqr(referenceNodes[i] - centroid);
+    if (distSqr < closestDistSqr) {
+      closest = i;
+      closestDistSqr = distSqr;
+    }
+  }
+  return closest;
+}
+
+std::optional<Real3> deformable::TranslateRootForRecentering(
+    CRecenteringParams const& params,
+    Real3 const& pivotDisplacement,
+    CRootTransform& root,
+    CBoundingVolume* bounds) {
+  if (!params.useRecentering || NearEqual(Real3{}, pivotDisplacement, params.translationEpsilon)) {
+    return std::nullopt;
+  }
+  Real3 const oldTranslation = root.worldFromLocal.GetTranslation();
+  root.worldFromLocal.SetTranslation(root.worldFromLocal.TransformPoint(pivotDisplacement));
+  // Use the stored (rounded) translation change so that world-space positions are preserved,
+  // rather than accumulating round-off with every recentering.
+  Real3 const shift = -root.worldFromLocal.TransformDirectionInverse(
+      root.worldFromLocal.GetTranslation() - oldTranslation);
+
+  // The previous-step state is translated too, so move its root transform to keep it fixed in world
+  // space.
+  TransformRT const newLocalFromOldLocal{Quaternion::Identity(), shift};
+  root.worldFromLocalPrev = root.worldFromLocalPrev * Invert(newLocalFromOldLocal);
+  if (bounds) {
+    bounds->localShape = TransformShape(newLocalFromOldLocal, bounds->localShape);
+  }
+  return shift;
+}
+
 template <bool kIsSync, typename DiscretizationT>
 void deformable::SetupActiveCollisionNormals(
     ecs::Excluded<TagShellActor, TagRodActor, TagUseDeformableContactSkin>,

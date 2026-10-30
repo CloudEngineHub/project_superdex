@@ -26,9 +26,12 @@
 #include "mochi_core/test/mochi_test_helpers.h"
 #include "mochi_physics_test_fixture.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -76,13 +79,14 @@ TEST_F(MochiShellActorUnitCubeScene, ShellActorFreefall) {
   real constexpr kTimeInterval = 4_r;
   int constexpr kNumSteps = 50;
   real constexpr kTimeStep = kTimeInterval / (real)kNumSteps;
+  TransformRT const worldFromLocalInitial = _actor->GetRootTransform();
   for (int i = 0; i < kNumSteps; ++i) {
     _scene->Step(kTimeStep);
   }
   Real3 const kExpectedPosition = 0.5_r * kGravity * kTimeInterval * kTimeInterval;
   int const numDofs = _actor->GetNumDofs();
-  DynamicArray<real> dofValues(numDofs);
-  _actor->GetDofValues({}, dofValues, test::ExpectOK{});
+  DynamicArray<real> const dofValues =
+      test::GetDofValuesRelativeToInitialFrame(*_actor, worldFromLocalInitial, kSpaceDim3);
 
   for (int i = 0; i < numDofs; i += 3) {
     // The result should be exact up to algebraic solver tolerances (and floating point rounding
@@ -142,6 +146,7 @@ class MochiShellActorAxialDeformationScene : public test::MochiSceneTestBase {
     real constexpr kTimeInterval = 1e8_r;
     int constexpr kNumSteps = 1;
     real constexpr kTimeStep = kTimeInterval / (real)kNumSteps;
+    TransformRT const worldFromLocalInitial = _actor->GetRootTransform();
     for (int i = 0; i < kNumSteps; ++i) {
       _scene->Step(kTimeStep);
     }
@@ -150,8 +155,8 @@ class MochiShellActorAxialDeformationScene : public test::MochiSceneTestBase {
     // expected solution from elementary strength of materials.
     int const numDofs = _actor->GetNumDofs();
     int const numNodes = numDofs / 3;
-    DynamicArray<real> dofValues(numDofs);
-    _actor->GetDofValues({}, dofValues, ErrorAssert{});
+    DynamicArray<real> const dofValues =
+        test::GetDofValuesRelativeToInitialFrame(*_actor, worldFromLocalInitial, kSpaceDim3);
     real const expected =
         0.5_r * kDensity2d * kGravityMagnitude * kScale * kScale / kYoungsModulus3d / kThickness;
     real maxYDisplacement = 0_r;
@@ -214,6 +219,7 @@ class MochiShellActorSimplySupportedBeamScene : public test::MochiSceneTestBase 
     int constexpr kNumSteps = 1;
 
     real constexpr kTimeStep = kTimeInterval / (real)kNumSteps;
+    TransformRT const worldFromLocalInitial = _actor->GetRootTransform();
     for (int i = 0; i < kNumSteps; ++i) {
       _scene->Step(kTimeStep);
     }
@@ -222,8 +228,8 @@ class MochiShellActorSimplySupportedBeamScene : public test::MochiSceneTestBase 
     // expected solution from Euler--Bernoulli beam theory.
     int const numDofs = _actor->GetNumDofs();
     int const numNodes = numDofs / 3;
-    DynamicArray<real> dofValues(numDofs);
-    _actor->GetDofValues({}, dofValues, ErrorAssert{});
+    DynamicArray<real> const dofValues =
+        test::GetDofValuesRelativeToInitialFrame(*_actor, worldFromLocalInitial, kSpaceDim3);
 
     // This is an analytical exact solution to linear beam theory.  We do not expect to match this
     // exactly, and check it with a loose tolerance.
@@ -297,6 +303,7 @@ class MochiShellActorSimplySupportedPlateScene : public test::MochiSceneTestBase
     int constexpr kNumSteps = 1;
 
     real constexpr kTimeStep = kTimeInterval / (real)kNumSteps;
+    TransformRT const worldFromLocalInitial = _actor->GetRootTransform();
     for (int i = 0; i < kNumSteps; ++i) {
       _scene->Step(kTimeStep);
     }
@@ -305,8 +312,8 @@ class MochiShellActorSimplySupportedPlateScene : public test::MochiSceneTestBase
     // value from the literature.
     int const numDofs = _actor->GetNumDofs();
     int const numNodes = numDofs / 3;
-    DynamicArray<real> dofValues(numDofs);
-    _actor->GetDofValues({}, dofValues, ErrorAssert{});
+    DynamicArray<real> const dofValues =
+        test::GetDofValuesRelativeToInitialFrame(*_actor, worldFromLocalInitial, kSpaceDim3);
     // The "exact" expected value is taken from a high-resolution reference computation in the
     // literature, using a different code.  We only expect to match this up to discretization error,
     // and therefore test the corresponding assert with a loose tolerance.
@@ -568,13 +575,14 @@ TEST_P(MochiShellMassDampingScene, VelocityDecay) {
   // The lumped mass adds up to the density times the cube's area (6), per DoF component.
   auto const& lumpedMass = GetRegistry().get<CLumpedMassMatrix const>(GetEntity(_actor)).values;
   EXPECT_NEAR_RTOL(3_r * kDensity * 6_r, HSum(MakeConstSpan(lumpedMass)), kMassRtol);
+  TransformRT const worldFromLocalInitial = _actor->GetRootTransform();
 
   // Step and track displacement to compute velocity via finite differences.
   DynamicArray<real> prevDispl(_numDofs, 0_r);
-  DynamicArray<real> currDispl(_numDofs);
   for (int step = 0; step < kNumSteps; ++step) {
     _scene->Step(kDt);
-    _actor->GetDofValues({}, MakeSpan(currDispl), ErrorAssert{});
+    DynamicArray<real> const currDispl =
+        test::GetDofValuesRelativeToInitialFrame(*_actor, worldFromLocalInitial, kDofsPerNode);
 
     // Velocity = (d_curr - d_prev) / dt.
     real const expectedVel = kV0 / Pow(1_r + alpha * kDt, step + 1);
@@ -582,7 +590,7 @@ TEST_P(MochiShellMassDampingScene, VelocityDecay) {
       real const vel = (currDispl[i] - prevDispl[i]) / kDt;
       EXPECT_NEAR_RTOL(expectedVel, vel, kVelRtol);
     }
-    std::copy(currDispl.begin(), currDispl.end(), prevDispl.begin());
+    prevDispl = currDispl;
   }
 
   // The near-zero stiffness adds nothing measurable.
@@ -672,14 +680,15 @@ TEST_F(MochiShellStiffnessDampingScene, StiffnessProportionalDecayRatio) {
 
   Actor* undampedActor = createActor(0_r);
   Actor* dampedActor = createActor(kBeta);
+  TransformRT const undampedWorldFromLocalInitial = undampedActor->GetRootTransform();
+  TransformRT const dampedWorldFromLocalInitial = dampedActor->GetRootTransform();
 
   _scene->Step(kDt);
 
-  int const numDofs = undampedActor->GetNumDofs();
-  DynamicArray<real> undampedDispl(numDofs);
-  DynamicArray<real> dampedDispl(numDofs);
-  undampedActor->GetDofValues({}, MakeSpan(undampedDispl), ErrorAssert{});
-  dampedActor->GetDofValues({}, MakeSpan(dampedDispl), ErrorAssert{});
+  DynamicArray<real> const undampedDispl = test::GetDofValuesRelativeToInitialFrame(
+      *undampedActor, undampedWorldFromLocalInitial, kDofsPerNode);
+  DynamicArray<real> const dampedDispl = test::GetDofValuesRelativeToInitialFrame(
+      *dampedActor, dampedWorldFromLocalInitial, kDofsPerNode);
 
   real const dUndamped = undampedDispl[kFreeNodeYDof];
   real const dDamped = dampedDispl[kFreeNodeYDof];
@@ -756,14 +765,15 @@ TEST_F(MochiShellStiffnessDampingScene, BendingStiffnessProportionalDecayRatio) 
 
   Actor* undampedActor = createActor(0_r);
   Actor* dampedActor = createActor(kBeta);
+  TransformRT const undampedWorldFromLocalInitial = undampedActor->GetRootTransform();
+  TransformRT const dampedWorldFromLocalInitial = dampedActor->GetRootTransform();
 
   _scene->Step(kDt);
 
-  int const numDofs = undampedActor->GetNumDofs();
-  DynamicArray<real> undampedDispl(numDofs);
-  DynamicArray<real> dampedDispl(numDofs);
-  undampedActor->GetDofValues({}, MakeSpan(undampedDispl), ErrorAssert{});
-  dampedActor->GetDofValues({}, MakeSpan(dampedDispl), ErrorAssert{});
+  DynamicArray<real> const undampedDispl = test::GetDofValuesRelativeToInitialFrame(
+      *undampedActor, undampedWorldFromLocalInitial, kDofsPerNode);
+  DynamicArray<real> const dampedDispl = test::GetDofValuesRelativeToInitialFrame(
+      *dampedActor, dampedWorldFromLocalInitial, kDofsPerNode);
 
   // Guard: all z-displacements of outer nodes must be positive.
   for (int n = 0; n < kNumOuterNodes; ++n) {
@@ -822,17 +832,18 @@ TEST_F(MochiShellStiffnessDampingScene, RigidTranslationUndamped) {
     vel[i] = kV0;
   }
   _actor->SetNodeVelocitiesLocal(MakeSpan(vel), ErrorAssert{});
+  TransformRT const worldFromLocalInitial = _actor->GetRootTransform();
 
   DynamicArray<real> prevDispl(_numDofs, 0_r);
-  DynamicArray<real> currDispl(_numDofs);
   for (int step = 0; step < kNumSteps; ++step) {
     _scene->Step(kDt);
-    _actor->GetDofValues({}, MakeSpan(currDispl), ErrorAssert{});
+    DynamicArray<real> const currDispl =
+        test::GetDofValuesRelativeToInitialFrame(*_actor, worldFromLocalInitial, kDofsPerNode);
     for (int i = 0; i < _numDofs; i += kDofsPerNode) {
       real const velX = (currDispl[i] - prevDispl[i]) / kDt;
       EXPECT_NEAR_RTOL(kV0, velX, kVelRtol);
     }
-    std::copy(currDispl.begin(), currDispl.end(), prevDispl.begin());
+    prevDispl = currDispl;
   }
 }
 
@@ -978,9 +989,8 @@ TEST_P(MochiShellActorExternalForcesScene, ShellActorUniaxialEndLoad) {
   test::SetSceneIntegrationMethod(_scene, IntegrationMethod::BackwardEuler);
   _scene->Step(1e2_r);
 
-  int const numDofs = _actor->GetNumDofs();
-  DynamicArray<real> dofValues(numDofs);
-  _actor->GetDofValues({}, MakeSpan(dofValues), ErrorAssert{});
+  DynamicArray<real> const dofValues =
+      test::GetDofValuesRelativeToInitialFrame(*_actor, _worldFromLocal, kSpaceDim3);
 
   // Average the tip's local-y displacement and track the maximum off-axis (local x, z)
   // displacement at the tip.
@@ -1572,3 +1582,142 @@ TEST_F(MochiShellContactSkinTest, ShellWithoutContactSkinKeepsDefaultRepresentat
                 CDeformedContactSkinNodes>(entity)));
   EXPECT_TRUE((reg.all_of<CContactLocal2GlobalMap, CContactNodalBasedStructure>(entity)));
 }
+
+// After a step that starts by recentering the shell's root transform, the contact-point, SDF
+// distance, and contact-sample queries must agree with sample positions computed from the current
+// state.
+TEST_F(MochiShellContactSkinTest, RecenteringKeepsContactQueriesConsistent) {
+  ShellActorParams shellParams;
+  shellParams.shape = CreateShape(/*includeContactSkin=*/false);
+  shellParams.material.density = 1_r;
+  shellParams.contactElementType = ActorBoundaryElementType::P1Q1;
+  shellParams.worldFromLocal.SetTranslation(Real3{0_r, 0_r, -0.01_r});
+  shellParams.contact.penaltyCoefficient = 1e6_r;
+  Actor* const shellActor = experimental::CreateShellActor(_scene, shellParams, test::ExpectOK{});
+  shellActor->RegisterQuery(QueryType::ContactPoints, test::ExpectOK{});
+  shellActor->RegisterQuery(QueryType::SdfDistances, test::ExpectOK{});
+  auto& reg = GetRegistry();
+  entt::entity const entity = GetEntity(shellActor);
+  reg.emplace<CQueryContactSamples>(entity);
+
+  // Slide the shell along the plane so that recentering moves its root transform.
+  DynamicArray<real> velocities(shellActor->GetNumDofs(), 0_r);
+  for (int i = 0; i < isize(velocities); i += kSpaceDim3) {
+    velocities[i] = 1_r;
+  }
+  shellActor->SetNodeVelocitiesLocal(MakeConstSpan(velocities), test::ExpectOK{});
+
+  RigidActorParams planeParams;
+  planeParams.shape = _mochiContext->CreatePlaneShape(Real3{0_r, 0_r, 1_r}, 0_r, test::ExpectOK{});
+  planeParams.isStatic = true;
+  planeParams.colliderType = ColliderType::Plane;
+  planeParams.contact.penaltyCoefficient = shellParams.contact.penaltyCoefficient;
+  _scene->CreateRigidActor(planeParams, test::ExpectOK{});
+
+  _scene->SetGravity({});
+  // The first step cannot recenter, since the pivot starts at its reference position.
+  _scene->Step(1e-3_r);
+  TransformRT const rootBeforeStep = shellActor->GetRootTransform();
+  _scene->Step(1e-3_r);
+
+  TransformRT const worldFromLocal = shellActor->GetRootTransform();
+  real const recenteringDistance =
+      Norm(worldFromLocal.GetTranslation() - rootBeforeStep.GetTranslation());
+  ASSERT_GT(recenteringDistance, 1e-4_r);
+  // Small relative to the recentering distance, so that pairing samples with the wrong root
+  // transform is detected. Loose enough to absorb the final Newton increment applied after the last
+  // update of the contact samples.
+  real const tolerance = 1e-2_r * recenteringDistance;
+
+  DynamicArray<Real3> const nodesWorld = test::GetWorldNodePositions(*shellActor, kSpaceDim3);
+  auto const contactPoints = shellActor->GetContactPointsWorld(test::ExpectOK{});
+  ASSERT_FALSE(contactPoints.empty());
+  SdfDistances const sdfDistances = shellActor->GetSdfDistances(test::ExpectOK{});
+  auto const samplesLocal = Unflatten<Real3 const>(
+      MakeConstSpan(reg.get<CQueryContactSamples const>(entity).contactSamples));
+  for (ContactPoint const& contactPoint : contactPoints) {
+    Int3 const triangle = kPhysicsTriangles[contactPoint.elementIndex];
+    Real3 expected{};
+    for (int k = 0; k < 3; ++k) {
+      expected += contactPoint.parametricCoords[k] * nodesWorld[triangle[k]];
+    }
+    EXPECT_NEAR_TOL(expected, contactPoint.posA, tolerance);
+    EXPECT_NEAR_TOL(
+        expected, worldFromLocal.TransformPoint(samplesLocal[contactPoint.sampleIndex]), tolerance);
+
+    auto const* const sdfIt =
+        std::ranges::find(sdfDistances.sampleIndices, contactPoint.sampleIndex);
+    ASSERT_NE(sdfIt, sdfDistances.sampleIndices.end());
+    EXPECT_NEAR_TOL(
+        expected,
+        sdfDistances.worldPositions[sdfIt - sdfDistances.sampleIndices.begin()],
+        tolerance);
+  }
+}
+
+// Translational recentering must not change the world-space motion of a shell. The cube translates
+// and spins under gravity with a multistep integrator, optionally with a node pinned by a
+// world-space boundary condition and with a nonzero recentering translation epsilon.
+class MochiShellRecenteringTest : public test::MochiSceneTestBase,
+                                  public ::testing::WithParamInterface<std::tuple<bool, real>> {
+ protected:
+  static constexpr Real3 kInitialVelocity{0.5_r, 0_r, 1_r};
+  static constexpr Real3 kAngularVelocity{0_r, 2_r, 1_r};
+  static constexpr Real3 kCubeCenter{0.5_r, 0.5_r, 0.5_r};
+  // Not the pivot node, so that the pinned actor still recenters.
+  static constexpr int kPinnedNode = 7;
+
+  static bool IsPinned() {
+    return std::get<0>(GetParam());
+  }
+
+  Actor* CreateCube() {
+    auto&& [coords, conn] = test::CreateMinimalTriMeshUnitCube();
+    ShellActorParams params;
+    params.worldFromLocal =
+        TransformRT{Quaternion::FromAxisAngle(Real3{0_r, 0_r, 1_r}, 0.3_r), Real3{1_r, -2_r, 3_r}};
+    params.material.density = 1_r;
+    params.material.membraneLambda = 40_r;
+    params.material.membraneMu = 40_r;
+    params.colliderType = ColliderType::None;
+    params.shape = _scene->GetContext()->CreateTriMeshShape(
+        Flatten(MakeSpan(coords)), Flatten(MakeSpan(conn)), ErrorAssert{});
+    Actor* const actor = CreateShellActor(_scene, params, ErrorAssert{});
+
+    DynamicArray<real> velocities(actor->GetNumDofs());
+    for (int n = 0; n < isize(coords); ++n) {
+      Real3 const v = kInitialVelocity + Cross(kAngularVelocity, coords[n] - kCubeCenter);
+      for (int d = 0; d < kSpaceDim3; ++d) {
+        velocities[kSpaceDim3 * n + d] = v[d];
+      }
+    }
+    actor->SetNodeVelocitiesLocal(MakeConstSpan(velocities), ErrorAssert{});
+
+    if (IsPinned()) {
+      std::array<int, 1> const pinnedNodes{kPinnedNode};
+      std::array<Real3, 1> const pinWorld{
+          params.worldFromLocal.TransformPoint(coords[kPinnedNode])};
+      actor->AddBoundaryConditionNodesWorldPermanent(
+          MakeConstSpan(pinnedNodes), Flatten(MakeConstSpan(pinWorld)), ErrorAssert{});
+    }
+    return actor;
+  }
+};
+
+TEST_P(MochiShellRecenteringTest, WorldMotionMatchesNonRecentered) {
+  test::ExpectRecenteringPreservesWorldMotion(
+      _scene,
+      [this] { return CreateCube(); },
+      RecenteringParams{.translationEpsilon = std::get<1>(GetParam())},
+      kSpaceDim3,
+      /*minRecenteringDistance=*/IsPinned() ? 1e-2_r : 0.5_r);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BoundaryConditionsAndEpsilons,
+    MochiShellRecenteringTest,
+    ::testing::Combine(::testing::Bool(), ::testing::Values(0_r, 0.1_r)),
+    [](::testing::TestParamInfo<std::tuple<bool, real>> const& info) {
+      return std::string(std::get<0>(info.param) ? "Pinned" : "Free") +
+          (std::get<1>(info.param) > 0_r ? "WithTranslationEpsilon" : "");
+    });

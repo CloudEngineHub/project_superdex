@@ -2193,12 +2193,15 @@
 
 /// @struct mochi::RecenteringParams
 ///
-/// @brief Parameters controlling recentering behavior for standalone soft actors.
+/// @brief Parameters controlling recentering behavior for standalone soft, shell, and rod actors.
 ///
-/// @details Recentering automatically updates the root transform as the actor's "rigid pivot" (typically near the center of mass) moves, with corresponding adjustments to local-space coordinates.
+/// @details Recentering transfers bulk motion from local simulation coordinates into the actor's root transform. This makes the root transform approximately follow the actor while keeping local displacements small, even when the actor travels far from its initial position. Keeping local values near the scale of the actor reduces floating-point roundoff and loss of precision.
 ///
+/// Soft actors recenter both translation and rotation around a rigid pivot, typically near the center of mass. Shell and rod actors use a pivot node near the centroid of the reference mesh. Because that pivot carries no rotation, they recenter translation only and @ref mochi::RecenteringParams::rotationEpsilonDeg "rotationEpsilonDeg" has no effect.
+///
+/// @note World-space boundary condition targets remain valid under recentering. Targets recomputed from the current root transform (e.g. by re-adding @ref mochi::Actor::AddBoundaryConditionConstrainedNodesAtRest "Actor::AddBoundaryConditionConstrainedNodesAtRest" after the actor has moved) follow the recentered frame instead of staying fixed in world space.
 /// @note When recentering is disabled, local-space displacement values can become very large if the actor moves far from its starting position. This may be problematic due to finite-precision arithmetic.
-/// @note When recentering is enabled, the root transform rotates and translates to follow the actor, and local-space displacements reflect only deformation, not global rotation or translation.
+/// @note When recentering is enabled, the root transform follows the actor, and local-space data (displacements, DoF values, and node positions) are expressed relative to it. For soft actors it rotates and translates, so local-space displacements reflect only deformation. For shell and rod actors it only translates, so local-space displacements still include global rotation.
 ///
 /// @see @ref mochi::Actor::GetRecenteringParams "Actor::GetRecenteringParams", @ref mochi::Actor::SetRecenteringParams "Actor::SetRecenteringParams"
 ///
@@ -5238,7 +5241,7 @@
 ///
 /// @return Recentering parameters of the actor.
 ///
-/// @note Recentering is only supported for standalone soft actors. For other actor types, returns default recentering parameters with @ref mochi::RecenteringParams::useRecentering "RecenteringParams::useRecentering" set to false.
+/// @note Recentering is only supported for standalone soft actors, shell actors, and rod actors. For other actor types, returns default recentering parameters with @ref mochi::RecenteringParams::useRecentering "RecenteringParams::useRecentering" set to false.
 ///
 /// @see @ref mochi::RecenteringParams "RecenteringParams", @ref mochi::Actor::SetRecenteringParams "SetRecenteringParams"
 ///
@@ -5252,7 +5255,7 @@
 /// @param[in] params Recentering parameters to set.
 /// @param[in,out] error Error status. Check @ref mochi::Error::IsOK "Error::IsOK" for success.
 ///
-/// @note Only supported for standalone soft actors.
+/// @note Only supported for standalone soft actors, shell actors, and rod actors.
 ///
 /// @see @ref mochi::RecenteringParams "RecenteringParams", @ref mochi::Actor::GetRecenteringParams "GetRecenteringParams"
 ///

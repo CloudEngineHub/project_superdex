@@ -303,6 +303,18 @@ void EntityReconstructPreviousStep(
     CRodPose<TimeStep::Previous>& outPrevPose,
     CVelocitySlice<real, TimeStep::Previous>& outPrevVel);
 
+// Recenter the local frame on the pivot node. The pivot carries no rotation, so only translation is
+// recentered.
+void RecenterSolutionUsingPivotNode(
+    ecs::Included<TagRodActor>,
+    CRecenteringParams const& params,
+    CRecenteringPivotNode const& pivot,
+    CRootTransform& root,
+    CRodPose<TimeStep::Current>& currPose,
+    CRodPose<TimeStep::Previous>& prevPose,
+    CIntegrationRodPoses& intPoses,
+    CBoundingVolume* bounds);
+
 /*
  * System executed before the first time integration stage of the time step.
  * Computes the differential variables at the beginning of the step.
