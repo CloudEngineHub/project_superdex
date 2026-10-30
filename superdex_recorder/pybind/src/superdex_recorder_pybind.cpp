@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <superdex_recorder/episode_reader.h>
 #include <superdex_recorder/episode_restorer.h>
 #include <superdex_recorder/physics_recorder.h>
 #include <superdex_recorder/recorder.h>
@@ -88,6 +89,17 @@ std::vector<T> ToVector(Array const& values) {
 
 superdex::recorder::SampleTime Sample(uint64_t frame, double simulationTimeSec) {
   return {.frame = frame, .simulationTimeSec = simulationTimeSec};
+}
+
+/* Binds an EpisodeReader method that reads one component of one entity. */
+template <auto Read>
+auto ReadComponent() {
+  return [](superdex::recorder::EpisodeReader const& self,
+            std::string const& entityPath,
+            std::string const& component) {
+    return CallWithErrorResult(
+        [&](mochi::Error& error) { return (self.*Read)(entityPath, component, error); });
+  };
 }
 
 } // namespace
@@ -255,6 +267,40 @@ NB_MODULE(SUPERDEX_RECORDER_MODULE_NAME, module) {
             CallWithError([&](mochi::Error& error) { self.RestoreFrame(frameIndex, error); });
           },
           nb::arg("frame_index"));
+
+  // Native episode reader, which the parity tests compare with Rerun's own reader.
+  nb::class_<EpisodeComponent>(module, "_EpisodeComponent")
+      .def_ro("entity_path", &EpisodeComponent::entityPath)
+      .def_ro("component", &EpisodeComponent::component)
+      .def_ro("is_static", &EpisodeComponent::isStatic);
+  nb::class_<ScalarRows>(module, "_ScalarRows")
+      .def_ro("frames", &ScalarRows::frames)
+      .def_ro("simulation_times_ns", &ScalarRows::simulationTimesNs)
+      .def_ro("offsets", &ScalarRows::offsets)
+      .def_ro("values", &ScalarRows::values);
+  nb::class_<EpisodeReader>(module, "_EpisodeReader")
+      .def(
+          nb::new_([](std::filesystem::path const& path) {
+            return CallWithErrorResult(
+                [&](mochi::Error& error) { return EpisodeReader::Open(path, error); });
+          }),
+          nb::arg("path"))
+      .def("components", &EpisodeReader::GetComponents)
+      .def(
+          "read_static_texts",
+          ReadComponent<&EpisodeReader::ReadStaticTexts>(),
+          nb::arg("entity_path"),
+          nb::arg("component"))
+      .def(
+          "read_static_scalars",
+          ReadComponent<&EpisodeReader::ReadStaticScalars>(),
+          nb::arg("entity_path"),
+          nb::arg("component"))
+      .def(
+          "read_scalars",
+          ReadComponent<&EpisodeReader::ReadScalars>(),
+          nb::arg("entity_path"),
+          nb::arg("component"));
 
   // Content hash that the Unreal recorder stores for the scene archive and task files.
   module.def(

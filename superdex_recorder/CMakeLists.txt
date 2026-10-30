@@ -22,6 +22,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(rerun_sdk)
 
+# The episode reader decompresses Rerun's LZ4 blocks with the reference decoder, lib/lz4.c.
+FetchContent_Declare(
+    lz4
+    URL https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz
+    URL_HASH SHA256=0b0e3aa07c8c063ddf40b082bdf7e37a1562bda40a0ff5272957f3e987e0e54b
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    # No CMakeLists.txt here, so the sources are fetched without adding lz4's own project.
+    SOURCE_SUBDIR lib
+)
+FetchContent_MakeAvailable(lz4)
+add_library(superdex_recorder_lz4 STATIC "${lz4_SOURCE_DIR}/lib/lz4.c")
+target_include_directories(superdex_recorder_lz4 SYSTEM PUBLIC "${lz4_SOURCE_DIR}/lib")
+set_target_properties(superdex_recorder_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(superdex_recorder_core STATIC
     src/link_kinematics.cpp
     src/series.cpp
@@ -53,10 +67,24 @@ target_compile_features(superdex_recorder_physics PUBLIC cxx_std_17)
 mochi_set_compiler_options(superdex_recorder_physics)
 set_target_properties(superdex_recorder_physics PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Reads episodes without Rerun: it needs only the Arrow library that the Rerun SDK builds.
+add_library(superdex_recorder_reader STATIC
+    src/episode_reader.cpp
+    src/rrd_chunks.cpp
+    src/rrd_chunks.h
+    include/superdex_recorder/episode_reader.h
+    include/superdex_recorder/formatted_error.h
+)
+target_include_directories(superdex_recorder_reader PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(superdex_recorder_reader PUBLIC mochi_core PRIVATE rerun_arrow_target superdex_recorder_lz4)
+target_compile_features(superdex_recorder_reader PUBLIC cxx_std_17)
+mochi_set_compiler_options(superdex_recorder_reader)
+set_target_properties(superdex_recorder_reader PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(superdex_recorder INTERFACE)
 target_sources(superdex_recorder INTERFACE include/superdex_recorder/superdex_recorder.h)
 target_include_directories(superdex_recorder INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(superdex_recorder INTERFACE superdex_recorder_physics)
+target_link_libraries(superdex_recorder INTERFACE superdex_recorder_physics superdex_recorder_reader)
 
 if (TARGET superdex_robotics)
     add_library(superdex_recorder_robotics STATIC
@@ -92,6 +120,15 @@ if (MOCHI_BUILD_TESTS)
     mochi_set_compiler_options(superdex_recorder_physics_test)
     mochi_set_output_directories(superdex_recorder_physics_test)
     add_test(NAME superdex_recorder_physics_test COMMAND superdex_recorder_physics_test)
+
+    add_executable(superdex_recorder_reader_test test/episode_reader_test.cpp)
+    target_link_libraries(
+        superdex_recorder_reader_test
+        PRIVATE superdex_recorder_core superdex_recorder_reader gtest_main
+    )
+    mochi_set_compiler_options(superdex_recorder_reader_test)
+    mochi_set_output_directories(superdex_recorder_reader_test)
+    add_test(NAME superdex_recorder_reader_test COMMAND superdex_recorder_reader_test)
 
     if (TARGET superdex_recorder_robotics)
         add_executable(superdex_recorder_robotics_test test/robotics_recorder_test.cpp)
