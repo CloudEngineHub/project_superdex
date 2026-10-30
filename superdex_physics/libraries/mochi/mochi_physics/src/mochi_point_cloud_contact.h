@@ -172,14 +172,14 @@ SpatialHashTable CreateSpatialHashTable(
     CColliderPointCloudDiscretization const& colliderDiscretization,
     real contactThreshold);
 
-// Finds point pairs within the contact range. Corresponding output entries identify each pair, and
-// outPointIndices is nondecreasing. For self-contact, collidingPointSampleIndices maps input points
-// to reference samples; an empty span denotes identity. Pairs within the self-contact exclusion
-// distance in the reference configuration are omitted.
+// Finds point pairs within the contact range, at the collider point positions colliderHashTable
+// was filled with. Corresponding output entries identify each pair, and outPointIndices is
+// nondecreasing. For self-contact, collidingPointSampleIndices maps input points to reference
+// samples; an empty span denotes identity. Pairs within the self-contact exclusion distance in the
+// reference configuration are omitted.
 void ComputePointCloudContactIndices(
     experimental::PointCloudColliderParams const& pointCloudColliderParams,
     CColliderPointCloudDiscretization const& colliderDiscretization,
-    ColumnVectorView<real const> colliderDisplacements,
     TransformRT const& worldFromCollider,
     CollidingPointCloudDiscretization const& collidingDiscretization,
     bool selfContact,

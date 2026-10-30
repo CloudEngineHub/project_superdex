@@ -660,7 +660,6 @@ static void QueryPointCloud(
     ComputePointCloudContactIndices(
         params,
         colliderDiscretization,
-        colliderDisplacements,
         worldFromCollider,
         collidingDiscretization,
         selfContact,

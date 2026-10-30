@@ -298,7 +298,6 @@ TEST_P(MochiPointCloudColliderTest, SpatialHashTablePopulationAndContactIndexQue
     ComputePointCloudContactIndices(
         _params,
         colliderDisc,
-        dispRef.value,
         TransformRT{},
         CollidingPointCloudDiscretization{&collidingDisc},
         selfContact,
@@ -435,7 +434,6 @@ TEST_P(MochiPointCloudColliderTest, ContactIndicesMatchPerPointQueries) {
     ComputePointCloudContactIndices(
         _params,
         colliderDisc,
-        AsConstView(displacements),
         TransformRT{},
         CollidingPointCloudDiscretization{&collidingDisc},
         selfContact,

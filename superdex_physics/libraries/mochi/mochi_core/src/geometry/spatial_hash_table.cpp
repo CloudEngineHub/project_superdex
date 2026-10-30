@@ -34,6 +34,7 @@ SpatialHashTable::SpatialHashTable(real cellSize, int pointCapacity, int minNumB
       _binHeads(_numBins, kSentinelIndex),
       _binLists(_pointCapacity, kSentinelIndex) {
   _activeBins.reserve(Min(_numBins, _pointCapacity));
+  _pointPositions.resize_noinit(_pointCapacity);
 }
 
 void SpatialHashTable::Reset() {
@@ -55,6 +56,7 @@ void SpatialHashTable::AddPoint(int pointIndex, Real3 const& point) {
   int const binIndex = GetBinIndex(cellCoordinates);
   MOCHI_ASSERT_VERBOSE(binIndex >= 0 && binIndex < _numBins, "Invalid bin index");
   ExpandOccupiedPointBounds(point);
+  _pointPositions[pointIndex] = point;
   AddPointToBin(pointIndex, binIndex);
   _numPoints++;
 }

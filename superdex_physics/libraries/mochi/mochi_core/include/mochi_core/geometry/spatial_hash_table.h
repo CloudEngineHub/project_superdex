@@ -22,6 +22,7 @@
 #include <mochi_core/utils/math_utils.h>
 #include <mochi_core/utils/nd_array.h>
 #include <mochi_core/utils/nd_array_utils.h>
+#include <mochi_core/utils/span.h>
 
 #include <cstdint>
 
@@ -43,7 +44,7 @@ class SpatialHashTable {
   // This adds a point, with the assumption that no other point with the given pointIndex is
   // contained. The pointIndex must be less than the point capacity. This only checks whether
   // capacity is exceeded in debug builds. This operation is always O(1), even if many points hash
-  // to the same bin.
+  // to the same bin. The point's position is kept: see @ref GetPointPositions.
   void AddPoint(int pointIndex, Real3 const& point);
 
   // This iterates over a collection of points that contains AT LEAST all points within a distance
@@ -88,6 +89,11 @@ class SpatialHashTable {
 
   real GetCellSize() const {
     return _cellSize;
+  }
+
+  // The position of each point added since the last @ref Reset, indexed by point index.
+  Span<Real3 const> GetPointPositions() const {
+    return _pointPositions;
   }
 
   // AABB for the points currently in the table. The table must be non-empty.
@@ -168,6 +174,7 @@ class SpatialHashTable {
   DynamicArray<int> _binHeads;
   DynamicArray<int> _binLists;
   DynamicArray<int> _activeBins;
+  DynamicArray<Real3> _pointPositions;
 };
 
 } // namespace mochi

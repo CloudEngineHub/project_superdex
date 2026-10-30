@@ -125,8 +125,6 @@ template <bool kSelfContact, typename ColliderDiscretizationT>
 static void ComputePointCloudContactIndicesImpl(
     experimental::PointCloudColliderParams const& pointCloudColliderParams,
     ColliderDiscretizationT const& colliderDisc,
-    int dofsPerNode,
-    ColumnVectorView<real const> colliderDisplacements,
     TransformRT const& worldFromCollider,
     CollidingPointCloudDiscretization const& collidingDiscretization,
     Span<Real3 const> collidingPointPositions,
@@ -178,30 +176,19 @@ static void ComputePointCloudContactIndicesImpl(
     colliderFromCollidingT = ToVMatrix4x4Transpose(colliderFromColliding);
   }
 
-  MOCHI_ASSERT_VERBOSE(
-      dofsPerNode > 0,
-      "CColliderPointCloudDiscretization::dofsPerNode was not set (zero sentinel)");
-
   // A colliding point's candidates are the collider points the hash table returns near it, before
-  // the exclusion and distance tests. A collider point can be a candidate of many colliding points,
-  // so its current position, and for self-contact its reference (zero-displacement) position, is
-  // computed once per call.
-  int const numColliderPoints = colliderDisc.GetNumQuadPoints();
-  DynamicArray<Real3> colliderPointPositions;
-  DynamicArray<Real3> colliderPointReferencePositions; // Self-contact only.
-  colliderPointPositions.resize_noinit(numColliderPoints);
+  // the exclusion and distance tests. Their current positions are the ones the hash table was
+  // filled with. A collider point can be a candidate of many colliding points, so for self-contact,
+  // its reference (zero-displacement) position is computed once per call.
+  Span<Real3 const> const colliderPointPositions = colliderHashTable.GetPointPositions();
+  DynamicArray<Real3> colliderPointReferencePositions;
   if constexpr (kSelfContact) {
+    int const numColliderPoints = colliderDisc.GetNumQuadPoints();
     colliderPointReferencePositions.resize_noinit(numColliderPoints);
-  }
-  for (int colliderPointIndex = 0; colliderPointIndex < numColliderPoints; ++colliderPointIndex) {
-    int const elementIndex = colliderPointIndex / ColliderDiscretizationT::kNumQuads;
-    int const localQuadIndex = colliderPointIndex % ColliderDiscretizationT::kNumQuads;
-    auto const& element = colliderDisc.femElements[elementIndex];
-    colliderPointPositions[colliderPointIndex] =
-        details::InterpolateColliderPointPosition<ColliderDiscretizationT>(
-            element, elementIndex, localQuadIndex, colliderDisplacements, dofsPerNode);
-    if constexpr (kSelfContact) {
-      colliderPointReferencePositions[colliderPointIndex] = element.mapEvaluated[localQuadIndex];
+    for (int colliderPointIndex = 0; colliderPointIndex < numColliderPoints; ++colliderPointIndex) {
+      colliderPointReferencePositions[colliderPointIndex] =
+          colliderDisc.femElements[colliderPointIndex / ColliderDiscretizationT::kNumQuads]
+              .mapEvaluated[colliderPointIndex % ColliderDiscretizationT::kNumQuads];
     }
   }
 
@@ -298,7 +285,6 @@ static void ComputePointCloudContactIndicesImpl(
 void ComputePointCloudContactIndices(
     experimental::PointCloudColliderParams const& pointCloudColliderParams,
     CColliderPointCloudDiscretization const& colliderDiscretization,
-    ColumnVectorView<real const> colliderDisplacements,
     TransformRT const& worldFromCollider,
     CollidingPointCloudDiscretization const& collidingDiscretization,
     bool selfContact,
@@ -315,8 +301,6 @@ void ComputePointCloudContactIndices(
       ComputePointCloudContactIndicesImpl</*kSelfContact*/ true>(
           pointCloudColliderParams,
           colliderDisc,
-          colliderDiscretization.dofsPerNode,
-          colliderDisplacements,
           worldFromCollider,
           collidingDiscretization,
           collidingPointPositions,
@@ -330,8 +314,6 @@ void ComputePointCloudContactIndices(
       ComputePointCloudContactIndicesImpl</*kSelfContact*/ false>(
           pointCloudColliderParams,
           colliderDisc,
-          colliderDiscretization.dofsPerNode,
-          colliderDisplacements,
           worldFromCollider,
           collidingDiscretization,
           collidingPointPositions,

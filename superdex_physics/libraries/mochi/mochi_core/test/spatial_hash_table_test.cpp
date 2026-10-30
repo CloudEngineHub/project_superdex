@@ -153,6 +153,22 @@ TEST_F(SpatialHashTableTest, OccupiedPointBoundsTrackRefills) {
   EXPECT_NEAR_EQ((Real3{-7.25_r, 8.25_r, 9.25_r}), occupiedPointBounds.GetMax());
 }
 
+// The table keeps each added point's position at its point index, also for points added out of
+// index order and after a reset.
+TEST_F(SpatialHashTableTest, PointPositionsTrackRefills) {
+  DynamicArray<Real3> const points = GenerateRandomPoints(7, 3, -5_r, 5_r);
+  SpatialHashTable spatialHashTable(1_r, 3, 4);
+  for (int const pointIndex : {2, 0, 1}) {
+    spatialHashTable.AddPoint(pointIndex, points[pointIndex]);
+  }
+  EXPECT_SPAN_EQ(points, spatialHashTable.GetPointPositions());
+
+  spatialHashTable.Reset();
+  Real3 const movedPoint = points[1] + Real3{1_r, 2_r, 3_r};
+  spatialHashTable.AddPoint(1, movedPoint);
+  EXPECT_EQ(movedPoint, spatialHashTable.GetPointPositions()[1]);
+}
+
 // Sweep through different point distributions, from all in one bin, to all in separate bins, by
 // progressively scaling up a stencil of points.
 TEST_F(SpatialHashTableTest, DensitySweep) {
