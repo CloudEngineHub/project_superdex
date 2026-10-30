@@ -222,6 +222,7 @@ static void ComputePointCloudContactIndicesImpl(
       Real3 position;
       Int3 cell;
       int collidingPointIndex;
+      Real3 referencePosition; // Self-contact only: the position at zero displacement.
     };
     std::array<QueryPoint, kCollidingPointsPerRange> queryPoints MOCHI_NO_INIT;
     int numQueryPoints = 0;
@@ -240,7 +241,30 @@ static void ComputePointCloudContactIndicesImpl(
       }
       Real3 const position = ToReal3(collidingPointPositionColliderFrame);
       queryPoints[numQueryPoints++] = {
-          position, colliderHashTable.GetCellCoordinates(position), collidingPointIndex};
+          .position = position,
+          .cell = colliderHashTable.GetCellCoordinates(position),
+          .collidingPointIndex = collidingPointIndex,
+          .referencePosition = {}};
+    }
+
+    // Look up each query point's reference position for the self-contact exclusion test below,
+    // which skips pairs whose reference positions are closer than the exclusion range: neighbors on
+    // the same surface or rod, not contacts. Visit dispatches through a std::visit that some
+    // standard libraries don't inline, so it runs once per range rather than once per point.
+    if constexpr (kSelfContact) {
+      collidingDiscretization.Visit([&](auto const& collidingDisc) {
+        using CollidingDiscretizationT = std::decay_t<decltype(collidingDisc)>;
+        for (QueryPoint& queryPoint : Span<QueryPoint>(queryPoints.data(), numQueryPoints)) {
+          // A caller that queries a subset of the samples maps each colliding point to its sample;
+          // otherwise colliding point i is sample i.
+          int const sampleIndex = collidingPointSampleIndices.empty()
+              ? queryPoint.collidingPointIndex
+              : collidingPointSampleIndices[queryPoint.collidingPointIndex];
+          queryPoint.referencePosition =
+              collidingDisc.femElements[sampleIndex / CollidingDiscretizationT::kNumQuads]
+                  .mapEvaluated[sampleIndex % CollidingDiscretizationT::kNumQuads];
+        }
+      });
     }
 
     // A point's candidates are the collider points in the bins of the 3x3x3 cells around its cell,
@@ -263,20 +287,6 @@ static void ComputePointCloudContactIndicesImpl(
       QueryPoint const& queryPoint = groupedQueryPoints[queryIndex];
       int const collidingPointIndex = queryPoint.collidingPointIndex;
 
-      Real3 collidingPointReferencePositionColliderFrame MOCHI_NO_INIT;
-      if constexpr (kSelfContact) {
-        int const sampleIndex = collidingPointSampleIndices.empty()
-            ? collidingPointIndex
-            : collidingPointSampleIndices[collidingPointIndex];
-        collidingDiscretization.Visit([&](auto const& collidingDisc) {
-          using CollidingDiscretizationT = std::decay_t<decltype(collidingDisc)>;
-          int const elementIndex = sampleIndex / CollidingDiscretizationT::kNumQuads;
-          int const localQuadIndex = sampleIndex % CollidingDiscretizationT::kNumQuads;
-          collidingPointReferencePositionColliderFrame =
-              collidingDisc.femElements[elementIndex].mapEvaluated[localQuadIndex];
-        });
-      }
-
       if (candidatesCell != queryPoint.cell) {
         candidates.clear();
         colliderHashTable.IteratePointsNearCell(queryPoint.cell, [&](int colliderPointIndex) {
@@ -293,8 +303,8 @@ static void ComputePointCloudContactIndicesImpl(
       for (int const colliderPointIndex : candidates) {
         bool isOutsideExclusion = true;
         if constexpr (kSelfContact) {
-          Real3 const referenceDisplacement = colliderPointReferencePositions[colliderPointIndex] -
-              collidingPointReferencePositionColliderFrame;
+          Real3 const referenceDisplacement =
+              colliderPointReferencePositions[colliderPointIndex] - queryPoint.referencePosition;
           isOutsideExclusion = NormSqr(referenceDisplacement) >= selfContactExclusionRangeSquared;
         }
         Real3 const displacement = queryPoint.position - colliderPointPositions[colliderPointIndex];
