@@ -35,10 +35,17 @@
     - MOCHI_LANGUAGE_C      Compiling with a C compiler
 */
 #if defined(__cplusplus)
+// MSVC keeps __cplusplus at 199711L unless /Zc:__cplusplus is passed, so use the larger of it and
+// _MSVC_LANG, as MSVC's STL does.
+#if defined(_MSVC_LANG) && _MSVC_LANG > __cplusplus
+#define MOCHI_DETAILS_CPLUSPLUS _MSVC_LANG
+#else
+#define MOCHI_DETAILS_CPLUSPLUS __cplusplus
+#endif
 #define MOCHI_LANGUAGE_CPP 1
-#define MOCHI_LANGUAGE_CPP17 (__cplusplus >= 201703L)
+#define MOCHI_LANGUAGE_CPP17 (MOCHI_DETAILS_CPLUSPLUS >= 201703L)
 #ifndef MOCHI_LANGUAGE_CPP20 // Can be defined to 0 in build script to test C++17 fallbacks.
-#define MOCHI_LANGUAGE_CPP20 (__cplusplus >= 202002L)
+#define MOCHI_LANGUAGE_CPP20 (MOCHI_DETAILS_CPLUSPLUS >= 202002L)
 #endif
 #define MOCHI_LANGUAGE_C 0
 #else
