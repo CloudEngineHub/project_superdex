@@ -178,7 +178,7 @@ picojson::value ParseJsonOrString(std::string_view text) {
   picojson::value parsed;
   std::string error;
   if (!ParseJson(text, parsed, error)) {
-    return picojson::value(std::string(text));
+    return {std::string(text)};
   }
   return parsed;
 }
