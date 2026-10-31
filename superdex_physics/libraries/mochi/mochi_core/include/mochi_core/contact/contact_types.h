@@ -102,7 +102,7 @@ struct SdfInfo {
 
  private:
   void CheckSizes() const {
-    MOCHI_ASSERT_VERBOSE(grad.size() == val.size());
+    MOCHI_ASSERT_VERBOSE(grad.size() == val.size(), "Mismatched gradient and value sizes.");
   }
 };
 

@@ -131,9 +131,9 @@ void ParallelForRange(
   MOCHI_PROFILE_LABEL_2("ParallelFor ", debugName);
 #endif
 
-  MOCHI_ASSERT_VERBOSE(globalRangeEnd >= globalRangeBegin);
-  MOCHI_ASSERT_VERBOSE(minPerTask > 0);
-  MOCHI_ASSERT_VERBOSE(maxPerTask >= minPerTask);
+  MOCHI_ASSERT_VERBOSE(globalRangeEnd >= globalRangeBegin, "Invalid range.");
+  MOCHI_ASSERT_VERBOSE(minPerTask > 0, "Non-positive minPerTask.");
+  MOCHI_ASSERT_VERBOSE(maxPerTask >= minPerTask, "maxPerTask below minPerTask.");
   auto* scheduler = TaskScheduler::TryGet();
   int numOtherThreads = scheduler ? scheduler->GetNumOtherThreads() : 0;
   if (numOtherThreads == 0) {

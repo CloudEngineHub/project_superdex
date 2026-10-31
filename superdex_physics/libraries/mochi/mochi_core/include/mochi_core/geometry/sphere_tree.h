@@ -358,7 +358,7 @@ void SphereTree<kNodeSize>::ForEachNodeSphere(VisitFn const& visit) const {
       }
     }
   }
-  MOCHI_ASSERT(numLeaves == isize(_leaves));
+  MOCHI_ASSERT(numLeaves == isize(_leaves), "Leaf count mismatch.");
 }
 
 template <int kNodeSize>

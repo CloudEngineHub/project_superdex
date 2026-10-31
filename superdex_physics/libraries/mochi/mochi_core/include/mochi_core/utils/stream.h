@@ -196,7 +196,7 @@ class SpanStreamReader final : public StreamReader {
     MOCHI_ERROR_IF(numBytes > GetNumBytesRemaining(), error, "End of stream");
     MOCHI_ERROR_RETURN(error);
     if (numBytes) MOCHI_LIKELY {
-      MOCHI_ASSERT_VERBOSE(dst != nullptr);
+      MOCHI_ASSERT_VERBOSE(dst != nullptr, "Null pointer.");
       std::memcpy(dst, &_src[_pos], numBytes);
       _pos += numBytes;
     }

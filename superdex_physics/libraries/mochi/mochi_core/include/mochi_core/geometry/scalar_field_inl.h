@@ -99,7 +99,7 @@ MOCHI_FORCE_INLINE void DenseGrid3D<T>::GetClampedParametricCoordsAt(
       outLowerIndex[i] = Select(clampLower, IVec{0}, outLowerIndex[i]);
       outParametric[i] = Select(clampLower, TVec{0}, outParametric[i]);
     } else {
-      MOCHI_ASSERT_VERBOSE(AllTrue(outLowerIndex[i] >= IVec{0}));
+      MOCHI_ASSERT_VERBOSE(AllTrue(outLowerIndex[i] >= IVec{0}), "Negative lower index.");
     }
     IVec const maxLowerIndex{_shape[i] - 2};
     IVec const clampUpper = (outLowerIndex[i] > maxLowerIndex);
@@ -283,7 +283,7 @@ MOCHI_FORCE_INLINE void DenseGrid3D<T>::TrilinearSampleBatch(
           "Extrapolation type not implemented");
     }
 
-    MOCHI_ASSERT_VERBOSE(outValues != nullptr);
+    MOCHI_ASSERT_VERBOSE(outValues != nullptr, "Null output values.");
     *outValues = values;
   } else {
     MOCHI_ASSERT_VERBOSE(
@@ -353,7 +353,7 @@ MOCHI_FORCE_INLINE void DenseGrid3D<T>::TrilinearSampleBatch(
           kExtrapolationType == GridExtrapolation::Unsupported, "Unimplemented extrapolation type");
     }
 
-    MOCHI_ASSERT_VERBOSE(outGradients != nullptr);
+    MOCHI_ASSERT_VERBOSE(outGradients != nullptr, "Null output gradients.");
     *outGradients = grad;
   } else {
     MOCHI_ASSERT_VERBOSE(

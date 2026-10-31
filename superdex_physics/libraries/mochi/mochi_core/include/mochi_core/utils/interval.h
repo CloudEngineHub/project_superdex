@@ -118,7 +118,7 @@ struct Interval final {
   [[nodiscard]] MOCHI_FORCE_INLINE friend constexpr auto Slice(
       Rng& rng,
       Interval const& integerInterval) {
-    MOCHI_ASSERT_VERBOSE(rng.begin() + integerInterval._end <= rng.end());
+    MOCHI_ASSERT_VERBOSE(rng.begin() + integerInterval._end <= rng.end(), "Interval out of range.");
     return rng.begin() + integerInterval;
   }
 

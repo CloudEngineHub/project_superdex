@@ -674,7 +674,7 @@ namespace details {
 } // namespace details
 
 inline void ProjectSymPsd(VMatrix2x2r& A, real eps) {
-  MOCHI_ASSERT_VERBOSE(eps >= 0_r);
+  MOCHI_ASSERT_VERBOSE(eps >= 0_r, "Negative eps.");
 
   // Perform eigendecomposition: A = Q * D * Q^T.
   // AnalyticalEigendecompSym2x2 returns eigenvectors as ROWS (i.e., Q^T).
@@ -701,7 +701,7 @@ inline void ProjectSymPsd(VMatrix2x2r& A, real eps) {
 }
 
 inline void ProjectSymPsd(VMatrix3x3r& A, real eps) {
-  MOCHI_ASSERT_VERBOSE(eps >= 0_r);
+  MOCHI_ASSERT_VERBOSE(eps >= 0_r, "Negative eps.");
   // To improve performance and avoid accumulation of finite precision errors, project only if not
   // already positive definite. The fast-path predicate is intentionally a strict-Sylvester PD check
   // rather than a full PSD check: it requires only the three leading principal minors (cheap)
@@ -719,7 +719,7 @@ inline void ProjectSymPsd(VMatrix3x3r& A, real eps) {
 }
 
 inline VMatrix2x2r CholeskySym2x2(VMatrix2x2r const& A, real eps) {
-  MOCHI_ASSERT_VERBOSE(eps > 0_r);
+  MOCHI_ASSERT_VERBOSE(eps > 0_r, "Non-positive eps.");
 
   // A is stored as (a00, a01, a10, a11) in row-major. For symmetric input, a01 == a10.
   real const a00 = Get<0>(A);
@@ -914,7 +914,7 @@ inline void BatchedRotationVariantSvd3x3(
 
 template <int kBatchSize>
 inline void BatchedProjectSymPsd(BatchReal3x3<kBatchSize>& A, real eps) {
-  MOCHI_ASSERT_VERBOSE(eps >= 0_r);
+  MOCHI_ASSERT_VERBOSE(eps >= 0_r, "Negative eps.");
   using V = BatchReal<kBatchSize>;
   using V3 = BatchReal3<kBatchSize>;
   using V3x3 = BatchReal3x3<kBatchSize>;

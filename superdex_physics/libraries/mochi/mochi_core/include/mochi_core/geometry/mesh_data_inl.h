@@ -44,7 +44,7 @@ inline MeshData::MeshData(MeshDataView const& src)
       skinning(src.skinning ? std::make_optional(SkinningData{*src.skinning}) : std::nullopt) {}
 
 inline int MeshData::GetNumNodes() const {
-  MOCHI_ASSERT_VERBOSE(isize(coordinates) % kMeshDataSpaceDim == 0);
+  MOCHI_ASSERT_VERBOSE(isize(coordinates) % kMeshDataSpaceDim == 0, "Invalid coordinates size.");
   return isize(coordinates) / kMeshDataSpaceDim;
 }
 
@@ -58,7 +58,7 @@ inline bool MeshData::IsEmpty() const {
 }
 
 inline int MeshDataView::GetNumNodes() const {
-  MOCHI_ASSERT_VERBOSE(isize(coordinates) % kMeshDataSpaceDim == 0);
+  MOCHI_ASSERT_VERBOSE(isize(coordinates) % kMeshDataSpaceDim == 0, "Invalid coordinates size.");
   return isize(coordinates) / kMeshDataSpaceDim;
 }
 

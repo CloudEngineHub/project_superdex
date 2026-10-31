@@ -29,7 +29,7 @@ inline void EvaluateField(
     NdArray<real, kNumDofs> const& basisEvaluated,
     NdArray<real, kNumDofs, kNumFields> const& dofValues,
     NdArray<real, kNumFields>* outField) {
-  MOCHI_ASSERT(outField);
+  MOCHI_ASSERT(outField, "Null output field.");
 
   if constexpr (kNumFields == 3 && kNumDofs == 4) {
     NdArray<Vec4r, 4> dofValuesV;
@@ -60,7 +60,7 @@ inline void EvaluateFieldGradient(
     NdArray<real, kNumDofs, kSpaceDim> const& dBasisEvaluated,
     NdArray<real, kNumDofs, kNumFields> const& dofValues,
     NdArray<real, kNumFields, kSpaceDim>* outFieldGradient) {
-  MOCHI_ASSERT(outFieldGradient);
+  MOCHI_ASSERT(outFieldGradient, "Null output field gradient.");
 
   if constexpr (kNumFields == 3 && kNumDofs == 4) {
     // Pad displacements for SIMD

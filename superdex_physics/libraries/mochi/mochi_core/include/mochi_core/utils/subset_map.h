@@ -120,7 +120,7 @@ class SubsetMap {
   // instead!
   inline SubsetMap(std::vector<int> subset_, int N)
       : subset(std::move(subset_)), originalRangeCount(N) {
-    MOCHI_ASSERT(std::is_sorted(subset.begin(), subset.end()));
+    MOCHI_ASSERT(std::is_sorted(subset.begin(), subset.end()), "Unsorted subset.");
   }
 
   auto begin() {
@@ -165,7 +165,7 @@ SubsetMap Intersection(SubsetMap const& A, SubsetMap const& B);
 
 template <typename object_t, typename index_t>
 void Extract(Span<object_t const> input, Span<object_t> output, Span<index_t const> indices) {
-  MOCHI_ASSERT(output.size() == indices.size());
+  MOCHI_ASSERT(output.size() == indices.size(), "Output size mismatch.");
 
   for (int i = 0; i < output.size(); ++i) {
     output[i] = input[indices[i]];
@@ -184,7 +184,7 @@ std::vector<object_t> Extract(Span<object_t const> input, Span<index_t const> in
 */
 template <typename object_t>
 void SubsetMap::Extract(Span<object_t const> input, Span<object_t> output) const {
-  MOCHI_ASSERT(output.size() == subset.size());
+  MOCHI_ASSERT(output.size() == subset.size(), "Output size mismatch.");
   mochi::Extract<object_t, int>(input, output, MakeSpan(subset));
 }
 

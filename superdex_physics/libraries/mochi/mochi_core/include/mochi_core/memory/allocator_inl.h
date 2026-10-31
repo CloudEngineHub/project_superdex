@@ -76,13 +76,13 @@ namespace mochi {
 #if MOCHI_ALLOCATOR_DEBUG
 #if MOCHI_HAS_VA_OPT
 #define MOCHI_ALLOCATOR_ASSERT(condition_without_side_effects, ...) \
-  MOCHI_ASSERT(condition_without_side_effects __VA_OPT__(, )##__VA_ARGS__)
+  MOCHI_ASSERT(condition_without_side_effects __VA_OPT__(, ) __VA_ARGS__)
 #else
 // Strict C++17 compatibility requires __VA_ARGS__ to be non-empty, to prevent a trailing comma.
 // Therefore, MOCHI_ALLOCATOR_ASSERT must always have a message string in C++17 limited headers,
 // even if the information in that string is redundant.
 #define MOCHI_ALLOCATOR_ASSERT(condition_without_side_effects, ...) \
-  MOCHI_ASSERT(condition_without_side_effects, ##__VA_ARGS__)
+  MOCHI_ASSERT(condition_without_side_effects, __VA_ARGS__)
 #endif
 #else
 #define MOCHI_ALLOCATOR_ASSERT(...)

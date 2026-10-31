@@ -25,14 +25,14 @@ namespace mochi {
 #if MOCHI_ARCH_CPU
 // Assert reporting in CPU code
 #if MOCHI_HAS_VA_OPT
-#define MOCHI_ASSERT_ON_FAILURE(file, line, conditionStr, ...)                             \
-  if (::mochi::OnAssertionFailure(file, line, conditionStr __VA_OPT__(, )##__VA_ARGS__)) { \
-    MOCHI_DEBUG_BREAK();                                                                   \
+#define MOCHI_ASSERT_ON_FAILURE(file, line, conditionStr, ...)                            \
+  if (::mochi::OnAssertionFailure(file, line, conditionStr __VA_OPT__(, ) __VA_ARGS__)) { \
+    MOCHI_DEBUG_BREAK();                                                                  \
   }
 #else
-#define MOCHI_ASSERT_ON_FAILURE(file, line, conditionStr, ...)                \
-  if (::mochi::OnAssertionFailure(file, line, conditionStr, ##__VA_ARGS__)) { \
-    MOCHI_DEBUG_BREAK();                                                      \
+#define MOCHI_ASSERT_ON_FAILURE(file, line, conditionStr, ...)              \
+  if (::mochi::OnAssertionFailure(file, line, conditionStr, __VA_ARGS__)) { \
+    MOCHI_DEBUG_BREAK();                                                    \
   }
 #endif
 #elif MOCHI_ARCH_GPU
@@ -53,16 +53,16 @@ namespace mochi {
 
 // Assert macro implementation (does not compile out if used directly)
 #if MOCHI_HAS_VA_OPT
-#define MOCHI_ASSERT_IMPL(condition, ...)                                                \
-  if (condition) {                                                                       \
-  } else MOCHI_UNLIKELY {                                                                \
-    MOCHI_ASSERT_ON_FAILURE(__FILE__, __LINE__, #condition __VA_OPT__(, )##__VA_ARGS__); \
+#define MOCHI_ASSERT_IMPL(condition, ...)                                               \
+  if (condition) {                                                                      \
+  } else MOCHI_UNLIKELY {                                                               \
+    MOCHI_ASSERT_ON_FAILURE(__FILE__, __LINE__, #condition __VA_OPT__(, ) __VA_ARGS__); \
   }
 #else
-#define MOCHI_ASSERT_IMPL(condition, ...)                                   \
-  if (condition) {                                                          \
-  } else MOCHI_UNLIKELY {                                                   \
-    MOCHI_ASSERT_ON_FAILURE(__FILE__, __LINE__, #condition, ##__VA_ARGS__); \
+#define MOCHI_ASSERT_IMPL(condition, ...)                                 \
+  if (condition) {                                                        \
+  } else MOCHI_UNLIKELY {                                                 \
+    MOCHI_ASSERT_ON_FAILURE(__FILE__, __LINE__, #condition, __VA_ARGS__); \
   }
 #endif
 

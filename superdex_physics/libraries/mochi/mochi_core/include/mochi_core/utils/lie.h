@@ -106,7 +106,7 @@ D2TrMultRotaMatRotbTDRotbDRota(VMatrix3x3r const& multRotaMatRobT /* Ra * M * Rb
     Vec4r const& multRotVec /* R * u */,
     int i /* axisa */,
     int j /* axisb */) {
-  MOCHI_ASSERT_VERBOSE(i >= 0 && i < 3 && j >= 0 && j < 3);
+  MOCHI_ASSERT_VERBOSE(i >= 0 && i < 3 && j >= 0 && j < 3, "Axis index out of range.");
   Real3 result{0_r, 0_r, 0_r};
   if (i != j) {
     result[i] = multRotVec[j];

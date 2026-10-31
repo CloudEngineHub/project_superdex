@@ -79,10 +79,10 @@ namespace mochi {
 #if MOCHI_ASSERT_ENABLED
 #if MOCHI_HAS_VA_OPT
 #define MOCHI_ASSERT(condition_without_side_effects, ...) \
-  MOCHI_ASSERT_IMPL(condition_without_side_effects __VA_OPT__(, )##__VA_ARGS__)
+  MOCHI_ASSERT_IMPL(condition_without_side_effects __VA_OPT__(, ) __VA_ARGS__)
 #else
 #define MOCHI_ASSERT(condition_without_side_effects, ...) \
-  MOCHI_ASSERT_IMPL(condition_without_side_effects, ##__VA_ARGS__)
+  MOCHI_ASSERT_IMPL(condition_without_side_effects, __VA_ARGS__)
 #endif
 #else
 #define MOCHI_ASSERT(...)
@@ -100,10 +100,10 @@ namespace mochi {
 #if MOCHI_ASSERT_VERBOSE_ENABLED
 #if MOCHI_HAS_VA_OPT
 #define MOCHI_ASSERT_VERBOSE(condition_without_side_effects, ...) \
-  MOCHI_ASSERT_IMPL(condition_without_side_effects __VA_OPT__(, )##__VA_ARGS__)
+  MOCHI_ASSERT_IMPL(condition_without_side_effects __VA_OPT__(, ) __VA_ARGS__)
 #else
 #define MOCHI_ASSERT_VERBOSE(condition_without_side_effects, ...) \
-  MOCHI_ASSERT_IMPL(condition_without_side_effects, ##__VA_ARGS__)
+  MOCHI_ASSERT_IMPL(condition_without_side_effects, __VA_ARGS__)
 #endif
 #else
 #define MOCHI_ASSERT_VERBOSE(...)
